@@ -277,7 +277,10 @@ fun TimedDurationSetScreen(
                                 hapticsViewModel.doHardVibrationTwice()
                             }
                         }
-                    ),
+                    )
+                    .semantics {
+                        contentDescription = SetValueSemantics.TimedDurationValueDescription
+                    },
                 seconds = currentMillis / 1000,
                 style = itemStyle,
                 color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground

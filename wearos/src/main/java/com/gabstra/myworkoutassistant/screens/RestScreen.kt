@@ -356,6 +356,9 @@ fun RestScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    onCloseClick = {
+                        isTimerInEditMode = false
+                    },
                     content = {
                         textComposable(seconds = currentSecondsFreeze)
                     }

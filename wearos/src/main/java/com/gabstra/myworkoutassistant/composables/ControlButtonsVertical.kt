@@ -22,6 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -56,6 +62,22 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .background(Color.Transparent)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Subtract"
+                        role = Role.Button
+                        onClick(
+                            label = "Subtract"
+                        ) {
+                            onMinusTap()
+                            true
+                        }
+                        onLongClick(
+                            label = "Subtract"
+                        ) {
+                            onMinusLongPress()
+                            true
+                        }
+                    }
                     .repeatActionOnLongPressOrTap(
                         coroutineScope,
                         thresholdMillis = 1000,
@@ -72,7 +94,12 @@ fun ControlButtonsVertical(
                         .background(Red),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Filled.ArrowDownward, contentDescription = "Subtract", tint = MaterialTheme.colorScheme.onSurface)
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Filled.ArrowDownward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
             Spacer(modifier = Modifier.width(5.dp))
@@ -80,6 +107,22 @@ fun ControlButtonsVertical(
                 modifier = Modifier
                     .size(50.dp)
                     .background(Color.Transparent)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Add"
+                        role = Role.Button
+                        onClick(
+                            label = "Add"
+                        ) {
+                            onPlusTap()
+                            true
+                        }
+                        onLongClick(
+                            label = "Add"
+                        ) {
+                            onPlusLongPress()
+                            true
+                        }
+                    }
                     .repeatActionOnLongPressOrTap(
                         coroutineScope,
                         thresholdMillis = 1000,
@@ -96,7 +139,12 @@ fun ControlButtonsVertical(
                         .background(Green),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Filled.ArrowUpward, contentDescription = "Add", tint = MaterialTheme.colorScheme.onSurface)
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Filled.ArrowUpward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }

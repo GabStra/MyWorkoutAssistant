@@ -27,8 +27,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -258,20 +263,23 @@ fun WeightSetScreen(
     @Composable
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
         val repsText = "${currentSetData.actualReps}"
+        fun toggleRepsEditMode() {
+            if (forceStopEditMode) return
+            isRepsInEditMode = !isRepsInEditMode
+            updateInteractionTime()
+            isWeightInEditMode = false
+
+            hapticsViewModel.doGentleVibration()
+        }
         Row(
             modifier = modifier
                 .height(40.dp)
                 .combinedClickable(
                     onClick = {
+                        updateInteractionTime()
                     },
                     onLongClick = {
-                        if (forceStopEditMode) return@combinedClickable
-
-                        isRepsInEditMode = !isRepsInEditMode
-                        updateInteractionTime()
-                        isWeightInEditMode = false
-
-                        hapticsViewModel.doGentleVibration()
+                        toggleRepsEditMode()
                     },
                     onDoubleClick = {
                         if (isRepsInEditMode) {
@@ -288,8 +296,21 @@ fun WeightSetScreen(
                         }
                     }
                 )
-                .semantics {
-                    contentDescription = SetValueSemantics.RepsValueDescription
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "${SetValueSemantics.RepsValueDescription}: $repsText"
+                    role = Role.Button
+                    onClick(
+                        label = "Focus reps"
+                    ) {
+                        updateInteractionTime()
+                        true
+                    }
+                    onLongClick(
+                        label = "Edit reps"
+                    ) {
+                        toggleRepsEditMode()
+                        true
+                    }
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -313,19 +334,23 @@ fun WeightSetScreen(
     @Composable
     fun WeightRow(modifier: Modifier = Modifier, style: TextStyle) {
         val weightText = equipment!!.formatWeight(currentSetData.getWeight())
+        fun toggleWeightEditMode() {
+            if (forceStopEditMode) return
+            isWeightInEditMode = !isWeightInEditMode
+            updateInteractionTime()
+            isRepsInEditMode = false
+
+            hapticsViewModel.doGentleVibration()
+        }
         Row(
             modifier = modifier
                 .height(40.dp)
                 .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        if (forceStopEditMode) return@combinedClickable
-
-                        isWeightInEditMode = !isWeightInEditMode
+                    onClick = {
                         updateInteractionTime()
-                        isRepsInEditMode = false
-
-                        hapticsViewModel.doGentleVibration()
+                    },
+                    onLongClick = {
+                        toggleWeightEditMode()
                     },
                     onDoubleClick = {
                         if (isWeightInEditMode) {
@@ -342,8 +367,21 @@ fun WeightSetScreen(
                         }
                     }
                 )
-                .semantics {
-                    contentDescription = SetValueSemantics.WeightValueDescription
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "${SetValueSemantics.WeightValueDescription}: $weightText"
+                    role = Role.Button
+                    onClick(
+                        label = "Focus weight"
+                    ) {
+                        updateInteractionTime()
+                        true
+                    }
+                    onLongClick(
+                        label = "Edit weight"
+                    ) {
+                        toggleWeightEditMode()
+                        true
+                    }
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -411,13 +449,68 @@ fun WeightSetScreen(
     }
 
     customComponentWrapper {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+        Box(
             modifier = modifier.semantics {
                 contentDescription = SetValueSemantics.WeightSetTypeDescription
             }
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (isInEditMode) 0f else 1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                ) {
+                    exerciseTitleComposable()
+                    if (extraInfo != null) {
+                        //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
+                        extraInfo(state)
+                    }
+                    if (isPlateauDetected) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPlateauDialog = true
+                                    hapticsViewModel.doGentleVibration()
+                                },
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Warning,
+                                contentDescription = "Warning",
+                                tint = if (showRed) Red else MediumDarkGray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Plateau Detected",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.onBackground,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Icon(
+                                imageVector = Icons.Filled.Info,
+                                contentDescription = "Info",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                SetScreen(
+                    customModifier = Modifier
+                )
+            }
+
             if (isRepsInEditMode || isWeightInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
@@ -446,62 +539,6 @@ fun WeightSetScreen(
                         }
                     }
                 )
-
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
-                    ){
-                        exerciseTitleComposable()
-                        if (extraInfo != null) {
-                            //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
-                            extraInfo(state)
-                        }
-                        if (isPlateauDetected) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        showPlateauDialog = true
-                                        hapticsViewModel.doGentleVibration()
-                                    },
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Warning,
-                                    contentDescription = "Warning",
-                                    tint = if (showRed) Red else MediumDarkGray,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = "Plateau Detected",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Icon(
-                                    imageVector = Icons.Filled.Info,
-                                    contentDescription = "Info",
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    SetScreen(
-                        customModifier = Modifier
-                    )
-                }
             }
         }
     }
