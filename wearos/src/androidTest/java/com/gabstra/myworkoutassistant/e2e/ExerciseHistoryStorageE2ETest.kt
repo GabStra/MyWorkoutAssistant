@@ -18,6 +18,7 @@ import com.gabstra.myworkoutassistant.e2e.fixtures.BodyWeightSetWorkoutStoreFixt
 import com.gabstra.myworkoutassistant.e2e.fixtures.ComprehensiveHistoryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationManualStartWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.WarmupSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WeightSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -28,6 +29,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -660,11 +662,110 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         verifyDoNotStoreHistoryExcluded(setHistories, workout)
     }
 
+    @Test
+    fun exerciseHistory_warmupSetsExcludedFromHistory() = runBlocking {
+        // Setup workout store with warmup sets enabled
+        WarmupSetWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+
+        val workoutName = WarmupSetWorkoutStoreFixture.getWorkoutName()
+        startWorkout(workoutName)
+
+        // Complete all sets (both warmup and work sets will be encountered)
+        completeAllSetsInWorkout(workoutName)
+
+        // Wait for completion screen
+        waitForWorkoutCompletion()
+
+        // Query database and verify
+        val db = AppDatabase.getDatabase(context)
+        val workoutHistoryDao = db.workoutHistoryDao()
+        val setHistoryDao = db.setHistoryDao()
+
+        // Read workout store from file (it was seeded by the fixture)
+        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        val workoutStore = workoutStoreRepository.getWorkoutStore()
+        val workout = workoutStore.workouts.firstOrNull { it.name == workoutName }
+            ?: error("Workout not found: $workoutName")
+
+        // Get the completed workout history
+        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
+        require(workoutHistory != null) { "WorkoutHistory not found for completed workout" }
+        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
+
+        // Get all set histories for this workout
+        val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+
+        // Get the exercise from the workout
+        val exercise = workout.workoutComponents
+            .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
+            .firstOrNull() ?: error("Expected a single exercise in $workoutName")
+
+        // The exercise should have generateWarmUpSets = true, so warmup sets were generated
+        // We should only have the work sets in history, not warmup sets
+        val exerciseSetHistories = setHistories.filter { it.exerciseId == exercise.id }
+
+        // Verify that no warmup sets are in SetHistory
+        val warmupSetsInHistory = exerciseSetHistories.filter { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> setData.subCategory == SetSubCategory.WarmupSet
+                is BodyWeightSetData -> setData.subCategory == SetSubCategory.WarmupSet
+                else -> false
+            }
+        }
+        require(warmupSetsInHistory.isEmpty()) {
+            "Expected no warmup sets in SetHistory, but found ${warmupSetsInHistory.size} warmup sets"
+        }
+
+        // Verify that we only have the work sets in history
+        // The fixture defines 1 work set (10 reps at 100.0 kg)
+        val expectedWorkSetCount = exercise.sets.count { set ->
+            when (set) {
+                is WeightSet -> set.subCategory != SetSubCategory.WarmupSet
+                is BodyWeightSet -> set.subCategory != SetSubCategory.WarmupSet
+                else -> true
+            }
+        }
+
+        require(exerciseSetHistories.size == expectedWorkSetCount) {
+            "Expected $expectedWorkSetCount work set(s) in SetHistory, but found ${exerciseSetHistories.size}"
+        }
+
+        // Verify that all SetHistory entries have valid work set data (not warmup)
+        exerciseSetHistories.forEach { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> {
+                    require(setData.subCategory != SetSubCategory.WarmupSet) {
+                        "SetHistory entry ${setHistory.id} has WarmupSet subCategory, but warmup sets should be excluded"
+                    }
+                    require(setData.actualReps > 0) {
+                        "SetHistory WeightSetData should have positive reps"
+                    }
+                    require(setData.actualWeight > 0) {
+                        "SetHistory WeightSetData should have positive weight"
+                    }
+                }
+                is BodyWeightSetData -> {
+                    require(setData.subCategory != SetSubCategory.WarmupSet) {
+                        "SetHistory entry ${setHistory.id} has WarmupSet subCategory, but warmup sets should be excluded"
+                    }
+                    require(setData.actualReps > 0) {
+                        "SetHistory BodyWeightSetData should have positive reps"
+                    }
+                }
+                else -> {
+                    // Other set types (TimedDuration, Endurance) should not have WarmupSet subCategory either
+                    // but they typically don't have subCategory at all, so we just verify they exist
+                }
+            }
+        }
+    }
+
     /**
      * Completes all sets in the workout by navigating through them.
      * This is a simplified version - in practice, you'd need to handle each exercise type.
      */
-    private fun completeAllSetsInWorkout() {
+    private fun completeAllSetsInWorkout(workoutName: String = ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName()) {
         // Navigate through exercises and complete sets
         // For WeightSet and BodyWeightSet: complete set with potential modifications
         // For TimedDurationSet: wait for timer
@@ -687,7 +788,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
 
             // Determine set type from UI semantics
             val uiSetType = detectCurrentSetTypeFromSemantics()
-            val currentSetInfo = runBlocking { getCurrentSetInfo() }
+            val currentSetInfo = runBlocking { getCurrentSetInfo(workoutName) }
 
             when (uiSetType) {
                 UiSetType.TIMED_DURATION,

@@ -48,12 +48,13 @@ Covered:
 - Endurance (manual start): start/stop early, assert stored timers.
 - Skipped set flag stored as `skipped=true`.
 - Comprehensive workout: completes all sets; verifies ordering, start/end times present, rest sets excluded, exercises with `doNotStoreHistory` excluded, and volume calculations for weight/body-weight sets.
+- Warmup sets excluded: verifies that warmup sets (with `SetSubCategory.WarmupSet`) are excluded from `SetHistory` storage.
 
 ## Gaps / Not Yet Covered by E2E
 
 - Warmup set behavior
-  - Explicitly verifying warmup sets are excluded from `SetHistory` and do not affect progression.
-  - Sub-category handling for `WarmupSet`, `RestPauseSet`, and `BackOffSet`.
+  - ~~Explicitly verifying warmup sets are excluded from `SetHistory` and do not affect progression.~~ (COVERED: `exerciseHistory_warmupSetsExcludedFromHistory`)
+  - Sub-category handling for `RestPauseSet` and `BackOffSet` (WarmupSet exclusion is covered).
 - Superset sequencing and history
   - Superset order, transitions, and `SetHistory` coverage for superset exercises.
 - Unilateral / intra-set rest
