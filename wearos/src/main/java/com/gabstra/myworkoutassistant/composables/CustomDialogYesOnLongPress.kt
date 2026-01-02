@@ -167,14 +167,14 @@ fun CustomDialogYesOnLongPress(
                     Text(
                         text = title,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(20.dp,8.dp)
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(20.dp,5.dp)
                     )
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(8.dp)
+                        modifier = Modifier.padding(5.dp)
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))

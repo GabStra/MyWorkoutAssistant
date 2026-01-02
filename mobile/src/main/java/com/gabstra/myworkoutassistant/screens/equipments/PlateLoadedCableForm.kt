@@ -171,7 +171,7 @@ fun PlateLoadedCableForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailablePlateDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate")
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -217,7 +217,7 @@ fun PlateLoadedCableForm(
                         barLengthState.value.toIntOrNull() != null &&
                         availablePlatesState.value.isNotEmpty()
             ) {
-                if (plateLoadedCable == null) Text("Add Plate-Loaded Cable") else Text("Edit Plate-Loaded Cable")
+                if (plateLoadedCable == null) Text("Add Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary)
             }
 
             // Cancel button
@@ -234,7 +234,7 @@ fun PlateLoadedCableForm(
     if (showAvailablePlateDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = { Text("Add Available Plate") },
+            title = { Text("Add Available Plate", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(

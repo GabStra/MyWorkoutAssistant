@@ -304,12 +304,12 @@ fun WorkoutForm(
                         showScheduleDialog.value = true
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("Add single") }
+                ) { Text("Add Single", color = MaterialTheme.colorScheme.onPrimary) }
 
                 Button(
                     onClick = { showBatchScheduleDialog.value = true },
                     modifier = Modifier.weight(1f)
-                ) { Text("Add multiple") }
+                ) { Text("Add Multiple", color = MaterialTheme.colorScheme.onPrimary) }
             }
 
             Spacer(Modifier.height(Spacing.md))
@@ -421,7 +421,7 @@ fun ScheduleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "Edit schedule" else "Add schedule") },
+        title = { Text(if (isEditing) "Edit schedule" else "Add schedule", color = MaterialTheme.colorScheme.onPrimary) },
         text = {
             Column(
                 modifier = Modifier
@@ -707,7 +707,7 @@ fun BatchScheduleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add multiple schedules") },
+        title = { Text("Add multiple schedules", color = MaterialTheme.colorScheme.onPrimary) },
         text = {
             Column(
                 modifier = Modifier

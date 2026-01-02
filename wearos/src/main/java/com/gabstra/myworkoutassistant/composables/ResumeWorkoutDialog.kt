@@ -70,6 +70,7 @@ fun ResumeWorkoutDialog(
                     }
                 ) { contentPadding ->
                     TransformingLazyColumn(
+                        modifier = Modifier.padding(horizontal = 10.dp),
                         contentPadding = contentPadding,
                         state = state
                     ) {
@@ -83,7 +84,7 @@ fun ResumeWorkoutDialog(
                                 Text(
                                     text = "Resume Workout",
                                     textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleLarge,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                             }
@@ -91,13 +92,11 @@ fun ResumeWorkoutDialog(
 
                         item {
                             Text(
-                                text = "Select workout to resume:",
+                                text = "Incomplete Workouts:",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
                             )
                         }
 
@@ -116,15 +115,17 @@ fun ResumeWorkoutDialog(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
+                                        modifier = Modifier.fillMaxWidth(),
                                         text = incompleteWorkout.workoutName,
                                         textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onPrimary
                                     )
 
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(5.dp))
 
                                     Text(
+                                        modifier = Modifier.fillMaxWidth(),
                                         text = incompleteWorkout.workoutHistory.startTime.format(
                                             DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
                                         ),

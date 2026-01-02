@@ -239,7 +239,7 @@ fun BarbellForm(
                             barLengthState.value.toIntOrNull() != null &&
                             availablePlatesState.value.isNotEmpty()
             ) {
-                Text(if (barbell == null) "Add Barbell" else "Save")
+                Text(if (barbell == null) "Add Barbell" else "Save", color = MaterialTheme.colorScheme.onPrimary)
             }
 
             // Cancel

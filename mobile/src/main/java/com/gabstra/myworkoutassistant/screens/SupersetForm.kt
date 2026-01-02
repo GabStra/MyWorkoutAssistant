@@ -97,6 +97,7 @@ fun SupersetForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         text = if (superset == null) "Add Superset" else "Edit Superset",
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                 },
                 navigationIcon = {

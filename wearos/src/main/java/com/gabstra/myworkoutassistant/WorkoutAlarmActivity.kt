@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -162,11 +163,14 @@ class WorkoutAlarmActivity : ComponentActivity() {
             putExtra("SCHEDULE_ID", intent.getStringExtra("SCHEDULE_ID"))
         }
         startActivity(i)
-        stopAlertAndFinish()
+        stopAlertAndFinish(showExitToast = false)
     }
 
-    private fun stopAlertAndFinish() {
+    private fun stopAlertAndFinish(showExitToast: Boolean = true) {
         stopAlert()
+        if (showExitToast) {
+            Toast.makeText(this, "Reminder dismissed. Closing app.", Toast.LENGTH_SHORT).show()
+        }
         finishAndRemoveTask()
         overridePendingTransition(0, 0)
     }

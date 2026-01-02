@@ -67,7 +67,7 @@ fun WorkoutStateHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .offset(y = 8.dp)
+            .offset(y = 10.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
@@ -124,6 +124,5 @@ fun WorkoutStateHeader(
                 )
             }
         }
-
     }
 }

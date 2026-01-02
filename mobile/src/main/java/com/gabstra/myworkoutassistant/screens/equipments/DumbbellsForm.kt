@@ -168,7 +168,7 @@ fun DumbbellsForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showDumbbellDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell")
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -214,7 +214,7 @@ fun DumbbellsForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight")
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -261,7 +261,7 @@ fun DumbbellsForm(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
             ) {
-                if (dumbbells == null) Text("Add Dumbbells") else Text("Edit Dumbbells")
+                if (dumbbells == null) Text("Add Dumbbells", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Dumbbells", color = MaterialTheme.colorScheme.onPrimary)
             }
 
             CustomButton(
@@ -277,7 +277,7 @@ fun DumbbellsForm(
     if (showDumbbellDialog.value) {
         AlertDialog(
             onDismissRequest = { showDumbbellDialog.value = false },
-            title = { Text("Add Dumbbell") },
+            title = { Text("Add Dumbbell", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -321,7 +321,7 @@ fun DumbbellsForm(
     if (showExtraWeightDialog.value) {
         AlertDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = { Text("Add Extra Weight") },
+            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(

@@ -155,7 +155,7 @@ fun WeightVestForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailableWeightsDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate")
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -198,7 +198,7 @@ fun WeightVestForm(
                 enabled = nameState.value.isNotBlank() &&
                         availableWeightsState.value.isNotEmpty()
             ) {
-                if (weightVest == null) Text("Add Weight Vest") else Text("Edit Weight Vest")
+                if (weightVest == null) Text("Add Weight Vest", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Weight Vest", color = MaterialTheme.colorScheme.onPrimary)
             }
 
             // Cancel button
@@ -215,7 +215,7 @@ fun WeightVestForm(
     if (showAvailableWeightsDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = { Text("Add Available Plate") },
+            title = { Text("Add Available Plate", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(

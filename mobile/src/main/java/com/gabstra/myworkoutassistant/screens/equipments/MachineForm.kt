@@ -173,7 +173,7 @@ fun MachineForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailableWeightsDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Weight")
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Weight", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -217,7 +217,7 @@ fun MachineForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight")
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -266,7 +266,7 @@ fun MachineForm(
                 enabled = nameState.value.isNotBlank() &&
                         availableWeightsState.value.isNotEmpty()
             ) {
-                if (machine == null) Text("Add Machine") else Text("Edit Machine")
+                if (machine == null) Text("Add Machine", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Machine", color = MaterialTheme.colorScheme.onPrimary)
             }
 
             // Cancel button
@@ -283,7 +283,7 @@ fun MachineForm(
     if (showAvailableWeightsDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = { Text("Add Weight") },
+            title = { Text("Add Weight", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -326,7 +326,7 @@ fun MachineForm(
     if (showExtraWeightDialog.value) {
         AlertDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = { Text("Add Extra Weight") },
+            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onPrimary) },
             text = {
                 Column {
                     OutlinedTextField(

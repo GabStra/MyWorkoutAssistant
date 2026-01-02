@@ -224,7 +224,6 @@ fun WorkoutsCalendar(
     selectedDate: CalendarDay,
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
     shouldHighlight: (CalendarDay) -> Boolean,
-    getHighlightColor: (CalendarDay) -> Color
 ){
     val currentDate = remember { LocalDate.now() }
     val currentMonth = remember { YearMonth.now() }
@@ -260,7 +259,6 @@ fun WorkoutsCalendar(
                     currentMonth = currentMonth,
                     isSelected = selectedDate.date == day.date,
                     shouldHighlight = shouldHighlight(day),
-                    highlightColor = getHighlightColor(day),
                 ) { selectedCalendarDay ->
                     onDayClicked(calendarState,selectedCalendarDay)
                 }

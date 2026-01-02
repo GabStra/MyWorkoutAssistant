@@ -14,6 +14,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -39,12 +40,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
@@ -58,6 +60,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
@@ -298,8 +301,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNotificationIntent(intent: Intent) {
-        Log.d("MainActivity", "Handling notification intent")
-
         if (intent.hasExtra("WORKOUT_ID")) {
             val workoutId = intent.getStringExtra("WORKOUT_ID")
             val scheduleId = intent.getStringExtra("SCHEDULE_ID")
@@ -311,8 +312,6 @@ class MainActivity : ComponentActivity() {
             val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
 
             if (isWorkoutInProgress) {
-                // A workout is already active, don't start a new one
-                Log.d("MainActivity", "Workout already in progress, skipping notification intent")
                 return
             }
 
@@ -343,13 +342,23 @@ fun WearApp(
     onNavControllerAvailable: (NavHostController) -> Unit
 ) {
     MyWorkoutAssistantTheme {
+        val localContext = LocalContext.current
         val navController = rememberSwipeDismissableNavController()
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
-        val userSwipeEnabled = currentRoute?.let {
-            it != Screen.Workout.route && it != Screen.Loading.route
-        } ?: false
-        val localContext = LocalContext.current
+        val userSwipeEnabled = currentRoute != null &&
+            currentRoute != Screen.Workout.route &&
+            currentRoute != Screen.Loading.route
+        val enableManualSwipe =
+            userSwipeEnabled && Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM
+        val activity = localContext.findActivity()
+        LaunchedEffect(currentRoute, userSwipeEnabled) {
+            Log.d(
+                "MainActivity",
+                "SwipeDismissableNavHost userSwipeEnabled=$userSwipeEnabled route=$currentRoute"
+            )
+        }
+
         appViewModel.initExerciseHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutScheduleDao(localContext)
@@ -490,154 +499,159 @@ fun WearApp(
 
         // Sync error logs when app opens and phone is connected
         LaunchedEffect(nodes) {
-            val phoneNode = nodes.firstOrNull()
-            if (phoneNode != null) {
-                launch(Dispatchers.IO) {
-                    try {
-                        val errorLogs =
-                            (localContext.applicationContext as? MyApplication)?.getErrorLogs()
-                                ?: emptyList()
-                        if (errorLogs.isNotEmpty()) {
-                            val success = sendErrorLogsToMobile(dataClient, errorLogs)
-                            if (success) {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(
-                                        localContext,
-                                        "Sent ${errorLogs.size} error log(s) to mobile",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                                Log.d(
-                                    "MainActivity",
-                                    "Error logs synced to mobile: ${errorLogs.size} logs"
-                                )
-                            } else {
-                                Log.e("MainActivity", "Failed to sync error logs to mobile")
+            val phoneNode = nodes.firstOrNull() ?: return@LaunchedEffect
+
+            launch(Dispatchers.IO) {
+                try {
+                    val errorLogs =
+                        (localContext.applicationContext as? MyApplication)?.getErrorLogs()
+                            ?: emptyList()
+                    if (errorLogs.isNotEmpty()) {
+                        val success = sendErrorLogsToMobile(dataClient, errorLogs)
+                        if (success) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    localContext,
+                                    "Sent ${errorLogs.size} error log(s) to mobile",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
+                        } else {
+                            Log.e("MainActivity", "Failed to sync error logs to mobile")
                         }
-                    } catch (exception: Exception) {
-                        Log.e("MainActivity", "Error syncing error logs", exception)
                     }
+                } catch (exception: Exception) {
+                    Log.e("MainActivity", "Error syncing error logs", exception)
                 }
             }
         }
-
-        // Note: Swipe-to-dismiss prevention is handled in WorkoutScreen using BackHandler
-        // Programmatic control via reflection is not reliable across all Wear OS versions
 
         if (!initialized || startDestination == null) {
             LoadingScreen(appViewModel)
         } else {
             val enableDimming by appViewModel.enableDimming
             KeepOn(appViewModel, enableDimming = enableDimming) {
-                SwipeDismissableNavHost(
-                    modifier = Modifier.fillMaxSize(),
-                    navController = navController,
-                    startDestination = startDestination!!,
-                    userSwipeEnabled = userSwipeEnabled
-                ) {
-                    composable(Screen.WorkoutSelection.route) {
-                        if (showWorkoutSelectionTutorial) {
-                            TutorialOverlay(
-                                visible = true,
-                                text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
-                                onDismiss = {
-                                    showWorkoutSelectionTutorial = false
-                                    tutorialState = TutorialPreferences.update(
-                                        localContext,
-                                        tutorialState
-                                    ) {
-                                        it.copy(hasSeenWorkoutSelectionTutorial = true)
-                                    }
-                                },
-                                hapticsViewModel = hapticsViewModel,
-                                onVisibilityChange = { isVisible ->
-                                    if (isVisible) {
-                                        appViewModel.setDimming(false)
-                                    } else {
-                                        appViewModel.reEvaluateDimmingForCurrentState()
-                                    }
-                                }
-                            )
+                EdgeSwipeBackHandler(
+                    enabled = enableManualSwipe,
+                    onSwipe = {
+                        val swipeRoute = navController.currentBackStackEntry?.destination?.route
+                        if (swipeRoute == Screen.WorkoutSelection.route) {
+                            Toast.makeText(localContext, "Returning to watch face", Toast.LENGTH_SHORT).show()
+                            activity?.finish()
                         } else {
-                            WorkoutSelectionScreen(
-                                alarmManager,
-                                dataClient,
+                            navController.popBackStack()
+                        }
+                    }
+                ) {
+                    SwipeDismissableNavHost(
+                        modifier = Modifier.fillMaxSize(),
+                        navController = navController,
+                        startDestination = startDestination!!,
+                        userSwipeEnabled = userSwipeEnabled
+                    ) {
+                        composable(Screen.WorkoutSelection.route) {
+                            if (showWorkoutSelectionTutorial) {
+                                TutorialOverlay(
+                                    visible = true,
+                                    text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
+                                    onDismiss = {
+                                        showWorkoutSelectionTutorial = false
+                                        tutorialState = TutorialPreferences.update(
+                                            localContext,
+                                            tutorialState
+                                        ) {
+                                            it.copy(hasSeenWorkoutSelectionTutorial = true)
+                                        }
+                                    },
+                                    hapticsViewModel = hapticsViewModel,
+                                    onVisibilityChange = { isVisible ->
+                                        if (isVisible) {
+                                            appViewModel.setDimming(false)
+                                        } else {
+                                            appViewModel.reEvaluateDimmingForCurrentState()
+                                        }
+                                    }
+                                )
+                            } else {
+                                WorkoutSelectionScreen(
+                                    alarmManager,
+                                    dataClient,
+                                    navController,
+                                    appViewModel,
+                                    hapticsViewModel,
+                                    appHelper,
+                                )
+                            }
+                        }
+                        composable(Screen.WorkoutDetail.route) {
+                            WorkoutDetailScreen(
                                 navController,
                                 appViewModel,
                                 hapticsViewModel,
-                                appHelper,
+                                hrViewModel
                             )
                         }
-                    }
-                    composable(Screen.WorkoutDetail.route) {
-                        WorkoutDetailScreen(
-                            navController,
-                            appViewModel,
-                            hapticsViewModel,
-                            hrViewModel
-                        )
-                    }
-                    composable(Screen.Workout.route) {
-                        WorkoutScreen(
-                            navController,
-                            appViewModel,
-                            hapticsViewModel,
-                            heartRateChangeViewModel,
-                            hrViewModel,
-                            polarViewModel,
-                            showHeartRateTutorial = showWorkoutHeartRateTutorial,
-                            onDismissHeartRateTutorial = {
-                                showWorkoutHeartRateTutorial = false
-                                tutorialState =
-                                    TutorialPreferences.update(
-                                        localContext,
-                                        tutorialState
-                                    ) {
-                                        it.copy(hasSeenWorkoutHeartRateTutorial = true)
-                                    }
-                            },
-                            showSetScreenTutorial = showSetScreenTutorial,
-                            onDismissSetScreenTutorial = {
-                                showSetScreenTutorial = false
-                                tutorialState =
-                                    TutorialPreferences.update(
-                                        localContext,
-                                        tutorialState
-                                    ) {
-                                        it.copy(hasSeenSetScreenTutorial = true)
-                                    }
-                            },
-                            showRestScreenTutorial = showRestScreenTutorial,
-                            onDismissRestScreenTutorial = {
-                                showRestScreenTutorial = false
-                                tutorialState =
-                                    TutorialPreferences.update(
-                                        localContext,
-                                        tutorialState
-                                    ) {
-                                        it.copy(hasSeenRestScreenTutorial = true)
-                                    }
-                            },
-                        )
-                    }
-                    composable(Screen.Loading.route) {
-                        val progress by appViewModel.backupProgress
-                        val animatedProgress by animateFloatAsState(
-                            targetValue = progress,
-                            animationSpec = tween(durationMillis = 400)
-                        )
+                        composable(Screen.Workout.route) {
+                            WorkoutScreen(
+                                navController,
+                                appViewModel,
+                                hapticsViewModel,
+                                heartRateChangeViewModel,
+                                hrViewModel,
+                                polarViewModel,
+                                showHeartRateTutorial = showWorkoutHeartRateTutorial,
+                                onDismissHeartRateTutorial = {
+                                    showWorkoutHeartRateTutorial = false
+                                    tutorialState =
+                                        TutorialPreferences.update(
+                                            localContext,
+                                            tutorialState
+                                        ) {
+                                            it.copy(hasSeenWorkoutHeartRateTutorial = true)
+                                        }
+                                },
+                                showSetScreenTutorial = showSetScreenTutorial,
+                                onDismissSetScreenTutorial = {
+                                    showSetScreenTutorial = false
+                                    tutorialState =
+                                        TutorialPreferences.update(
+                                            localContext,
+                                            tutorialState
+                                        ) {
+                                            it.copy(hasSeenSetScreenTutorial = true)
+                                        }
+                                },
+                                showRestScreenTutorial = showRestScreenTutorial,
+                                onDismissRestScreenTutorial = {
+                                    showRestScreenTutorial = false
+                                    tutorialState =
+                                        TutorialPreferences.update(
+                                            localContext,
+                                            tutorialState
+                                        ) {
+                                            it.copy(hasSeenRestScreenTutorial = true)
+                                        }
+                                },
+                            )
+                        }
+                        composable(Screen.Loading.route) {
+                            val progress by appViewModel.backupProgress
+                            val animatedProgress by animateFloatAsState(
+                                targetValue = progress,
+                                animationSpec = tween(durationMillis = 400)
+                            )
 
-                        CircularProgressIndicator(
-                            progress = animatedProgress,
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            strokeWidth = 4.dp,
-                            indicatorColor = MaterialTheme.colorScheme.primary,
-                            trackColor = MediumDarkGray,
-                        )
+                            CircularProgressIndicator(
+                                progress = animatedProgress,
+                                modifier = Modifier
+                                    .fillMaxSize(),
+                                strokeWidth = 4.dp,
+                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                trackColor = MediumDarkGray,
+                            )
 
-                        LoadingScreen(appViewModel, "Syncing with phone")
+                            LoadingScreen(appViewModel, "Syncing with phone")
+                        }
                     }
                 }
             }

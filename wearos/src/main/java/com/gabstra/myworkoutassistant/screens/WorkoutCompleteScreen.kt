@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -84,6 +85,7 @@ fun WorkoutCompleteScreen(
             }
 
             if (isActive) {
+                Toast.makeText(context, "Workout saved. Closing app.", Toast.LENGTH_SHORT).show()
                 (context as? Activity)?.finishAndRemoveTask()
             }
         }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -45,7 +46,6 @@ import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
-import androidx.wear.compose.material3.ListSubHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
 import androidx.wear.compose.material3.OpenOnPhoneDialogDefaults
@@ -177,6 +177,7 @@ fun WorkoutSelectionScreen(
     // Handle back button press to close the app
     BackHandler {
         hapticsViewModel.doGentleVibration()
+        Toast.makeText(context, "Closing app. See you soon.", Toast.LENGTH_SHORT).show()
         (context as? Activity)?.finish()
     }
     
@@ -259,20 +260,17 @@ fun WorkoutSelectionScreen(
 
                 if (!canScheduleExactAlarms) {
                     item {
-                        ListSubHeader(
+                        Text(
                             modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
                                 .transformedHeight(this, spec)
                                 .animateItem(),
-                            transformation = SurfaceTransformation(spec),
-                        ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Enable Alarms for scheduled workouts",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                            )
-                        }
+                            text = "Enable Alarms for scheduled workouts",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                     item {
                         Spacer(modifier = Modifier.height(5.dp))
@@ -305,29 +303,30 @@ fun WorkoutSelectionScreen(
 
                 if (userAge == currentYear) {
                     item {
-                        ListSubHeader(
-                            modifier = Modifier
-                                .transformedHeight(this, spec)
-                                .animateItem(),
-                            transformation = SurfaceTransformation(spec),
-                        ) {
-                            if (viewModel.isPhoneConnectedAndHasApp) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Complete configuration on the companion app",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                                )
-                            } else {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Install the companion app",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-                                )
-                            }
+                        if (viewModel.isPhoneConnectedAndHasApp) {
+                            Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 5.dp)
+                                    .transformedHeight(this, spec)
+                                    .animateItem(),
+                                text = "Complete configuration on the companion app",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        } else {
+                            Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 5.dp)
+                                    .transformedHeight(this, spec)
+                                    .animateItem(),
+                                text = "Install the companion app",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
                         }
                     }
                     if (viewModel.isPhoneConnectedAndHasApp) {

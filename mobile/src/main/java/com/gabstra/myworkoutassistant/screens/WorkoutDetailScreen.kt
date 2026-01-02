@@ -731,7 +731,7 @@ fun WorkoutDetailScreen(
                                     }
                                 ),
                                 content = {
-                                    Text("Add Workout Component")
+                                    Text("Add Workout Component", color = MaterialTheme.colorScheme.onPrimary)
                                 }
                             )
                         }
@@ -968,7 +968,7 @@ fun WorkoutDetailScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = "Add",
-                                    tint = MaterialTheme.colorScheme.background,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
                                 )
                             }
                         )

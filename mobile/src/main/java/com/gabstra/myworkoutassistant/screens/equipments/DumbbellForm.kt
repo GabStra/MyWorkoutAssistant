@@ -167,7 +167,7 @@ fun DumbbellForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showDumbbellDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell")
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 
@@ -213,7 +213,7 @@ fun DumbbellForm(
                             style = MaterialTheme.typography.titleMedium
                         )
                         IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight")
+                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
 

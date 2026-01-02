@@ -591,7 +591,7 @@ fun ExerciseDetailScreen(
                                     );
                                 },
                             ) {
-                                Text("Add Set")
+                                Text("Add Set", color = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
                     }else{
@@ -699,7 +699,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.Add,
                                         contentDescription = "Add",
-                                        tint = MaterialTheme.colorScheme.background,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
                                     )
                                 }
                             )

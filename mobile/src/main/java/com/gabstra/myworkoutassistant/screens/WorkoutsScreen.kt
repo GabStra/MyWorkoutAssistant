@@ -83,7 +83,6 @@ import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
-import com.gabstra.myworkoutassistant.composables.getDaysOfWeekStringForSchedule
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
@@ -385,7 +384,7 @@ fun WorkoutsScreen(
 
     val scope = rememberCoroutineScope()
 
-    val tabTitles = listOf("Status", "Workouts", "Equipments", "Schedules")
+    val tabTitles = listOf("Status", "Workouts", "Gear", "Alarms")
 
     var selectedDate by remember {
         mutableStateOf<CalendarDay>(
@@ -523,17 +522,6 @@ fun WorkoutsScreen(
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
-    fun getHighlightColor(day: CalendarDay): Color {
-        val workoutsDoneCount = groupedWorkoutsHistories?.get(day.date)?.size ?: 0
-
-        return when {
-            workoutsDoneCount <= 0 -> Color.Transparent
-            workoutsDoneCount == 1 -> Color(0xFFff6700)
-            workoutsDoneCount == 2 -> Color(0xFFff6700)
-            workoutsDoneCount >= 3 -> Color(0xFFff6700)
-            else -> Color.Transparent
-        }
-    }
 
     @Composable
     fun workoutsBottomBar(){
@@ -766,16 +754,14 @@ fun WorkoutsScreen(
                         onClick = {
                             appViewModel.setHomeTab(index)
                         },
-                        text = { Text(text = title) },
+                        text = { Text(text = title,style = MaterialTheme.typography.bodySmall) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
                             override val interactions: Flow<Interaction> = emptyFlow()
-
                             override suspend fun emit(interaction: Interaction) {
                                 // Empty implementation
                             }
-
                             override fun tryEmit(interaction: Interaction): Boolean = true
                         }
                     )
@@ -827,7 +813,6 @@ fun WorkoutsScreen(
                                                 onDayClicked(calendarState, day)
                                             },
                                             shouldHighlight = { day -> highlightDay(day) },
-                                            getHighlightColor = { day -> getHighlightColor(day) }
                                         )
                                     }
                                     if (isLoading) {
@@ -1177,7 +1162,7 @@ fun WorkoutsScreen(
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
                                                 },
                                             ) {
-                                                Text("Add Workout")
+                                                Text("Add Workout", color = MaterialTheme.colorScheme.onPrimary)
                                             }
                                         }
                                     } else {
@@ -1239,7 +1224,7 @@ fun WorkoutsScreen(
                                                 Icon(
                                                     imageVector = Icons.Filled.Add,
                                                     contentDescription = "Add",
-                                                    tint = MaterialTheme.colorScheme.background,
+                                                    tint = MaterialTheme.colorScheme.onPrimary,
                                                 )
                                             }
                                         }
@@ -1274,7 +1259,7 @@ fun WorkoutsScreen(
                                                     }
                                                 }.toList(),
                                                 content = {
-                                                    Text("Add Equipment")
+                                                    Text("Add Equipment", color = MaterialTheme.colorScheme.onPrimary)
                                                 }
                                             )
                                         }
@@ -1334,7 +1319,7 @@ fun WorkoutsScreen(
                                                     Icon(
                                                         imageVector = Icons.Filled.Add,
                                                         contentDescription = "Add",
-                                                        tint = MaterialTheme.colorScheme.background,
+                                                        tint = MaterialTheme.colorScheme.onPrimary,
                                                     )
                                                 }
                                             )
@@ -1369,9 +1354,10 @@ fun WorkoutsScreen(
                                 }
                                 
                                 // Group schedules by workout
-                                val schedulesByWorkout = remember(allSchedules, workouts) {
+                                val schedulesByWorkout = remember(allSchedules, enabledWorkouts) {
+                                    val enabledByGlobalId = enabledWorkouts.associateBy { it.globalId }
                                     allSchedules.groupBy { schedule ->
-                                        workouts.find { it.globalId == schedule.workoutId }?.globalId
+                                        enabledByGlobalId[schedule.workoutId]?.globalId
                                     }.filterKeys { it != null }
                                 }
                                 
@@ -1439,7 +1425,8 @@ fun WorkoutsScreen(
                                             ) {
                                                 Text(
                                                     text = if (hasBulkDisabledSchedules) "Restore All Schedules" else "Disable All Schedules",
-                                                    style = MaterialTheme.typography.bodyLarge
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = MaterialTheme.colorScheme.onPrimary,
                                                 )
                                             }
                                         }
@@ -1519,4 +1506,3 @@ fun WorkoutsScreen(
 
     }
 }
-

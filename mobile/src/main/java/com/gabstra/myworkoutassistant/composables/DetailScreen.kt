@@ -96,7 +96,7 @@ fun <T> DetailScreen(
                     containerColor = MaterialTheme.colorScheme.primary,
                     onClick = onAddClick
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
                 }
         }
     ) {
