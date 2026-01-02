@@ -83,3 +83,32 @@ fun cancelWorkoutInProgressNotification(context: Context) {
         cancel(notificationId)
     }
 }
+
+@SuppressLint("MissingPermission")
+fun showSyncCompleteNotification(context: Context) {
+    val channelId = "sync_status_channel"
+    val notificationId = 2
+
+    val channelName = "Sync Status"
+    val channelDescription = "Notifications for sync events"
+    val channelImportance = NotificationManager.IMPORTANCE_DEFAULT
+    val channel = NotificationChannel(channelId, channelName, channelImportance).apply {
+        description = channelDescription
+    }
+    val notificationManager: NotificationManager =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    notificationManager.createNotificationChannel(channel)
+
+    val notification = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(R.drawable.ic_workout_icon)
+        .setContentTitle("Sync complete")
+        .setContentText("Workout data updated")
+        .setAutoCancel(true)
+        .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .build()
+
+    with(NotificationManagerCompat.from(context)) {
+        notify(notificationId, notification)
+    }
+}

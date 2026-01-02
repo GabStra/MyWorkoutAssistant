@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.WearableListenerService
@@ -333,6 +334,9 @@ class DataLayerListenerService : WearableListenerService() {
                                     }
 
                                     sendBroadcast(intent)
+                                    if (!MyApplication.isAppInForeground()) {
+                                        showSyncCompleteNotification(this@DataLayerListenerService)
+                                    }
 
                                     backupChunks = mutableListOf()
                                     expectedChunks = 0

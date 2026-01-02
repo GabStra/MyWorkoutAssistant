@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant
 
+import android.app.Activity
 import android.app.Application
 import android.content.Intent
+import android.os.Bundle
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -20,6 +22,7 @@ import java.io.StringWriter
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.concurrent.atomic.AtomicInteger
 
 class MyApplication : Application() {
     
@@ -42,6 +45,27 @@ class MyApplication : Application() {
     
     override fun onCreate() {
         super.onCreate()
+
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                resumedActivities.incrementAndGet()
+                isInForeground = true
+            }
+
+            override fun onActivityPaused(activity: Activity) {
+                val remaining = resumedActivities.decrementAndGet()
+                if (remaining <= 0) {
+                    resumedActivities.set(0)
+                    isInForeground = false
+                }
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
         
         // Set up global uncaught exception handler
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -117,6 +141,10 @@ class MyApplication : Application() {
     
     companion object {
         const val ERROR_LOGGED_ACTION = "com.gabstra.myworkoutassistant.ERROR_LOGGED"
+        private val resumedActivities = AtomicInteger(0)
+        @Volatile private var isInForeground = false
+
+        fun isAppInForeground(): Boolean = isInForeground
     }
     
     private fun readErrorLogs(): List<ErrorLog> {
