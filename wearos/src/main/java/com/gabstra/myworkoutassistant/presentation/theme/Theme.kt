@@ -25,7 +25,7 @@ val darkScheme = ColorScheme(
     primary = Orange,
     primaryDim = Orange,
     primaryContainer = MediumDarkerGray,
-    onPrimary = DarkGray,
+    onPrimary = LighterGray,
     onPrimaryContainer = LighterGray,
 
     secondary = Green,
@@ -76,7 +76,7 @@ fun checkboxButtonColors(): CheckboxButtonColors {
     return CheckboxButtonColors(
         // Checked state colors
         checkedBoxColor = colorScheme.primary, // Orange - visible
-        checkedCheckmarkColor = colorScheme.primaryContainer, // Light gray for visibility on orange background
+        checkedCheckmarkColor = colorScheme.onPrimary, // Light gray for visibility on orange background
         checkedContainerColor = colorScheme.primaryContainer, // MediumDarkerGray
         checkedContentColor = colorScheme.onPrimaryContainer, // LighterGray
         checkedIconColor = colorScheme.primary, // Orange

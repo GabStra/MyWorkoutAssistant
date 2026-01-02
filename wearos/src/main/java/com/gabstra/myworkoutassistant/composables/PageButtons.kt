@@ -146,7 +146,7 @@ fun PageButtons(
                             .fillMaxWidth()
                             .transformedHeight(this, spec).animateItem(),
                         transformation = SurfaceTransformation(spec),
-                        text = "Add set",
+                        text = "Add Set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()

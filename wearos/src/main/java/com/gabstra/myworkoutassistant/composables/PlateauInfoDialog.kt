@@ -105,7 +105,8 @@ fun PlateauInfoDialog(
                             Text(
                                 text = buttonText,
                                 style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }

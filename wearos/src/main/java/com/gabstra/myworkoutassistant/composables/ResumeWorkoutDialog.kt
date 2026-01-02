@@ -118,7 +118,8 @@ fun ResumeWorkoutDialog(
                                     Text(
                                         text = incompleteWorkout.workoutName,
                                         textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.titleMedium
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onPrimary
                                     )
 
                                     Spacer(modifier = Modifier.height(4.dp))

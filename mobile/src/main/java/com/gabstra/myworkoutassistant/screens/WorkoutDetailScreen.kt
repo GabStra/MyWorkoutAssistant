@@ -75,6 +75,7 @@ import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -82,6 +83,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.getDaysOfWeekStringForSchedule
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -89,6 +91,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -243,6 +246,7 @@ fun WorkoutDetailScreen(
     workoutRecordDao: WorkoutRecordDao,
     setHistoryDao: SetHistoryDao,
     exerciseInfoDao: ExerciseInfoDao,
+    workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     workout: Workout,
     onGoBack: () -> Unit
 ) {
@@ -801,6 +805,49 @@ fun WorkoutDetailScreen(
                                 }
                             }
                                 
+                            Spacer(Modifier.height(Spacing.md))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                        
+                        // Display schedules for this workout
+                        var workoutSchedules by remember { mutableStateOf<List<WorkoutSchedule>>(emptyList()) }
+                        
+                        LaunchedEffect(workout.globalId) {
+                            withContext(Dispatchers.IO) {
+                                workoutSchedules = workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
+                            }
+                        }
+                        
+                        if (workoutSchedules.isNotEmpty()) {
+                            Spacer(Modifier.height(Spacing.md))
+                            StyledCard {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(15.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        text = "Workout Schedules",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    
+                                    workoutSchedules.forEachIndexed { index, schedule ->
+                                        ActiveScheduleCard(
+                                            schedule = schedule,
+                                            index = index,
+                                            workout = workout
+                                        )
+                                        if (index < workoutSchedules.size - 1) {
+                                            HorizontalDivider(
+                                                color = MaterialTheme.colorScheme.outlineVariant,
+                                                modifier = Modifier.padding(vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             Spacer(Modifier.height(Spacing.md))
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }

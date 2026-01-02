@@ -20,5 +20,6 @@ data class WorkoutSchedule(
     val daysOfWeek: Int = 0,
     val specificDate: LocalDate? = null,
     val hasExecuted: Boolean = false,
-    val lastNotificationSentAt : LocalDate? = null
+    val lastNotificationSentAt : LocalDate? = null,
+    val previousEnabledState: Boolean? = null
 )

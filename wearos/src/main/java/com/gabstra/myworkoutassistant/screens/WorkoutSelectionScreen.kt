@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -46,6 +45,7 @@ import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
+import androidx.wear.compose.material3.ListSubHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
 import androidx.wear.compose.material3.OpenOnPhoneDialogDefaults
@@ -63,7 +63,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
-import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.getVersionName
@@ -214,11 +213,14 @@ fun WorkoutSelectionScreen(
             TransformingLazyColumn(
                 contentPadding = contentPadding,
                 state = state,
+                verticalArrangement = Arrangement.spacedBy(
+                    space = 4.dp,
+                    alignment = Alignment.CenterVertically,
+                ),
             ) {
                 item {
                     ListHeader(
                         modifier = Modifier
-                            .fillMaxWidth()
                             .transformedHeight(this, spec)
                             .animateItem(),
                         transformation = SurfaceTransformation(spec),
@@ -248,8 +250,8 @@ fun WorkoutSelectionScreen(
                             Text(
                                 text = "My Workout Assistant",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = LighterGray
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground
                             )
                         }
                     }
@@ -257,19 +259,18 @@ fun WorkoutSelectionScreen(
 
                 if (!canScheduleExactAlarms) {
                     item {
-                        Box(
+                        ListSubHeader(
                             modifier = Modifier
-                                .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .animateItem(),
+                            transformation = SurfaceTransformation(spec),
                         ) {
                             Text(
-                                modifier = Modifier
-                                    .fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth(),
                                 text = "Enable Alarms for scheduled workouts",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
                             )
                         }
                     }
@@ -279,7 +280,6 @@ fun WorkoutSelectionScreen(
                     item {
                         Button(
                             modifier = Modifier
-                                .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .animateItem(),
                             transformation = SurfaceTransformation(spec),
@@ -294,10 +294,10 @@ fun WorkoutSelectionScreen(
                             }
                         ) {
                             Text(
-                                modifier = Modifier.fillMaxWidth(),
                                 text = "Open Alarms Settings",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }
@@ -305,67 +305,60 @@ fun WorkoutSelectionScreen(
 
                 if (userAge == currentYear) {
                     item {
-                        Box(
+                        ListSubHeader(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec)
-                                .animateItem(),
-                        ) {
-                            if (viewModel.isPhoneConnectedAndHasApp) {
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth(),
-                                    text = "Input your age on the mobile app",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            } else {
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 5.dp, vertical = 10.dp),
-                                    text = "Install the mobile app on your phone",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        Spacer(modifier = Modifier.height(5.dp))
-                    }
-                    item {
-                        Button(
-                            modifier = Modifier
-                                .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .animateItem(),
                             transformation = SurfaceTransformation(spec),
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                showOpenOnPhoneDialog = true
-                                scope.launch {
-                                    openSettingsOnPhoneApp(
-                                        context,
-                                        dataClient,
-                                        viewModel.phoneNode!!,
-                                        appHelper
-                                    )
-                                }
-                            }
                         ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Open mobile app",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                            if (viewModel.isPhoneConnectedAndHasApp) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = "Complete configuration on the companion app",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                                )
+                            } else {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = "Install the companion app",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                                )
+                            }
                         }
                     }
-
-
+                    if (viewModel.isPhoneConnectedAndHasApp) {
+                        item {
+                            Button(
+                                modifier = Modifier
+                                    .transformedHeight(this, spec)
+                                    .animateItem(),
+                                transformation = SurfaceTransformation(spec),
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    showOpenOnPhoneDialog = true
+                                    scope.launch {
+                                        openSettingsOnPhoneApp(
+                                            context,
+                                            dataClient,
+                                            viewModel.phoneNode!!,
+                                            appHelper
+                                        )
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    text = "Open Mobile App",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                        }
+                    }
                 } else {
                     if (sortedWorkouts.isEmpty()) {
                         item {
@@ -398,7 +391,6 @@ fun WorkoutSelectionScreen(
                     }
                 }
             }
-
         }
 
         val text = OpenOnPhoneDialogDefaults.text

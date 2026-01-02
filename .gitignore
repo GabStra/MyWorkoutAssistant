@@ -30,3 +30,4 @@ repomix-output.xml
 mobile/release/baselineProfiles/0/mobile-release.dm
 mobile/release/
 test_output.txt
+wearos/wearos/build/e2e-logs/

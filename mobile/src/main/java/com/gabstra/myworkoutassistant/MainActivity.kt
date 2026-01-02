@@ -546,6 +546,7 @@ fun MyWorkoutAssistantNavHost(
                     appViewModel,
                     workoutHistoryDao,
                     setHistoryDao,
+                    workoutScheduleDao,
                     healthConnectClient,
                     onSyncClick = {
                         syncWithWatch()
@@ -831,6 +832,7 @@ fun MyWorkoutAssistantNavHost(
                         workoutRecordDao,
                         setHistoryDao,
                         exerciseInfoDao,
+                        workoutScheduleDao,
                         selectedWorkout,
                     ) {
                         appViewModel.goBack()

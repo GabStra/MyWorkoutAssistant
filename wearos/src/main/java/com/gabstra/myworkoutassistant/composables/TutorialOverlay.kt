@@ -139,7 +139,7 @@ fun TutorialOverlay(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(contentPadding)
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = 15.dp, vertical = 5.dp)
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -163,7 +163,8 @@ fun TutorialOverlay(
                         Text(
                             text = buttonText,
                             style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                 }

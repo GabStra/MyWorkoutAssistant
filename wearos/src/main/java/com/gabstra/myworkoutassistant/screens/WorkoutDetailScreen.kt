@@ -198,6 +198,7 @@ fun WorkoutDetailScreen(
                             text = "Start",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                 }
@@ -219,6 +220,7 @@ fun WorkoutDetailScreen(
                                 text = "Resume",
                                 textAlign = TextAlign.Center,
                                 style =  MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }

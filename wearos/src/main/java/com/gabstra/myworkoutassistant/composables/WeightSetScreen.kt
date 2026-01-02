@@ -154,7 +154,7 @@ fun WeightSetScreen(
         if (isInEditMode) {
             onEditModeEnabled()
             while (isInEditMode) {
-                if (System.currentTimeMillis() - lastInteractionTime > 2000) {
+                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
                     isRepsInEditMode = false
                     isWeightInEditMode = false
                 }

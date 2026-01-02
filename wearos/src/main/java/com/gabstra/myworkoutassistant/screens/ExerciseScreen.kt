@@ -441,14 +441,7 @@ fun ExerciseScreen(
                                                     }
                                                 if (isWarmupSet) {
                                                     sep()
-                                                    withStyle(
-                                                        SpanStyle(
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    ) {
-                                                        append("Warm-up")
-                                                    }
+                                                    append("Warm-up")
                                                 }
                                             }
 

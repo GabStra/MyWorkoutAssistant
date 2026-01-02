@@ -12,7 +12,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
@@ -24,7 +23,7 @@ import com.gabstra.myworkoutassistant.shared.Yellow
 
 private val DarkColorScheme = darkColorScheme(
     primary = Orange,
-    onPrimary = DarkGray,
+    onPrimary = LighterGray,
     primaryContainer = MediumDarkerGray,
     onPrimaryContainer = LighterGray,
     inversePrimary = Orange,

@@ -88,7 +88,6 @@ private fun Day(
     currentMonth: YearMonth,
     isSelected: Boolean = false,
     shouldHighlight: Boolean = false,
-    highlightColor: Color,
     onClick: (CalendarDay) -> Unit = {},
 ) {
     val isToday = remember(day) { day.date == currentDate }
@@ -116,11 +115,11 @@ private fun Day(
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.onSurfaceVariant else if(shouldHighlight) Color.Black else MaterialTheme.colorScheme.onBackground
+            val textColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.onSurfaceVariant else if(shouldHighlight) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground
 
             val shape = if(shouldHighlight) CircleShape else null
 
-            val backgroundColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.surfaceVariant else highlightColor
+            val backgroundColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary
 
             Box(
                 modifier = Modifier
