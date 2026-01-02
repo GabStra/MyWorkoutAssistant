@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -121,11 +118,10 @@ fun BodyWeightSetForm(
 
                     val scrollState = rememberScrollState()
 
-                    DropdownMenu(
+                    AppDropdownMenu(
                         expanded = expandedWeights.value,
                         onDismissRequest = { expandedWeights.value = false },
-                        modifier =  Modifier.background(MaterialTheme.colorScheme.background).fillMaxWidth(.75f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        modifier = Modifier.fillMaxWidth(.75f)
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 10.dp),

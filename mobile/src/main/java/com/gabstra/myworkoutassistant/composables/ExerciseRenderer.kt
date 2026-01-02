@@ -1,18 +1,24 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -69,147 +75,182 @@ fun ExerciseRenderer(
             },
             content = {
                 Column(
-                    modifier = Modifier.padding(5.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier.padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val equipment = if(exercise.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
+                    val textColor = if (exercise.enabled) {
+                        MaterialTheme.colorScheme.onBackground
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    val headerStyle = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                    val headerColor = MaterialTheme.colorScheme.onSurface
+                    val rowPadding = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
 
                     if(equipment != null){
                         Text(
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
-                            text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium
+                            text = "Equipment: ${equipment.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textColor
                         )
                     }
 
                     var index = 0
-                    Row {
-                        Text(
-                            modifier = Modifier.weight(1f),
-                            text = "#",
-                            style = MaterialTheme.typography.titleSmall,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
-                            Text(
-                                modifier = Modifier.weight(1f),
-                                text = "WEIGHT (KG)",
-                                style = MaterialTheme.typography.titleSmall,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            Text(
-                                modifier = Modifier.weight(1f),
-                                text = "REPS",
-                                style = MaterialTheme.typography.titleSmall,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                        }else{
-                            Text(
-                                modifier = Modifier.weight(1f),
-                                text = "TIME",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                        }
-                    }
-
-
-                    sets.forEach() { set ->
-                        if(set !is RestSet){
-                            index += 1
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    modifier = Modifier.weight(1f),
-                                    text = "$index",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    textAlign = TextAlign.Center,
-                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                when (set) {
-                                    is WeightSet -> {
-                                        val weightText = equipment!!.formatWeight(set.weight)
-
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text = weightText,
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text = "${set.reps}",
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-
-                                    is BodyWeightSet -> {
-                                        val weightText = when{
-                                            set.additionalWeight > 0 -> {
-
-                                                equipment!!.formatWeight(set.additionalWeight)
-                                            }
-                                            else -> "-"
-                                        }
-
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text = weightText,
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text = "${set.reps}",
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-
-                                    is TimedDurationSet -> {
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text = formatTime(set.timeInMillis / 1000),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-
-                                    is EnduranceSet -> {
-                                        Text(
-                                            modifier = Modifier.weight(1f),
-                                            text =formatTime(set.timeInMillis / 1000),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            textAlign = TextAlign.Center,
-                                            color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    else -> throw IllegalArgumentException("Unknown set type")
-                                }
-                            }
-                        }else{
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(vertical = 6.dp, horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "Rest "+formatTime(set.timeInSeconds),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                    text = "SET",
+                                    style = headerStyle,
+                                    textAlign = TextAlign.Center,
+                                    color = headerColor,
                                 )
+                                if(exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT){
+                                    Text(
+                                        modifier = Modifier.weight(1f),
+                                        text = "WEIGHT (KG)",
+                                        style = headerStyle,
+                                        textAlign = TextAlign.Center,
+                                        color = headerColor,
+                                    )
+                                    Text(
+                                        modifier = Modifier.weight(1f),
+                                        text = "REPS",
+                                        style = headerStyle,
+                                        textAlign = TextAlign.Center,
+                                        color = headerColor,
+                                    )
+                                }else{
+                                    Text(
+                                        modifier = Modifier.weight(2f),
+                                        text = "TIME",
+                                        textAlign = TextAlign.Center,
+                                        style = headerStyle,
+                                        color = headerColor,
+                                    )
+                                }
+                            }
+
+                            sets.forEachIndexed { setIndex, set ->
+                                if(set !is RestSet){
+                                    index += 1
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(rowPadding),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            modifier = Modifier.weight(1f),
+                                            text = "$index",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            textAlign = TextAlign.Center,
+                                            color = textColor,
+                                        )
+                                        when (set) {
+                                            is WeightSet -> {
+                                                val weightText = equipment!!.formatWeight(set.weight)
+
+                                                Text(
+                                                    modifier = Modifier.weight(1f),
+                                                    text = weightText,
+                                                    textAlign = TextAlign.Center,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = textColor,
+                                                )
+                                                Text(
+                                                    modifier = Modifier.weight(1f),
+                                                    text = "${set.reps}",
+                                                    textAlign = TextAlign.Center,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = textColor,
+                                                )
+                                            }
+
+                                            is BodyWeightSet -> {
+                                                val weightText = when{
+                                                    set.additionalWeight > 0 -> {
+
+                                                        equipment!!.formatWeight(set.additionalWeight)
+                                                    }
+                                                    else -> "-"
+                                                }
+
+                                                Text(
+                                                    modifier = Modifier.weight(1f),
+                                                    text = weightText,
+                                                    textAlign = TextAlign.Center,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = textColor,
+                                                )
+                                                Text(
+                                                    modifier = Modifier.weight(1f),
+                                                    text = "${set.reps}",
+                                                    textAlign = TextAlign.Center,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = textColor,
+                                                )
+                                            }
+
+                                            is TimedDurationSet -> {
+                                                Text(
+                                                    modifier = Modifier.weight(2f),
+                                                    text = formatTime(set.timeInMillis / 1000),
+                                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                                    textAlign = TextAlign.Center,
+                                                    color = textColor,
+                                                )
+                                            }
+
+                                            is EnduranceSet -> {
+                                                Text(
+                                                    modifier = Modifier.weight(2f),
+                                                    text =formatTime(set.timeInMillis / 1000),
+                                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                                    textAlign = TextAlign.Center,
+                                                    color = textColor,
+                                                )
+                                            }
+                                            else -> throw IllegalArgumentException("Unknown set type")
+                                        }
+                                    }
+                                }else{
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(rowPadding),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "REST ${formatTime(set.timeInSeconds)}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = textColor,
+                                        )
+                                    }
+                                }
+
+                                if (setIndex < sets.size - 1) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp)
+                                    )
+                                }
                             }
                         }
                     }

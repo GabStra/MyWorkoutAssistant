@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -89,6 +90,7 @@ fun WorkoutForm(
     onWorkoutUpsert: (Workout, List<WorkoutSchedule>) -> Unit,
     onCancel: () -> Unit,
     workout: Workout? = null,
+    isSaving: Boolean = false,
     existingSchedules: List<WorkoutSchedule> = emptyList()
 ) {
     // ---- state ----
@@ -111,64 +113,65 @@ fun WorkoutForm(
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                modifier = Modifier.drawBehind {
-                    drawLine(
-                        color = outlineVariant,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                },
-                title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = if (workout == null) "Insert Workout" else "Edit Workout",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                navigationIcon = {
-                    IconButton(onClick = onCancel) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    modifier = Modifier.drawBehind {
+                        drawLine(
+                            color = outlineVariant,
+                            start = Offset(0f, size.height),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = 1.dp.toPx()
                         )
-                    }
-                },
-                actions = {
-                    // invisible icon to keep title centered like in ExerciseForm
-                    IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                    },
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            text = if (workout == null) "Insert Workout" else "Edit Workout",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.titleLarge
                         )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    navigationIcon = {
+                        IconButton(onClick = onCancel, enabled = !isSaving) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        // invisible icon to keep title centered like in ExerciseForm
+                        IconButton(modifier = Modifier.alpha(0f), onClick = { }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
                     }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(top = 10.dp)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-        ) {
-            // Name
-            OutlinedTextField(
-                value = workoutNameState.value,
-                onValueChange = { workoutNameState.value = it },
-                label = { Text("Workout name", style = MaterialTheme.typography.labelLarge) },
-                modifier = Modifier.fillMaxWidth()
-            )
+                )
+            }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(top = 10.dp)
+                    .verticalColumnScrollbar(scrollState)
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 15.dp),
+            ) {
+                // Name
+                OutlinedTextField(
+                    value = workoutNameState.value,
+                    onValueChange = { workoutNameState.value = it },
+                    label = { Text("Workout name", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
             Spacer(Modifier.height(Spacing.lg))
 
@@ -320,37 +323,59 @@ fun WorkoutForm(
             // ---- Actions ----------------------------------------------------
             val canBeSaved = workoutNameState.value.isNotBlank()
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-            ) {
-                TextButton(
-                    onClick = onCancel,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    TextButton(
+                        onClick = onCancel,
+                        enabled = !isSaving,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
 
-                Button(
-                    onClick = {
-                        val newWorkout = Workout(
-                            id = workout?.id ?: UUID.randomUUID(),
-                            name = workoutNameState.value.trim(),
-                            description = workoutDescriptionState.value.trim(),
-                            workoutComponents = workout?.workoutComponents ?: listOf(),
-                            usePolarDevice = usePolarDeviceState.value,
-                            creationDate = LocalDate.now(),
-                            order = workout?.order ?: 0,
-                            timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
-                            globalId = newGlobalId,
-                            type = selectedWorkoutType.value
-                        )
-                        onWorkoutUpsert(newWorkout, schedules.value)
-                    },
-                    enabled = canBeSaved,
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (workout == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge) }
-            }
+                    Button(
+                        onClick = {
+                            val newWorkout = Workout(
+                                id = workout?.id ?: UUID.randomUUID(),
+                                name = workoutNameState.value.trim(),
+                                description = workoutDescriptionState.value.trim(),
+                                workoutComponents = workout?.workoutComponents ?: listOf(),
+                                usePolarDevice = usePolarDeviceState.value,
+                                creationDate = LocalDate.now(),
+                                order = workout?.order ?: 0,
+                                timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
+                                globalId = newGlobalId,
+                                type = selectedWorkoutType.value
+                            )
+                            onWorkoutUpsert(newWorkout, schedules.value)
+                        },
+                        enabled = canBeSaved && !isSaving,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (workout == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge) }
+                }
 
             Spacer(Modifier.height(Spacing.xl))
+            }
+        }
+        if (isSaving) {
+            val interactionSource = remember { MutableInteractionSource() }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = {}
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(Spacing.md))
+                    Text(text = "Saving...", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
     }
 

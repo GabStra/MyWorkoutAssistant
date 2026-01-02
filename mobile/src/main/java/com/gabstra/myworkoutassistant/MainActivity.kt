@@ -28,9 +28,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.edit
@@ -284,6 +286,13 @@ fun MyWorkoutAssistantNavHost(
     val exerciseInfoDao = db.exerciseInfoDao()
 
     val updateMobileFlow = appViewModel.updateMobileFlow
+    val updateMobileSignal by updateMobileFlow.collectAsState()
+
+    LaunchedEffect(updateMobileSignal) {
+        if (updateMobileSignal != null) {
+            workoutViewModel.updateWorkoutStore(appViewModel.workoutStore)
+        }
+    }
 
     LaunchedEffect(Unit) {
         try{
@@ -708,35 +717,45 @@ fun MyWorkoutAssistantNavHost(
             }
 
             is ScreenData.NewWorkout -> {
+                var isSaving by remember { mutableStateOf(false) }
                 WorkoutForm(
                     onWorkoutUpsert = { newWorkout, schedules ->
+                        if (isSaving) return@WorkoutForm
+                        isSaving = true
                         scope.launch {
-                            // Check for conflicts before saving
-                            val allExistingSchedules = withContext(Dispatchers.IO) {
-                                workoutScheduleDao.getAllSchedules()
-                            }
-                            
-                            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                                newSchedules = schedules,
-                                existingSchedules = allExistingSchedules
-                            )
-                            
-                            if (conflicts.isNotEmpty()) {
-                                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                            try {
+                                // Check for conflicts before saving
+                                val allExistingSchedules = withContext(Dispatchers.IO) {
+                                    workoutScheduleDao.getAllSchedules()
                                 }
-                            } else {
+
+                                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                                    newSchedules = schedules,
+                                    existingSchedules = allExistingSchedules
+                                )
+
+                                if (conflicts.isNotEmpty()) {
+                                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                                    }
+                                    return@launch
+                                }
+
                                 appViewModel.addNewWorkout(newWorkout)
                                 withContext(Dispatchers.IO) {
+                                    workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                     saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
                                 }
                                 appViewModel.goBack()
+                            } finally {
+                                isSaving = false
                             }
                         }
                     },
                     onCancel = { appViewModel.goBack() },
+                    isSaving = isSaving,
                 )
             }
 
@@ -744,6 +763,7 @@ fun MyWorkoutAssistantNavHost(
                 val screenData = currentScreen as ScreenData.EditWorkout
                 val workouts by appViewModel.workoutsFlow.collectAsState()
                 val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+                var isSaving by remember { mutableStateOf(false) }
 
                 val existingSchedules by produceState(
                     initialValue = emptyList(),
@@ -754,32 +774,40 @@ fun MyWorkoutAssistantNavHost(
 
                 WorkoutForm(
                     onWorkoutUpsert = { updatedWorkout, schedules ->
+                        if (isSaving) return@WorkoutForm
+                        isSaving = true
                         scope.launch {
-                            // Check for conflicts before saving
-                            // Exclude schedules for this workout since we're replacing them
-                            val allExistingSchedules = withContext(Dispatchers.IO) {
-                                workoutScheduleDao.getAllSchedules()
-                                    .filter { it.workoutId != selectedWorkout.globalId }
-                            }
-                            
-                            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                                newSchedules = schedules,
-                                existingSchedules = allExistingSchedules
-                            )
-                            
-                            if (conflicts.isNotEmpty()) {
-                                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                            try {
+                                // Check for conflicts before saving
+                                // Exclude schedules for this workout since we're replacing them
+                                val allExistingSchedules = withContext(Dispatchers.IO) {
+                                    workoutScheduleDao.getAllSchedules()
+                                        .filter { it.workoutId != selectedWorkout.globalId }
                                 }
-                            } else {
+
+                                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                                    newSchedules = schedules,
+                                    existingSchedules = allExistingSchedules
+                                )
+
+                                if (conflicts.isNotEmpty()) {
+                                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                                    }
+                                    return@launch
+                                }
+
                                 appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
                                 withContext(Dispatchers.IO) {
+                                    workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
                                     workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                     saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
                                 }
                                 appViewModel.goBack()
+                            } finally {
+                                isSaving = false
                             }
                         }
                     },
@@ -787,6 +815,7 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.goBack()
                     },
                     workout = selectedWorkout,
+                    isSaving = isSaving,
                     existingSchedules = existingSchedules
                 )
             }
@@ -1406,4 +1435,3 @@ fun MyWorkoutAssistantNavHost(
         )
     }
 }
-

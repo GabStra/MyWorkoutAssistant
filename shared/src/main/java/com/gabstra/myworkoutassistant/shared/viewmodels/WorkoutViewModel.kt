@@ -515,10 +515,23 @@ open class WorkoutViewModel(
 
 
     fun setSelectedWorkoutId(workoutId: UUID) {
-        val workout = workouts.value.find { it.id == workoutId }!!
+        val workout = workoutStore.workouts.find { it.id == workoutId }
+            ?: workouts.value.find { it.id == workoutId }
 
         pendingResumeWorkoutHistoryId = null
         _selectedWorkoutId.value = workoutId
+
+        if (workout == null) {
+            Log.w("WorkoutViewModel", "Workout not found for id: $workoutId")
+            _hasExercises.value = false
+            _hasWorkoutRecord.value = false
+            _isCheckingWorkoutRecord.value = false
+            exercisesById = emptyMap()
+            supersetIdByExerciseId = emptyMap()
+            exercisesBySupersetId = emptyMap()
+            rebuildScreenState()
+            return
+        }
 
         _hasExercises.value = workout.workoutComponents.filter { it.enabled }.isNotEmpty()
 

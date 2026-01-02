@@ -1,15 +1,11 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,11 +50,9 @@ fun RangeDropdown(
         Spacer(Modifier.width(2.5.dp))
         Box {
             TextButton(onClick = { expanded = true }) { Text(label) }
-            DropdownMenu(
+            AppDropdownMenu(
                 expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                onDismissRequest = { expanded = false }
             ) {
                 DropdownMenuItem(text = { Text("Last 7 days") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_7_DAYS); expanded = false

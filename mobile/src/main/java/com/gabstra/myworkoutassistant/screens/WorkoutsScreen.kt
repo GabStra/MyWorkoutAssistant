@@ -5,7 +5,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.Interaction
@@ -39,7 +38,6 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -74,6 +72,7 @@ import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -145,84 +144,80 @@ fun Menu(
                 contentDescription = "More"
             )
         }
-        StyledCard {
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.background(MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Settings") },
-                    onClick = {
-                        onOpenSettingsClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Sync with Watch") },
-                    onClick = {
-                        onSyncClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Sync with Health Connect") },
-                    onClick = {
-                        onSyncWithHealthConnectClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Export Workouts") },
-                    onClick = {
-                        onExportWorkouts()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Save Backup") },
-                    onClick = {
-                        onBackupClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Restore Backup") },
-                    onClick = {
-                        onRestoreClick()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear all incomplete workouts") },
-                    onClick = {
-                        showClearIncompleteDialog = true
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear history") },
-                    onClick = {
-                        onClearAllHistories()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Clear all exercise info") },
-                    onClick = {
-                        onClearAllExerciseInfo()
-                        expanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("View Error Logs") },
-                    onClick = {
-                        onViewErrorLogs()
-                        expanded = false
-                    }
-                )
-            }
+        AppDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("Settings") },
+                onClick = {
+                    onOpenSettingsClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Sync with Watch") },
+                onClick = {
+                    onSyncClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Sync with Health Connect") },
+                onClick = {
+                    onSyncWithHealthConnectClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Export Workouts") },
+                onClick = {
+                    onExportWorkouts()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Save Backup") },
+                onClick = {
+                    onBackupClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Restore Backup") },
+                onClick = {
+                    onRestoreClick()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear all incomplete workouts") },
+                onClick = {
+                    showClearIncompleteDialog = true
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear history") },
+                onClick = {
+                    onClearAllHistories()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear all exercise info") },
+                onClick = {
+                    onClearAllExerciseInfo()
+                    expanded = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("View Error Logs") },
+                onClick = {
+                    onViewErrorLogs()
+                    expanded = false
+                }
+            )
         }
     }
 
