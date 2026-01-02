@@ -4,11 +4,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -23,14 +20,29 @@ fun <T> SelectableList(
     itemContent: @Composable (T) -> Unit,
 ) {
     Column(
-        modifier = modifier
+        modifier = modifier,
+        verticalArrangement =  Arrangement.spacedBy(10.dp)
     ) {
         for(item in items){
+            val isSelected = selection.any { it === item }
+
             Row(
-                modifier = Modifier.fillMaxWidth().then(if(selection.any { it === item }) Modifier.border(1.dp, MaterialTheme.colorScheme.primary) else Modifier)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if(isSelected)
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.primary)
+                        else Modifier
+                    )
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(5.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if(isSelected)
+                                Modifier.padding(5.dp)
+                            else Modifier
+                        )
                 ) {
                     itemContent(item)
                 }

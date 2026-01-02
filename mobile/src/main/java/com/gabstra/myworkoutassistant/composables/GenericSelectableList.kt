@@ -1,12 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,7 +21,6 @@ import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -31,12 +28,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-fun findNewIndex(newCenterY: Float, currentIndex: Int, centerPointByIndex: MutableMap<Int, Pair<Float, Float>>): Int {
+fun findNewIndex(
+    newCenterY: Float,
+    currentIndex: Int,
+    centerPointByIndex: MutableMap<Int, Pair<Float, Float>>
+): Int {
     val minDiff = 60f // Adjust this threshold as needed
     val potentialIndices = centerPointByIndex.keys.filter { it != currentIndex }
 
@@ -65,7 +64,8 @@ fun <T> GenericSelectableList(
     isDragDisabled: Boolean = false
 ) {
     val centerPointByIndex = remember { mutableMapOf<Int, Pair<Float, Float>>() }
-    val itemToRenderByIndex = remember { mutableStateOf(mutableMapOf<Int, @Composable () -> Unit>()) }
+    val itemToRenderByIndex =
+        remember { mutableStateOf(mutableMapOf<Int, @Composable () -> Unit>()) }
     val draggedItem = remember { mutableStateOf<T?>(null) }
     val tempDragChanges = remember { mutableMapOf<Int, T>() }
     val listState = rememberLazyListState() // LazyListState for controlling scrolling
@@ -85,6 +85,7 @@ fun <T> GenericSelectableList(
                     currentCenterY < visibleAreaStart + scrollThreshold -> {
                         listState.scrollBy(-20f) // Scroll up when dragging near the top
                     }
+
                     currentCenterY > visibleAreaEnd - scrollThreshold -> {
                         listState.scrollBy(20f) // Scroll down when dragging near the bottom
                     }
@@ -95,7 +96,11 @@ fun <T> GenericSelectableList(
     }
 
     // Conditional modifier for dragging
-    fun Modifier.conditionalPointerInput(item: T,index:Int,offsetY: MutableFloatState): Modifier =
+    fun Modifier.conditionalPointerInput(
+        item: T,
+        index: Int,
+        offsetY: MutableFloatState
+    ): Modifier =
         if (isSelectionModeActive || isDragDisabled) {
             this // If dragging is disabled, return the modifier as-is
         } else {
@@ -116,43 +121,45 @@ fun <T> GenericSelectableList(
                         offsetY.floatValue += dragAmount.y
 
                         val currentCenterY = centerPointByIndex[index]!!.second + offsetY.floatValue
-                        val newIndex = findNewIndex(currentCenterY, currentIndex, centerPointByIndex)
+                        val newIndex =
+                            findNewIndex(currentCenterY, currentIndex, centerPointByIndex)
 
-                        if(newIndex != currentIndex){
+                        if (newIndex != currentIndex) {
                             val newItemAtIndex = tempDragChanges[newIndex]!!
                             tempDragChanges[currentIndex] = newItemAtIndex
 
-                            itemToRenderByIndex.value =  itemToRenderByIndex.value .toMutableMap().apply {
-                                val capturedIndex = currentIndex
+                            itemToRenderByIndex.value =
+                                itemToRenderByIndex.value.toMutableMap().apply {
+                                    val capturedIndex = currentIndex
 
-                                if(newIndex == index) this.remove(capturedIndex)
-                                else {
-                                    this[capturedIndex] = {
-                                        val itemToDisplay = newItemAtIndex
-                                        Card(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(5.dp)
-                                        ){
-                                            itemContent(itemToDisplay)
+                                    if (newIndex == index) this.remove(capturedIndex)
+                                    else {
+                                        this[capturedIndex] = {
+                                            val itemToDisplay = newItemAtIndex
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(5.dp)
+                                            ) {
+                                                itemContent(itemToDisplay)
+                                            }
                                         }
                                     }
-                                }
 
-                                this[newIndex] = {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(50.dp),
-                                    )
+                                    this[newIndex] = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(50.dp),
+                                        )
+                                    }
                                 }
-                            }
 
                             tempDragChanges[newIndex] = item
                             currentIndex = newIndex
                         }
                     }, onDragEnd = {
-                        itemToRenderByIndex.value =  itemToRenderByIndex.value .toMutableMap().apply {
+                        itemToRenderByIndex.value = itemToRenderByIndex.value.toMutableMap().apply {
                             this.clear()
                         }
                         val newList = items.toMutableList().apply {
@@ -216,16 +223,15 @@ fun <T> GenericSelectableList(
                         val centerY = positionInRoot.y + size.height / 2
 
                         centerPointByIndex[index] = centerX to centerY
-                    }
-                ,
+                    },
                 contentAlignment = Alignment.Center
-            ){
+            ) {
 
-                if(itemToRenderByIndex.value.containsKey(index)){
+                if (itemToRenderByIndex.value.containsKey(index)) {
                     itemToRenderByIndex.value[index]!!.invoke()
                 }
 
-                if(draggedItem.value === item || !itemToRenderByIndex.value.containsKey(index)) {
+                if (draggedItem.value === item || !itemToRenderByIndex.value.containsKey(index)) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -242,13 +248,14 @@ fun <T> GenericSelectableList(
                                         onItemClick(item)
                                     }
                                 },
-                                onLongClick = { if (!isSelectionModeActive){
-                                    onEnableSelection()
-                                    onSelectionChange(selectedItems + item)
-                                } else{
-                                    onDisableSelection()
-                                    onSelectionChange(emptyList())
-                                }
+                                onLongClick = {
+                                    if (!isSelectionModeActive) {
+                                        onEnableSelection()
+                                        onSelectionChange(selectedItems + item)
+                                    } else {
+                                        onDisableSelection()
+                                        onSelectionChange(emptyList())
+                                    }
                                 }
                             )
                             .conditionalPointerInput(item, index, offsetY)

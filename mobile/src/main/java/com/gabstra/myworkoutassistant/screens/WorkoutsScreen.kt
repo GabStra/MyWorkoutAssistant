@@ -282,8 +282,8 @@ fun WorkoutTitle(
     style: TextStyle = MaterialTheme.typography.bodyLarge
 ) {
     Row(
-        horizontalArrangement = Arrangement.SpaceBetween,
         modifier = modifier,
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -754,7 +754,7 @@ fun WorkoutsScreen(
                         onClick = {
                             appViewModel.setHomeTab(index)
                         },
-                        text = { Text(text = title,style = MaterialTheme.typography.bodySmall) },
+                        text = { Text(text = title, style = MaterialTheme.typography.bodySmall) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         interactionSource = object : MutableInteractionSource {
@@ -1105,34 +1105,21 @@ fun WorkoutsScreen(
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
                                         .padding(horizontal = 15.dp),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
-                                    // Display all muscle groups
-                                    StyledCard(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 5.dp)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(vertical = 5.dp)
-                                        ) {
-                                            Text(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                text = "All Muscle Groups",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onBackground
-                                            )
-                                            
-                                            if (allMuscleGroups.isEmpty()) {
+
+                                    if (allMuscleGroups.isNotEmpty()) {
+                                        StyledCard{
+                                            Column(
+                                                modifier = Modifier.padding(vertical = 5.dp)
+                                            ) {
                                                 Text(
-                                                    text = "No muscle groups found in workouts",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onBackground,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    text = "Trained Muscle Groups",
+                                                    style = MaterialTheme.typography.titleMedium,
                                                     textAlign = TextAlign.Center,
-                                                    modifier = Modifier.fillMaxWidth()
+                                                    color = MaterialTheme.colorScheme.onBackground
                                                 )
-                                            } else {
+
                                                 MuscleHeatMap(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
@@ -1146,7 +1133,7 @@ fun WorkoutsScreen(
                                             }
                                         }
                                     }
-                                    
+
                                     if (activeAndEnabledWorkouts.isEmpty()) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(5.dp),
@@ -1200,7 +1187,9 @@ fun WorkoutsScreen(
                                             itemContent = { it ->
                                                 StyledCard {
                                                     WorkoutTitle(
-                                                        Modifier.padding(15.dp),
+                                                        Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(15.dp),
                                                         it
                                                     )
                                                 }
@@ -1239,7 +1228,6 @@ fun WorkoutsScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(top = 10.dp)
                                         .verticalColumnScrollbar(scrollState)
                                         .verticalScroll(scrollState)
                                         .padding(horizontal = 15.dp)
@@ -1370,68 +1358,6 @@ fun WorkoutsScreen(
                                         .padding(horizontal = 15.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    // Bulk toggle button
-                                    StyledCard {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(15.dp),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Button(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                onClick = {
-                                                    scope.launch(Dispatchers.IO) {
-                                                        if (hasBulkDisabledSchedules) {
-                                                            // Restore all schedules
-                                                            val updatedSchedules = allSchedules.map { schedule ->
-                                                                val previousState = schedule.previousEnabledState
-                                                                if (previousState != null) {
-                                                                    schedule.copy(
-                                                                        isEnabled = previousState,
-                                                                        previousEnabledState = null
-                                                                    )
-                                                                } else {
-                                                                    schedule
-                                                                }
-                                                            }
-                                                            updatedSchedules.forEach { schedule ->
-                                                                workoutScheduleDao.update(schedule)
-                                                            }
-                                                            allSchedules = workoutScheduleDao.getAllSchedules()
-                                                        } else {
-                                                            // Disable all schedules
-                                                            val updatedSchedules = allSchedules.map { schedule ->
-                                                                schedule.copy(
-                                                                    previousEnabledState = schedule.isEnabled,
-                                                                    isEnabled = false
-                                                                )
-                                                            }
-                                                            updatedSchedules.forEach { schedule ->
-                                                                workoutScheduleDao.update(schedule)
-                                                            }
-                                                            allSchedules = workoutScheduleDao.getAllSchedules()
-                                                        }
-                                                        // Trigger sync to watch
-                                                        withContext(Dispatchers.Main) {
-                                                            onSyncClick()
-                                                        }
-                                                    }
-                                                },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    contentColor = MaterialTheme.colorScheme.background,
-                                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                                                )
-                                            ) {
-                                                Text(
-                                                    text = if (hasBulkDisabledSchedules) "Restore All Schedules" else "Disable All Schedules",
-                                                    style = MaterialTheme.typography.bodyLarge,
-                                                    color = MaterialTheme.colorScheme.onPrimary,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    
                                     if (isLoadingSchedules) {
                                         Box(
                                             modifier = Modifier
@@ -1453,12 +1379,74 @@ fun WorkoutsScreen(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = "No schedules found",
+                                                text = "No alarms found",
                                                 textAlign = TextAlign.Center,
                                                 color = MaterialTheme.colorScheme.onBackground,
                                             )
                                         }
                                     } else {
+                                        // Bulk toggle button
+                                        StyledCard {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(15.dp),
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Button(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    onClick = {
+                                                        scope.launch(Dispatchers.IO) {
+                                                            if (hasBulkDisabledSchedules) {
+                                                                // Restore all schedules
+                                                                val updatedSchedules = allSchedules.map { schedule ->
+                                                                    val previousState = schedule.previousEnabledState
+                                                                    if (previousState != null) {
+                                                                        schedule.copy(
+                                                                            isEnabled = previousState,
+                                                                            previousEnabledState = null
+                                                                        )
+                                                                    } else {
+                                                                        schedule
+                                                                    }
+                                                                }
+                                                                updatedSchedules.forEach { schedule ->
+                                                                    workoutScheduleDao.update(schedule)
+                                                                }
+                                                                allSchedules = workoutScheduleDao.getAllSchedules()
+                                                            } else {
+                                                                // Disable all schedules
+                                                                val updatedSchedules = allSchedules.map { schedule ->
+                                                                    schedule.copy(
+                                                                        previousEnabledState = schedule.isEnabled,
+                                                                        isEnabled = false
+                                                                    )
+                                                                }
+                                                                updatedSchedules.forEach { schedule ->
+                                                                    workoutScheduleDao.update(schedule)
+                                                                }
+                                                                allSchedules = workoutScheduleDao.getAllSchedules()
+                                                            }
+                                                            // Trigger sync to watch
+                                                            withContext(Dispatchers.Main) {
+                                                                onSyncClick()
+                                                            }
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        contentColor = MaterialTheme.colorScheme.background,
+                                                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                                    )
+                                                ) {
+                                                    Text(
+                                                        text = if (hasBulkDisabledSchedules) "Restore All Alarms" else "Disable All Alarms",
+                                                        style = MaterialTheme.typography.bodyLarge,
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                    )
+                                                }
+                                            }
+                                        }
+
                                         schedulesByWorkout.forEach { (workoutGlobalId, schedules) ->
                                             val workout = workouts.find { it.globalId == workoutGlobalId && it.isActive }
                                             if (workout != null && schedules.isNotEmpty()) {
