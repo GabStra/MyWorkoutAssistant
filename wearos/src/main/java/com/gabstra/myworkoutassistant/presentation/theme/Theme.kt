@@ -25,7 +25,7 @@ val darkScheme = ColorScheme(
     primary = Orange,
     primaryDim = Orange,
     primaryContainer = MediumDarkerGray,
-    onPrimary = Color.Black,
+    onPrimary = LighterGray,
     onPrimaryContainer = LighterGray,
 
     secondary = Green,
