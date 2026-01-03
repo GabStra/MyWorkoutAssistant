@@ -26,6 +26,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
+import kotlin.math.roundToInt
 
 fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     val markdown = StringBuilder()
@@ -46,24 +48,12 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
             when (equipment) {
                 is Barbell -> {
                     markdown.append("- **Bar Weight**: ${formatNumber(equipment.barWeight)} kg\n")
-                    markdown.append("- **Bar Length**: ${equipment.barLength} mm\n")
                     if (equipment.availablePlates.isNotEmpty()) {
                         markdown.append("- **Available Plates**: ")
                         val platesStr = equipment.availablePlates
                             .sortedByDescending { it.weight }
-                            .joinToString(", ") { plate ->
-                                "${formatNumber(plate.weight)} kg (${formatNumber(plate.thickness)} mm)"
-                            }
+                            .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(platesStr).append("\n")
-                    }
-                    val achievableWeights = equipment.getWeightsCombinations().sorted().take(20)
-                    if (achievableWeights.isNotEmpty()) {
-                        markdown.append("- **Example Weight Combinations**: ")
-                        markdown.append(achievableWeights.joinToString(", ") { "${formatNumber(it)} kg" })
-                        if (equipment.getWeightsCombinations().size > 20) {
-                            markdown.append(" (and ${equipment.getWeightsCombinations().size - 20} more)")
-                        }
-                        markdown.append("\n")
                     }
                 }
                 
@@ -81,7 +71,6 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                             .sortedByDescending { it.weight }
                             .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(extraStr).append("\n")
-                        markdown.append("- **Max Extra Weights Per Loading Point**: ${equipment.maxExtraWeightsPerLoadingPoint}\n")
                     }
                 }
                 
@@ -99,7 +88,6 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                             .sortedByDescending { it.weight }
                             .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(extraStr).append("\n")
-                        markdown.append("- **Max Extra Weights Per Loading Point**: ${equipment.maxExtraWeightsPerLoadingPoint}\n")
                     }
                 }
                 
@@ -117,7 +105,6 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                             .sortedByDescending { it.weight }
                             .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(extraStr).append("\n")
-                        markdown.append("- **Max Extra Weights Per Loading Point**: ${equipment.maxExtraWeightsPerLoadingPoint}\n")
                     }
                 }
                 
@@ -132,29 +119,17 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                 }
                 
                 is PlateLoadedCable -> {
-                    markdown.append("- **Bar Length**: ${equipment.barLength} mm\n")
                     if (equipment.availablePlates.isNotEmpty()) {
                         markdown.append("- **Available Plates**: ")
                         val platesStr = equipment.availablePlates
                             .sortedByDescending { it.weight }
-                            .joinToString(", ") { plate ->
-                                "${formatNumber(plate.weight)} kg (${formatNumber(plate.thickness)} mm)"
-                            }
+                            .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(platesStr).append("\n")
                     }
                 }
                 
                 else -> {
-                    // Generic or other types
-                    val achievableWeights = equipment.getWeightsCombinations().sorted().take(20)
-                    if (achievableWeights.isNotEmpty()) {
-                        markdown.append("- **Example Weight Combinations**: ")
-                        markdown.append(achievableWeights.joinToString(", ") { "${formatNumber(it)} kg" })
-                        if (equipment.getWeightsCombinations().size > 20) {
-                            markdown.append(" (and ${equipment.getWeightsCombinations().size - 20} more)")
-                        }
-                        markdown.append("\n")
-                    }
+                    // Generic or other types - no additional details needed
                 }
             }
             
@@ -165,24 +140,13 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     // Workout Plans Section
     markdown.append("## Workout Plans\n\n")
     
-    val activeWorkouts = workoutStore.workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
-    val inactiveWorkouts = workoutStore.workouts.filterNot { it.enabled && it.isActive }
+    val workouts = workoutStore.workouts.sortedBy { it.order }
     
-    if (activeWorkouts.isEmpty() && inactiveWorkouts.isEmpty()) {
+    if (workouts.isEmpty()) {
         markdown.append("No workouts configured.\n\n")
     } else {
-        if (activeWorkouts.isNotEmpty()) {
-            markdown.append("### Active Workouts\n\n")
-            activeWorkouts.forEachIndexed { index, workout ->
-                appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
-            }
-        }
-        
-        if (inactiveWorkouts.isNotEmpty()) {
-            markdown.append("### Inactive Workouts\n\n")
-            inactiveWorkouts.forEachIndexed { index, workout ->
-                appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
-            }
+        workouts.forEachIndexed { index, workout ->
+            appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
         }
     }
     
@@ -190,39 +154,27 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
 }
 
 private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, index: Int, workoutStore: WorkoutStore) {
-    markdown.append("#### ${index}. ${workout.name}\n\n")
+    markdown.append("### ${index}. ${workout.name}\n\n")
     
     if (workout.description.isNotEmpty()) {
         markdown.append("*${workout.description}*\n\n")
     }
     
-    markdown.append("**Metadata**:\n")
-    markdown.append("- Order: ${workout.order}\n")
-    markdown.append("- Enabled: ${workout.enabled}\n")
-    markdown.append("- Active: ${workout.isActive}\n")
-    markdown.append("- Use Polar Device: ${workout.usePolarDevice}\n")
-    markdown.append("- Creation Date: ${workout.creationDate}\n")
-    if (workout.timesCompletedInAWeek != null) {
-        markdown.append("- Times Completed Per Week: ${workout.timesCompletedInAWeek}\n")
-    }
-    markdown.append("\n")
-    
     if (workout.workoutComponents.isEmpty()) {
         markdown.append("No components configured.\n\n")
     } else {
-        markdown.append("**Components**:\n\n")
         workout.workoutComponents.forEachIndexed { componentIndex, component ->
             when (component) {
                 is Exercise -> {
                     appendExerciseDetails(markdown, component, componentIndex + 1, workoutStore)
                 }
                 is Superset -> {
-                    appendSupersetDetails(markdown, component, componentIndex + 1, workoutStore)
+                    val hasRestAfter = componentIndex + 1 < workout.workoutComponents.size && 
+                                      workout.workoutComponents[componentIndex + 1] is com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+                    appendSupersetDetails(markdown, component, componentIndex + 1, workoutStore, hasRestAfter)
                 }
                 is Rest -> {
-                    markdown.append("${componentIndex + 1}. **Rest** (${component.timeInSeconds} seconds)")
-                    if (!component.enabled) markdown.append(" [Disabled]")
-                    markdown.append("\n\n")
+                    markdown.append("${componentIndex + 1}. **Rest**: ${component.timeInSeconds} seconds\n\n")
                 }
             }
         }
@@ -230,9 +182,7 @@ private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, inde
 }
 
 private fun appendExerciseDetails(markdown: StringBuilder, exercise: Exercise, index: Int, workoutStore: WorkoutStore) {
-    markdown.append("${index}. **Exercise: ${exercise.name}**")
-    if (!exercise.enabled) markdown.append(" [Disabled]")
-    markdown.append("\n\n")
+    markdown.append("${index}. **${exercise.name}**\n\n")
     
     markdown.append("  - **Type**: ${exercise.exerciseType.name}\n")
     
@@ -240,68 +190,77 @@ private fun appendExerciseDetails(markdown: StringBuilder, exercise: Exercise, i
         workoutStore.equipments.find { it.id == equipmentId }
     }
     if (equipment != null) {
-        markdown.append("  - **Equipment**: ${equipment.name} (${equipment.type.toDisplayText()})\n")
-    } else if (exercise.equipmentId != null) {
-        markdown.append("  - **Equipment**: Unknown (ID: ${exercise.equipmentId})\n")
-    }
-    
-    if (exercise.muscleGroups != null && exercise.muscleGroups.isNotEmpty()) {
-        markdown.append("  - **Primary Muscle Groups**: ")
-        markdown.append(exercise.muscleGroups.joinToString(", ") { it.name.replace("_", " ") })
-        markdown.append("\n")
-    }
-    
-    if (exercise.secondaryMuscleGroups != null && exercise.secondaryMuscleGroups.isNotEmpty()) {
-        markdown.append("  - **Secondary Muscle Groups**: ")
-        markdown.append(exercise.secondaryMuscleGroups.joinToString(", ") { it.name.replace("_", " ") })
-        markdown.append("\n")
+        markdown.append("  - **Equipment**: ${equipment.name}\n")
     }
     
     if (exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.bodyWeightPercentage != null) {
         markdown.append("  - **Body Weight Percentage**: ${formatNumber(exercise.bodyWeightPercentage)}%\n")
     }
     
-    markdown.append("  - **Rep Range**: ${exercise.minReps}-${exercise.maxReps}\n")
+    if (exercise.exerciseType != ExerciseType.COUNTDOWN && exercise.exerciseType != ExerciseType.COUNTUP) {
+        markdown.append("  - **Rep Range**: ${exercise.minReps}-${exercise.maxReps}\n")
+    }
     
     if (exercise.exerciseType == ExerciseType.WEIGHT) {
-        markdown.append("  - **Load Range**: ${formatNumber(exercise.minLoadPercent * 100)}%-${formatNumber(exercise.maxLoadPercent * 100)}%\n")
+        val minLoadPct = exercise.minLoadPercent.roundToInt()
+        val maxLoadPct = exercise.maxLoadPercent.roundToInt()
+        markdown.append("  - **Load Range**: ${minLoadPct}%-${maxLoadPct}%\n")
     }
     
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
         markdown.append("  - **Heart Rate Zone**: ${formatNumber(exercise.lowerBoundMaxHRPercent.toDouble() * 100)}%-${formatNumber(exercise.upperBoundMaxHRPercent.toDouble() * 100)}% of max HR\n")
     }
     
-    if (exercise.enableProgression) {
-        markdown.append("  - **Progression**: Enabled\n")
-        if (exercise.loadJumpDefaultPct != null) {
-            markdown.append("    - Default Load Jump: ${formatNumber(exercise.loadJumpDefaultPct * 100)}%\n")
-        }
-        if (exercise.loadJumpMaxPct != null) {
-            markdown.append("    - Max Load Jump: ${formatNumber(exercise.loadJumpMaxPct * 100)}%\n")
-        }
-        if (exercise.loadJumpOvercapUntil != null) {
-            markdown.append("    - Overcap Until: ${exercise.loadJumpOvercapUntil} sessions\n")
-        }
-    }
-    
     if (exercise.generateWarmUpSets) {
-        markdown.append("  - **Warm-up Sets**: Enabled\n")
-    }
-    
-    if (exercise.keepScreenOn) {
-        markdown.append("  - **Keep Screen On**: Enabled\n")
-    }
-    
-    if (exercise.showCountDownTimer) {
-        markdown.append("  - **Countdown Timer**: Enabled\n")
-    }
-    
-    if (exercise.intraSetRestInSeconds != null) {
-        markdown.append("  - **Intra-set Rest**: ${exercise.intraSetRestInSeconds} seconds\n")
-    }
-    
-    if (exercise.doNotStoreHistory) {
-        markdown.append("  - **History**: Not stored\n")
+        markdown.append("  - **Warm-up Sets**: ")
+        
+        // Generate warmup sets if possible (only for WEIGHT exercises with equipment)
+        if (exercise.exerciseType == ExerciseType.WEIGHT && exercise.equipmentId != null) {
+            val equipment = workoutStore.equipments.find { it.id == exercise.equipmentId }
+            if (equipment != null && exercise.sets.isNotEmpty()) {
+                val firstWorkSet = exercise.sets.firstOrNull { it !is RestSet && it is WeightSet }
+                if (firstWorkSet is WeightSet) {
+                    val workWeight = firstWorkSet.weight
+                    val workReps = firstWorkSet.reps
+                    val availableTotals = equipment.getWeightsCombinationsNoExtra()
+                    
+                    val warmups = if (equipment is Barbell) {
+                        WarmupPlanner.buildWarmupSetsForBarbell(
+                            availableTotals = availableTotals,
+                            workWeight = workWeight,
+                            workReps = workReps,
+                            barbell = equipment,
+                            initialSetup = emptyList(),
+                            maxWarmups = 4
+                        )
+                    } else {
+                        WarmupPlanner.buildWarmupSets(
+                            availableTotals = availableTotals,
+                            workWeight = workWeight,
+                            workReps = workReps,
+                            maxWarmups = 4
+                        )
+                    }
+                    
+                    if (warmups.isNotEmpty()) {
+                        markdown.append("\n")
+                        warmups.forEachIndexed { index, (weight, reps) ->
+                            markdown.append("    Warm-up ${index + 1}: ${formatNumber(weight)} kg × $reps reps\n")
+                        }
+                    } else {
+                        markdown.append("Enabled\n")
+                    }
+                } else {
+                    markdown.append("Enabled\n")
+                }
+            } else {
+                markdown.append("Enabled\n")
+            }
+        } else if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            markdown.append("Enabled (requires body weight to calculate)\n")
+        } else {
+            markdown.append("Enabled\n")
+        }
     }
     
     if (exercise.notes.isNotEmpty()) {
@@ -312,46 +271,101 @@ private fun appendExerciseDetails(markdown: StringBuilder, exercise: Exercise, i
         markdown.append("  - **Sets**: None configured\n")
     } else {
         markdown.append("  - **Sets**:\n")
-        exercise.sets.forEachIndexed { setIndex, set ->
-            val setStr = formatSet(set, setIndex + 1)
-            markdown.append("    ${setStr}\n")
+        var workSetNumber = 0
+        val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+        
+        exercise.sets.forEachIndexed { index, set ->
+            if (set !is RestSet) {
+                workSetNumber++
+                val setStr = formatSetInline(set, workSetNumber)
+                
+                if (hasIntraSetRest) {
+                    markdown.append("    Set $workSetNumber (Side A): $setStr\n")
+                    markdown.append("\tRest: ${exercise.intraSetRestInSeconds} seconds\n")
+                    markdown.append("    Set $workSetNumber (Side B): $setStr\n")
+                } else {
+                    markdown.append("    Set $workSetNumber: $setStr\n")
+                }
+                
+                // Look ahead to see if there's a rest set immediately after this work set
+                if (index + 1 < exercise.sets.size && exercise.sets[index + 1] is RestSet) {
+                    val restSet = exercise.sets[index + 1] as RestSet
+                    markdown.append("\tRest: ${restSet.timeInSeconds} seconds\n")
+                }
+            }
         }
     }
     
     markdown.append("\n")
 }
 
-private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, index: Int, workoutStore: WorkoutStore) {
-    markdown.append("${index}. **Superset**")
-    if (!superset.enabled) markdown.append(" [Disabled]")
-    markdown.append("\n\n")
+private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, index: Int, workoutStore: WorkoutStore, hasRestAfter: Boolean = false) {
+    markdown.append("${index}. **Superset**\n\n")
     
-    markdown.append("  **Exercises**:\n\n")
+    // Show exercise details first
     superset.exercises.forEachIndexed { exerciseIndex, exercise ->
-        markdown.append("  ${exerciseIndex + 1}. ${exercise.name}")
-        if (!exercise.enabled) markdown.append(" [Disabled]")
+        markdown.append("  Exercise ${exerciseIndex + 1}: **${exercise.name}**\n")
+        
+        markdown.append("    - Type: ${exercise.exerciseType.name}")
+        
+        val equipment = exercise.equipmentId?.let { equipmentId ->
+            workoutStore.equipments.find { it.id == equipmentId }
+        }
+        if (equipment != null) {
+            markdown.append(" | Equipment: ${equipment.name}")
+        }
         markdown.append("\n")
-        
-        val restAfter = superset.restSecondsByExercise[exercise.id]
-        if (restAfter != null && restAfter > 0) {
-            markdown.append("     - Rest after: ${restAfter} seconds\n")
-        }
-        
-        if (exercise.sets.isNotEmpty()) {
-            markdown.append("     - Sets: ")
-            val setsStr = exercise.sets.mapIndexed { setIndex, set ->
-                formatSetInline(set, setIndex + 1)
-            }.joinToString(", ")
-            markdown.append(setsStr).append("\n")
-        }
     }
     
     markdown.append("\n")
+    markdown.append("  **Execution Order**:\n\n")
+    
+    // Build lists of work sets (excluding rest sets) for each exercise
+    val exerciseWorkSets = superset.exercises.map { exercise ->
+        exercise.sets.filter { it !is RestSet }
+    }
+    
+    // Determine number of rounds (minimum number of sets across exercises)
+    val rounds = exerciseWorkSets.minOfOrNull { it.size } ?: 0
+    
+    // Display alternating sets with rest after each exercise (matching WorkoutViewModel logic)
+    for (round in 0 until rounds) {
+        val isLastRound = round == rounds - 1
+        superset.exercises.forEachIndexed { exerciseIndex, exercise ->
+            if (round < exerciseWorkSets[exerciseIndex].size) {
+                val set = exerciseWorkSets[exerciseIndex][round]
+                val setStr = formatSetInline(set, round + 1)
+                val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
+                
+                if (hasIntraSetRest) {
+                    markdown.append("    ${exercise.name} (Side A): $setStr\n")
+                    markdown.append("\tRest: ${exercise.intraSetRestInSeconds} seconds\n")
+                    markdown.append("    ${exercise.name} (Side B): $setStr\n")
+                } else {
+                    markdown.append("    ${exercise.name}: $setStr\n")
+                }
+                
+                // Add rest after each exercise (from restSecondsByExercise, matching WorkoutViewModel)
+                // Skip last exercise's rest in last round if there's a workout Rest after this superset
+                val isLastExerciseInLastRound = isLastRound && exerciseIndex == superset.exercises.size - 1
+                val shouldSkipRest = isLastExerciseInLastRound && hasRestAfter
+                
+                if (!shouldSkipRest) {
+                    val restAfter = superset.restSecondsByExercise[exercise.id] ?: 0
+                    if (restAfter > 0) {
+                        markdown.append("\tRest: $restAfter seconds\n")
+                    }
+                }
+            }
+        }
+        markdown.append("\n")
+    }
 }
 
 private fun formatSet(set: Set, setNumber: Int): String {
     val prefix = "Set $setNumber: "
-    return prefix + formatSetInline(set, setNumber)
+    val setStr = formatSetInline(set, setNumber)
+    return prefix + setStr
 }
 
 private fun formatSetInline(set: Set, setNumber: Int): String {
@@ -379,18 +393,12 @@ private fun formatSetInline(set: Set, setNumber: Int): String {
         is TimedDurationSet -> {
             val minutes = set.timeInMillis / 60000
             val seconds = (set.timeInMillis % 60000) / 1000
-            var str = "${minutes}:${String.format("%02d", seconds)}"
-            if (set.autoStart) str += " (auto-start)"
-            if (set.autoStop) str += " (auto-stop)"
-            str
+            "${minutes}:${String.format("%02d", seconds)}"
         }
         is EnduranceSet -> {
             val minutes = set.timeInMillis / 60000
             val seconds = (set.timeInMillis % 60000) / 1000
-            var str = "${minutes}:${String.format("%02d", seconds)} (endurance)"
-            if (set.autoStart) str += " (auto-start)"
-            if (set.autoStop) str += " (auto-stop)"
-            str
+            "${minutes}:${String.format("%02d", seconds)} (endurance)"
         }
         is RestSet -> {
             "${set.timeInSeconds} seconds rest"
