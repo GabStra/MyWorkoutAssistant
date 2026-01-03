@@ -44,6 +44,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -349,6 +350,10 @@ fun WorkoutDetailScreen(
             contentPadding = PaddingValues(0.dp),
             containerColor = Color.Transparent,
             actions = {
+                val selectionIconColors = IconButtonDefaults.iconButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onBackground,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -392,11 +397,12 @@ fun WorkoutDetailScreen(
                             val updatedWorkout =
                                 workout.copy(workoutComponents = adjustedComponents)
                             updateWorkoutWithHistory(updatedWorkout)
-                        }) {
+                        },
+                        colors = selectionIconColors
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.ArrowUpward,
                             contentDescription = "Go Higher",
-                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(
@@ -437,10 +443,12 @@ fun WorkoutDetailScreen(
                             val updatedWorkout =
                                 workout.copy(workoutComponents = adjustedComponents)
                             updateWorkoutWithHistory(updatedWorkout)
-                        }) {
+                        },
+                        colors = selectionIconColors
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = "Go Lower", tint = MaterialTheme.colorScheme.onBackground
+                            contentDescription = "Go Lower"
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
@@ -448,7 +456,7 @@ fun WorkoutDetailScreen(
                             modifier = Modifier.padding(5.dp),
                             colors = ButtonDefaults.buttonColors(
                                 contentColor = MaterialTheme.colorScheme.background,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             onClick = {
                                 val updatedWorkoutComponents =
@@ -481,7 +489,7 @@ fun WorkoutDetailScreen(
                             modifier = Modifier.padding(5.dp),
                             colors = ButtonDefaults.buttonColors(
                                 contentColor = MaterialTheme.colorScheme.background,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             onClick = {
                                 val updatedWorkoutComponents =
@@ -522,25 +530,22 @@ fun WorkoutDetailScreen(
                             updateWorkoutWithHistory(updatedWorkout)
                             selectedWorkoutComponents = emptyList()
 
-                        }) {
-                        val isEnabled = selectedWorkoutComponents.isNotEmpty()
-                        val color =
-                            if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
-
+                        },
+                        colors = selectionIconColors
+                    ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
                             contentDescription = "Copy",
-                            tint = color
                         )
                     }
                     IconButton(
                         enabled = selectedWorkoutComponents.isNotEmpty(),
-                        onClick = { showMoveWorkoutDialog = true }
+                        onClick = { showMoveWorkoutDialog = true },
+                        colors = selectionIconColors
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoveDown,
                             contentDescription = "Move to Another Workout",
-                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(onClick = {

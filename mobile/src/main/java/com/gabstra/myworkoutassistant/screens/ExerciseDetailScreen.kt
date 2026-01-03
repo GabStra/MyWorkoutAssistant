@@ -34,6 +34,7 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -296,6 +297,10 @@ fun ExerciseDetailScreen(
                 },
 
                 actions = {
+                    val exportIconColors = IconButtonDefaults.iconButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onBackground,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     IconButton(
                         enabled = !exercise.doNotStoreHistory,
                         onClick = {
@@ -314,12 +319,12 @@ fun ExerciseDetailScreen(
                                     )
                                 }
                             }
-                        }
+                        },
+                        colors = exportIconColors
                     ) {
                         Icon(
                             imageVector = Icons.Default.FileDownload,
                             contentDescription = "Export History",
-                            tint = if (exercise.doNotStoreHistory) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
                         )
                     }
                     IconButton(onClick = {
@@ -345,6 +350,10 @@ fun ExerciseDetailScreen(
                         contentPadding = PaddingValues(0.dp),
                         containerColor = Color.Transparent,
                         actions = {
+                            val selectionIconColors = IconButtonDefaults.iconButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onBackground,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxSize(),
@@ -385,11 +394,12 @@ fun ExerciseDetailScreen(
                                         updateExerciseWithHistory(updatedExercise)
 
                                         sets = adjustedComponents
-                                    }) {
+                                    },
+                                    colors = selectionIconColors
+                                ) {
                                     Icon(
                                         imageVector = Icons.Filled.ArrowUpward,
                                         contentDescription = "Go Higher",
-                                        tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
 
@@ -431,11 +441,12 @@ fun ExerciseDetailScreen(
                                         sets = adjustedComponents
 
                                         updateExerciseWithHistory(updatedExercise)
-                                    }) {
+                                    },
+                                    colors = selectionIconColors
+                                ) {
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDownward,
                                         contentDescription = "Go Lower"
-                                        ,tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
 
@@ -482,11 +493,10 @@ fun ExerciseDetailScreen(
                                         updateExerciseWithHistory(updatedExercise)
 
                                         selectedSets = emptyList()
-                                    }) {
-                                    val isEnabled = selectedSets.isNotEmpty()
-                                    val color = if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onBackground
-
-                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = color)
+                                    },
+                                    colors = selectionIconColors
+                                ) {
+                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
                                 }
                             }
                         }
@@ -578,7 +588,7 @@ fun ExerciseDetailScreen(
                             Button(
                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                 onClick = {
                                     appViewModel.setScreenData(

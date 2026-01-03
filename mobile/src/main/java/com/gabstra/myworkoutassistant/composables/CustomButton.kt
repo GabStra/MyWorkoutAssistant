@@ -36,7 +36,7 @@ fun CustomButton(
     val backgroundOnPress = lerp(backgroundColor, textColor, 0.2f)
     val textColorOnPress = lerp(textColor, MaterialTheme.colorScheme.background, 0.2f)
 
-    val disabledColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    val disabledColor = MaterialTheme.colorScheme.onSurfaceVariant
     val interactionSource = remember { MutableInteractionSource() }
     val interactions = interactionSource.interactions
     val isPressed = if (enabled) interactions.collectAsState(initial = null).value is PressInteraction.Press else false

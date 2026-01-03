@@ -659,7 +659,7 @@ fun WorkoutsScreen(
                                 modifier = Modifier.padding(5.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                 onClick = {
                                     updateWorkoutsEnabledState(true)
@@ -669,7 +669,7 @@ fun WorkoutsScreen(
                             Button(
                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                 modifier = Modifier.padding(5.dp),
                                 onClick = {
@@ -1206,7 +1206,7 @@ fun WorkoutsScreen(
                                             Button(
                                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
@@ -1267,7 +1267,7 @@ fun WorkoutsScreen(
                                             Button(
                                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
@@ -1498,7 +1498,7 @@ fun WorkoutsScreen(
                                                     },
                                                     colors = ButtonDefaults.buttonColors(
                                                         contentColor = MaterialTheme.colorScheme.background,
-                                                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 ) {
                                                     Text(

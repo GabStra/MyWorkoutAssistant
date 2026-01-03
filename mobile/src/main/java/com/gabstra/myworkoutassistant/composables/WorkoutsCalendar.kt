@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -173,6 +174,10 @@ fun SimpleCalendarTitle(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth() // Good practice for Rows like this
     ) {
+        val navIconColors = IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onBackground,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         IconButton(
             onClick = {
                 scope.launch {
@@ -180,11 +185,11 @@ fun SimpleCalendarTitle(
                     calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
                 }
             },
+            colors = navIconColors
         ) {
             Icon(
                 imageVector = Icons.Filled.ArrowBack,
-                contentDescription = "Previous Month", // More descriptive
-                tint = MaterialTheme.colorScheme.onBackground
+                contentDescription = "Previous Month" // More descriptive
             )
         }
 
@@ -205,12 +210,11 @@ fun SimpleCalendarTitle(
                     calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
                 }
             },
+            colors = navIconColors
         ) {
             Icon(
                 imageVector = Icons.Filled.ArrowForward,
-                contentDescription = "Next Month", // More descriptive
-                // Tint based on whether it's the real-world current month
-                tint = if (isRealCurrentMonth) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onBackground
+                contentDescription = "Next Month" // More descriptive
             )
         }
     }

@@ -246,7 +246,7 @@ fun DumbbellsForm(
             Button(
                 colors = ButtonDefaults.buttonColors(
                     contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 ),
                 onClick = {
                     val newDumbbells = Dumbbells(

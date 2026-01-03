@@ -88,7 +88,7 @@ fun AppDropdownMenuItem(
     enabled: Boolean = true
 ) {
     val baseColor = MaterialTheme.colorScheme.onSurface
-    val contentColor = if (enabled) baseColor else baseColor.copy(alpha = 0.38f)
+    val contentColor = if (enabled) baseColor else MaterialTheme.colorScheme.onSurfaceVariant
 
     fun wrapContent(content: @Composable () -> Unit): @Composable () -> Unit = {
         CompositionLocalProvider(LocalContentColor provides contentColor) {

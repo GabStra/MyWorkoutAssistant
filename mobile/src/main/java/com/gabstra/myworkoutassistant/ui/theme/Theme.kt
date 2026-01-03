@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.SoftGray
 import com.gabstra.myworkoutassistant.shared.Yellow
 
 private val DarkColorScheme = darkColorScheme(
@@ -43,7 +44,7 @@ private val DarkColorScheme = darkColorScheme(
     surface = MediumDarkerGray,
     onSurface = LighterGray,
     surfaceVariant = MediumDarkGray,
-    onSurfaceVariant = LighterGray,
+    onSurfaceVariant = SoftGray,
     surfaceTint = Orange,
     inverseSurface = LighterGray,
     inverseOnSurface = DarkGray,
