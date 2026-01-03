@@ -30,7 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -49,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
@@ -286,7 +286,8 @@ fun BarbellForm(
                 }
             },
             confirmButton = {
-                TextButton(
+                DialogTextButton(
+                    text = "Add",
                     onClick = {
                         val weight = newPlateWeightState.value.toDoubleOrNull()
                         val thickness = newPlateThicknessState.value.toDoubleOrNull()
@@ -300,12 +301,13 @@ fun BarbellForm(
                     },
                     enabled = newPlateWeightState.value.isNotEmpty() &&
                             newPlateThicknessState.value.isNotEmpty()
-                ) { Text("Add") }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showAvailablePlateDialog.value = false }) {
-                    Text("Cancel")
-                }
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showAvailablePlateDialog.value = false }
+                )
             }
         )
     }

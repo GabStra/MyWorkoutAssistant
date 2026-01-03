@@ -798,7 +798,10 @@ fun MyWorkoutAssistantNavHost(
                                     return@launch
                                 }
 
-                                appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
+                                val hasHistory = withContext(Dispatchers.IO) {
+                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                                }
+                                appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
                                 withContext(Dispatchers.IO) {
                                     workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
                                     workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
@@ -965,8 +968,13 @@ fun MyWorkoutAssistantNavHost(
                 ExerciseForm(
                     appViewModel,
                     onExerciseUpsert = { newExercise ->
-                        appViewModel.addWorkoutComponent(selectedWorkout, newExercise)
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.addWorkoutComponentVersioned(selectedWorkout, newExercise, hasHistory)
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = { appViewModel.goBack() },
                     allowSettingDoNotStoreHistory = true
@@ -996,9 +1004,13 @@ fun MyWorkoutAssistantNavHost(
                         val adjustedComponents =
                             ensureRestSeparatedByExercises(newWorkoutComponents)
                         val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
-
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = { appViewModel.goBack() },
                     availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>()
@@ -1028,12 +1040,18 @@ fun MyWorkoutAssistantNavHost(
                 ExerciseForm(
                     appViewModel,
                     onExerciseUpsert = { updatedExercise ->
-                        appViewModel.updateWorkoutComponentOld(
-                            selectedWorkout,
-                            selectedExercise,
-                            updatedExercise
-                        )
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutComponentVersioned(
+                                selectedWorkout,
+                                selectedExercise,
+                                updatedExercise,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()
@@ -1065,12 +1083,18 @@ fun MyWorkoutAssistantNavHost(
 
                 SupersetForm(
                     onSupersetUpsert = { updatedSuperset ->
-                        appViewModel.updateWorkoutComponentOld(
-                            selectedWorkout,
-                            selectedSuperset,
-                            updatedSuperset
-                        )
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutComponentVersioned(
+                                selectedWorkout,
+                                selectedSuperset,
+                                updatedSuperset,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = { appViewModel.goBack() },
                     availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
@@ -1098,8 +1122,18 @@ fun MyWorkoutAssistantNavHost(
                 ) as Exercise
                 SetForm(
                     onSetUpsert = { updatedSet ->
-                        appViewModel.addSetToExercise(selectedWorkout, parentExercise, updatedSet)
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.addSetToExerciseVersioned(
+                                selectedWorkout,
+                                parentExercise,
+                                updatedSet,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()
@@ -1142,13 +1176,18 @@ fun MyWorkoutAssistantNavHost(
 
                         val updatedExercise = parentExercise.copy(sets = modifiedSets)
 
-                        appViewModel.updateWorkoutComponentOld(
-                            selectedWorkout,
-                            parentExercise,
-                            updatedExercise
-                        )
-
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutComponentVersioned(
+                                selectedWorkout,
+                                parentExercise,
+                                updatedExercise,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()
@@ -1177,13 +1216,19 @@ fun MyWorkoutAssistantNavHost(
                 ) as Exercise
                 RestSetForm(
                     onRestSetUpsert = { updatedSet ->
-                        appViewModel.updateSetInExercise(
-                            selectedWorkout,
-                            parentExercise,
-                            screenData.selectedRestSet,
-                            updatedSet
-                        )
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateSetInExerciseVersioned(
+                                selectedWorkout,
+                                parentExercise,
+                                screenData.selectedRestSet,
+                                updatedSet,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()
@@ -1223,8 +1268,13 @@ fun MyWorkoutAssistantNavHost(
                             ensureRestSeparatedByExercises(modifiedWorkoutComponents)
 
                         val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkoutOld(selectedWorkout, updatedWorkout)
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = { appViewModel.goBack() },
                 )
@@ -1247,8 +1297,18 @@ fun MyWorkoutAssistantNavHost(
 
                 RestForm(
                     onRestUpsert = { newRest ->
-                        appViewModel.updateWorkoutComponentOld(selectedWorkout, screenData.selectedRest,newRest)
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateWorkoutComponentVersioned(
+                                selectedWorkout,
+                                screenData.selectedRest,
+                                newRest,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = { appViewModel.goBack() },
                     rest = screenData.selectedRest
@@ -1276,13 +1336,19 @@ fun MyWorkoutAssistantNavHost(
                 ) as Exercise
                 SetForm(
                     onSetUpsert = { updatedSet ->
-                        appViewModel.updateSetInExercise(
-                            selectedWorkout,
-                            parentExercise,
-                            screenData.selectedSet,
-                            updatedSet
-                        )
-                        appViewModel.goBack()
+                        scope.launch {
+                            val hasHistory = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                            }
+                            appViewModel.updateSetInExerciseVersioned(
+                                selectedWorkout,
+                                parentExercise,
+                                screenData.selectedSet,
+                                updatedSet,
+                                hasHistory
+                            )
+                            appViewModel.goBack()
+                        }
                     },
                     onCancel = {
                         appViewModel.goBack()

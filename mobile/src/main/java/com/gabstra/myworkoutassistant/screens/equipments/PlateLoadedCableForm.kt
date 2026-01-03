@@ -29,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -46,6 +45,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
@@ -234,7 +234,7 @@ fun PlateLoadedCableForm(
     if (showAvailablePlateDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = { Text("Add Available Plate", color = MaterialTheme.colorScheme.onPrimary) },
+            title = { Text("Add Available Plate", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -263,7 +263,8 @@ fun PlateLoadedCableForm(
                 }
             },
             confirmButton = {
-                TextButton(
+                DialogTextButton(
+                    text = "Add",
                     onClick = {
                         val weight = newPlateWeightState.value.toDoubleOrNull()
                         val thickness = newPlateThicknessState.value.toDoubleOrNull()
@@ -276,14 +277,13 @@ fun PlateLoadedCableForm(
                     },
                     enabled = newPlateWeightState.value.isNotEmpty() &&
                             newPlateThicknessState.value.isNotEmpty()
-                ) {
-                    Text("Add")
-                }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showAvailablePlateDialog.value = false }) {
-                    Text("Cancel")
-                }
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showAvailablePlateDialog.value = false }
+                )
             }
         )
     }

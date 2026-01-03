@@ -247,6 +247,17 @@ fun ExerciseDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    fun updateExerciseWithHistory(updatedExercise: Exercise) {
+        scope.launch {
+            val hasHistory = withContext(Dispatchers.IO) {
+                workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id)
+            }
+            withContext(Dispatchers.Main) {
+                appViewModel.updateWorkoutComponentVersioned(workout, exercise, updatedExercise, hasHistory)
+            }
+        }
+    }
+
     LaunchedEffect(showRest) {
         selectedSets = emptyList()
     }
@@ -371,11 +382,7 @@ fun ExerciseDetailScreen(
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
 
-                                        appViewModel.updateWorkoutComponentOld(
-                                            workout,
-                                            exercise,
-                                            updatedExercise
-                                        )
+                                        updateExerciseWithHistory(updatedExercise)
 
                                         sets = adjustedComponents
                                     }) {
@@ -423,11 +430,7 @@ fun ExerciseDetailScreen(
 
                                         sets = adjustedComponents
 
-                                        appViewModel.updateWorkoutComponentOld(
-                                            workout,
-                                            exercise,
-                                            updatedExercise
-                                        )
+                                        updateExerciseWithHistory(updatedExercise)
                                     }) {
                                     Icon(
                                         imageVector = Icons.Filled.ArrowDownward,
@@ -446,11 +449,7 @@ fun ExerciseDetailScreen(
 
                                     sets = adjustedComponents
 
-                                    appViewModel.updateWorkoutComponentOld(
-                                        workout,
-                                        exercise,
-                                        updatedExercise
-                                    )
+                                    updateExerciseWithHistory(updatedExercise)
 
                                     selectedSets = emptyList()
                                     isSelectionModeActive = false
@@ -464,8 +463,8 @@ fun ExerciseDetailScreen(
                                 IconButton(
                                     enabled = selectedSets.isNotEmpty(),
                                     onClick = {
-                                        selectedSets.forEach {
-                                            val newSet = when (it) {
+                                        val copiedSets = selectedSets.map {
+                                            when (it) {
                                                 is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
                                                 is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
                                                 is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
@@ -473,20 +472,14 @@ fun ExerciseDetailScreen(
                                                 is RestSet -> it.copy(id = java.util.UUID.randomUUID())
                                                 else -> throw IllegalArgumentException("Unknown type")
                                             }
-                                            appViewModel.addSetToExercise(workout, exercise, newSet)
-                                            sets = sets + newSet
                                         }
 
-                                        val adjustedComponents = ensureRestSeparatedBySets(sets)
+                                        val adjustedComponents = ensureRestSeparatedBySets(sets + copiedSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
 
                                         sets = adjustedComponents
 
-                                        appViewModel.updateWorkoutComponentOld(
-                                            workout,
-                                            exercise,
-                                            updatedExercise
-                                        )
+                                        updateExerciseWithHistory(updatedExercise)
 
                                         selectedSets = emptyList()
                                     }) {
@@ -670,7 +663,7 @@ fun ExerciseDetailScreen(
                                 if (!showRest) return@GenericSelectableList
                                 val adjustedComponents = ensureRestSeparatedBySets(newComponents)
                                 val updatedExercise = exercise.copy(sets = adjustedComponents)
-                                appViewModel.updateWorkoutComponentOld(workout, exercise, updatedExercise)
+                                updateExerciseWithHistory(updatedExercise)
                                 sets = adjustedComponents
                             },
                             isDragDisabled = true,

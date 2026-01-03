@@ -40,7 +40,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,6 +77,7 @@ import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -130,14 +130,14 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Edit Workout") },
                 onClick = {
                     onEditWorkout()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Clear History") },
                 onClick = {
                     onClearHistory()
@@ -321,6 +321,17 @@ fun WorkoutDetailScreen(
 
     val scope = rememberCoroutineScope()
 
+    fun updateWorkoutWithHistory(updatedWorkout: Workout) {
+        scope.launch {
+            val hasHistory = withContext(Dispatchers.IO) {
+                workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id)
+            }
+            withContext(Dispatchers.Main) {
+                appViewModel.updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
+            }
+        }
+    }
+
     LaunchedEffect(showRest) {
         selectedWorkoutComponents = emptyList()
     }
@@ -380,7 +391,7 @@ fun WorkoutDetailScreen(
                                 ensureRestSeparatedByExercises(newWorkoutComponents)
                             val updatedWorkout =
                                 workout.copy(workoutComponents = adjustedComponents)
-                            appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                            updateWorkoutWithHistory(updatedWorkout)
                         }) {
                         Icon(
                             imageVector = Icons.Filled.ArrowUpward,
@@ -425,7 +436,7 @@ fun WorkoutDetailScreen(
                                 ensureRestSeparatedByExercises(newWorkoutComponents)
                             val updatedWorkout =
                                 workout.copy(workoutComponents = adjustedComponents)
-                            appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                            updateWorkoutWithHistory(updatedWorkout)
                         }) {
                         Icon(
                             imageVector = Icons.Filled.ArrowDownward,
@@ -458,7 +469,7 @@ fun WorkoutDetailScreen(
 
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = adjustedComponents)
-                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                                updateWorkoutWithHistory(updatedWorkout)
 
                                 selectedWorkoutComponents = emptyList()
                                 isSelectionModeActive = false
@@ -491,7 +502,7 @@ fun WorkoutDetailScreen(
 
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = adjustedComponents)
-                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                                updateWorkoutWithHistory(updatedWorkout)
                                 selectedWorkoutComponents = emptyList()
                                 isSelectionModeActive = false
                             }) {
@@ -508,7 +519,7 @@ fun WorkoutDetailScreen(
 
                             val updatedWorkout =
                                 workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponents)
-                            appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                            updateWorkoutWithHistory(updatedWorkout)
                             selectedWorkoutComponents = emptyList()
 
                         }) {
@@ -545,7 +556,7 @@ fun WorkoutDetailScreen(
                             ensureRestSeparatedByExercises(newWorkoutComponents)
 
                         val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
-                        appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                        updateWorkoutWithHistory(updatedWorkout)
                         selectedWorkoutComponents = emptyList()
                         isSelectionModeActive = false
 
@@ -929,7 +940,7 @@ fun WorkoutDetailScreen(
                                     ensureRestSeparatedByExercises(newWorkoutComponents)
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = adjustedComponents)
-                                appViewModel.updateWorkoutOld(workout, updatedWorkout)
+                                updateWorkoutWithHistory(updatedWorkout)
                             },
                             itemContent = { it ->
                                 WorkoutComponentRenderer(
@@ -984,17 +995,31 @@ fun WorkoutDetailScreen(
                     workouts = allWorkouts,
                     currentWorkout = workout,
                     onMove = { targetWorkout ->
-                        appViewModel.moveComponents(workout, selectedWorkoutComponents, targetWorkout)
+                        scope.launch {
+                            val (sourceHasHistory, targetHasHistory) = withContext(Dispatchers.IO) {
+                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id) to
+                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(targetWorkout.id)
+                            }
+                            withContext(Dispatchers.Main) {
+                                appViewModel.moveComponentsVersioned(
+                                    workout,
+                                    selectedWorkoutComponents,
+                                    targetWorkout,
+                                    sourceHasHistory,
+                                    targetHasHistory
+                                )
 
-                        selectedWorkoutComponents = emptyList()
-                        isSelectionModeActive = false
-                        Toast.makeText(
-                            context,
-                            "Selection moved to ${targetWorkout.name}",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                                selectedWorkoutComponents = emptyList()
+                                isSelectionModeActive = false
+                                Toast.makeText(
+                                    context,
+                                    "Selection moved to ${targetWorkout.name}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
 
-                        appViewModel.setScreenData(ScreenData.WorkoutDetail(targetWorkout.id))
+                                appViewModel.setScreenData(ScreenData.WorkoutDetail(targetWorkout.id))
+                            }
+                        }
                     }
                 )
             }

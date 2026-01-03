@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +23,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 
 data class MenuItem(
     val label: String,
@@ -68,7 +68,7 @@ fun GenericButtonWithMenu(
                     MenuSurface {
                         Column {
                             menuItems.forEach { item ->
-                                DropdownMenuItem(
+                                AppDropdownMenuItem(
                                     onClick = {
                                         item.onClick()
                                         expanded = false

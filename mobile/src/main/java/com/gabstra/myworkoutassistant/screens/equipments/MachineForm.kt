@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -44,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
@@ -283,7 +283,7 @@ fun MachineForm(
     if (showAvailableWeightsDialog.value) {
         AlertDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = { Text("Add Weight", color = MaterialTheme.colorScheme.onPrimary) },
+            title = { Text("Add Weight", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -300,7 +300,8 @@ fun MachineForm(
                 }
             },
             confirmButton = {
-                TextButton(
+                DialogTextButton(
+                    text = "Add",
                     onClick = {
                         val weight = newWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
@@ -311,14 +312,13 @@ fun MachineForm(
                         }
                     },
                     enabled = newWeightState.value.isNotEmpty()
-                ) {
-                    Text("Add")
-                }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showAvailableWeightsDialog.value = false }) {
-                    Text("Cancel")
-                }
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showAvailableWeightsDialog.value = false }
+                )
             }
         )
     }
@@ -326,7 +326,7 @@ fun MachineForm(
     if (showExtraWeightDialog.value) {
         AlertDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onPrimary) },
+            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -343,7 +343,8 @@ fun MachineForm(
                 }
             },
             confirmButton = {
-                TextButton(
+                DialogTextButton(
+                    text = "Add",
                     onClick = {
                         val weight = newExtraWeightState.value.toDoubleOrNull()
                         if (weight != null && weight > 0) {
@@ -353,14 +354,13 @@ fun MachineForm(
                         }
                     },
                     enabled = newExtraWeightState.value.isNotEmpty()
-                ) {
-                    Text("Add")
-                }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showExtraWeightDialog.value = false }) {
-                    Text("Cancel")
-                }
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showExtraWeightDialog.value = false }
+                )
             }
         )
     }

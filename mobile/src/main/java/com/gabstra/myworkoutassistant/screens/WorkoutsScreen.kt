@@ -38,11 +38,11 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -66,13 +66,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -134,6 +137,8 @@ fun Menu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showClearIncompleteDialog by remember { mutableStateOf(false) }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
+    var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier.wrapContentSize(Alignment.TopEnd)
@@ -148,70 +153,79 @@ fun Menu(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            DropdownMenuItem(
+            MenuSectionHeader("Settings", showDivider = false)
+            AppDropdownMenuItem(
                 text = { Text("Settings") },
                 onClick = {
                     onOpenSettingsClick()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+
+            MenuSectionHeader("Sync")
+            AppDropdownMenuItem(
                 text = { Text("Sync with Watch") },
                 onClick = {
                     onSyncClick()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Sync with Health Connect") },
                 onClick = {
                     onSyncWithHealthConnectClick()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+
+            MenuSectionHeader("Data")
+            AppDropdownMenuItem(
                 text = { Text("Export Workouts") },
                 onClick = {
                     onExportWorkouts()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Save Backup") },
                 onClick = {
                     onBackupClick()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Restore Backup") },
                 onClick = {
                     onRestoreClick()
                     expanded = false
                 }
             )
-            DropdownMenuItem(
-                text = { Text("Clear all incomplete workouts") },
+
+            MenuSectionHeader("Maintenance")
+            AppDropdownMenuItem(
+                text = { Text("Clear incomplete workouts") },
                 onClick = {
                     showClearIncompleteDialog = true
                     expanded = false
                 }
             )
-            DropdownMenuItem(
-                text = { Text("Clear history") },
+            AppDropdownMenuItem(
+                text = { Text("Clear workout history") },
                 onClick = {
-                    onClearAllHistories()
+                    showClearHistoryDialog = true
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+            AppDropdownMenuItem(
                 text = { Text("Clear all exercise info") },
                 onClick = {
-                    onClearAllExerciseInfo()
+                    showClearExerciseInfoDialog = true
                     expanded = false
                 }
             )
-            DropdownMenuItem(
+
+            MenuSectionHeader("Diagnostics")
+            AppDropdownMenuItem(
                 text = { Text("View Error Logs") },
                 onClick = {
                     onViewErrorLogs()
@@ -236,6 +250,56 @@ fun Menu(
         handleOnAutomaticClose = {
             showClearIncompleteDialog = false
         }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showClearHistoryDialog,
+        title = "Clear Workout History",
+        message = "Are you sure you want to clear all workout history? This action cannot be undone.",
+        handleYesClick = {
+            onClearAllHistories()
+            showClearHistoryDialog = false
+        },
+        handleNoClick = {
+            showClearHistoryDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showClearHistoryDialog = false
+        }
+    )
+
+    CustomDialogYesOnLongPress(
+        show = showClearExerciseInfoDialog,
+        title = "Clear Exercise Info",
+        message = "Are you sure you want to clear all exercise info? This action cannot be undone.",
+        handleYesClick = {
+            onClearAllExerciseInfo()
+            showClearExerciseInfoDialog = false
+        },
+        handleNoClick = {
+            showClearExerciseInfoDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showClearExerciseInfoDialog = false
+        }
+    )
+}
+
+@Composable
+private fun MenuSectionHeader(title: String, showDivider: Boolean = true) {
+    val dividerColor = LocalContentColor.current.copy(alpha = 0.2f)
+    if (showDivider) {
+        HorizontalDivider(color = dividerColor)
+    }
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp
+        ),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
     )
 }
 
@@ -517,6 +581,24 @@ fun WorkoutsScreen(
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
+    fun updateWorkoutsEnabledState(enabled: Boolean) {
+        val workoutsToUpdate = selectedWorkouts.toList()
+        if (workoutsToUpdate.isEmpty()) return
+        scope.launch {
+            val historyById = withContext(Dispatchers.IO) {
+                workoutsToUpdate.associate { it.id to workoutHistoryDao.workoutHistoryExistsByWorkoutId(it.id) }
+            }
+            withContext(Dispatchers.Main) {
+                workoutsToUpdate.forEach { workout ->
+                    val hasHistory = historyById[workout.id] ?: false
+                    appViewModel.updateWorkoutVersioned(workout, workout.copy(enabled = enabled), hasHistory)
+                }
+                selectedWorkouts = emptyList()
+                isWorkoutSelectionModeActive = false
+            }
+        }
+    }
+
 
     @Composable
     fun workoutsBottomBar(){
@@ -580,14 +662,7 @@ fun WorkoutsScreen(
                                     disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                                 ),
                                 onClick = {
-                                    for (workout in selectedWorkouts) {
-                                        appViewModel.updateWorkoutOld(
-                                            workout,
-                                            workout.copy(enabled = true)
-                                        )
-                                    }
-                                    selectedWorkouts = emptyList()
-                                    isWorkoutSelectionModeActive = false
+                                    updateWorkoutsEnabledState(true)
                                 }) {
                                 Text("Enable")
                             }
@@ -598,14 +673,7 @@ fun WorkoutsScreen(
                                 ),
                                 modifier = Modifier.padding(5.dp),
                                 onClick = {
-                                    for (workout in selectedWorkouts) {
-                                        appViewModel.updateWorkoutOld(
-                                            workout,
-                                            workout.copy(enabled = false)
-                                        )
-                                    }
-                                    selectedWorkouts = emptyList()
-                                    isWorkoutSelectionModeActive = false
+                                    updateWorkoutsEnabledState(false)
                                 }) {
                                 Text("Disable")
                             }

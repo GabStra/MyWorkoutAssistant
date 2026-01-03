@@ -25,13 +25,13 @@ val darkScheme = ColorScheme(
     primary = Orange,
     primaryDim = Orange,
     primaryContainer = MediumDarkerGray,
-    onPrimary = LighterGray,
+    onPrimary = Color.Black,
     onPrimaryContainer = LighterGray,
 
     secondary = Green,
     secondaryDim = Green,
     secondaryContainer = MediumDarkerGray,
-    onSecondary = DarkGray,
+    onSecondary = Color.White,
     onSecondaryContainer = LighterGray,
 
     tertiary = Yellow,
@@ -42,9 +42,9 @@ val darkScheme = ColorScheme(
 
     surfaceContainerLow = MediumDarkerGray,
     surfaceContainer = MediumDarkGray,
-    surfaceContainerHigh = MediumLightGray,
+    surfaceContainerHigh = MediumGray,
     onSurface =  LighterGray, //Color(210, 210, 210),
-    onSurfaceVariant = MediumLightGray,
+    onSurfaceVariant = LighterGray,
     outline = MediumGray,
     outlineVariant = MediumLightGray,
 
@@ -54,8 +54,8 @@ val darkScheme = ColorScheme(
     error = Red,
     errorDim = Red,
     errorContainer = MediumDarkerGray,
-    onError = LighterGray,
-    onErrorContainer = Red,
+    onError = Color.White,
+    onErrorContainer = Color.White,
 )
 
 @Immutable
@@ -87,7 +87,7 @@ fun checkboxButtonColors(): CheckboxButtonColors {
         uncheckedContainerColor = colorScheme.surfaceContainer, // MediumGray
         uncheckedContentColor = colorScheme.onSurface, // LighterGray
         uncheckedIconColor = colorScheme.primary, // Orange
-        uncheckedSecondaryContentColor = colorScheme.onSurfaceVariant, // MediumLightGray
+        uncheckedSecondaryContentColor = colorScheme.onSurfaceVariant, // LighterGray
 
         // Disabled checked state colors
         disabledCheckedBoxColor = colorScheme.onSurface.copy(alpha = 0.12f),

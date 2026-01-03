@@ -20,8 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import androidx.compose.material3.TextButton
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
 
 @Composable
 fun MoveExercisesToWorkoutDialog(
@@ -77,9 +77,10 @@ fun MoveExercisesToWorkoutDialog(
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel")
-                }
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = onDismiss
+                )
             }
         )
     }

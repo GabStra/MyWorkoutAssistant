@@ -22,29 +22,21 @@ class WorkoutManager {
         }
 
         fun updateWorkout(workouts: List<Workout>, oldWorkout: Workout, updatedWorkout: Workout): List<Workout> {
+            val newVersionId = UUID.randomUUID()
             val newVersion = updatedWorkout.copy(
-                id = UUID.randomUUID(), // Genera un nuovo ID per la nuova versione
-                creationDate = LocalDate.now(), // Imposta la data corrente
-                previousVersionId = oldWorkout.id // Imposta il riferimento alla versione precedente
+                id = newVersionId,
+                creationDate = LocalDate.now(),
+                previousVersionId = oldWorkout.id,
+                nextVersionId = null,
+                isActive = true,
+                globalId = oldWorkout.globalId
             )
 
-            val updatedOldWorkout = updatedWorkout.copy(isActive = false, nextVersionId = newVersion.id)
+            val updatedOldWorkout = oldWorkout.copy(isActive = false, nextVersionId = newVersionId)
 
             return workouts.map { workout ->
                 if (workout == oldWorkout) updatedOldWorkout else workout
             } + newVersion
-        }
-
-/*        fun updateWorkoutComponent(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-            val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
-            val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-            return updateWorkout(workouts, parentWorkout, updatedWorkout)
-        }*/
-
-        fun updateWorkoutComponentOld(workouts: List<Workout>, parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent): List<Workout> {
-            val updatedComponents = updateWorkoutComponentsRecursively(parentWorkout.workoutComponents, oldWorkoutComponent, updatedWorkoutComponent)
-            val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
-            return updateWorkoutOld(workouts, parentWorkout, updatedWorkout)
         }
 
         fun updateWorkoutComponentsRecursively(workoutComponents: List<WorkoutComponent>, oldComponent: WorkoutComponent, updatedComponent: WorkoutComponent): List<WorkoutComponent> {
@@ -68,12 +60,6 @@ class WorkoutManager {
                     */
                 }
             }
-        }
-
-        fun addWorkoutComponent(workouts: List<Workout>, workout: Workout, newWorkoutComponent: WorkoutComponent): List<Workout> {
-            val updatedComponents = workout.workoutComponents + newWorkoutComponent
-            val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
-            return updateWorkoutOld(workouts, workout, updatedWorkout)
         }
 
         /*
@@ -111,16 +97,6 @@ class WorkoutManager {
             }
         }*/
 
-        fun addSetToExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, newSet: Set, index: UInt? = null): List<Workout> {
-            return workouts.map { currentWorkout ->
-                if (currentWorkout == workout) {
-                    currentWorkout.copy(workoutComponents = addSetToExerciseRecursively(currentWorkout.workoutComponents, exercise, newSet, index))
-                } else {
-                    currentWorkout
-                }
-            }
-        }
-
         fun addSetToExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSet: Set, index: UInt? = null): List<WorkoutComponent> {
             return components.map { component ->
                 if (component.id == parentExercise.id) {
@@ -157,16 +133,6 @@ class WorkoutManager {
             }
         }
 
-        fun updateSetInExercise(workouts: List<Workout>, workout: Workout, exercise: Exercise, oldSet: Set, updatedSet: Set) : List<Workout> {
-            return workouts.map { it ->
-                if (it == workout) {
-                    it.copy(workoutComponents = updateSetInExerciseRecursively(it.workoutComponents, exercise, oldSet, updatedSet))
-                } else {
-                    it
-                }
-            }
-        }
-
         fun updateSetInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, oldSet: Set, updatedSet: Set): List<WorkoutComponent> {
             return components.map { component ->
                 if(component == parentExercise) {
@@ -192,39 +158,6 @@ class WorkoutManager {
             }
         }
 
-        fun deleteSet(workouts: List<Workout>, workout: Workout, exercise: Exercise, setToDelete: Set) : List<Workout> {
-            return workouts.map {
-                if (it == workout) {
-                    workout.copy(
-                        workoutComponents  = deleteSetRecursively(
-                            it.workoutComponents,
-                            exercise,
-                            setToDelete
-                        )
-                    )
-                } else {
-                    workout
-                }
-            }
-        }
-
-        private fun deleteSetRecursively(components: List<WorkoutComponent>, exercise: Exercise, setToDelete: Set): List<WorkoutComponent> {
-            return components.map { component ->
-                if (component == exercise) {
-                    val selectedExercise = component as Exercise
-                    selectedExercise.copy(
-                        sets = component.sets.filter { set -> set != setToDelete }
-                    )
-                } else {
-                    if(component is Superset){
-                        component.copy(exercises = deleteSetRecursively(component.exercises, exercise, setToDelete) as List<Exercise>)
-                    }else{
-                        component
-                    }
-                }
-            }
-        }
-
         fun moveWorkoutComponents(sourceWorkouts: List<Workout>, sourceWorkout: Workout, componentsToMove: List<WorkoutComponent>, targetWorkout: Workout): List<Workout> {
             // Remove from source
             val updatedSourceWorkouts = sourceWorkouts.map { workout ->
@@ -241,30 +174,6 @@ class WorkoutManager {
                     workout.copy(workoutComponents = workout.workoutComponents + componentsToMove)
                 } else {
                     workout
-                }
-            }
-        }
-
-        fun deleteWorkoutComponent(workouts: List<Workout>, workout: Workout, workoutComponentToDelete: WorkoutComponent) : List<Workout> {
-            return workouts.map {
-                if (it == workout) {
-                    if(workoutComponentToDelete in it.workoutComponents){
-                        it.copy(
-                            workoutComponents = it.workoutComponents.filter { workoutComponent ->
-                                workoutComponent != workoutComponentToDelete
-                             }.map {  workoutComponent ->
-                                if(workoutComponent is Superset){
-                                    workoutComponent.copy(exercises = workoutComponent.exercises.filter { exercise -> exercise != workoutComponentToDelete } as List<Exercise>)
-                                }else{
-                                    workoutComponent
-                                }
-                            }
-                        )
-                    }else{
-                        it
-                    }
-                } else {
-                    it
                 }
             }
         }

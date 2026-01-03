@@ -23,7 +23,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -69,6 +68,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.AppMenuContent
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -112,6 +114,8 @@ fun WorkoutForm(
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+    val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -211,24 +215,25 @@ fun WorkoutForm(
 
                 ExposedDropdownMenu(
                     expanded = workoutTypeExpanded,
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.background(dropdownBackground),
+                    border = BorderStroke(1.dp, dropdownBorderColor),
                     onDismissRequest = { workoutTypeExpanded = false }
                 ) {
-                    WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    key.replace('_', ' ').lowercase(Locale.ROOT)
-                                        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() },
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                            },
-                            onClick = {
-                                selectedWorkoutType.value = WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP[key]!!
-                                workoutTypeExpanded = false
-                            }
-                        )
+                    AppMenuContent {
+                        WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
+                            AppDropdownMenuItem(
+                                text = {
+                                    Text(
+                                        key.replace('_', ' ').lowercase(Locale.ROOT)
+                                            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                                    )
+                                },
+                                onClick = {
+                                    selectedWorkoutType.value = WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP[key]!!
+                                    workoutTypeExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -446,7 +451,7 @@ fun ScheduleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "Edit schedule" else "Add schedule", color = MaterialTheme.colorScheme.onPrimary) },
+        title = { Text(if (isEditing) "Edit schedule" else "Add schedule", color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -531,7 +536,9 @@ fun ScheduleDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            DialogTextButton(
+                text = "Save",
+                onClick = {
                 val specificDate = if (useSpecificDate.value) {
                     datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -562,9 +569,15 @@ fun ScheduleDialog(
                 } else {
                     onSave(newSchedule)
                 }
-            }) { Text("Save") }
+            }
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            DialogTextButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+        }
     )
 
     if (showTimePicker.value) {
@@ -582,8 +595,18 @@ fun ScheduleDialog(
     if (showDatePicker.value) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
-            confirmButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("OK") } },
-            dismissButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("Cancel") } }
+            confirmButton = {
+                DialogTextButton(
+                    text = "OK",
+                    onClick = { showDatePicker.value = false }
+                )
+            },
+            dismissButton = {
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showDatePicker.value = false }
+                )
+            }
         ) { DatePicker(state = datePickerState) }
     }
 }
@@ -630,8 +653,18 @@ fun TimePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("Select time") },
         text = { TimePicker(state = timePickerState) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("OK") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = {
+            DialogTextButton(
+                text = "OK",
+                onClick = onConfirm
+            )
+        },
+        dismissButton = {
+            DialogTextButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+        }
     )
 }
 
@@ -732,7 +765,7 @@ fun BatchScheduleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add multiple schedules", color = MaterialTheme.colorScheme.onPrimary) },
+        title = { Text("Add multiple schedules", color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column(
                 modifier = Modifier
@@ -886,7 +919,9 @@ fun BatchScheduleDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            DialogTextButton(
+                text = "Save",
+                onClick = {
                 val list = mutableListOf<WorkoutSchedule>()
                 val startTotal = startHourState.intValue * 60 + startMinuteState.intValue
                 val endTotal = endHourState.intValue * 60 + endMinuteState.intValue
@@ -934,9 +969,15 @@ fun BatchScheduleDialog(
                 } else {
                     onSave(list)
                 }
-            }) { Text("Save") }
+            }
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            DialogTextButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+        }
     )
 
     if (showTimePicker.value) {
@@ -959,8 +1000,18 @@ fun BatchScheduleDialog(
     if (showDatePicker.value) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
-            confirmButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("OK") } },
-            dismissButton = { TextButton(onClick = { showDatePicker.value = false }) { Text("Cancel") } }
+            confirmButton = {
+                DialogTextButton(
+                    text = "OK",
+                    onClick = { showDatePicker.value = false }
+                )
+            },
+            dismissButton = {
+                DialogTextButton(
+                    text = "Cancel",
+                    onClick = { showDatePicker.value = false }
+                )
+            }
         ) { DatePicker(state = datePickerState) }
     }
 }

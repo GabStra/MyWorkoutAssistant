@@ -23,13 +23,13 @@ import com.gabstra.myworkoutassistant.shared.Yellow
 
 private val DarkColorScheme = darkColorScheme(
     primary = Orange,
-    onPrimary = LighterGray,
+    onPrimary = Color.Black,
     primaryContainer = MediumDarkerGray,
     onPrimaryContainer = LighterGray,
     inversePrimary = Orange,
 
     secondary = Green,
-    onSecondary = DarkGray,
+    onSecondary = Color.White,
     secondaryContainer = MediumDarkerGray,
     onSecondaryContainer = LighterGray,
 
@@ -43,15 +43,15 @@ private val DarkColorScheme = darkColorScheme(
     surface = MediumDarkerGray,
     onSurface = LighterGray,
     surfaceVariant = MediumDarkGray,
-    onSurfaceVariant = MediumLightGray,
+    onSurfaceVariant = LighterGray,
     surfaceTint = Orange,
     inverseSurface = LighterGray,
     inverseOnSurface = DarkGray,
 
     error = Red,
-    onError = LighterGray,
+    onError = Color.White,
     errorContainer = MediumDarkerGray,
-    onErrorContainer = Red,
+    onErrorContainer = Color.White,
 
     outline = MediumGray,
     outlineVariant = MediumLightGray,

@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -54,6 +53,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.AppMenuContent
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
@@ -171,6 +172,8 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Scaffold(
         topBar = {
@@ -250,21 +253,23 @@ fun ExerciseForm(
                     )
                     ExposedDropdownMenu(
                         expanded = exerciseTypeExpanded,
-                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.background(dropdownBackground),
+                        border = BorderStroke(1.dp, dropdownBorderColor),
                         onDismissRequest = { exerciseTypeExpanded = false }
                     ) {
-                        exerciseTypeDescriptions.forEach { desc ->
-                            DropdownMenuItem(
-                                text = { Text(desc, style = MaterialTheme.typography.bodyLarge) },
-                                onClick = {
-                                    selectedExerciseType.value = stringToExerciseType(desc)!!
-                                    selectedEquipmentId.value =
-                                        if (selectedExerciseType.value == ExerciseType.WEIGHT) viewModel.GENERIC_ID
-                                        else null
-                                    exerciseTypeExpanded = false
-                                }
-                            )
+                        AppMenuContent {
+                            exerciseTypeDescriptions.forEach { desc ->
+                                AppDropdownMenuItem(
+                                    text = { Text(desc) },
+                                    onClick = {
+                                        selectedExerciseType.value = stringToExerciseType(desc)!!
+                                        selectedEquipmentId.value =
+                                            if (selectedExerciseType.value == ExerciseType.WEIGHT) viewModel.GENERIC_ID
+                                            else null
+                                        exerciseTypeExpanded = false
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -324,25 +329,27 @@ fun ExerciseForm(
                     )
                     ExposedDropdownMenu(
                         expanded = equipmentExpanded,
-                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.background(dropdownBackground),
+                        border = BorderStroke(1.dp, dropdownBorderColor),
                         onDismissRequest = { equipmentExpanded = false }
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("None", style = MaterialTheme.typography.bodyLarge) },
-                            onClick = {
-                                selectedEquipmentId.value = null
-                                equipmentExpanded = false
-                            }
-                        )
-                        equipments.forEach { equipment ->
-                            DropdownMenuItem(
-                                text = { Text(equipment.name, style = MaterialTheme.typography.bodyLarge) },
+                        AppMenuContent {
+                            AppDropdownMenuItem(
+                                text = { Text("None") },
                                 onClick = {
-                                    selectedEquipmentId.value = equipment.id
+                                    selectedEquipmentId.value = null
                                     equipmentExpanded = false
                                 }
                             )
+                            equipments.forEach { equipment ->
+                                AppDropdownMenuItem(
+                                    text = { Text(equipment.name) },
+                                    onClick = {
+                                        selectedEquipmentId.value = equipment.id
+                                        equipmentExpanded = false
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -623,35 +630,37 @@ fun ExerciseForm(
                     )
                     ExposedDropdownMenu(
                         expanded = hrZoneExpanded,
-                        modifier =  Modifier.background(MaterialTheme.colorScheme.background),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.background(dropdownBackground),
+                        border = BorderStroke(1.dp, dropdownBorderColor),
                         onDismissRequest = { hrZoneExpanded = false }
                     ) {
-                        heartRateZones.forEachIndexed { index, zoneLabel ->
-                            DropdownMenuItem(
-                                text = { Text(zoneLabel, style = MaterialTheme.typography.bodyLarge) },
-                                onClick = {
-                                    when (index) {
-                                        0 -> { // None
-                                            selectedLowerBoundMaxHRPercent.value = null
-                                            selectedUpperBoundMaxHRPercent.value = null
-                                            selectedTargetZone.value = null
+                        AppMenuContent {
+                            heartRateZones.forEachIndexed { index, zoneLabel ->
+                                AppDropdownMenuItem(
+                                    text = { Text(zoneLabel) },
+                                    onClick = {
+                                        when (index) {
+                                            0 -> { // None
+                                                selectedLowerBoundMaxHRPercent.value = null
+                                                selectedUpperBoundMaxHRPercent.value = null
+                                                selectedTargetZone.value = null
+                                            }
+                                            in 1..4 -> { // Zone 2..5
+                                                val (lower, upper) = zoneRanges[index + 1] // align with your table
+                                                selectedLowerBoundMaxHRPercent.value = lower
+                                                selectedUpperBoundMaxHRPercent.value = upper
+                                                selectedTargetZone.value = index
+                                            }
+                                            5 -> { // Custom
+                                                selectedLowerBoundMaxHRPercent.value = 50f
+                                                selectedUpperBoundMaxHRPercent.value = 60f
+                                                selectedTargetZone.value = -1
+                                            }
                                         }
-                                        in 1..4 -> { // Zone 2..5
-                                            val (lower, upper) = zoneRanges[index + 1] // align with your table
-                                            selectedLowerBoundMaxHRPercent.value = lower
-                                            selectedUpperBoundMaxHRPercent.value = upper
-                                            selectedTargetZone.value = index
-                                        }
-                                        5 -> { // Custom
-                                            selectedLowerBoundMaxHRPercent.value = 50f
-                                            selectedUpperBoundMaxHRPercent.value = 60f
-                                            selectedTargetZone.value = -1
-                                        }
+                                        hrZoneExpanded = false
                                     }
-                                    hrZoneExpanded = false
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }

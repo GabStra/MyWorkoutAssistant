@@ -273,56 +273,102 @@ class AppViewModel() : ViewModel() {
         workouts = newWorkouts
     }
 
-    fun updateWorkoutOld(oldWorkout: Workout, updatedWorkout: Workout) {
-        workouts = WorkoutManager.updateWorkoutOld(workouts,oldWorkout,updatedWorkout)
+    private fun applyWorkoutUpdate(
+        currentWorkouts: List<Workout>,
+        oldWorkout: Workout,
+        updatedWorkout: Workout,
+        hasHistory: Boolean
+    ): List<Workout> {
+        return if (hasHistory) {
+            WorkoutManager.updateWorkout(currentWorkouts, oldWorkout, updatedWorkout)
+        } else {
+            WorkoutManager.updateWorkoutOld(currentWorkouts, oldWorkout, updatedWorkout)
+        }
     }
 
-/*    fun updateWorkout(oldWorkout: Workout, updatedWorkout: Workout) {
-        workouts = WorkoutManager.updateWorkout(workouts,oldWorkout,updatedWorkout)
-    }*/
-
-/*    fun updateWorkoutComponent(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
-        workouts = WorkoutManager.updateWorkoutComponent(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)
-    }*/
-
-    fun updateWorkoutComponentOld(parentWorkout: Workout, oldWorkoutComponent: WorkoutComponent, updatedWorkoutComponent: WorkoutComponent) {
-        workouts = WorkoutManager.updateWorkoutComponentOld(workouts,parentWorkout,oldWorkoutComponent,updatedWorkoutComponent)
+    fun updateWorkoutVersioned(oldWorkout: Workout, updatedWorkout: Workout, hasHistory: Boolean) {
+        workouts = applyWorkoutUpdate(workouts, oldWorkout, updatedWorkout, hasHistory)
     }
 
-    fun addNewWorkout(newWorkout: Workout) {
-        workouts = workouts + newWorkout.copy(order = workouts.size)
+    fun updateWorkoutComponentVersioned(
+        parentWorkout: Workout,
+        oldWorkoutComponent: WorkoutComponent,
+        updatedWorkoutComponent: WorkoutComponent,
+        hasHistory: Boolean
+    ) {
+        val updatedComponents = WorkoutManager.updateWorkoutComponentsRecursively(
+            parentWorkout.workoutComponents,
+            oldWorkoutComponent,
+            updatedWorkoutComponent
+        )
+        val updatedWorkout = parentWorkout.copy(workoutComponents = updatedComponents)
+        updateWorkoutVersioned(parentWorkout, updatedWorkout, hasHistory)
     }
 
-    fun addWorkoutComponent(workout: Workout, newWorkoutComponent: WorkoutComponent) {
-        workouts = WorkoutManager.addWorkoutComponent(workouts,workout,newWorkoutComponent)
+    fun addWorkoutComponentVersioned(
+        workout: Workout,
+        newWorkoutComponent: WorkoutComponent,
+        hasHistory: Boolean
+    ) {
+        val updatedWorkout = workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponent)
+        updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
     }
 
-    fun addSetToExercise(workout: Workout, exercise: Exercise, newSet: Set) {
-        workouts = WorkoutManager.addSetToExercise(workouts,workout,exercise,newSet)
+    fun addSetToExerciseVersioned(
+        workout: Workout,
+        exercise: Exercise,
+        newSet: Set,
+        hasHistory: Boolean
+    ) {
+        val updatedComponents = WorkoutManager.addSetToExerciseRecursively(
+            workout.workoutComponents,
+            exercise,
+            newSet
+        )
+        val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
+        updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
     }
 
-    fun updateSetInExercise(workout: Workout, exercise: Exercise, oldSet: Set, updatedSet: Set) {
-        workouts = WorkoutManager.updateSetInExercise(workouts,workout,exercise,oldSet,updatedSet)
+    fun updateSetInExerciseVersioned(
+        workout: Workout,
+        exercise: Exercise,
+        oldSet: Set,
+        updatedSet: Set,
+        hasHistory: Boolean
+    ) {
+        val updatedComponents = WorkoutManager.updateSetInExerciseRecursively(
+            workout.workoutComponents,
+            exercise,
+            oldSet,
+            updatedSet
+        )
+        val updatedWorkout = workout.copy(workoutComponents = updatedComponents)
+        updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
     }
 
-    fun deleteSet(workout: Workout, exercise: Exercise, setToDelete: Set) {
-        workouts = WorkoutManager.deleteSet(workouts,workout,exercise,setToDelete)
-    }
-
-    fun deleteWorkout(workoutToDelete: Workout) {
-        workouts = workouts.filter { it != workoutToDelete }  // Direct object comparison
-    }
-
-    fun deleteWorkoutComponent(workout: Workout, workoutComponentToDelete: WorkoutComponent) {
-        workouts = WorkoutManager.deleteWorkoutComponent(workouts,workout,workoutComponentToDelete)
-    }
-
-    fun moveComponents(sourceWorkout: Workout, componentsToMove: List<WorkoutComponent>, targetWorkout: Workout) {
-        workouts = WorkoutManager.moveWorkoutComponents(
+    fun moveComponentsVersioned(
+        sourceWorkout: Workout,
+        componentsToMove: List<WorkoutComponent>,
+        targetWorkout: Workout,
+        sourceHasHistory: Boolean,
+        targetHasHistory: Boolean
+    ) {
+        val updatedWorkouts = WorkoutManager.moveWorkoutComponents(
             workouts,
             sourceWorkout,
             componentsToMove,
             targetWorkout
         )
+        val updatedSourceWorkout = updatedWorkouts.firstOrNull { it.id == sourceWorkout.id } ?: return
+        val updatedTargetWorkout = updatedWorkouts.firstOrNull { it.id == targetWorkout.id } ?: return
+
+        var nextWorkouts = workouts
+        nextWorkouts = applyWorkoutUpdate(nextWorkouts, sourceWorkout, updatedSourceWorkout, sourceHasHistory)
+        nextWorkouts = applyWorkoutUpdate(nextWorkouts, targetWorkout, updatedTargetWorkout, targetHasHistory)
+        workouts = nextWorkouts
+    }
+
+    fun addNewWorkout(newWorkout: Workout) {
+        workouts = workouts + newWorkout.copy(order = workouts.size)
     }
 }

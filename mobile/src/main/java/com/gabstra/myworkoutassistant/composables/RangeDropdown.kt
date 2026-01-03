@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -16,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 
 enum class FilterRange {
     LAST_WEEK,
@@ -54,22 +54,22 @@ fun RangeDropdown(
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {
-                DropdownMenuItem(text = { Text("Last 7 days") }, onClick = {
+                AppDropdownMenuItem(text = { Text("Last 7 days") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_7_DAYS); expanded = false
                 })
-                DropdownMenuItem(text = { Text("Last 30 days") }, onClick = {
+                AppDropdownMenuItem(text = { Text("Last 30 days") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_30_DAYS); expanded = false
                 })
-                DropdownMenuItem(text = { Text("Last week") }, onClick = {
+                AppDropdownMenuItem(text = { Text("Last week") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_WEEK); expanded = false
                 })
-                DropdownMenuItem(text = { Text("Last month") }, onClick = {
+                AppDropdownMenuItem(text = { Text("Last month") }, onClick = {
                     onSelectedRangeChange(FilterRange.THIS_MONTH); expanded = false
                 })
-                DropdownMenuItem(text = { Text("Last three months") }, onClick = {
+                AppDropdownMenuItem(text = { Text("Last three months") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_3_MONTHS); expanded = false
                 })
-                DropdownMenuItem(text = { Text("All") }, onClick = {
+                AppDropdownMenuItem(text = { Text("All") }, onClick = {
                     onSelectedRangeChange(FilterRange.ALL); expanded = false
                 })
             }
