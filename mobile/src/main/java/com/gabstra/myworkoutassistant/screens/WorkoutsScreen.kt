@@ -132,6 +132,7 @@ fun Menu(
     onClearAllHistories: () -> Unit,
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
+    onExportWorkoutPlan: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
 ) {
@@ -183,6 +184,13 @@ fun Menu(
                 text = { Text("Export Workouts") },
                 onClick = {
                     onExportWorkouts()
+                    expanded = false
+                }
+            )
+            AppDropdownMenuItem(
+                text = { Text("Export Workout Plan (Markdown)") },
+                onClick = {
+                    onExportWorkoutPlan()
                     expanded = false
                 }
             )
@@ -373,6 +381,7 @@ fun WorkoutsScreen(
     onClearAllHistories: () -> Unit,
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
+    onExportWorkoutPlan: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
     selectedTabIndex: Int
@@ -776,6 +785,7 @@ fun WorkoutsScreen(
                         onClearAllHistories = onClearAllHistories,
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts,
+                        onExportWorkoutPlan = onExportWorkoutPlan,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
                         onViewErrorLogs = onViewErrorLogs
                     )

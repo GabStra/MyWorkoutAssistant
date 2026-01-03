@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
+import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
@@ -1205,6 +1206,24 @@ suspend fun exportExerciseHistoryToMarkdown(
         }
     } catch (e: Exception) {
         Log.e("ExerciseExport", "Error exporting exercise history", e)
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+suspend fun exportWorkoutPlanToMarkdown(
+    context: Context,
+    workoutStore: WorkoutStore
+) {
+    try {
+        val markdown = buildWorkoutPlanMarkdown(workoutStore)
+        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        val filename = "workout_plan_export_$timestamp.md"
+        writeMarkdownToDownloadsFolder(context, filename, markdown)
+    } catch (e: Exception) {
+        Log.e("WorkoutPlanExport", "Error exporting workout plan", e)
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }

@@ -599,6 +599,22 @@ fun MyWorkoutAssistantNavHost(
                             Toast.LENGTH_SHORT
                         ).show()
                     },
+                    onExportWorkoutPlan = {
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    exportWorkoutPlanToMarkdown(context, appViewModel.workoutStore)
+                                }
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error exporting workout plan", e)
+                                Toast.makeText(
+                                    context,
+                                    "Export failed: ${e.message}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
                     onClearUnfinishedWorkouts = {
                         scope.launch {
                             val unfinishedWorkoutHistories = workoutHistoryDao.getAllUnfinishedWorkoutHistories()
