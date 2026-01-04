@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -446,10 +447,15 @@ fun ExerciseDetailScreen(
                                         textAlign = TextAlign.Center
                                     )
                                 }
-                                VerticalDivider(
-                                    modifier = Modifier.height(48.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    VerticalDivider(
+                                        modifier = Modifier.height(48.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                }
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier

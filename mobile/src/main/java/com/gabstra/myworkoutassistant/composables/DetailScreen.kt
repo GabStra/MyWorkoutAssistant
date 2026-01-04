@@ -5,10 +5,12 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -151,10 +153,15 @@ fun <T> DetailScreen(
                                         textAlign = TextAlign.Center
                                     )
                                 }
-                                VerticalDivider(
-                                    modifier = Modifier.height(48.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    VerticalDivider(
+                                        modifier = Modifier.height(48.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                }
                                 if (onUpdateItems != null) {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,

@@ -735,10 +735,15 @@ fun WorkoutsScreen(
                                     modifier = Modifier.heightIn(min = 0.dp)
                                 )
                             }
-                            VerticalDivider(
-                                modifier = Modifier.height(48.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant
-                            )
+                            Box(
+                                modifier = Modifier.fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                VerticalDivider(
+                                    modifier = Modifier.height(48.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            }
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
@@ -985,10 +990,15 @@ fun WorkoutsScreen(
                                     textAlign = TextAlign.Center
                                 )
                             }
-                            VerticalDivider(
-                                modifier = Modifier.height(48.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant
-                            )
+                            Box(
+                                modifier = Modifier.fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                VerticalDivider(
+                                    modifier = Modifier.height(48.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            }
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
