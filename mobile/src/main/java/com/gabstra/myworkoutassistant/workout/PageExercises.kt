@@ -178,7 +178,7 @@ fun PageExercises(
                                     textAlign = TextAlign.Center,
                                     text = "Unilateral",
                                     style = captionStyle,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.background
                                 )
                             }
                         }
@@ -193,7 +193,7 @@ fun PageExercises(
                                 Text(
                                     text = "Warm-up",
                                     style = captionStyle,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.background
                                 )
                             }
                         }
@@ -284,3 +284,4 @@ fun PageExercises(
         }
     }
 }
+

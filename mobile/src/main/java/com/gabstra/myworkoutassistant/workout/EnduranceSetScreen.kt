@@ -321,8 +321,12 @@ fun EnduranceSetScreen (
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                    ){
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Start",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 }else{
                     IconButton(
@@ -334,7 +338,11 @@ fun EnduranceSetScreen (
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Stop",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 }
             }
@@ -413,3 +421,4 @@ fun EnduranceSetScreen (
         CountDownDialog(displayStartingDialog,countdownValue)
     }
 }
+

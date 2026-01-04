@@ -289,8 +289,13 @@ fun TimedDurationSetScreen(
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                    ){
-                        Icon(modifier =Modifier.size(35.dp),imageVector = Icons.Default.PlayArrow, contentDescription = "Start", tint = MaterialTheme.colorScheme.onSurface)
+                    ) {
+                        Icon(
+                            modifier = Modifier.size(35.dp),
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Start",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 }else{
                     IconButton(
@@ -302,7 +307,12 @@ fun TimedDurationSetScreen(
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) {
-                        Icon( modifier =Modifier.size(35.dp),imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = MaterialTheme.colorScheme.onSurface)
+                        Icon(
+                            modifier = Modifier.size(35.dp),
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Stop",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 }
             }
@@ -382,3 +392,4 @@ fun TimedDurationSetScreen(
         CountDownDialog(displayStartingDialog,countdownValue)
     }
 }
+

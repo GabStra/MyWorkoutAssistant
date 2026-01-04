@@ -503,8 +503,7 @@ fun WorkoutHistoryScreen(
                 },
                 enabled = selectedWorkoutHistory != workoutHistories.first()
             ) {
-                val isEnabled = selectedWorkoutHistory != workoutHistories.first()
-                val color =  if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                val color = MaterialTheme.colorScheme.onBackground
 
                 Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
             }
@@ -529,8 +528,7 @@ fun WorkoutHistoryScreen(
                 },
                 enabled = selectedWorkoutHistory != workoutHistories.last()
             ) {
-                val isEnabled = selectedWorkoutHistory != workoutHistories.last()
-                val color =  if (isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                val color = MaterialTheme.colorScheme.onBackground
 
                 Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
             }
@@ -886,7 +884,11 @@ fun WorkoutHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.ShowChart,
                         contentDescription = "Graphs",
-                        tint = if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (selectedMode == 0) {
+                            MaterialTheme.colorScheme.background
+                        } else {
+                            MaterialTheme.colorScheme.onBackground
+                        }
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Graphs", color =  if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
@@ -907,7 +909,11 @@ fun WorkoutHistoryScreen(
                     Icon(
                         Icons.AutoMirrored.Filled.List,
                         contentDescription = "Sets",
-                        tint = if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (selectedMode == 1) {
+                            MaterialTheme.colorScheme.background
+                        } else {
+                            MaterialTheme.colorScheme.onBackground
+                        }
                     )
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
@@ -919,7 +925,12 @@ fun WorkoutHistoryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                ),
                 title = {
                     Text(
                         modifier = Modifier
@@ -1101,3 +1112,4 @@ fun WorkoutHistoryScreen(
         }
     }
 }
+

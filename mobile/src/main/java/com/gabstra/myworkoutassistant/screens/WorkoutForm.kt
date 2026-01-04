@@ -139,7 +139,11 @@ fun WorkoutForm(
                             style = MaterialTheme.typography.titleLarge
                         )
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                    ),
                     navigationIcon = {
                         IconButton(onClick = onCancel, enabled = !isSaving) {
                             Icon(
@@ -1015,3 +1019,5 @@ fun BatchScheduleDialog(
         ) { DatePicker(state = datePickerState) }
     }
 }
+
+

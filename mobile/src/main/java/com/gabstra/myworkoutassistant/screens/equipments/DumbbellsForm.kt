@@ -87,7 +87,11 @@ fun DumbbellsForm(
                         strokeWidth = 1.dp.toPx()
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                ),
                 title = {
                     Text(
                         modifier = Modifier
@@ -167,8 +171,17 @@ fun DumbbellsForm(
                             text = "Available Dumbbells",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showDumbbellDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Dumbbell", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(
+                            modifier = Modifier.clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .size(35.dp),
+                            onClick = { showDumbbellDialog.value = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Dumbbell",
+                                tint = MaterialTheme.colorScheme.background
+                            )
                         }
                     }
 
@@ -213,8 +226,17 @@ fun DumbbellsForm(
                             text = "Extra Weights",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(
+                            modifier = Modifier.clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .size(35.dp),
+                            onClick = { showExtraWeightDialog.value = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Extra Weight",
+                                tint = MaterialTheme.colorScheme.background
+                            )
                         }
                     }
 
@@ -360,3 +382,5 @@ fun DumbbellsForm(
         )
     }
 }
+
+

@@ -296,7 +296,12 @@ fun ExerciseDetailScreen(
         Scaffold(
             topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                ),
                 title = {
                     Text(
                         modifier = Modifier
@@ -318,7 +323,7 @@ fun ExerciseDetailScreen(
                 actions = {
                     val exportIconColors = IconButtonDefaults.iconButtonColors(
                         contentColor = MaterialTheme.colorScheme.onBackground,
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        disabledContentColor = MaterialTheme.colorScheme.onBackground
                     )
                     IconButton(
                         enabled = !exercise.doNotStoreHistory,
@@ -846,7 +851,7 @@ fun ExerciseDetailScreen(
                                     Icon(
                                         imageVector = Icons.Filled.Add,
                                         contentDescription = "Add",
-                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        tint = MaterialTheme.colorScheme.background,
                                     )
                                 }
                             )
@@ -858,3 +863,4 @@ fun ExerciseDetailScreen(
     SavingOverlay(isSaving = isSaving)
     }
 }
+

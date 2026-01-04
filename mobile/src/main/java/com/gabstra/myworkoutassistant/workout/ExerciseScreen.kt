@@ -287,7 +287,7 @@ fun ExerciseScreen(
                                         textAlign = TextAlign.Center,
                                         text = "Unilateral",
                                         style = captionStyle,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.background
                                     )
                                 }
                             }
@@ -302,7 +302,7 @@ fun ExerciseScreen(
                                     Text(
                                         text = "Warm-up",
                                         style = captionStyle,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.background
                                     )
                                 }
                             }
@@ -396,3 +396,4 @@ fun ExerciseScreen(
         }
     }
 }
+

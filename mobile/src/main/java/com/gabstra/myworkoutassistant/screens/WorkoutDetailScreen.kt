@@ -836,7 +836,7 @@ fun WorkoutDetailScreen(
                             Icon(
                                 imageVector = Icons.Filled.ChevronRight,
                                 contentDescription = "Scroll right",
-                                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                     }
@@ -860,7 +860,7 @@ fun WorkoutDetailScreen(
                             Icon(
                                 imageVector = Icons.Filled.ChevronLeft,
                                 contentDescription = "Scroll left",
-                                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                     }
@@ -876,7 +876,9 @@ fun WorkoutDetailScreen(
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.background,
-                        titleContentColor = MaterialTheme.colorScheme.onBackground
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onBackground
                     ),
                     title = {
                         Text(
@@ -1035,7 +1037,7 @@ fun WorkoutDetailScreen(
                                 content = {
                                     Text(
                                         "Add Workout Component",
-                                        color = MaterialTheme.colorScheme.onPrimary
+                                        color = MaterialTheme.colorScheme.background
                                     )
                                 }
                             )
@@ -1281,7 +1283,7 @@ fun WorkoutDetailScreen(
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = "Add",
-                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    tint = MaterialTheme.colorScheme.background,
                                 )
                             }
                         )
@@ -1363,4 +1365,5 @@ fun WorkoutDetailScreen(
         }
     }
 }
+
 

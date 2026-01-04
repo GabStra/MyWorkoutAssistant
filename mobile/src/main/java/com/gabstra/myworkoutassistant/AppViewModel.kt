@@ -373,3 +373,4 @@ class AppViewModel() : ViewModel() {
         workouts = workouts + newWorkout.copy(order = workouts.size)
     }
 }
+

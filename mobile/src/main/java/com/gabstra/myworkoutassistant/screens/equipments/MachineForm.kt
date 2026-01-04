@@ -89,7 +89,11 @@ fun MachineForm(
                         strokeWidth = 1.dp.toPx()
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                ),
                 title = {
                     Text(
                         modifier = Modifier
@@ -172,8 +176,17 @@ fun MachineForm(
                             text = "Available Weights",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailableWeightsDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Weight", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(
+                            modifier = Modifier.clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .size(35.dp),
+                            onClick = { showAvailableWeightsDialog.value = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Weight",
+                                tint = MaterialTheme.colorScheme.background
+                            )
                         }
                     }
 
@@ -216,8 +229,17 @@ fun MachineForm(
                             text = "Extra Weights",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showExtraWeightDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add,  contentDescription = "Add Extra Weight", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(
+                            modifier = Modifier.clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .size(35.dp),
+                            onClick = { showExtraWeightDialog.value = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Extra Weight",
+                                tint = MaterialTheme.colorScheme.background
+                            )
                         }
                     }
 
@@ -365,3 +387,5 @@ fun MachineForm(
         )
     }
 }
+
+

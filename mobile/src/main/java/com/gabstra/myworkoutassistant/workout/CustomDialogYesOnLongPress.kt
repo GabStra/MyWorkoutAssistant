@@ -225,7 +225,12 @@ fun CustomDialogYesOnLongPress(
                                         .background(MaterialTheme.colorScheme.primary),
                                     contentAlignment = Alignment.Center
                                 ){
-                                    Icon(modifier = Modifier.size(25.dp),imageVector = Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.onPrimary)
+                                    Icon(
+                                        modifier = Modifier.size(25.dp),
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Done",
+                                        tint = MaterialTheme.colorScheme.background
+                                    )
                                 }
                             }
                         }
@@ -261,3 +266,4 @@ fun CustomDialogYesOnLongPress(
         }
     }
 }
+

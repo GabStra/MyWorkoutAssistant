@@ -87,7 +87,11 @@ fun PlateLoadedCableForm(
                         strokeWidth = 1.dp.toPx()
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                ),
                 title = {
                     Text(
                         modifier = Modifier
@@ -170,8 +174,17 @@ fun PlateLoadedCableForm(
                             text = "Available Plates",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        IconButton(modifier= Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).size(35.dp),onClick = { showAvailablePlateDialog.value = true }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Plate", tint = MaterialTheme.colorScheme.onPrimary)
+                        IconButton(
+                            modifier = Modifier.clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .size(35.dp),
+                            onClick = { showAvailablePlateDialog.value = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Plate",
+                                tint = MaterialTheme.colorScheme.background
+                            )
                         }
                     }
 
@@ -288,3 +301,5 @@ fun PlateLoadedCableForm(
         )
     }
 }
+
+

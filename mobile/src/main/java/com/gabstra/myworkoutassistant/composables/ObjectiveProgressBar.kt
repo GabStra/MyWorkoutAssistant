@@ -32,7 +32,7 @@ fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
         Icon(
             imageVector = Icons.Default.Check,
             contentDescription = "Checkbox",
-            tint = MaterialTheme.colorScheme.onPrimary, // Icon color
+            tint = MaterialTheme.colorScheme.background, // Icon color
             modifier = Modifier.align(Alignment.Center) // Center the icon within the circle
         )
     }
@@ -76,3 +76,4 @@ fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
         }
     }
 }
+

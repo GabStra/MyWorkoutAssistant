@@ -130,3 +130,4 @@ fun ResumeWorkoutDialog(
         }
     }
 }
+

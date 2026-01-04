@@ -493,7 +493,9 @@ fun <T> removeRestAndRestPause(
     val out = ArrayList<T>(sets.size)
     for (s in sets) {
         if (isRestPause(s)) {
-            while (out.isNotEmpty() && isRestSet(out.last())) out.removeLast()
+            while (out.isNotEmpty() && isRestSet(out.last())) {
+                out.removeAt(out.lastIndex)
+            }
             continue // drop the rest-pause set itself
         }
         out += s

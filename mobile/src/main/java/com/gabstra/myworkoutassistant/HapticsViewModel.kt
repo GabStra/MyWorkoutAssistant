@@ -83,3 +83,4 @@ class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvid
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
 }
+

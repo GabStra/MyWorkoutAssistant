@@ -103,7 +103,11 @@ fun WorkoutScreen(
                             strokeWidth = 1.dp.toPx()
                         )
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                    ),
                     title = {
                         Text(
                             modifier = Modifier
@@ -279,3 +283,4 @@ fun WorkoutScreen(
         )
     }
 }
+

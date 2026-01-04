@@ -77,13 +77,18 @@ fun <T> DetailScreen(
                     IconButton(onClick = onGoBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
                 actions = {
                     IconButton(onClick = onSettingsClick) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
                     }
                 }
             )
@@ -195,7 +200,11 @@ fun <T> DetailScreen(
                     containerColor = MaterialTheme.colorScheme.primary,
                     onClick = onAddClick
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.background
+                    )
                 }
         }
     ) {
@@ -236,3 +245,4 @@ fun <T> DetailScreen(
         }
     }
 }
+

@@ -143,3 +143,4 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         }
     }
 }
+
