@@ -15,21 +15,30 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -43,8 +52,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -56,6 +67,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,7 +77,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -630,11 +644,27 @@ fun WorkoutsScreen(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
                     actions = {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        val scrollState = rememberScrollState()
+                        val canScrollForward by remember {
+                            derivedStateOf { scrollState.canScrollForward }
+                        }
+                        val canScrollBackward by remember {
+                            derivedStateOf { scrollState.canScrollBackward }
+                        }
+                        val density = LocalDensity.current
+                        
+                        LaunchedEffect(scrollState.value) {
+                            // Trigger recomposition when scroll state changes
+                        }
+                        
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .horizontalScroll(scrollState),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
@@ -647,16 +677,68 @@ fun WorkoutsScreen(
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Cancel",
+                                        contentDescription = "Cancel selection",
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
                                 Text(
-                                    "Cancel",
+                                    "Cancel selection",
                                     style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
                                 )
                             }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedWorkouts = activeWorkouts
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBox,
+                                        contentDescription = "Select all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Select all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedWorkouts = emptyList()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                        contentDescription = "Deselect all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Deselect all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                            VerticalDivider(
+                                modifier = Modifier.height(48.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
@@ -708,30 +790,115 @@ fun WorkoutsScreen(
                                 Text(
                                     "Delete",
                                     style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
                                 )
                             }
-                            Button(
-                                modifier = Modifier.padding(5.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                onClick = {
-                                    updateWorkoutsEnabledState(true)
-                                }) {
-                                Text("Enable")
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        updateWorkoutsEnabledState(true)
+                                    },
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckCircle,
+                                        contentDescription = "Enable",
+                                    )
+                                }
+                                Text(
+                                    "Enable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
                             }
-                            Button(
-                                colors = ButtonDefaults.buttonColors(
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                modifier = Modifier.padding(5.dp),
-                                onClick = {
-                                    updateWorkoutsEnabledState(false)
-                                }) {
-                                Text("Disable")
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        updateWorkoutsEnabledState(false)
+                                    },
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Block,
+                                        contentDescription = "Disable",
+                                    )
+                                }
+                                Text(
+                                    "Disable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                            }
+                            
+                            // Right side chevron
+                            if (canScrollForward) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .background(
+                                            brush = Brush.horizontalGradient(
+                                                colors = listOf(Color.Transparent, Color.Black),
+                                                startX = 0f,
+                                                endX = with(density) { 32.dp.toPx() }
+                                            )
+                                        )
+                                        .padding(horizontal = 4.dp)
+                                        .align(Alignment.CenterEnd),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ChevronRight,
+                                        contentDescription = "Scroll right",
+                                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+                            
+                            // Left side chevron
+                            if (canScrollBackward) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .background(
+                                            brush = Brush.horizontalGradient(
+                                                colors = listOf(Color.Black, Color.Transparent),
+                                                startX = 0f,
+                                                endX = with(density) { 32.dp.toPx() }
+                                            )
+                                        )
+                                        .padding(horizontal = 4.dp)
+                                        .align(Alignment.CenterStart),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ChevronLeft,
+                                        contentDescription = "Scroll left",
+                                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -752,7 +919,7 @@ fun WorkoutsScreen(
                         Row(
                             modifier = Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -766,16 +933,62 @@ fun WorkoutsScreen(
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Cancel",
+                                        contentDescription = "Cancel selection",
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
                                 Text(
-                                    "Cancel",
+                                    "Cancel selection",
                                     style = MaterialTheme.typography.labelSmall,
                                     textAlign = TextAlign.Center
                                 )
                             }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedEquipments = equipments
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBox,
+                                        contentDescription = "Select all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Select all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedEquipments = emptyList()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                        contentDescription = "Deselect all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Deselect all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            VerticalDivider(
+                                modifier = Modifier.height(48.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier

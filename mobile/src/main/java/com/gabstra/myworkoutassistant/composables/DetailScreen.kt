@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
@@ -31,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -105,14 +109,52 @@ fun <T> DetailScreen(
                                         selectedItems = emptyList()
                                         selectionMode = false
                                     }) {
-                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel")
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel selection")
                                     }
                                     Text(
-                                        "Cancel",
+                                        "Cancel selection",
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )
                                 }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    IconButton(onClick = {
+                                        selectedItems = items
+                                    }) {
+                                        Icon(imageVector = Icons.Filled.CheckBox, contentDescription = "Select all")
+                                    }
+                                    Text(
+                                        "Select all",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    IconButton(onClick = {
+                                        selectedItems = emptyList()
+                                    }) {
+                                        Icon(imageVector = Icons.Filled.CheckBoxOutlineBlank, contentDescription = "Deselect all")
+                                    }
+                                    Text(
+                                        "Deselect all",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                VerticalDivider(
+                                    modifier = Modifier.height(48.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
                                 if (onUpdateItems != null) {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,

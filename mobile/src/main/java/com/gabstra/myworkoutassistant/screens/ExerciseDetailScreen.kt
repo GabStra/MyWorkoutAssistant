@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +25,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -40,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -389,16 +393,63 @@ fun ExerciseDetailScreen(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Cancel",
+                                            contentDescription = "Cancel selection",
                                             tint = MaterialTheme.colorScheme.onBackground
                                         )
                                     }
                                     Text(
-                                        "Cancel",
+                                        "Cancel selection",
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )
                                 }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    IconButton(onClick = {
+                                        val filteredSets = if (!showRest) sets.filter { it !is RestSet } else sets
+                                        selectedSets = filteredSets
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckBox,
+                                            contentDescription = "Select all",
+                                            tint = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                    Text(
+                                        "Select all",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    IconButton(onClick = {
+                                        selectedSets = emptyList()
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                            contentDescription = "Deselect all",
+                                            tint = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                    Text(
+                                        "Deselect all",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                VerticalDivider(
+                                    modifier = Modifier.height(48.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier

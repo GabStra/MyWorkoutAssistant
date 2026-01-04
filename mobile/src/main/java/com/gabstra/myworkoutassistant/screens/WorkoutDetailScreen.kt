@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +33,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -38,7 +46,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -59,6 +67,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,9 +75,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
@@ -372,13 +383,26 @@ fun WorkoutDetailScreen(
                     disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 val scrollState = rememberScrollState()
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalScroll(scrollState),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                val canScrollForward by remember {
+                    derivedStateOf { scrollState.canScrollForward }
+                }
+                val canScrollBackward by remember {
+                    derivedStateOf { scrollState.canScrollBackward }
+                }
+                val density = LocalDensity.current
+                
+                LaunchedEffect(scrollState.value) {
+                    // Trigger recomposition when scroll state changes
+                }
+                
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .horizontalScroll(scrollState),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
@@ -391,16 +415,69 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Cancel",
+                                contentDescription = "Cancel selection",
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Text(
-                            "Cancel",
+                            "Cancel selection",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(onClick = {
+                            val filteredItems = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents
+                            selectedWorkoutComponents = filteredItems
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckBox,
+                                contentDescription = "Select all",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        Text(
+                            "Select all",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(onClick = {
+                            selectedWorkoutComponents = emptyList()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                contentDescription = "Deselect all",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        Text(
+                            "Deselect all",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
+                        )
+                    }
+                    VerticalDivider(
+                        modifier = Modifier.height(48.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
@@ -459,7 +536,9 @@ fun WorkoutDetailScreen(
                         Text(
                             "Move Up",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
                     Column(
@@ -521,73 +600,103 @@ fun WorkoutDetailScreen(
                         Text(
                             "Move Down",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
-                        Button(
-                            modifier = Modifier.padding(5.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                contentColor = MaterialTheme.colorScheme.background,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            onClick = {
-                                val updatedWorkoutComponents =
-                                    workout.workoutComponents.map { workoutComponent ->
-                                        if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
-                                            when (workoutComponent) {
-                                                is Exercise -> workoutComponent.copy(enabled = true)
-                                                is Rest -> workoutComponent.copy(enabled = true)
-                                                else -> workoutComponent
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(56.dp)
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val updatedWorkoutComponents =
+                                        workout.workoutComponents.map { workoutComponent ->
+                                            if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                when (workoutComponent) {
+                                                    is Exercise -> workoutComponent.copy(enabled = true)
+                                                    is Rest -> workoutComponent.copy(enabled = true)
+                                                    else -> workoutComponent
+                                                }
+                                            } else {
+                                                workoutComponent
                                             }
-                                        } else {
-                                            workoutComponent
                                         }
-                                    }
 
-                                val adjustedComponents =
-                                    ensureRestSeparatedByExercises(updatedWorkoutComponents)
+                                    val adjustedComponents =
+                                        ensureRestSeparatedByExercises(updatedWorkoutComponents)
 
-                                val updatedWorkout =
-                                    workout.copy(workoutComponents = adjustedComponents)
-                                updateWorkoutWithHistory(updatedWorkout)
+                                    val updatedWorkout =
+                                        workout.copy(workoutComponents = adjustedComponents)
+                                    updateWorkoutWithHistory(updatedWorkout)
 
-                                selectedWorkoutComponents = emptyList()
-                                isSelectionModeActive = false
-                            }) {
-                            Text("Enable")
+                                    selectedWorkoutComponents = emptyList()
+                                    isSelectionModeActive = false
+                                },
+                                colors = selectionIconColors
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = "Enable",
+                                )
+                            }
+                            Text(
+                                "Enable",
+                                style = MaterialTheme.typography.labelSmall,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                modifier = Modifier.heightIn(min = 0.dp)
+                            )
                         }
                     } else {
-                        Button(
-                            modifier = Modifier.padding(5.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                contentColor = MaterialTheme.colorScheme.background,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            onClick = {
-                                val updatedWorkoutComponents =
-                                    workout.workoutComponents.map { workoutComponent ->
-                                        if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
-                                            when (workoutComponent) {
-                                                is Exercise -> workoutComponent.copy(enabled = false)
-                                                is Rest -> workoutComponent.copy(enabled = false)
-                                                else -> workoutComponent
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(56.dp)
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val updatedWorkoutComponents =
+                                        workout.workoutComponents.map { workoutComponent ->
+                                            if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                when (workoutComponent) {
+                                                    is Exercise -> workoutComponent.copy(enabled = false)
+                                                    is Rest -> workoutComponent.copy(enabled = false)
+                                                    else -> workoutComponent
+                                                }
+                                            } else {
+                                                workoutComponent
                                             }
-                                        } else {
-                                            workoutComponent
                                         }
-                                    }
 
-                                val adjustedComponents =
-                                    ensureRestSeparatedByExercises(updatedWorkoutComponents)
+                                    val adjustedComponents =
+                                        ensureRestSeparatedByExercises(updatedWorkoutComponents)
 
-                                val updatedWorkout =
-                                    workout.copy(workoutComponents = adjustedComponents)
-                                updateWorkoutWithHistory(updatedWorkout)
-                                selectedWorkoutComponents = emptyList()
-                                isSelectionModeActive = false
-                            }) {
-                            Text("Disable")
+                                    val updatedWorkout =
+                                        workout.copy(workoutComponents = adjustedComponents)
+                                    updateWorkoutWithHistory(updatedWorkout)
+                                    selectedWorkoutComponents = emptyList()
+                                    isSelectionModeActive = false
+                                },
+                                colors = selectionIconColors
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Block,
+                                    contentDescription = "Disable",
+                                )
+                            }
+                            Text(
+                                "Disable",
+                                style = MaterialTheme.typography.labelSmall,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                modifier = Modifier.heightIn(min = 0.dp)
+                            )
                         }
                     }
 
@@ -620,7 +729,9 @@ fun WorkoutDetailScreen(
                         Text(
                             "Copy",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
                     Column(
@@ -642,7 +753,9 @@ fun WorkoutDetailScreen(
                         Text(
                             "Move",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
                     Column(
@@ -692,8 +805,59 @@ fun WorkoutDetailScreen(
                         Text(
                             "Delete",
                             style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.heightIn(min = 0.dp)
                         )
+                    }
+                    }
+                    
+                    // Right side chevron
+                    if (canScrollForward) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .background(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Transparent, Color.Black),
+                                        startX = 0f,
+                                        endX = with(density) { 32.dp.toPx() }
+                                    )
+                                )
+                                .padding(horizontal = 4.dp)
+                                .align(Alignment.CenterEnd),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ChevronRight,
+                                contentDescription = "Scroll right",
+                                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                    
+                    // Left side chevron
+                    if (canScrollBackward) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .background(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(Color.Black, Color.Transparent),
+                                        startX = 0f,
+                                        endX = with(density) { 32.dp.toPx() }
+                                    )
+                                )
+                                .padding(horizontal = 4.dp)
+                                .align(Alignment.CenterStart),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ChevronLeft,
+                                contentDescription = "Scroll left",
+                                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                            )
+                        }
                     }
                 }
             }
