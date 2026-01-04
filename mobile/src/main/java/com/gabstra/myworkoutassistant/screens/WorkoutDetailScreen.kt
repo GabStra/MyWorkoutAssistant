@@ -3,13 +3,12 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import android.content.Context
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -75,16 +76,16 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
-import com.gabstra.myworkoutassistant.composables.DashedCard
-import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.DashedCard
+import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.composables.getDaysOfWeekStringForSchedule
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -92,9 +93,9 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -102,9 +103,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.workout.LoadingText
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -159,7 +158,7 @@ fun WorkoutComponentRenderer(
 ) {
     when (workoutComponent) {
         is Exercise -> {
-            StyledCard{
+            StyledCard {
                 ExerciseRenderer(
                     exercise = workoutComponent,
                     showRest = showRest,
@@ -210,10 +209,12 @@ fun WorkoutComponentRenderer(
                         .padding(10.dp),
                     text = "Superset",
                     style = MaterialTheme.typography.bodyLarge,
-                    color =  if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Column(
-                    modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),
+                    modifier = Modifier
+                        .padding(horizontal = 10.dp)
+                        .padding(bottom = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     superSet.exercises.forEach { exercise ->
@@ -254,27 +255,27 @@ fun WorkoutDetailScreen(
     onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
-    
+
     val isCheckingWorkoutRecord by workoutViewModel.isCheckingWorkoutRecord.collectAsState()
     val currentSelectedWorkoutId by workoutViewModel.selectedWorkoutId
     val hasWorkoutRecordFlow by workoutViewModel.hasWorkoutRecord.collectAsState()
-    
+
     // Stabilize hasWorkoutRecord to prevent blink - only update when check completes
     // Use remember with workout.id as key to reset when workout changes
     var hasWorkoutRecord by remember(workout.id) { mutableStateOf(false) }
-    
+
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
-    
+
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
     val startWorkoutDirectly = {
-        if(hasWorkoutRecord) workoutViewModel.deleteWorkoutRecord()
+        if (hasWorkoutRecord) workoutViewModel.deleteWorkoutRecord()
         workoutViewModel.startWorkout()
         val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
         prefs.edit { putBoolean("isWorkoutInProgress", true) }
         appViewModel.setScreenData(ScreenData.Workout(workout.id))
     }
-    
+
     // Helper function to resume workout directly
     val resumeWorkoutDirectly = {
         workoutViewModel.resumeWorkoutFromRecord()
@@ -282,22 +283,27 @@ fun WorkoutDetailScreen(
         prefs.edit { putBoolean("isWorkoutInProgress", true) }
         appViewModel.setScreenData(ScreenData.Workout(workout.id))
     }
-    
+
     LaunchedEffect(workout.id) {
         // Only set if different to avoid unnecessary state updates and recompositions
         if (currentSelectedWorkoutId != workout.id) {
             workoutViewModel.setSelectedWorkoutId(workout.id)
         }
     }
-    
+
     // Update hasWorkoutRecord only when check completes and workout ID matches
     // This prevents UI from updating during the async check, eliminating the blink
-    LaunchedEffect(hasWorkoutRecordFlow, isCheckingWorkoutRecord, workout.id, currentSelectedWorkoutId) {
+    LaunchedEffect(
+        hasWorkoutRecordFlow,
+        isCheckingWorkoutRecord,
+        workout.id,
+        currentSelectedWorkoutId
+    ) {
         if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id) {
             hasWorkoutRecord = hasWorkoutRecordFlow
         }
     }
-    
+
     LaunchedEffect(hasWorkoutRecord) {
         // Fix: Clear stale isWorkoutInProgress flag if there's no workout record
         // This prevents auto-starting workouts when the flag persisted from a previous session
@@ -314,21 +320,32 @@ fun WorkoutDetailScreen(
     var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
-    var showRest by remember { mutableStateOf(false) }
+    var showRest by remember { mutableStateOf(true) }
 
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     val allWorkouts by appViewModel.workoutsFlow.collectAsState()
 
 
     val scope = rememberCoroutineScope()
+    var isSaving by remember { mutableStateOf(false) }
 
     fun updateWorkoutWithHistory(updatedWorkout: Workout) {
+        if (isSaving) return
+        isSaving = true
         scope.launch {
-            val hasHistory = withContext(Dispatchers.IO) {
-                workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id)
-            }
-            withContext(Dispatchers.Main) {
-                appViewModel.updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
+            try {
+                val hasHistory = withContext(Dispatchers.IO) {
+                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id)
+                }
+                withContext(Dispatchers.Main) {
+                    appViewModel.updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
+                }
+                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
+                    context,
+                    appViewModel.workoutStore
+                )
+            } finally {
+                isSaving = false
             }
         }
     }
@@ -354,101 +371,157 @@ fun WorkoutDetailScreen(
                     contentColor = MaterialTheme.colorScheme.onBackground,
                     disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                val scrollState = rememberScrollState()
                 Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .horizontalScroll(scrollState),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        enabled = selectedWorkoutComponents.size == 1 &&
-                                workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0 &&
-                                selectedWorkoutComponents.first() !is Rest,
-                        onClick = {
-                            val currentWorkoutComponents = workout.workoutComponents
-                            val selectedComponent = selectedWorkoutComponents.first()
-
-                            val selectedIndex =
-                                currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
-
-                            if (selectedIndex <= 0) {
-                                return@IconButton
-                            }
-
-                            val previousWorkoutComponent = currentWorkoutComponents.subList(0, selectedIndex)
-                                .lastOrNull { it !is Rest }
-
-                            if (previousWorkoutComponent == null) {
-                                return@IconButton
-                            }
-
-                            val previousIndex = currentWorkoutComponents.indexOfFirst { it.id == previousWorkoutComponent.id }
-
-                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
-                                val componentToMoveToPreviousSlot = this[selectedIndex]
-                                val componentToMoveToSelectedSlot = this[previousIndex]
-
-                                this[selectedIndex] = componentToMoveToSelectedSlot
-                                this[previousIndex] = componentToMoveToPreviousSlot
-                            }
-
-
-                            val adjustedComponents =
-                                ensureRestSeparatedByExercises(newWorkoutComponents)
-                            val updatedWorkout =
-                                workout.copy(workoutComponents = adjustedComponents)
-                            updateWorkoutWithHistory(updatedWorkout)
-                        },
-                        colors = selectionIconColors
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.ArrowUpward,
-                            contentDescription = "Go Higher",
+                        IconButton(onClick = {
+                            selectedWorkoutComponents = emptyList()
+                            isSelectionModeActive = false
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        Text(
+                            "Cancel",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
                         )
                     }
-                    IconButton(
-                        enabled = selectedWorkoutComponents.size == 1 &&
-                                workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1 &&
-                                selectedWorkoutComponents.first() !is Rest
-                        ,
-                        onClick = {
-                            val currentWorkoutComponents = workout.workoutComponents
-                            val selectedComponent = selectedWorkoutComponents.first()
-
-                            val selectedIndex =
-                                currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
-
-                            if (selectedIndex < 0 || selectedIndex + 1 >= currentWorkoutComponents.size) {
-                                return@IconButton
-                            }
-
-                            val nextWorkoutComponent = currentWorkoutComponents.subList(selectedIndex + 1, currentWorkoutComponents.size)
-                                .firstOrNull { it !is Rest }
-
-                            if (nextWorkoutComponent == null) {
-                                return@IconButton
-                            }
-
-                            val nextIndex = currentWorkoutComponents.indexOfFirst { it.id == nextWorkoutComponent.id }
-
-                            val newWorkoutComponents = currentWorkoutComponents.toMutableList().apply {
-                                val componentToMoveToPreviousSlot = this[selectedIndex]
-                                val componentToMoveToSelectedSlot = this[nextIndex]
-
-                                this[selectedIndex] = componentToMoveToSelectedSlot
-                                this[nextIndex] = componentToMoveToPreviousSlot
-                            }
-
-                            val adjustedComponents =
-                                ensureRestSeparatedByExercises(newWorkoutComponents)
-                            val updatedWorkout =
-                                workout.copy(workoutComponents = adjustedComponents)
-                            updateWorkoutWithHistory(updatedWorkout)
-                        },
-                        colors = selectionIconColors
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.ArrowDownward,
-                            contentDescription = "Go Lower"
+                        IconButton(
+                            enabled = selectedWorkoutComponents.size == 1 &&
+                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0 &&
+                                    selectedWorkoutComponents.first() !is Rest,
+                            onClick = {
+                                val currentWorkoutComponents = workout.workoutComponents
+                                val selectedComponent = selectedWorkoutComponents.first()
+
+                                val selectedIndex =
+                                    currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
+
+                                if (selectedIndex <= 0) {
+                                    return@IconButton
+                                }
+
+                                val previousWorkoutComponent =
+                                    currentWorkoutComponents.subList(0, selectedIndex)
+                                        .lastOrNull { it !is Rest }
+
+                                if (previousWorkoutComponent == null) {
+                                    return@IconButton
+                                }
+
+                                val previousIndex =
+                                    currentWorkoutComponents.indexOfFirst { it.id == previousWorkoutComponent.id }
+
+                                val newWorkoutComponents =
+                                    currentWorkoutComponents.toMutableList().apply {
+                                        val componentToMoveToPreviousSlot = this[selectedIndex]
+                                        val componentToMoveToSelectedSlot = this[previousIndex]
+
+                                        this[selectedIndex] = componentToMoveToSelectedSlot
+                                        this[previousIndex] = componentToMoveToPreviousSlot
+                                    }
+
+
+                                val adjustedComponents =
+                                    ensureRestSeparatedByExercises(newWorkoutComponents)
+                                val updatedWorkout =
+                                    workout.copy(workoutComponents = adjustedComponents)
+                                updateWorkoutWithHistory(updatedWorkout)
+                            },
+                            colors = selectionIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowUpward,
+                                contentDescription = "Move Up",
+                            )
+                        }
+                        Text(
+                            "Move Up",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(
+                            enabled = selectedWorkoutComponents.size == 1 &&
+                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1 &&
+                                    selectedWorkoutComponents.first() !is Rest,
+                            onClick = {
+                                val currentWorkoutComponents = workout.workoutComponents
+                                val selectedComponent = selectedWorkoutComponents.first()
+
+                                val selectedIndex =
+                                    currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
+
+                                if (selectedIndex < 0 || selectedIndex + 1 >= currentWorkoutComponents.size) {
+                                    return@IconButton
+                                }
+
+                                val nextWorkoutComponent = currentWorkoutComponents.subList(
+                                    selectedIndex + 1,
+                                    currentWorkoutComponents.size
+                                )
+                                    .firstOrNull { it !is Rest }
+
+                                if (nextWorkoutComponent == null) {
+                                    return@IconButton
+                                }
+
+                                val nextIndex =
+                                    currentWorkoutComponents.indexOfFirst { it.id == nextWorkoutComponent.id }
+
+                                val newWorkoutComponents =
+                                    currentWorkoutComponents.toMutableList().apply {
+                                        val componentToMoveToPreviousSlot = this[selectedIndex]
+                                        val componentToMoveToSelectedSlot = this[nextIndex]
+
+                                        this[selectedIndex] = componentToMoveToSelectedSlot
+                                        this[nextIndex] = componentToMoveToPreviousSlot
+                                    }
+
+                                val adjustedComponents =
+                                    ensureRestSeparatedByExercises(newWorkoutComponents)
+                                val updatedWorkout =
+                                    workout.copy(workoutComponents = adjustedComponents)
+                                updateWorkoutWithHistory(updatedWorkout)
+                            },
+                            colors = selectionIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowDownward,
+                                contentDescription = "Move Down"
+                            )
+                        }
+                        Text(
+                            "Move Down",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
                         )
                     }
                     if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
@@ -518,71 +591,108 @@ fun WorkoutDetailScreen(
                         }
                     }
 
-                    IconButton(
-                        enabled = selectedWorkoutComponents.isNotEmpty(),
-                        onClick = {
-                            val newWorkoutComponents = selectedWorkoutComponents.map {
-                                cloneWorkoutComponent(it)
-                            }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(
+                            enabled = selectedWorkoutComponents.isNotEmpty(),
+                            onClick = {
+                                val newWorkoutComponents = selectedWorkoutComponents.map {
+                                    cloneWorkoutComponent(it)
+                                }
+
+                                val updatedWorkout =
+                                    workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponents)
+                                updateWorkoutWithHistory(updatedWorkout)
+                                selectedWorkoutComponents = emptyList()
+
+                            },
+                            colors = selectionIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy",
+                            )
+                        }
+                        Text(
+                            "Copy",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(
+                            enabled = selectedWorkoutComponents.isNotEmpty(),
+                            onClick = { showMoveWorkoutDialog = true },
+                            colors = selectionIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoveDown,
+                                contentDescription = "Move",
+                            )
+                        }
+                        Text(
+                            "Move",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .width(56.dp)
+                            .padding(horizontal = 4.dp)
+                    ) {
+                        IconButton(onClick = {
+                            val superSetExercises =
+                                selectedWorkoutComponents.filterIsInstance<Superset>()
+                                    .flatMap { it.exercises }
+
+                            val newWorkoutComponents = workout.workoutComponents.filter { item ->
+                                selectedWorkoutComponents.none { it.id == item.id }
+                            } + superSetExercises
+
+                            val adjustedComponents =
+                                ensureRestSeparatedByExercises(newWorkoutComponents)
 
                             val updatedWorkout =
-                                workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponents)
+                                workout.copy(workoutComponents = adjustedComponents)
                             updateWorkoutWithHistory(updatedWorkout)
                             selectedWorkoutComponents = emptyList()
+                            isSelectionModeActive = false
 
-                        },
-                        colors = selectionIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy",
-                        )
-                    }
-                    IconButton(
-                        enabled = selectedWorkoutComponents.isNotEmpty(),
-                        onClick = { showMoveWorkoutDialog = true },
-                        colors = selectionIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoveDown,
-                            contentDescription = "Move to Another Workout",
-                        )
-                    }
-                    IconButton(onClick = {
-                        val superSetExercises =
-                            selectedWorkoutComponents.filterIsInstance<Superset>()
-                                .flatMap { it.exercises }
-
-                        val newWorkoutComponents = workout.workoutComponents.filter { item ->
-                            selectedWorkoutComponents.none { it.id == item.id }
-                        } + superSetExercises
-
-                        val adjustedComponents =
-                            ensureRestSeparatedByExercises(newWorkoutComponents)
-
-                        val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
-                        updateWorkoutWithHistory(updatedWorkout)
-                        selectedWorkoutComponents = emptyList()
-                        isSelectionModeActive = false
-
-                        val selectedExerciseIds =
-                            selectedWorkoutComponents.toList().filterIsInstance<Exercise>()
-                                .map { it.id }
-                        if (selectedExerciseIds.isNotEmpty()) {
-                            scope.launch {
-                                withContext(Dispatchers.IO) {
-                                    selectedExerciseIds.forEach {
-                                        setHistoryDao.deleteByExerciseId(it)
-                                        exerciseInfoDao.deleteById(it)
+                            val selectedExerciseIds =
+                                selectedWorkoutComponents.toList().filterIsInstance<Exercise>()
+                                    .map { it.id }
+                            if (selectedExerciseIds.isNotEmpty()) {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        selectedExerciseIds.forEach {
+                                            setHistoryDao.deleteByExerciseId(it)
+                                            exerciseInfoDao.deleteById(it)
+                                        }
                                     }
                                 }
                             }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.onBackground
+                            )
                         }
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.onBackground
+                        Text(
+                            "Delete",
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -591,57 +701,62 @@ fun WorkoutDetailScreen(
     }
 
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
-                title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(),
-                        textAlign = TextAlign.Center,
-                        text = workout.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
+                    ),
+                    title = {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(),
+                            textAlign = TextAlign.Center,
+                            text = workout.name
                         )
-                    }
-                },
-                actions = {
-                    Menu(
-                        onEditWorkout = {
-                            appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
-                        },
-                        onClearHistory = {
-                            scope.launch {
-                                withContext(Dispatchers.Main) {
-                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                    workoutRecordDao.deleteByWorkoutId(workout.id)
-                                    Toast.makeText(
-                                        context,
-                                        "History deleted",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+                    actions = {
+                        Menu(
+                            onEditWorkout = {
+                                appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
+                            },
+                            onClearHistory = {
+                                scope.launch {
+                                    withContext(Dispatchers.Main) {
+                                        workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                        workoutRecordDao.deleteByWorkoutId(workout.id)
+                                        Toast.makeText(
+                                            context,
+                                            "History deleted",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
+                )
+            },
+            bottomBar = {
+                if (selectedWorkoutComponents.isNotEmpty()) {
+                    Column {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        editModeBottomBar()
+                    }
                 }
-            )
-        },
-        bottomBar = {
-            if (selectedWorkoutComponents.isNotEmpty()) {
-                StyledCard {
-                    editModeBottomBar()
-                }
-            }
-        },
-    ) { paddingValues ->
+            },
+        ) { paddingValues ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -749,18 +864,21 @@ fun WorkoutDetailScreen(
                                     }
                                 ),
                                 content = {
-                                    Text("Add Workout Component", color = MaterialTheme.colorScheme.onPrimary)
+                                    Text(
+                                        "Add Workout Component",
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
                                 }
                             )
                         }
-                    }else{
-                        if(workout.enabled){
+                    } else {
+                        if (workout.enabled) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
-                            ){
+                            ) {
                                 Button(
                                     onClick = {
                                         if (hasWorkoutRecord) {
@@ -787,7 +905,7 @@ fun WorkoutDetailScreen(
                                         .fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
-                                ){
+                                ) {
                                     Button(
                                         onClick = {
                                             resumeWorkoutDirectly()
@@ -807,7 +925,7 @@ fun WorkoutDetailScreen(
                                         .fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
-                                ){
+                                ) {
                                     Button(
                                         onClick = {
                                             showDeleteDialog = true
@@ -822,20 +940,25 @@ fun WorkoutDetailScreen(
                                     }
                                 }
                             }
-                                
+
                             Spacer(Modifier.height(Spacing.md))
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
-                        
+
                         // Display schedules for this workout
-                        var workoutSchedules by remember { mutableStateOf<List<WorkoutSchedule>>(emptyList()) }
-                        
+                        var workoutSchedules by remember {
+                            mutableStateOf<List<WorkoutSchedule>>(
+                                emptyList()
+                            )
+                        }
+
                         LaunchedEffect(workout.globalId) {
                             withContext(Dispatchers.IO) {
-                                workoutSchedules = workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
+                                workoutSchedules =
+                                    workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
                             }
                         }
-                        
+
                         if (workoutSchedules.isNotEmpty()) {
                             Spacer(Modifier.height(Spacing.md))
                             StyledCard {
@@ -850,7 +973,7 @@ fun WorkoutDetailScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
-                                    
+
                                     workoutSchedules.forEachIndexed { index, schedule ->
                                         ActiveScheduleCard(
                                             schedule = schedule,
@@ -892,7 +1015,10 @@ fun WorkoutDetailScreen(
                                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                                     )
                                 )
-                                Text(text = "Show Rests", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "Show Rests",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
                             }
                         }
 
@@ -1003,7 +1129,9 @@ fun WorkoutDetailScreen(
                         scope.launch {
                             val (sourceHasHistory, targetHasHistory) = withContext(Dispatchers.IO) {
                                 workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id) to
-                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(targetWorkout.id)
+                                        workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                            targetWorkout.id
+                                        )
                             }
                             withContext(Dispatchers.Main) {
                                 appViewModel.moveComponentsVersioned(
@@ -1029,39 +1157,41 @@ fun WorkoutDetailScreen(
                 )
             }
 
-    CustomDialogYesOnLongPress(
-        show = showDeleteDialog,
-        title = "Delete Paused Workout",
-        message = "Are you sure you want to delete this paused workout?",
-        handleYesClick = {
-            workoutViewModel.deleteWorkoutRecord()
-            showDeleteDialog = false
-        },
-        handleNoClick = {
-            showDeleteDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showDeleteDialog = false
-        }
-    )
+            CustomDialogYesOnLongPress(
+                show = showDeleteDialog,
+                title = "Delete Paused Workout",
+                message = "Are you sure you want to delete this paused workout?",
+                handleYesClick = {
+                    workoutViewModel.deleteWorkoutRecord()
+                    showDeleteDialog = false
+                },
+                handleNoClick = {
+                    showDeleteDialog = false
+                },
+                closeTimerInMillis = 5000,
+                handleOnAutomaticClose = {
+                    showDeleteDialog = false
+                }
+            )
 
-    CustomDialogYesOnLongPress(
-        show = showStartConfirmationDialog,
-        title = "Start New Workout",
-        message = "An existing paused workout will be deleted. Continue?",
-        handleYesClick = {
-            showStartConfirmationDialog = false
-            startWorkoutDirectly()
-        },
-        handleNoClick = {
-            showStartConfirmationDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showStartConfirmationDialog = false
+            CustomDialogYesOnLongPress(
+                show = showStartConfirmationDialog,
+                title = "Start New Workout",
+                message = "An existing paused workout will be deleted. Continue?",
+                handleYesClick = {
+                    showStartConfirmationDialog = false
+                    startWorkoutDirectly()
+                },
+                handleNoClick = {
+                    showStartConfirmationDialog = false
+                },
+                closeTimerInMillis = 5000,
+                handleOnAutomaticClose = {
+                    showStartConfirmationDialog = false
+                }
+            )
+            SavingOverlay(isSaving = isSaving)
         }
-    )
     }
 }
 

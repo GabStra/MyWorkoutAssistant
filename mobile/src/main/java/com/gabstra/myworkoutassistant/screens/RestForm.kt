@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -43,12 +45,14 @@ fun RestForm(
     onRestUpsert: (Rest) -> Unit,
     onCancel: () -> Unit,
     rest: Rest? = null, // Add exercise parameter with default value null
+    isSaving: Boolean = false
 ) {
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(rest?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
@@ -70,7 +74,7 @@ fun RestForm(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -150,5 +154,7 @@ fun RestForm(
                     .padding(8.dp)
             )
         }
+    }
+    SavingOverlay(isSaving = isSaving)
     }
 }

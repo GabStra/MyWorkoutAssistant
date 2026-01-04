@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.screens // Or your appropriate package
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -53,7 +55,8 @@ fun SupersetForm(
     onSupersetUpsert: (Superset) -> Unit,
     onCancel: () -> Unit,
     availableExercises: List<Exercise>,
-    superset: Superset? = null
+    superset: Superset? = null,
+    isSaving: Boolean = false
 ) {
 
     var selectedExercises by remember { mutableStateOf(superset?.exercises ?: emptyList()) }
@@ -78,7 +81,8 @@ fun SupersetForm(
     // END of new code
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
@@ -101,7 +105,7 @@ fun SupersetForm(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -277,5 +281,7 @@ fun SupersetForm(
 
             Spacer(modifier = Modifier.height(10.dp))
         }
+    }
+    SavingOverlay(isSaving = isSaving)
     }
 }

@@ -161,16 +161,16 @@ class WorkoutManager {
         fun moveWorkoutComponents(sourceWorkouts: List<Workout>, sourceWorkout: Workout, componentsToMove: List<WorkoutComponent>, targetWorkout: Workout): List<Workout> {
             // Remove from source
             val updatedSourceWorkouts = sourceWorkouts.map { workout ->
-                if (workout == sourceWorkout) {
+                if (workout.id == sourceWorkout.id) {
                     workout.copy(workoutComponents = workout.workoutComponents.filter { it !in componentsToMove })
                 } else {
                     workout
                 }
             }
             
-            // Add to target
+            // Add to target - find by globalId and isActive to handle versioned workouts correctly
             return updatedSourceWorkouts.map { workout ->
-                if (workout == targetWorkout) {
+                if (workout.globalId == targetWorkout.globalId && workout.isActive) {
                     workout.copy(workoutComponents = workout.workoutComponents + componentsToMove)
                 } else {
                     workout

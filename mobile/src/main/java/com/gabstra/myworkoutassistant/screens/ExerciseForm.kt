@@ -3,7 +3,10 @@ package com.gabstra.myworkoutassistant.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -41,8 +45,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -58,6 +64,7 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -94,7 +101,8 @@ fun ExerciseForm(
     onExerciseUpsert: (Exercise) -> Unit,
     onCancel: () -> Unit,
     exercise: Exercise? = null,
-    allowSettingDoNotStoreHistory: Boolean = true
+    allowSettingDoNotStoreHistory: Boolean = true,
+    isSaving: Boolean = false
 ) {
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
@@ -175,7 +183,8 @@ fun ExerciseForm(
     val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
     val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
@@ -198,7 +207,7 @@ fun ExerciseForm(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -766,5 +775,7 @@ fun ExerciseForm(
 
             Spacer(Modifier.height(Spacing.xl))
         }
+    }
+    SavingOverlay(isSaving = isSaving)
     }
 }

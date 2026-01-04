@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
 import com.gabstra.myworkoutassistant.composables.WeightSetForm
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -72,13 +73,15 @@ fun SetForm(
     onCancel: () -> Unit,
     set: Set? = null, // Add exercise parameter with default value null
     exerciseType : ExerciseType,
-    exercise: Exercise
+    exercise: Exercise,
+    isSaving: Boolean = false
 ) {
     val selectedSetType = remember { mutableStateOf(getSetTypeFromExerciseType(exerciseType)) }
     val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.drawBehind {
@@ -101,7 +104,7 @@ fun SetForm(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -202,5 +205,7 @@ fun SetForm(
                     .padding(8.dp)
             )
         }
+    }
+    SavingOverlay(isSaving = isSaving)
     }
 }

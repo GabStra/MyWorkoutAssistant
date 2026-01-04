@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -83,6 +84,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
+import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
@@ -590,10 +592,16 @@ fun WorkoutsScreen(
         return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var isSaving by remember { mutableStateOf(false) }
+    
     fun updateWorkoutsEnabledState(enabled: Boolean) {
         val workoutsToUpdate = selectedWorkouts.toList()
         if (workoutsToUpdate.isEmpty()) return
+        if (isSaving) return
+        isSaving = true
         scope.launch {
+            try {
             val historyById = withContext(Dispatchers.IO) {
                 workoutsToUpdate.associate { it.id to workoutHistoryDao.workoutHistoryExistsByWorkoutId(it.id) }
             }
@@ -605,6 +613,10 @@ fun WorkoutsScreen(
                 selectedWorkouts = emptyList()
                 isWorkoutSelectionModeActive = false
             }
+            com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+            } finally {
+                isSaving = false
+            }
         }
     }
 
@@ -612,56 +624,91 @@ fun WorkoutsScreen(
     @Composable
     fun workoutsBottomBar(){
         if (selectedWorkouts.isNotEmpty()) {
-            StyledCard{
+            Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
                     actions = {
                         Row(
                             modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
-                                onClick = {
-                                    val newWorkouts =
-                                        activeAndEnabledWorkouts.filter { workout ->
-                                            selectedWorkouts.none { it.id == workout.id }
-                                        }
-
-                                    val newWorkoutsWithUpdatedOrder =
-                                        newWorkouts.mapIndexed { index, workout ->
-                                            workout.copy(
-                                                order = index
-                                            )
-                                        }
-
-                                    appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                                    scope.launch(Dispatchers.IO) {
-                                        for (workout in selectedWorkouts) {
-                                            val workoutHistories =
-                                                workoutHistoryDao.getWorkoutsByWorkoutId(
-                                                    workout.id
-                                                )
-                                            for (workoutHistory in workoutHistories) {
-                                                setHistoryDao.deleteByWorkoutHistoryId(
-                                                    workoutHistory.id
-                                                )
-                                            }
-                                            workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                        }
-                                        groupedWorkoutsHistories =
-                                            workoutHistoryDao.getAllWorkoutHistories()
-                                                .groupBy { it.date }
-                                    }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
                                     selectedWorkouts = emptyList()
                                     isWorkoutSelectionModeActive = false
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Cancel",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
                                 }
+                                Text(
+                                    "Cancel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    tint = MaterialTheme.colorScheme.onBackground
+                                IconButton(
+                                    onClick = {
+                                        val newWorkouts =
+                                            activeAndEnabledWorkouts.filter { workout ->
+                                                selectedWorkouts.none { it.id == workout.id }
+                                            }
+
+                                        val newWorkoutsWithUpdatedOrder =
+                                            newWorkouts.mapIndexed { index, workout ->
+                                                workout.copy(
+                                                    order = index
+                                                )
+                                            }
+
+                                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
+                                        scope.launch(Dispatchers.IO) {
+                                            for (workout in selectedWorkouts) {
+                                                val workoutHistories =
+                                                    workoutHistoryDao.getWorkoutsByWorkoutId(
+                                                        workout.id
+                                                    )
+                                                for (workoutHistory in workoutHistories) {
+                                                    setHistoryDao.deleteByWorkoutHistoryId(
+                                                        workoutHistory.id
+                                                    )
+                                                }
+                                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                            }
+                                            groupedWorkoutsHistories =
+                                                workoutHistoryDao.getAllWorkoutHistories()
+                                                    .groupBy { it.date }
+                                        }
+                                        selectedWorkouts = emptyList()
+                                        isWorkoutSelectionModeActive = false
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Delete",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                             Button(
@@ -686,7 +733,6 @@ fun WorkoutsScreen(
                                 }) {
                                 Text("Disable")
                             }
-
                         }
                     }
                 )
@@ -697,45 +743,92 @@ fun WorkoutsScreen(
     @Composable
     fun equipmentsBottomBar(){
         if(selectedEquipments.isNotEmpty()){
-            StyledCard {
+            Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 BottomAppBar(
                     contentPadding = PaddingValues(0.dp),
                     containerColor = Color.Transparent,
                     actions = {
                         Row(
                             modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = {
-                                val newEquipments = selectedEquipments.map { it ->
-                                    when (it.type){
-                                        EquipmentType.GENERIC -> throw NotImplementedError()
-                                        EquipmentType.BARBELL -> Barbell(UUID.randomUUID(), it.name + " (Copy)", (it as Barbell).availablePlates, it.barLength,it.barWeight)
-                                        EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
-                                        EquipmentType.DUMBBELL -> TODO()
-                                        EquipmentType.PLATELOADEDCABLE -> TODO()
-                                        EquipmentType.WEIGHTVEST -> TODO()
-                                        EquipmentType.MACHINE -> TODO()
-                                        EquipmentType.IRONNECK -> TODO()
-                                    }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedEquipments = emptyList()
+                                    isEquipmentSelectionModeActive = false
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Cancel",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
                                 }
-
-                                val newTotalEquipments = equipments + newEquipments
-
-                                appViewModel.updateEquipments(newTotalEquipments)
-                                isEquipmentSelectionModeActive = false
-                            }) {
-                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = MaterialTheme.colorScheme.onBackground)
+                                Text(
+                                    "Cancel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
                             }
-                            IconButton(onClick = {
-                                val newEquipments = equipments.filter { item ->
-                                    selectedEquipments.none { it.id == item.id }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    val newEquipments = selectedEquipments.map { it ->
+                                        when (it.type){
+                                            EquipmentType.GENERIC -> throw NotImplementedError()
+                                            EquipmentType.BARBELL -> Barbell(UUID.randomUUID(), it.name + " (Copy)", (it as Barbell).availablePlates, it.barLength,it.barWeight)
+                                            EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
+                                            EquipmentType.DUMBBELL -> TODO()
+                                            EquipmentType.PLATELOADEDCABLE -> TODO()
+                                            EquipmentType.WEIGHTVEST -> TODO()
+                                            EquipmentType.MACHINE -> TODO()
+                                            EquipmentType.IRONNECK -> TODO()
+                                        }
+                                    }
+
+                                    val newTotalEquipments = equipments + newEquipments
+
+                                    appViewModel.updateEquipments(newTotalEquipments)
+                                    isEquipmentSelectionModeActive = false
+                                }) {
+                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = MaterialTheme.colorScheme.onBackground)
                                 }
-                                appViewModel.updateEquipments(newEquipments)
-                                isEquipmentSelectionModeActive = false
-                            }) {
-                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
+                                Text(
+                                    "Copy",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    val newEquipments = equipments.filter { item ->
+                                        selectedEquipments.none { it.id == item.id }
+                                    }
+                                    appViewModel.updateEquipments(newEquipments)
+                                    isEquipmentSelectionModeActive = false
+                                }) {
+                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
+                                }
+                                Text(
+                                    "Delete",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
                             }
                         }
                     }
@@ -755,8 +848,9 @@ fun WorkoutsScreen(
         pagerState.scrollToPage(selectedTabIndex)
     }
 
-    Scaffold(
-        topBar = {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background, titleContentColor = MaterialTheme.colorScheme.onBackground),
                 title = {
@@ -1565,5 +1659,7 @@ fun WorkoutsScreen(
         }
 
 
+    }
+    SavingOverlay(isSaving = isSaving)
     }
 }

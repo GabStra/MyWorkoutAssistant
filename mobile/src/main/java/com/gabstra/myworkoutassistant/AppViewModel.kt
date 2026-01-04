@@ -360,7 +360,8 @@ class AppViewModel() : ViewModel() {
             targetWorkout
         )
         val updatedSourceWorkout = updatedWorkouts.firstOrNull { it.id == sourceWorkout.id } ?: return
-        val updatedTargetWorkout = updatedWorkouts.firstOrNull { it.id == targetWorkout.id } ?: return
+        // Find target workout by globalId and isActive to handle versioned workouts correctly
+        val updatedTargetWorkout = updatedWorkouts.firstOrNull { it.globalId == targetWorkout.globalId && it.isActive } ?: return
 
         var nextWorkouts = workouts
         nextWorkouts = applyWorkoutUpdate(nextWorkouts, sourceWorkout, updatedSourceWorkout, sourceHasHistory)

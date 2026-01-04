@@ -4,20 +4,27 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,10 +36,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -74,21 +83,62 @@ fun <T> DetailScreen(
             )
         },
         bottomBar = {
-            if (selectedItems.isNotEmpty()) BottomAppBar(
-                actions = {
-                    if (onUpdateItems != null) {
-                        IconButton(onClick = {
-                            onUpdateItems(items.filterNot { it in selectedItems })
-                            selectedItems = emptyList()
-                            selectionMode = false
-                        }) {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+            if (selectedItems.isNotEmpty()) {
+                Column {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    BottomAppBar(
+                        contentPadding = PaddingValues(0.dp),
+                        containerColor = Color.Transparent,
+                        actions = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .width(56.dp)
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    IconButton(onClick = {
+                                        selectedItems = emptyList()
+                                        selectionMode = false
+                                    }) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel")
+                                    }
+                                    Text(
+                                        "Cancel",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                if (onUpdateItems != null) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                            .padding(horizontal = 4.dp)
+                                    ) {
+                                        IconButton(onClick = {
+                                            onUpdateItems(items.filterNot { it in selectedItems })
+                                            selectedItems = emptyList()
+                                            selectionMode = false
+                                        }) {
+                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                                        }
+                                        Text(
+                                            "Delete",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    }
-
-                    // Add more actions as necessary
+                    )
                 }
-            )
+            }
         },
         floatingActionButton = {
             if (isAddButtonVisible && selectedItems.isEmpty())

@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
@@ -235,6 +236,38 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
         }
+    }
+}
+
+/**
+ * Saves workout store to both internal storage and backup file.
+ * This is a convenience function that combines both save operations.
+ */
+suspend fun saveWorkoutStoreWithBackup(
+    context: Context,
+    workoutStore: WorkoutStore,
+    workoutStoreRepository: WorkoutStoreRepository,
+    db: AppDatabase
+) {
+    withContext(Dispatchers.IO) {
+        workoutStoreRepository.saveWorkoutStore(workoutStore)
+        saveWorkoutStoreToDownloads(context, workoutStore, db)
+    }
+}
+
+/**
+ * Saves workout store with backup, automatically creating database and repository instances.
+ * Use this in composables where you only have access to context.
+ */
+suspend fun saveWorkoutStoreWithBackupFromContext(
+    context: Context,
+    workoutStore: WorkoutStore
+) {
+    withContext(Dispatchers.IO) {
+        val db = AppDatabase.getDatabase(context)
+        val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
+        workoutStoreRepository.saveWorkoutStore(workoutStore)
+        saveWorkoutStoreToDownloads(context, workoutStore, db)
     }
 }
 
