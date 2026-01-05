@@ -37,17 +37,6 @@ fun <T> SelectableList(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (isSelected) {
-                            Modifier
-                                .border(1.dp, MaterialTheme.colorScheme.primary)
-                                .background(
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                )
-                        } else {
-                            Modifier
-                        }
-                    )
                     .padding(Spacing.sm),
                 verticalAlignment = Alignment.CenterVertically
             ) {
