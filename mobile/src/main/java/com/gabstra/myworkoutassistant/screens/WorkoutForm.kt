@@ -70,6 +70,7 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -337,11 +338,12 @@ fun WorkoutForm(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
-                    TextButton(
+                    CustomButton(
+                        text = "Cancel",
                         onClick = onCancel,
                         enabled = !isSaving,
                         modifier = Modifier.weight(1f)
-                    ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
+                    )
 
                     Button(
                         onClick = {

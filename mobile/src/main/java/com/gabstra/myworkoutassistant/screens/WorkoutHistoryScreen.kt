@@ -100,6 +100,7 @@ import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -706,7 +707,7 @@ fun WorkoutHistoryScreen(
                                         Spacer(Modifier.height(5.dp))
                                         SimpleProgressIndicator(
                                             progress = progress,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            trackColor = MediumDarkGray,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(16.dp)
@@ -835,7 +836,7 @@ fun WorkoutHistoryScreen(
                                                     Spacer(Modifier.height(5.dp))
                                                     SimpleProgressIndicator(
                                                         progress = progress,
-                                                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        trackColor = MediumDarkGray,
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .height(16.dp)
@@ -1129,7 +1130,7 @@ fun WorkoutHistoryScreen(
                     CircularProgressIndicator(
                         modifier = Modifier.width(32.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.scrim,
+                        trackColor = MediumDarkGray,
                     )
                 }
             } else {

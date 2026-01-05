@@ -103,6 +103,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -1209,7 +1210,7 @@ fun WorkoutsScreen(
                                             CircularProgressIndicator(
                                                 modifier = Modifier.width(32.dp),
                                                 color = MaterialTheme.colorScheme.primary,
-                                                trackColor = MaterialTheme.colorScheme.background,
+                                                trackColor = MediumDarkGray,
                                             )
                                         }
                                     } else {
@@ -1759,7 +1760,7 @@ fun WorkoutsScreen(
                                             CircularProgressIndicator(
                                                 modifier = Modifier.width(32.dp),
                                                 color = MaterialTheme.colorScheme.primary,
-                                                trackColor = MaterialTheme.colorScheme.background,
+                                                trackColor = MediumDarkGray,
                                             )
                                         }
                                     } else if (allSchedules.isEmpty()) {

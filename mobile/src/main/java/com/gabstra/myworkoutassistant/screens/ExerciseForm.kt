@@ -62,6 +62,7 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.BodyView
+import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.SavingOverlay
@@ -734,10 +735,11 @@ fun ExerciseForm(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                TextButton(
+                CustomButton(
+                    text = "Cancel",
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
-                ) { Text("Cancel", style = MaterialTheme.typography.bodyLarge) }
+                )
 
                 Button(
                     onClick = {

@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
@@ -49,7 +50,7 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
     ) {
         SimpleProgressIndicator(
             progress = progress,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            trackColor = MediumDarkGray,
             progressBarColor =  MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .fillMaxWidth()

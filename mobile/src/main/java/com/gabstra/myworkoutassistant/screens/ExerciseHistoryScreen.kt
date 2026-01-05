@@ -78,6 +78,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -530,7 +531,7 @@ fun ExerciseHistoryScreen(
                     CircularProgressIndicator(
                         modifier = Modifier.width(32.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.scrim,
+                        trackColor = MediumDarkGray,
                     )
                 }
             } else {
@@ -709,7 +710,7 @@ fun ExerciseHistoryScreen(
                                                     Spacer(Modifier.height(5.dp))
                                                     SimpleProgressIndicator(
                                                         progress = progress,
-                                                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        trackColor = MediumDarkGray,
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .height(16.dp)

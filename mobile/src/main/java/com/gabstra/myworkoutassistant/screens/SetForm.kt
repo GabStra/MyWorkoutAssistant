@@ -205,9 +205,7 @@ fun SetForm(
                 onClick = {
                     onCancel()
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

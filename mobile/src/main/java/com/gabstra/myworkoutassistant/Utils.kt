@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -761,7 +762,7 @@ fun Modifier.verticalColumnScrollbar(
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {
-    val defaultTrackColor = scrollBarTrackColor ?: MaterialTheme.colorScheme.scrim
+    val defaultTrackColor = scrollBarTrackColor ?: MediumDarkGray
     val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onBackground
     val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
     // Remember updated state for all parameters accessed within draw lambda
@@ -909,7 +910,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {
-    val defaultTrackColor = scrollBarTrackColor ?: MaterialTheme.colorScheme.scrim
+    val defaultTrackColor = scrollBarTrackColor ?: MediumDarkGray
     val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onSurfaceVariant
     val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)

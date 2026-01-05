@@ -279,9 +279,7 @@ fun SupersetForm(
             CustomButton(
                 text = "Cancel",
                 onClick = onCancel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                modifier = Modifier.fillMaxWidth()
             )
 
             Spacer(modifier = Modifier.height(10.dp))
