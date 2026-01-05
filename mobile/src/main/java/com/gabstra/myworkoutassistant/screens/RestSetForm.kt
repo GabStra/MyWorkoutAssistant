@@ -159,7 +159,7 @@ fun RestSetForm(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(Spacing.sm)
             )
         }
     }

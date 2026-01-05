@@ -334,11 +334,11 @@ fun WorkoutForm(
             // ---- Actions ----------------------------------------------------
             val canBeSaved = workoutNameState.value.isNotBlank()
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                     CustomButton(
                         text = "Cancel",
                         onClick = onCancel,

@@ -257,7 +257,9 @@ fun BarbellForm(
             CustomButton(
                 text = "Cancel",
                 onClick = onCancel,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Spacing.sm)
             )
 
             Spacer(Modifier.height(Spacing.xl))

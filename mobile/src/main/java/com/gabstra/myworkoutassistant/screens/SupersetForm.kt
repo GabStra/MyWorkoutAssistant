@@ -284,7 +284,7 @@ fun SupersetForm(
                 onClick = onCancel,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(Spacing.sm)
             )
 
             Spacer(modifier = Modifier.height(10.dp))

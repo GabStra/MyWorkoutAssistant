@@ -178,7 +178,7 @@ fun RestForm(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(Spacing.sm)
             )
         }
     }

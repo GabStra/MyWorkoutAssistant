@@ -243,7 +243,9 @@ fun PlateLoadedCableForm(
                 onClick = {
                     onCancel()
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Spacing.sm)
             )
         }
     }
