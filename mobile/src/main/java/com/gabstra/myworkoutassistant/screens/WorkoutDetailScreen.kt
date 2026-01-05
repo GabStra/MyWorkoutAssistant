@@ -6,8 +6,6 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -54,7 +52,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -64,6 +61,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -89,15 +87,14 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
-import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -170,7 +167,7 @@ fun WorkoutComponentRenderer(
 ) {
     when (workoutComponent) {
         is Exercise -> {
-            StyledCard {
+            StyledCard(enabled = workoutComponent.enabled) {
                 ExerciseRenderer(
                     exercise = workoutComponent,
                     showRest = showRest,
@@ -183,7 +180,11 @@ fun WorkoutComponentRenderer(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RectangleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant
+                color = if (workoutComponent.enabled) {
+                    MaterialTheme.colorScheme.surfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                }
             ) {
                 Row(
                     modifier = Modifier
@@ -377,13 +378,12 @@ fun WorkoutDetailScreen(
                             .fillMaxSize()
                             .horizontalScroll(scrollState),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(onClick = {
                             selectedWorkoutComponents = emptyList()
@@ -407,7 +407,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(onClick = {
                             val filteredItems = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents
@@ -431,7 +430,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(onClick = {
                             selectedWorkoutComponents = emptyList()
@@ -463,7 +461,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.size == 1 &&
@@ -526,7 +523,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.size == 1 &&
@@ -591,7 +587,6 @@ fun WorkoutDetailScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .width(56.dp)
-                                .padding(horizontal = 4.dp)
                         ) {
                             IconButton(
                                 onClick = {
@@ -638,7 +633,6 @@ fun WorkoutDetailScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .width(56.dp)
-                                .padding(horizontal = 4.dp)
                         ) {
                             IconButton(
                                 onClick = {
@@ -685,7 +679,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.isNotEmpty(),
@@ -719,7 +712,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.isNotEmpty(),
@@ -743,7 +735,6 @@ fun WorkoutDetailScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .width(56.dp)
-                            .padding(horizontal = 4.dp)
                     ) {
                         IconButton(onClick = {
                             val superSetExercises =

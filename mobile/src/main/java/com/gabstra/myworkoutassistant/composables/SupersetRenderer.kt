@@ -60,11 +60,17 @@ fun SupersetRenderer(
     val exerciseNames = superset.exercises.joinToString(", ") { it.name }
     val titleText = "Superset: $exerciseNames"
 
+    val borderColor = if (superset.enabled) {
+        MaterialTheme.colorScheme.outlineVariant
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+    }
+    
     ExpandableContainer(
         isOpen = false,
         modifier = modifier
             .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            .border(1.dp, borderColor),
         isExpandable = true,
         title = { m ->
             Text(

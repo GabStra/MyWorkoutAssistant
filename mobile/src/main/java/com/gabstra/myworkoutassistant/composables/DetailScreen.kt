@@ -110,7 +110,6 @@ fun <T> DetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         selectedItems = emptyList()
@@ -128,7 +127,6 @@ fun <T> DetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         selectedItems = items
@@ -145,7 +143,6 @@ fun <T> DetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         selectedItems = emptyList()
@@ -172,7 +169,6 @@ fun <T> DetailScreen(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
                                             .width(56.dp)
-                                            .padding(horizontal = 4.dp)
                                     ) {
                                         IconButton(onClick = {
                                             onUpdateItems(items.filterNot { it in selectedItems })
@@ -228,6 +224,13 @@ fun <T> DetailScreen(
                     },
                 items = items,
                 selection = selectedItems,
+                onItemSelectionToggle = { item ->
+                    selectedItems = if (selectedItems.any { it === item }) {
+                        selectedItems.filter { it !== item }
+                    } else {
+                        selectedItems + item
+                    }
+                },
                 itemContent = { item ->
                     Card(
                         modifier = Modifier

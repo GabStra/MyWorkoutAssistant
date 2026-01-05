@@ -1,8 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +13,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
@@ -26,10 +22,10 @@ fun <T> SelectableList(
     items: List<T>,
     selection: List<T>,
     itemContent: @Composable (T) -> Unit,
+    onItemSelectionToggle: ((T) -> Unit)? = null,
 ) {
     Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(if(selectionMode)  5.dp else 0.dp)
+        modifier = modifier
     ) {
         for (item in items) {
             val isSelected = selection.any { it === item }
@@ -48,7 +44,7 @@ fun <T> SelectableList(
                     ) {
                         Checkbox(
                             checked = isSelected,
-                            onCheckedChange = null, // Selection handled by parent click
+                            onCheckedChange = { onItemSelectionToggle?.invoke(item) },
                             colors = CheckboxDefaults.colors().copy(
                                 checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
                                 uncheckedBorderColor = MaterialTheme.colorScheme.primary

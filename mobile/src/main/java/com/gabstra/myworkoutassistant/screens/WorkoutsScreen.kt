@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -55,7 +55,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -64,6 +63,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -669,7 +669,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedWorkouts = emptyList()
@@ -693,7 +692,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedWorkouts = activeWorkouts
@@ -716,7 +714,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedWorkouts = emptyList()
@@ -748,7 +745,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(
                                     onClick = {
@@ -804,7 +800,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(
                                     onClick = {
@@ -832,7 +827,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(
                                     onClick = {
@@ -930,7 +924,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedEquipments = emptyList()
@@ -952,7 +945,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedEquipments = equipments
@@ -973,7 +965,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     selectedEquipments = emptyList()
@@ -1003,7 +994,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     val newEquipments = selectedEquipments.map { it ->
@@ -1036,7 +1026,6 @@ fun WorkoutsScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .width(56.dp)
-                                    .padding(horizontal = 4.dp)
                             ) {
                                 IconButton(onClick = {
                                     val newEquipments = equipments.filter { item ->
@@ -1580,7 +1569,7 @@ fun WorkoutsScreen(
                                                 appViewModel.updateWorkouts(workoutsWithOrderUpdated)
                                             },
                                             itemContent = { it ->
-                                                StyledCard {
+                                                StyledCard(enabled = it.enabled) {
                                                     WorkoutTitle(
                                                         Modifier
                                                             .fillMaxWidth()

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -44,7 +44,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -54,6 +53,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -107,7 +107,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
-            StyledCard {
+            StyledCard(enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -141,7 +141,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         is BodyWeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
 
-            StyledCard {
+            StyledCard(enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -171,7 +171,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is EnduranceSet -> {
-            StyledCard {
+            StyledCard(enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -190,7 +190,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
         }
 
         is TimedDurationSet -> {
-            StyledCard {
+            StyledCard(enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -213,7 +213,11 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RectangleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant
+                color = if (exercise.enabled) {
+                    MaterialTheme.colorScheme.surfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                }
             ) {
                 Row(
                     modifier = Modifier
@@ -225,7 +229,11 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                     Text(
                         text = "REST ${formatTime(set.timeInSeconds)}",
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = if (exercise.enabled) {
+                            MaterialTheme.colorScheme.onBackground
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -385,13 +393,12 @@ fun ExerciseDetailScreen(
                                     .fillMaxSize()
                                     .horizontalScroll(scrollState),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         selectedSets = emptyList()
@@ -413,7 +420,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         val filteredSets = if (!showRest) sets.filter { it !is RestSet } else sets
@@ -435,7 +441,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         selectedSets = emptyList()
@@ -465,7 +470,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(
                                         enabled = selectedSets.size == 1 &&
@@ -519,7 +523,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(
                                         enabled = selectedSets.size == 1 &&
@@ -577,7 +580,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(onClick = {
                                         val newSets = sets.filter { set ->
@@ -610,7 +612,6 @@ fun ExerciseDetailScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .width(56.dp)
-                                        .padding(horizontal = 4.dp)
                                 ) {
                                     IconButton(
                                         enabled = selectedSets.isNotEmpty(),
