@@ -1404,7 +1404,8 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onCancel = { appViewModel.goBack() },
                     rest = screenData.selectedRest,
-                    isSaving = isSaving
+                    isSaving = isSaving,
+                    workout = selectedWorkout
                 )
             }
 

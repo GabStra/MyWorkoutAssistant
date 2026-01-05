@@ -176,7 +176,16 @@ fun WorkoutComponentRenderer(
             }
         }
 
-        is Rest ->
+        is Rest -> {
+            val allRests = workout.workoutComponents.filterIsInstance<Rest>()
+            val restIndex = allRests.indexOf(workoutComponent)
+            val restCount = allRests.size
+            val restText = if (restCount > 1) {
+                "REST ${restIndex + 1} of $restCount - ${formatTime(workoutComponent.timeInSeconds)}"
+            } else {
+                "REST ${formatTime(workoutComponent.timeInSeconds)}"
+            }
+            
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RectangleShape,
@@ -199,13 +208,14 @@ fun WorkoutComponentRenderer(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
                     Text(
-                        text = "REST ${formatTime(workoutComponent.timeInSeconds)}",
+                        text = restText,
                         style = MaterialTheme.typography.bodyMedium,
                         color = restColor,
                         textAlign = TextAlign.Center
                     )
                 }
             }
+        }
 
         is Superset -> {
             val superSet = workoutComponent as Superset

@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
@@ -45,10 +46,28 @@ fun RestForm(
     onRestUpsert: (Rest) -> Unit,
     onCancel: () -> Unit,
     rest: Rest? = null, // Add exercise parameter with default value null
-    isSaving: Boolean = false
+    isSaving: Boolean = false,
+    workout: Workout? = null
 ) {
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(rest?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
+
+    val titleText = if (rest == null) {
+        "Insert Rest"
+    } else {
+        val allRests = workout?.workoutComponents?.filterIsInstance<Rest>() ?: emptyList()
+        val restCount = allRests.size
+        if (restCount > 1) {
+            val restIndex = allRests.indexOf(rest)
+            if (restIndex >= 0) {
+                "Edit Rest (${restIndex + 1} of $restCount)"
+            } else {
+                "Edit Rest"
+            }
+        } else {
+            "Edit Rest"
+        }
+    }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
@@ -74,7 +93,7 @@ fun RestForm(
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
-                        text = if (rest == null) "Insert Rest" else "Edit Rest",
+                        text = titleText,
                     )
                 },
                 navigationIcon = {
