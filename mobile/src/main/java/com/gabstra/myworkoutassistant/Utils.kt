@@ -75,7 +75,10 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,6 +86,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.ConcurrentHashMap
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Duration
@@ -98,31 +103,156 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlin.math.pow
 
-fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
+// Helper object to manage sync handshake state
+object SyncHandshakeManager {
+    private val pendingAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val pendingCompletions = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    fun registerAckWaiter(transactionId: String): CompletableDeferred<Unit> {
+        val deferred = CompletableDeferred<Unit>()
+        pendingAcks[transactionId] = deferred
+        return deferred
+    }
+
+    fun registerCompletionWaiter(transactionId: String): CompletableDeferred<Unit> {
+        val deferred = CompletableDeferred<Unit>()
+        pendingCompletions[transactionId] = deferred
+        return deferred
+    }
+
+    fun completeAck(transactionId: String) {
+        pendingAcks.remove(transactionId)?.complete(Unit)
+    }
+
+    fun completeCompletion(transactionId: String) {
+        pendingCompletions.remove(transactionId)?.complete(Unit)
+    }
+
+    fun cleanup(transactionId: String) {
+        pendingAcks.remove(transactionId)?.cancel()
+        pendingCompletions.remove(transactionId)?.cancel()
+    }
+}
+
+// Helper function to process sync handshake messages
+fun processSyncHandshakeMessages(dataEvents: DataEventBuffer) {
+    dataEvents.forEach { dataEvent ->
+        val uri = dataEvent.dataItem.uri
+        when (uri.path) {
+            DataLayerListenerService.SYNC_ACK_PATH -> {
+                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                val transactionId = dataMap.getString("transactionId")
+                if (transactionId != null) {
+                    SyncHandshakeManager.completeAck(transactionId)
+                }
+            }
+            DataLayerListenerService.SYNC_COMPLETE_PATH -> {
+                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                val transactionId = dataMap.getString("transactionId")
+                if (transactionId != null) {
+                    SyncHandshakeManager.completeCompletion(transactionId)
+                }
+            }
+        }
+    }
+}
+
+suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Boolean {
+    return try {
+        val request = PutDataMapRequest.create(DataLayerListenerService.SYNC_REQUEST_PATH).apply {
+            dataMap.putString("transactionId", transactionId)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+        
+        dataClient.putDataItem(request)
+        
+        // Wait for acknowledgment with timeout
+        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+        val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
+            ackWaiter.await()
+            true
+        } ?: false
+        
+        if (!ackReceived) {
+            SyncHandshakeManager.cleanup(transactionId)
+            Log.e("SyncHandshake", "Handshake timeout for transaction: $transactionId")
+        }
+        
+        ackReceived
+    } catch (exception: Exception) {
+        Log.e("SyncHandshake", "Error sending sync request", exception)
+        SyncHandshakeManager.cleanup(transactionId)
+        false
+    }
+}
+
+suspend fun waitForSyncCompletion(transactionId: String): Boolean {
+    return try {
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            completionWaiter.await()
+            true
+        } ?: false
+        
+        if (!completionReceived) {
+            Log.w("SyncHandshake", "Completion timeout for transaction: $transactionId (data may have been received)")
+        }
+        
+        SyncHandshakeManager.cleanup(transactionId)
+        completionReceived
+    } catch (exception: Exception) {
+        Log.e("SyncHandshake", "Error waiting for sync completion", exception)
+        SyncHandshakeManager.cleanup(transactionId)
+        false
+    }
+}
+
+suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
+    val transactionId = UUID.randomUUID().toString()
     try {
+        // Send sync request and wait for acknowledgment
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        if (!handshakeSuccess) {
+            Log.e("SyncHandshake", "Failed to establish connection for workout store sync")
+            return
+        }
+
+        // Send workout store data
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
         val compressedData = compressString(jsonString)
         val request = PutDataMapRequest.create("/workoutStore").apply {
-            dataMap.putByteArray("compressedJson",compressedData)
-            dataMap.putString("timestamp",System.currentTimeMillis().toString())
+            dataMap.putByteArray("compressedJson", compressedData)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
+
+        // Wait for completion acknowledgment
+        waitForSyncCompletion(transactionId)
     } catch (cancellationException: CancellationException) {
+        SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()
     } catch (exception: Exception) {
+        SyncHandshakeManager.cleanup(transactionId)
         exception.printStackTrace()
     }
 }
 
 suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
+    val transactionId = UUID.randomUUID().toString()
     try {
+        // Send sync request and wait for acknowledgment
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        if (!handshakeSuccess) {
+            Log.e("SyncHandshake", "Failed to establish connection for app backup sync")
+            return
+        }
+
         val jsonString = fromAppBackupToJSON(appBackup)
         val chunkSize = 50000 // Adjust the chunk size as needed
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize)
-
-        val transactionId = UUID.randomUUID().toString()
 
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
             dataMap.putBoolean("isStart", true)
@@ -153,9 +283,14 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                 delay(500)
             }
         }
+
+        // Wait for completion acknowledgment
+        waitForSyncCompletion(transactionId)
     } catch (cancellationException: CancellationException) {
+        SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()
     } catch (exception: Exception) {
+        SyncHandshakeManager.cleanup(transactionId)
         exception.printStackTrace()
     }
 }

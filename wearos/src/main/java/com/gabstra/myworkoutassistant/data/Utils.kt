@@ -50,13 +50,18 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import android.util.Log
 import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
+import com.gabstra.myworkoutassistant.DataLayerListenerService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -67,6 +72,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -470,8 +478,120 @@ fun Context.findActivity(): Activity? {
     return null
 }
 
-fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) : Boolean {
+// Helper object to manage sync handshake state
+object SyncHandshakeManager {
+    private val pendingAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val pendingCompletions = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    fun registerAckWaiter(transactionId: String): CompletableDeferred<Unit> {
+        val deferred = CompletableDeferred<Unit>()
+        pendingAcks[transactionId] = deferred
+        return deferred
+    }
+
+    fun registerCompletionWaiter(transactionId: String): CompletableDeferred<Unit> {
+        val deferred = CompletableDeferred<Unit>()
+        pendingCompletions[transactionId] = deferred
+        return deferred
+    }
+
+    fun completeAck(transactionId: String) {
+        pendingAcks.remove(transactionId)?.complete(Unit)
+    }
+
+    fun completeCompletion(transactionId: String) {
+        pendingCompletions.remove(transactionId)?.complete(Unit)
+    }
+
+    fun cleanup(transactionId: String) {
+        pendingAcks.remove(transactionId)?.cancel()
+        pendingCompletions.remove(transactionId)?.cancel()
+    }
+}
+
+// Helper function to process sync handshake messages
+fun processSyncHandshakeMessages(dataEvents: DataEventBuffer) {
+    dataEvents.forEach { dataEvent ->
+        val uri = dataEvent.dataItem.uri
+        when (uri.path) {
+            DataLayerListenerService.SYNC_ACK_PATH -> {
+                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                val transactionId = dataMap.getString("transactionId")
+                if (transactionId != null) {
+                    SyncHandshakeManager.completeAck(transactionId)
+                }
+            }
+            DataLayerListenerService.SYNC_COMPLETE_PATH -> {
+                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                val transactionId = dataMap.getString("transactionId")
+                if (transactionId != null) {
+                    SyncHandshakeManager.completeCompletion(transactionId)
+                }
+            }
+        }
+    }
+}
+
+suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Boolean {
+    return try {
+        val request = PutDataMapRequest.create(DataLayerListenerService.SYNC_REQUEST_PATH).apply {
+            dataMap.putString("transactionId", transactionId)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+        
+        dataClient.putDataItem(request)
+        
+        // Wait for acknowledgment with timeout
+        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+        val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
+            ackWaiter.await()
+            true
+        } ?: false
+        
+        if (!ackReceived) {
+            SyncHandshakeManager.cleanup(transactionId)
+            Log.e("SyncHandshake", "Handshake timeout for transaction: $transactionId")
+        }
+        
+        ackReceived
+    } catch (exception: Exception) {
+        Log.e("SyncHandshake", "Error sending sync request", exception)
+        SyncHandshakeManager.cleanup(transactionId)
+        false
+    }
+}
+
+suspend fun waitForSyncCompletion(transactionId: String): Boolean {
+    return try {
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            completionWaiter.await()
+            true
+        } ?: false
+        
+        if (!completionReceived) {
+            Log.w("SyncHandshake", "Completion timeout for transaction: $transactionId (data may have been received)")
+        }
+        
+        SyncHandshakeManager.cleanup(transactionId)
+        completionReceived
+    } catch (exception: Exception) {
+        Log.e("SyncHandshake", "Error waiting for sync completion", exception)
+        SyncHandshakeManager.cleanup(transactionId)
+        false
+    }
+}
+
+suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) : Boolean {
+    val transactionId = UUID.randomUUID().toString()
     try {
+        // Send sync request and wait for acknowledgment
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        if (!handshakeSuccess) {
+            Log.e("SyncHandshake", "Failed to establish connection for workout history sync")
+            return false
+        }
+
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
             .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
@@ -485,13 +605,18 @@ fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: Workout
         val jsonString = gson.toJson(workoutHistoryStore)
         val compressedData = compressString(jsonString)
         val request = PutDataMapRequest.create("/workoutHistoryStore").apply {
-            dataMap.putByteArray("compressedJson",compressedData)
-            dataMap.putString("timestamp",System.currentTimeMillis().toString())
+            dataMap.putByteArray("compressedJson", compressedData)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
+
+        // Wait for completion acknowledgment
+        waitForSyncCompletion(transactionId)
         return true
     } catch(exception: Exception) {
+        SyncHandshakeManager.cleanup(transactionId)
         exception.printStackTrace()
         return false
     }
