@@ -1084,40 +1084,40 @@ fun WorkoutHistoryScreen(
                 )
             }
 
-            if (historiesToShow.isEmpty()) {
+            if(isLoading){
                 Box(
                     modifier = Modifier
                         .fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ){
-                    StyledCard(
-                        modifier = Modifier
-                            .padding(15.dp),
-                        
-                    ) {
-                        Text(
-                            modifier = Modifier
-                                .padding(15.dp),
-                            text = "No history found",
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
-                        )
-                    }
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.scrim,
+                    )
                 }
             } else {
-                if(isLoading){
+                if (historiesToShow.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ){
-                        CircularProgressIndicator(
-                            modifier = Modifier.width(32.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.scrim,
-                        )
+                        StyledCard(
+                            modifier = Modifier
+                                .padding(15.dp),
+                            
+                        ) {
+                            Text(
+                                modifier = Modifier
+                                    .padding(15.dp),
+                                text = "No history found",
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                            )
+                        }
                     }
-                }else{
+                } else {
                     AnimatedContent(
                         modifier = Modifier.weight(1f),
                         targetState = selectedMode,
