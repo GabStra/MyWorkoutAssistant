@@ -740,7 +740,7 @@ fun ExerciseForm(
 
                 Button(
                     onClick = {
-                        val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()
+                        val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
                         val newExercise = Exercise(
                             id = exercise?.id ?: UUID.randomUUID(),
                             name = nameState.value.trim(),
@@ -748,13 +748,13 @@ fun ExerciseForm(
                             enabled = exercise?.enabled ?: true,
                             sets = exercise?.sets ?: listOf(),
                             exerciseType = selectedExerciseType.value,
-                            minLoadPercent = minLoadPercent.floatValue.toDouble(),
-                            maxLoadPercent = maxLoadPercent.floatValue.toDouble(),
+                            minLoadPercent = minLoadPercent.floatValue.toDouble().round(2),
+                            maxLoadPercent = maxLoadPercent.floatValue.toDouble().round(2),
                             minReps = minReps.floatValue.toInt(),
                             maxReps = maxReps.floatValue.toInt(),
                             notes = notesState.value.trim(),
-                            lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value,
-                            upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value,
+                            lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value?.round(2),
+                            upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value?.round(2),
                             equipmentId = selectedEquipmentId.value,
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
@@ -762,8 +762,8 @@ fun ExerciseForm(
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
-                            loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble(),
-                            loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble(),
+                            loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble().round(2),
+                            loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble().round(2),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
                             muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
                             secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value
