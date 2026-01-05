@@ -91,6 +91,7 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -208,45 +209,20 @@ fun WorkoutComponentRenderer(
         is Superset -> {
             val superSet = workoutComponent as Superset
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    text = "Superset",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (superSet.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = 10.dp)
-                        .padding(bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    superSet.exercises.forEach { exercise ->
-                        DashedCard {
-                            ExerciseRenderer(
-                                modifier = Modifier.clickable {
-                                    appViewModel.setScreenData(
-                                        ScreenData.ExerciseDetail(
-                                            workout.id,
-                                            exercise.id
-                                        )
-                                    )
-                                },
-                                exercise = exercise,
-                                showRest = showRest,
-                                appViewModel = appViewModel
-                            )
-                        }
-                    }
+            SupersetRenderer(
+                superset = superSet,
+                showRest = showRest,
+                appViewModel = appViewModel,
+                workoutId = workout.id,
+                onExerciseClick = { exerciseId ->
+                    appViewModel.setScreenData(
+                        ScreenData.ExerciseDetail(
+                            workout.id,
+                            exerciseId
+                        )
+                    )
                 }
-            }
+            )
         }
     }
 }
