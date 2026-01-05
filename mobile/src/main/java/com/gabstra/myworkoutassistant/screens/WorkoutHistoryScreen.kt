@@ -75,10 +75,10 @@ import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
+import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
-import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
@@ -95,6 +95,7 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
+import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -743,48 +744,17 @@ fun WorkoutHistoryScreen(
                                 }
                             }
 
+                            // Convert SetHistory to Set objects, sorted by order
+                            val sets = setHistories
+                                .sortedBy { it.order }
+                                .map { getNewSetFromSetHistory(it) }
+                            
+                            // Create an exercise with the historical sets
+                            val exerciseWithHistorySets = exercise.copy(sets = sets)
+                            
                             StyledCard {
-                                ExpandableContainer(
-                                    isOpen = false,
-                                    isExpandable = setHistories.isNotEmpty(),
-                                    modifier = Modifier
-                                        .fillMaxWidth(),
-                                    title = { m ->
-                                        Row(
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            modifier =  m,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            if(exerciseById.containsKey(key)){
-                                                IconButton(
-                                                    onClick = {
-                                                        appViewModel.setScreenData(
-                                                            ScreenData.ExerciseHistory(
-                                                                workout.id,
-                                                                exercise.id
-                                                            )
-                                                        )
-                                                    }) {
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Search,
-                                                        contentDescription = "Details",
-                                                        tint = MaterialTheme.colorScheme.onBackground
-                                                    )
-                                                }
-                                            }
-                                            Text(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .basicMarquee(iterations = Int.MAX_VALUE),
-                                                text = exercise.name,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    },
-                                    content = {
-                                        if (hasTarget) {
-                                            Column {
+                                if (hasTarget) {
+                                    Column {
                                                 Column(
                                                     modifier = Modifier.fillMaxWidth()
                                                         .padding(10.dp)
@@ -844,13 +814,85 @@ fun WorkoutHistoryScreen(
                                                         ),
                                                     )
                                                 }
-                                                SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel,workout = workout)
+                                                ExerciseRenderer(
+                                                    exercise = exerciseWithHistorySets,
+                                                    showRest = true,
+                                                    appViewModel = appViewModel,
+                                                    customTitle = { m ->
+                                                        Row(
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            modifier = m,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            if(exerciseById.containsKey(key)){
+                                                                IconButton(
+                                                                    onClick = {
+                                                                        appViewModel.setScreenData(
+                                                                            ScreenData.ExerciseHistory(
+                                                                                workout.id,
+                                                                                exercise.id
+                                                                            )
+                                                                        )
+                                                                    }) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Filled.Search,
+                                                                        contentDescription = "Details",
+                                                                        tint = MaterialTheme.colorScheme.onBackground
+                                                                    )
+                                                                }
+                                                            }
+                                                            Text(
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                                                text = exercise.name,
+                                                                style = MaterialTheme.typography.bodyLarge,
+                                                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            )
+                                                        }
+                                                    }
+                                                )
                                             }
-                                        } else {
-                                            SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel,workout = workout)
+                                } else {
+                                    ExerciseRenderer(
+                                        exercise = exerciseWithHistorySets,
+                                        showRest = true,
+                                        appViewModel = appViewModel,
+                                        customTitle = { m ->
+                                            Row(
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                modifier = m,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                if(exerciseById.containsKey(key)){
+                                                    IconButton(
+                                                        onClick = {
+                                                            appViewModel.setScreenData(
+                                                                ScreenData.ExerciseHistory(
+                                                                    workout.id,
+                                                                    exercise.id
+                                                                )
+                                                            )
+                                                        }) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Search,
+                                                            contentDescription = "Details",
+                                                            tint = MaterialTheme.colorScheme.onBackground
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .basicMarquee(iterations = Int.MAX_VALUE),
+                                                    text = exercise.name,
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
                             }
                         }
                 }

@@ -34,7 +34,8 @@ fun ExerciseRenderer(
     exercise: Exercise,
     modifier: Modifier = Modifier,
     showRest:Boolean,
-    appViewModel: AppViewModel
+    appViewModel: AppViewModel,
+    customTitle: (@Composable (Modifier) -> Unit)? = null
 ){
     var sets = exercise.sets
 
@@ -63,15 +64,19 @@ fun ExerciseRenderer(
             modifier = modifier,
             isExpandable = true,
             title = { m ->
-                Text(
-                    modifier = m
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                        .basicMarquee(iterations = Int.MAX_VALUE),
-                    text = exercise.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (customTitle != null) {
+                    customTitle(m)
+                } else {
+                    Text(
+                        modifier = m
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp)
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        text = exercise.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             content = {
                 Column(
