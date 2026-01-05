@@ -39,7 +39,7 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
 import com.gabstra.myworkoutassistant.composables.WeightSetForm
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -212,7 +212,7 @@ fun SetForm(
             )
         }
     }
-    SavingOverlay(isSaving = isSaving)
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
     }
 }
 

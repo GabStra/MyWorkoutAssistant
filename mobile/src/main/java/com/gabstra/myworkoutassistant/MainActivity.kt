@@ -330,6 +330,8 @@ fun MyWorkoutAssistantNavHost(
 
     val scope = rememberCoroutineScope()
 
+    var isSyncing by remember { mutableStateOf(false) }
+
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri?.let {
@@ -455,94 +457,103 @@ fun MyWorkoutAssistantNavHost(
 
     val syncWithWatch = {
         scope.launch {
-            withContext(Dispatchers.IO){
-                val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-
-                val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
-                    workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+            try {
+                withContext(Dispatchers.Main) {
+                    isSyncing = true
                 }
+                withContext(Dispatchers.IO){
+                    val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
 
-                val adjustedWorkouts = allowedWorkouts.map { workout ->
-                    val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
-                        when (workoutComponent) {
-                            is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
-                            is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                                exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
-                            })
-                            is Rest -> workoutComponent
-                        }
+                    val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
+                        workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
                     }
 
-                    workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
-                }
+                    val adjustedWorkouts = allowedWorkouts.map { workout ->
+                        val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
+                            when (workoutComponent) {
+                                is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                                is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
+                                    exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                                })
+                                is Rest -> workoutComponent
+                            }
+                        }
 
-                val workoutRecords = workoutRecordDao.getAll()
+                        workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
+                    }
 
-                // Filter workout histories by allowed workouts and done status
-                val filteredWorkoutHistories = workoutHistories
-                    .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
+                    val workoutRecords = workoutRecordDao.getAll()
 
-                // Collect all exercises from allowed workouts (including exercises from Supersets)
-                val allExercises = allowedWorkouts.flatMap { workout ->
-                    workout.workoutComponents.filterIsInstance<Exercise>() +
-                    workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-                }.distinctBy { it.id }
+                    // Filter workout histories by allowed workouts and done status
+                    val filteredWorkoutHistories = workoutHistories
+                        .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
 
-                // For each exercise, get set histories and extract workout history IDs
-                // Group by exercise and keep the most recent 15 workout histories per exercise
-                val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
-                    val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
-                    val workoutHistoryIds = setHistoriesForExercise
-                        .mapNotNull { it.workoutHistoryId }
-                        .distinct()
-                    
-                    if (workoutHistoryIds.isEmpty()) null
-                    else exercise.id to workoutHistoryIds
-                }.toMap()
+                    // Collect all exercises from allowed workouts (including exercises from Supersets)
+                    val allExercises = allowedWorkouts.flatMap { workout ->
+                        workout.workoutComponents.filterIsInstance<Exercise>() +
+                        workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                    }.distinctBy { it.id }
 
-                // Get workout histories for each exercise and keep the most recent 15 per exercise
-                val workoutHistoriesByExerciseId = workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
-                    filteredWorkoutHistories
-                        .filter { it.id in workoutHistoryIds }
-                        .sortedByDescending { it.startTime }
-                        .take(15)
-                        .map { it.id }
-                }
+                    // For each exercise, get set histories and extract workout history IDs
+                    // Group by exercise and keep the most recent 15 workout histories per exercise
+                    val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
+                        val setHistoriesForExercise = setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
+                        val workoutHistoryIds = setHistoriesForExercise
+                            .mapNotNull { it.workoutHistoryId }
+                            .distinct()
+                        
+                        if (workoutHistoryIds.isEmpty()) null
+                        else exercise.id to workoutHistoryIds
+                    }.toMap()
 
-                // Union all workout history IDs across exercises
-                val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
+                    // Get workout histories for each exercise and keep the most recent 15 per exercise
+                    val workoutHistoriesByExerciseId = workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
+                        filteredWorkoutHistories
+                            .filter { it.id in workoutHistoryIds }
+                            .sortedByDescending { it.startTime }
+                            .take(15)
+                            .map { it.id }
+                    }
 
-                // Filter to only include required workout histories
-                val validWorkoutHistories = filteredWorkoutHistories
-                    .filter { it.id in requiredWorkoutHistoryIds }
+                    // Union all workout history IDs across exercises
+                    val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
 
-                val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
-                    validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
-                }
+                    // Filter to only include required workout histories
+                    val validWorkoutHistories = filteredWorkoutHistories
+                        .filter { it.id in requiredWorkoutHistoryIds }
 
-                val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                val workoutSchedules = workoutScheduleDao.getAllSchedules()
+                    val setHistories = setHistoryDao.getAllSetHistories().filter{ setHistory ->
+                        validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+                    }
 
-                val exerciseSessionProgressions = db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions().filter { progression ->
-                    validWorkoutHistories.any { it.id == progression.workoutHistoryId }
-                }
+                    val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+                    val workoutSchedules = workoutScheduleDao.getAllSchedules()
 
-                val errorLogDao = db.errorLogDao()
-                val errorLogs = errorLogDao.getAllErrorLogs().first()
+                    val exerciseSessionProgressions = db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions().filter { progression ->
+                        validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+                    }
 
-                val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
-                try {
-                    sendAppBackup(dataClient, appBackup)
-                    // Success toast will be shown when completion message is received
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Error syncing with watch", e)
-                    withContext(Dispatchers.Main) {
-                        if (e.message?.contains("Handshake failed") == true) {
-                            Toast.makeText(context, "Sync failed: Unable to connect to watch", Toast.LENGTH_LONG).show()
-                        } else {
-                            Toast.makeText(context, "Failed to sync with watch: ${e.message}", Toast.LENGTH_LONG).show()
+                    val errorLogDao = db.errorLogDao()
+                    val errorLogs = errorLogDao.getAllErrorLogs().first()
+
+                    val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
+                    try {
+                        sendAppBackup(dataClient, appBackup)
+                        // Success toast will be shown when completion message is received
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error syncing with watch", e)
+                        withContext(Dispatchers.Main) {
+                            if (e.message?.contains("Handshake failed") == true) {
+                                Toast.makeText(context, "Sync failed: Unable to connect to watch", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "Failed to sync with watch: ${e.message}", Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isSyncing = false
                 }
             }
         }
@@ -569,6 +580,7 @@ fun MyWorkoutAssistantNavHost(
                     setHistoryDao,
                     workoutScheduleDao,
                     healthConnectClient,
+                    isSyncing = isSyncing,
                     onSyncClick = {
                         syncWithWatch()
                     },

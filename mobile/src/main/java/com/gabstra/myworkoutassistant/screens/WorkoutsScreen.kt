@@ -98,7 +98,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
@@ -390,6 +390,7 @@ fun WorkoutsScreen(
     setHistoryDao: SetHistoryDao,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     healthConnectClient: HealthConnectClient,
+    isSyncing: Boolean = false,
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
@@ -1885,7 +1886,8 @@ fun WorkoutsScreen(
 
 
     }
-    SavingOverlay(isSaving = isSaving)
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
+    LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }
 }
 

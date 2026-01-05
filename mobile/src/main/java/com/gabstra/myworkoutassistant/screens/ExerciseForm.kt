@@ -65,7 +65,7 @@ import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -784,7 +784,7 @@ fun ExerciseForm(
             Spacer(Modifier.height(Spacing.xl))
         }
     }
-    SavingOverlay(isSaving = isSaving)
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
     }
 }
 

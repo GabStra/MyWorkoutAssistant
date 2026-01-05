@@ -75,7 +75,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
@@ -862,7 +862,7 @@ fun ExerciseDetailScreen(
                 }
             }
     }
-    SavingOverlay(isSaving = isSaving)
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
     }
 }
 

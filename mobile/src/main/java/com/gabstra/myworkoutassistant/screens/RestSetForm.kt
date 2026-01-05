@@ -34,7 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -163,7 +163,7 @@ fun RestSetForm(
             )
         }
     }
-    SavingOverlay(isSaving = isSaving)
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
     }
 }
 

@@ -18,8 +18,8 @@ import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
-fun SavingOverlay(isSaving: Boolean) {
-    if (isSaving) {
+fun LoadingOverlay(isVisible: Boolean, text: String = "Loading...") {
+    if (isVisible) {
         val interactionSource = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
@@ -35,10 +35,9 @@ fun SavingOverlay(isSaving: Boolean) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(Spacing.md))
-                Text(text = "Saving...", style = MaterialTheme.typography.bodyLarge)
+                Text(text = text, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }
 }
-
 

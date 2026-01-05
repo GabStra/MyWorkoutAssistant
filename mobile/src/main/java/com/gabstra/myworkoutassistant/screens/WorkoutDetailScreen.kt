@@ -92,7 +92,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
-import com.gabstra.myworkoutassistant.composables.SavingOverlay
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
@@ -1339,7 +1339,7 @@ fun WorkoutDetailScreen(
                     showStartConfirmationDialog = false
                 }
             )
-            SavingOverlay(isSaving = isSaving)
+            LoadingOverlay(isVisible = isSaving, text = "Saving...")
         }
     }
 }
