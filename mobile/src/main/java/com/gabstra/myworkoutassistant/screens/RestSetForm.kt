@@ -38,6 +38,7 @@ import com.gabstra.myworkoutassistant.composables.SavingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.Spacing
 import java.util.UUID
 
 
@@ -149,13 +150,16 @@ fun RestSetForm(
                 if (restSet == null) Text("Insert Rest") else Text("Edit Rest")
             }
 
+            Spacer(modifier = Modifier.height(Spacing.md))
 
             CustomButton(
                 text = "Cancel",
                 onClick = {
                     onCancel()
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
             )
         }
     }

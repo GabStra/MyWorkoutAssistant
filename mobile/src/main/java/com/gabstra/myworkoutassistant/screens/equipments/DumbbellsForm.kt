@@ -5,7 +5,9 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -286,6 +289,8 @@ fun DumbbellsForm(
             ) {
                 if (dumbbells == null) Text("Add Dumbbells", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Dumbbells", color = MaterialTheme.colorScheme.onPrimary)
             }
+
+            Spacer(modifier = Modifier.height(Spacing.md))
 
             CustomButton(
                 text = "Cancel",

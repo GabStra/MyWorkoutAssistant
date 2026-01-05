@@ -251,6 +251,8 @@ fun BarbellForm(
                 Text(if (barbell == null) "Add Barbell" else "Save", color = MaterialTheme.colorScheme.onPrimary)
             }
 
+            Spacer(modifier = Modifier.height(Spacing.md))
+
             // Cancel
             CustomButton(
                 text = "Cancel",

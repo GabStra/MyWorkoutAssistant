@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -233,6 +234,8 @@ fun PlateLoadedCableForm(
             ) {
                 if (plateLoadedCable == null) Text("Add Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary)
             }
+
+            Spacer(modifier = Modifier.height(Spacing.md))
 
             // Cancel button
             CustomButton(

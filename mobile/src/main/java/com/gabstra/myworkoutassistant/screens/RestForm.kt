@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -167,13 +168,17 @@ fun RestForm(
                 if (rest == null) Text("Insert Rest") else Text("Edit Rest")
             }
 
+            Spacer(modifier = Modifier.height(Spacing.md))
+
             // Cancel button
             CustomButton(
                 text = "Cancel",
                 onClick = {
                     onCancel()
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
             )
         }
     }

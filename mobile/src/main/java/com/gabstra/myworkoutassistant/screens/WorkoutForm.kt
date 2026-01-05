@@ -336,7 +336,8 @@ fun WorkoutForm(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     CustomButton(
                         text = "Cancel",

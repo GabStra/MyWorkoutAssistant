@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.Spacing
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -275,11 +276,15 @@ fun SupersetForm(
                 Text(if (superset == null) "Create Superset" else "Update Superset")
             }
 
+            Spacer(modifier = Modifier.height(Spacing.md))
+
             // Cancel Button
             CustomButton(
                 text = "Cancel",
                 onClick = onCancel,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
             )
 
             Spacer(modifier = Modifier.height(10.dp))
