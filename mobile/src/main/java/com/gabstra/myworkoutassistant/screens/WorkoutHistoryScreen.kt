@@ -929,7 +929,7 @@ fun WorkoutHistoryScreen(
                         }
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color =  if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
+                    Text("Graphs", color =  if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
                 }
             }
 
@@ -954,7 +954,7 @@ fun WorkoutHistoryScreen(
                         }
                     )
                     Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium,)
+                    Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
                 }
             }
         }
