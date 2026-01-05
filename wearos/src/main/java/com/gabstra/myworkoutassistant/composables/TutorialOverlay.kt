@@ -139,7 +139,8 @@ fun TutorialOverlay(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(contentPadding)
-                        .padding(horizontal = 15.dp, vertical = 5.dp)
+                        .padding(top = 5.dp)
+                        .padding(horizontal = 15.dp)
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally

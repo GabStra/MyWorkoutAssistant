@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.combineChunks
@@ -28,6 +29,7 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import com.google.android.gms.tasks.Tasks
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
@@ -179,11 +181,49 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
-            // Process sync handshake messages first
-            com.gabstra.myworkoutassistant.data.processSyncHandshakeMessages(dataEvents)
+            // Collect events first to avoid multiple iterations
+            val eventsList = mutableListOf<com.google.android.gms.wearable.DataEvent>()
+            dataEvents.forEach { eventsList.add(it) }
             
-            dataEvents.forEach { dataEvent ->
-
+            // Process sync handshake messages first
+            eventsList.forEach { dataEvent ->
+                val uri = dataEvent.dataItem.uri
+                when (uri.path) {
+                    SYNC_ACK_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val transactionId = dataMap.getString("transactionId")
+                        if (transactionId != null) {
+                            Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $transactionId")
+                            com.gabstra.myworkoutassistant.data.SyncHandshakeManager.completeAck(transactionId)
+                        } else {
+                            Log.w("DataLayerSync", "Received SYNC_ACK without transactionId")
+                        }
+                    }
+                    SYNC_COMPLETE_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val transactionId = dataMap.getString("transactionId")
+                        val timestamp = dataMap.getString("timestamp", "unknown")
+                        if (transactionId != null) {
+                            Log.d("DataLayerSync", "Received SYNC_COMPLETE for transaction: $transactionId, timestamp: $timestamp")
+                            com.gabstra.myworkoutassistant.data.SyncHandshakeManager.completeCompletion(transactionId)
+                            Log.d("DataLayerSync", "Completed completion waiter for transaction: $transactionId")
+                            // Show success toast
+                            scope.launch(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Sync completed successfully",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } else {
+                            Log.w("DataLayerSync", "Received SYNC_COMPLETE without transactionId, timestamp: $timestamp")
+                        }
+                    }
+                }
+            }
+            
+            // Process other data events
+            eventsList.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
                 when (uri.path) {
                     SYNC_REQUEST_PATH -> {
@@ -191,31 +231,27 @@ class DataLayerListenerService : WearableListenerService() {
                         val transactionId = dataMap.getString("transactionId")
                         
                         if (transactionId != null) {
+                            Log.d("DataLayerSync", "Received SYNC_REQUEST for transaction: $transactionId")
+                            
                             scope.launch(Dispatchers.IO) {
                                 try {
                                     // Send acknowledgment
-                                    val ackRequest = PutDataMapRequest.create(SYNC_ACK_PATH).apply {
-                                        dataMap.putString("transactionId", transactionId)
-                                        dataMap.putString("timestamp", System.currentTimeMillis().toString())
-                                    }.asPutDataRequest().setUrgent()
+                                    val ackDataMapRequest = PutDataMapRequest.create(SYNC_ACK_PATH)
+                                    ackDataMapRequest.dataMap.putString("transactionId", transactionId)
+                                    ackDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
                                     
-                                    dataClient.putDataItem(ackRequest)
-                                    Log.d("DataLayerListenerService", "Sent sync acknowledgment for transaction: $transactionId")
+                                    val ackRequest = ackDataMapRequest.asPutDataRequest().setUrgent()
+                                    val task = dataClient.putDataItem(ackRequest)
+                                    Tasks.await(task)
+                                    Log.d("DataLayerSync", "Sent sync acknowledgment for transaction: $transactionId")
                                 } catch (exception: Exception) {
-                                    Log.e("DataLayerListenerService", "Error sending sync acknowledgment", exception)
+                                    Log.e("DataLayerSync", "Error sending sync acknowledgment for transaction: $transactionId", exception)
+                                    exception.printStackTrace()
                                 }
                             }
+                        } else {
+                            Log.w("DataLayerSync", "Received SYNC_REQUEST without transactionId")
                         }
-                    }
-
-                    SYNC_ACK_PATH -> {
-                        // Acknowledgment received - handled by waiting sync operations
-                        // No action needed here as the waiting coroutines will handle it
-                    }
-
-                    SYNC_COMPLETE_PATH -> {
-                        // Completion received - handled by waiting sync operations
-                        // No action needed here as the waiting coroutines will handle it
                     }
 
                     WORKOUT_STORE_PATH -> {
@@ -234,15 +270,19 @@ class DataLayerListenerService : WearableListenerService() {
                         transactionId?.let { tid ->
                             scope.launch(Dispatchers.IO) {
                                 try {
-                                    val completeRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH).apply {
-                                        dataMap.putString("transactionId", tid)
-                                        dataMap.putString("timestamp", System.currentTimeMillis().toString())
-                                    }.asPutDataRequest().setUrgent()
+                                    Log.d("DataLayerSync", "Preparing to send SYNC_COMPLETE for transaction: $tid (workout store processed)")
+                                    val completeDataMapRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH)
+                                    completeDataMapRequest.dataMap.putString("transactionId", tid)
+                                    val timestamp = System.currentTimeMillis().toString()
+                                    completeDataMapRequest.dataMap.putString("timestamp", timestamp)
                                     
-                                    dataClient.putDataItem(completeRequest)
-                                    Log.d("DataLayerListenerService", "Sent sync completion for workout store transaction: $tid")
+                                    val completeRequest = completeDataMapRequest.asPutDataRequest().setUrgent()
+                                    Log.d("DataLayerSync", "Sending SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp")
+                                    val task = dataClient.putDataItem(completeRequest)
+                                    Tasks.await(task)
+                                    Log.d("DataLayerSync", "Successfully sent SYNC_COMPLETE for transaction: $tid (workout store)")
                                 } catch (exception: Exception) {
-                                    Log.e("DataLayerListenerService", "Error sending sync completion", exception)
+                                    Log.e("DataLayerSync", "Failed to send SYNC_COMPLETE for transaction: $tid", exception)
                                 }
                             }
                         }
@@ -255,6 +295,7 @@ class DataLayerListenerService : WearableListenerService() {
                         val isLastChunk = dataMap.getBoolean("isLastChunk", false)
                         val backupChunk = dataMap.getByteArray("chunk")
                         val transactionId = dataMap.getString("transactionId")
+                        
 
 
                         val shouldStop = (isStart && hasStartedSync) ||
@@ -286,13 +327,14 @@ class DataLayerListenerService : WearableListenerService() {
                                 expectedChunks = dataMap.getInt("chunksCount", 0)
                             }
 
-                            Log.d("DataLayerListenerService", "Backup started with expected chunks: $expectedChunks, transactionId: $transactionId")
+                            Log.d("DataLayerSync", "Backup started with expected chunks: $expectedChunks, transactionId: $transactionId")
 
                             backupChunks = mutableListOf()
                             hasStartedSync = true
                             ignoreUntilStartOrEnd = false
                             currentTransactionId = transactionId
 
+                            // Send backup start broadcast (may be duplicate if sync request already triggered it, but that's okay)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_START_JSON, APP_BACKUP_START_JSON)
                             }.apply { setPackage(packageName) }
@@ -308,6 +350,7 @@ class DataLayerListenerService : WearableListenerService() {
                             backupChunks = backupChunks.toMutableList().apply {
                                 add(backupChunk)
                             }
+                            
 
                             val progress = backupChunks.size.toFloat() / expectedChunks
 
@@ -318,11 +361,11 @@ class DataLayerListenerService : WearableListenerService() {
                         }
 
                         if (isLastChunk) {
+                            Log.d("DataLayerSync", "Received last backup chunk. Total chunks received: ${backupChunks.size}, expected: $expectedChunks")
                             if (!ignoreUntilStartOrEnd) {
                                 removeTimeout()
                                 val backupData = combineChunks(backupChunks)
                                 val jsonBackup = decompressToString(backupData)
-
                                 val appBackup = fromJSONtoAppBackup(jsonBackup)
                                 workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
@@ -388,8 +431,8 @@ class DataLayerListenerService : WearableListenerService() {
                                         putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)
                                         setPackage(packageName)
                                     }
-
                                     sendBroadcast(intent)
+                                    Log.d("DataLayerSync", "Backup completed and broadcast sent for transaction: $transactionId")
                                     if (!MyApplication.isAppInForeground()) {
                                         showSyncCompleteNotification(this@DataLayerListenerService)
                                     }
@@ -397,15 +440,19 @@ class DataLayerListenerService : WearableListenerService() {
                                     // Send completion acknowledgment
                                     transactionId?.let { tid ->
                                         try {
-                                            val completeRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH).apply {
-                                                dataMap.putString("transactionId", tid)
-                                                dataMap.putString("timestamp", System.currentTimeMillis().toString())
-                                            }.asPutDataRequest().setUrgent()
+                                            Log.d("DataLayerSync", "Preparing to send SYNC_COMPLETE for transaction: $tid (backup processed)")
+                                            val completeDataMapRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH)
+                                            completeDataMapRequest.dataMap.putString("transactionId", tid)
+                                            val timestamp = System.currentTimeMillis().toString()
+                                            completeDataMapRequest.dataMap.putString("timestamp", timestamp)
                                             
-                                            dataClient.putDataItem(completeRequest)
-                                            Log.d("DataLayerListenerService", "Sent sync completion for backup transaction: $tid")
+                                            val completeRequest = completeDataMapRequest.asPutDataRequest().setUrgent()
+                                            Log.d("DataLayerSync", "Sending SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp")
+                                            val task = dataClient.putDataItem(completeRequest)
+                                            Tasks.await(task)
+                                            Log.d("DataLayerSync", "Successfully sent SYNC_COMPLETE for transaction: $tid (backup)")
                                         } catch (exception: Exception) {
-                                            Log.e("DataLayerListenerService", "Error sending sync completion", exception)
+                                            Log.e("DataLayerSync", "Failed to send SYNC_COMPLETE for transaction: $tid", exception)
                                         }
                                     }
 

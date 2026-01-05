@@ -182,30 +182,32 @@ open class AppViewModel : WorkoutViewModel() {
                         } catch (e: Exception) {
                             Log.e("AppViewModel", "Error sending workout data for ${it.id}", e)
                             statuses.add(false)
+                            // Show toast for handshake failure
+                            if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                                }
+                            }
                         }
                     }
 
-                    if (statuses.contains(false)) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT)
-                                .show()
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Data sent to phone", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    // Don't show immediate success toast - wait for completion message
+                    // Success toast will be shown when SYNC_COMPLETE is received
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error in sendAll", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
+                        Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
     }
 
-    fun sendWorkoutHistoryToPhone(onEnd: (Boolean) -> Unit = {}) {
+    fun sendWorkoutHistoryToPhone(context: Context, onEnd: (Boolean) -> Unit = {}) {
         viewModelScope.launch(coroutineExceptionHandler + Dispatchers.IO) {
             try {
                 val workoutHistory =
@@ -250,6 +252,9 @@ open class AppViewModel : WorkoutViewModel() {
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error sending workout history to phone", e)
                 withContext(Dispatchers.Main) {
+                    if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
+                        Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                    }
                     onEnd(false)
                 }
             }
@@ -336,6 +341,8 @@ open class AppViewModel : WorkoutViewModel() {
                             }
                         }
 
+                        // Don't show immediate success toast - wait for completion message
+                        // Success toast will be shown when SYNC_COMPLETE is received
                         if (context != null && !result) {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
@@ -345,7 +352,11 @@ open class AppViewModel : WorkoutViewModel() {
                         Log.e("AppViewModel", "Error in pushAndStoreWorkoutData", e)
                         if (context != null) {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                                if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
+                                    Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
                     }

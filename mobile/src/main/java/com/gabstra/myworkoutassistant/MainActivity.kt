@@ -531,9 +531,20 @@ fun MyWorkoutAssistantNavHost(
                 val errorLogs = errorLogDao.getAllErrorLogs().first()
 
                 val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
-                sendAppBackup(dataClient, appBackup)
+                try {
+                    sendAppBackup(dataClient, appBackup)
+                    // Success toast will be shown when completion message is received
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error syncing with watch", e)
+                    withContext(Dispatchers.Main) {
+                        if (e.message?.contains("Handshake failed") == true) {
+                            Toast.makeText(context, "Sync failed: Unable to connect to watch", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(context, "Failed to sync with watch: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
             }
-            Toast.makeText(context, "Data sent to watch", Toast.LENGTH_SHORT).show()
         }
     }
 

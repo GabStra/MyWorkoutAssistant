@@ -247,14 +247,9 @@ fun WorkoutDetailScreen(
                         text = "Send history",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            viewModel.sendWorkoutHistoryToPhone() { success ->
-                                if (success)
-                                    Toast.makeText(
-                                        context,
-                                        "Workout History sent to phone",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                else
+                            viewModel.sendWorkoutHistoryToPhone(context) { success ->
+                                // Success toast will be shown when completion message is received
+                                if (!success)
                                     Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT)
                                         .show()
                             }

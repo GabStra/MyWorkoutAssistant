@@ -107,6 +107,7 @@ class MyReceiver(
                     intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PROGRESS_UPDATE)
 
                 if (appBackupStartJson != null) {
+                    Log.d("DataLayerSync", "Received APP_BACKUP_START_JSON - triggering loading screen")
                     appViewModel.setBackupProgress(0f)
 
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
@@ -125,14 +126,12 @@ class MyReceiver(
                 }
 
                 if (appBackupEndJson != null) {
+                    Log.d("DataLayerSync", "Received APP_BACKUP_END_JSON - dismissing loading screen")
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute != Screen.Workout.route) {
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
-                    } else {
-                        //Disabling this for now
-                        //appViewModel.RefreshAndGoToLastState()
                     }
 
                     val scheduler = WorkoutAlarmScheduler(this)
@@ -145,6 +144,7 @@ class MyReceiver(
                 }
 
                 if (appBackupFailed != null) {
+                    Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute == Screen.Loading.route) {
                         Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()

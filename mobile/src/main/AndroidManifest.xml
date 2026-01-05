@@ -33,6 +33,15 @@
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/errorLogsSync"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/syncRequest"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/syncAck"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/syncComplete"/>
             </intent-filter>
         </service>
         <activity

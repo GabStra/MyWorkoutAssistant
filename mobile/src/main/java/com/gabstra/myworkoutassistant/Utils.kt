@@ -134,53 +134,42 @@ object SyncHandshakeManager {
     }
 }
 
-// Helper function to process sync handshake messages
-fun processSyncHandshakeMessages(dataEvents: DataEventBuffer) {
-    dataEvents.forEach { dataEvent ->
-        val uri = dataEvent.dataItem.uri
-        when (uri.path) {
-            DataLayerListenerService.SYNC_ACK_PATH -> {
-                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                val transactionId = dataMap.getString("transactionId")
-                if (transactionId != null) {
-                    SyncHandshakeManager.completeAck(transactionId)
-                }
-            }
-            DataLayerListenerService.SYNC_COMPLETE_PATH -> {
-                val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                val transactionId = dataMap.getString("transactionId")
-                if (transactionId != null) {
-                    SyncHandshakeManager.completeCompletion(transactionId)
-                }
-            }
-        }
-    }
-}
-
 suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Boolean {
     return try {
+        Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId")
+        
+        // Register waiter BEFORE sending request to avoid race condition
+        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+        
         val request = PutDataMapRequest.create(DataLayerListenerService.SYNC_REQUEST_PATH).apply {
             dataMap.putString("transactionId", transactionId)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
         
+        Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
         dataClient.putDataItem(request)
         
+        // Small delay to allow message delivery
+        delay(100)
+        
+        Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
         // Wait for acknowledgment with timeout
-        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
         val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
             ackWaiter.await()
+            Log.d("DataLayerSync", "Received acknowledgment for transaction: $transactionId")
             true
         } ?: false
         
         if (!ackReceived) {
             SyncHandshakeManager.cleanup(transactionId)
-            Log.e("SyncHandshake", "Handshake timeout for transaction: $transactionId")
+            Log.e("DataLayerSync", "Handshake timeout for transaction: $transactionId after ${DataLayerListenerService.HANDSHAKE_TIMEOUT_MS}ms")
+        } else {
+            Log.d("DataLayerSync", "Handshake successful for transaction: $transactionId")
         }
         
         ackReceived
     } catch (exception: Exception) {
-        Log.e("SyncHandshake", "Error sending sync request", exception)
+        Log.e("DataLayerSync", "Error sending sync request for transaction: $transactionId", exception)
         SyncHandshakeManager.cleanup(transactionId)
         false
     }
@@ -195,13 +184,13 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
         } ?: false
         
         if (!completionReceived) {
-            Log.w("SyncHandshake", "Completion timeout for transaction: $transactionId (data may have been received)")
+            Log.w("DataLayerSync", "Completion timeout for transaction: $transactionId (data may have been received)")
         }
         
         SyncHandshakeManager.cleanup(transactionId)
         completionReceived
     } catch (exception: Exception) {
-        Log.e("SyncHandshake", "Error waiting for sync completion", exception)
+        Log.e("DataLayerSync", "Error waiting for sync completion", exception)
         SyncHandshakeManager.cleanup(transactionId)
         false
     }
@@ -213,9 +202,12 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
         if (!handshakeSuccess) {
-            Log.e("SyncHandshake", "Failed to establish connection for workout store sync")
-            return
+            Log.e("DataLayerSync", "Failed to establish connection for workout store sync")
+            throw Exception("Handshake failed - unable to establish connection with watch")
         }
+
+        // Register completion waiter BEFORE sending data
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
 
         // Send workout store data
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
@@ -227,15 +219,29 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(request)
+        
+        // Small delay to allow message delivery
+        delay(100)
 
         // Wait for completion acknowledgment
-        waitForSyncCompletion(transactionId)
+        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            completionWaiter.await()
+            true
+        } ?: false
+        
+        if (!completionReceived) {
+            Log.w("DataLayerSync", "Completion timeout for workout store transaction: $transactionId (data may have been received)")
+        }
+        
+        SyncHandshakeManager.cleanup(transactionId)
     } catch (cancellationException: CancellationException) {
         SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()
+        throw cancellationException
     } catch (exception: Exception) {
         SyncHandshakeManager.cleanup(transactionId)
-        exception.printStackTrace()
+        Log.e("DataLayerSync", "Error sending workout store", exception)
+        throw exception
     }
 }
 
@@ -245,9 +251,12 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
         if (!handshakeSuccess) {
-            Log.e("SyncHandshake", "Failed to establish connection for app backup sync")
-            return
+            Log.e("DataLayerSync", "Failed to establish connection for app backup sync")
+            throw Exception("Handshake failed - unable to establish connection with watch")
         }
+
+        // Register completion waiter BEFORE sending data
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
 
         val jsonString = fromAppBackupToJSON(appBackup)
         val chunkSize = 50000 // Adjust the chunk size as needed
@@ -283,15 +292,29 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                 delay(500)
             }
         }
+        
+        // Small delay after last chunk to allow message delivery
+        delay(100)
 
         // Wait for completion acknowledgment
-        waitForSyncCompletion(transactionId)
+        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            completionWaiter.await()
+            true
+        } ?: false
+        
+        if (!completionReceived) {
+            Log.w("DataLayerSync", "Completion timeout for backup transaction: $transactionId (data may have been received)")
+        }
+        
+        SyncHandshakeManager.cleanup(transactionId)
     } catch (cancellationException: CancellationException) {
         SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()
+        throw cancellationException
     } catch (exception: Exception) {
         SyncHandshakeManager.cleanup(transactionId)
-        exception.printStackTrace()
+        Log.e("DataLayerSync", "Error sending app backup", exception)
+        throw exception
     }
 }
 
