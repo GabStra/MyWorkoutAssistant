@@ -139,6 +139,7 @@ fun SupersetForm(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(top = 10.dp)
+                .padding(bottom = 10.dp)
                 .verticalColumnScrollbar(scrollState)
                 .verticalScroll(scrollState)
                 .padding(horizontal = 15.dp),

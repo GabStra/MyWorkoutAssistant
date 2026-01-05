@@ -723,6 +723,7 @@ fun ExerciseDetailScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(top = 10.dp)
+                        .padding(bottom = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState)
                         .padding(horizontal = 15.dp),

@@ -11,6 +11,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -37,8 +38,6 @@ import androidx.health.connect.client.units.Energy
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import androidx.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
@@ -763,7 +762,7 @@ fun Modifier.verticalColumnScrollbar(
     contentFadeColor: Color? = null
 ): Modifier {
     val defaultTrackColor = scrollBarTrackColor ?: MaterialTheme.colorScheme.scrim
-    val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onSurfaceVariant
+    val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onBackground
     val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
     // Remember updated state for all parameters accessed within draw lambda
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)

@@ -41,6 +41,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -78,6 +80,7 @@ import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
+import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -490,48 +493,67 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutSelector = @Composable {
-        Row(
-            verticalAlignment = Alignment.CenterVertically
+        val canGoBack = selectedWorkoutHistory != workoutHistories.first()
+        val canGoForward = selectedWorkoutHistory != workoutHistories.last()
+        
+        val navIconColors = IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onBackground,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        
+        StyledCard(
+            modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(
-                modifier = Modifier.size(25.dp),
-                onClick = {
-                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index > 0) { // Check to avoid IndexOutOfBoundsException
-                        isLoading = true
-                        selectedWorkoutHistory = workoutHistories[index - 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != workoutHistories.first()
-            ) {
-                val color = MaterialTheme.colorScheme.onBackground
-
-                Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
+            Row(
                 modifier = Modifier
-                    .weight(1f),
-                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            IconButton(
-                modifier = Modifier.size(25.dp),
-                onClick = {
-                    val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                        isLoading = true
-                        selectedWorkoutHistory = workoutHistories[index + 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != workoutHistories.last()
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val color = MaterialTheme.colorScheme.onBackground
-
-                Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
+                IconButton(
+                    modifier = Modifier.size(25.dp),
+                    onClick = {
+                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                            isLoading = true
+                            selectedWorkoutHistory = workoutHistories[index - 1]
+                        }
+                    },
+                    enabled = canGoBack,
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "Previous"
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    modifier = Modifier
+                        .weight(1f),
+                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                IconButton(
+                    modifier = Modifier.size(25.dp),
+                    onClick = {
+                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                            isLoading = true
+                            selectedWorkoutHistory = workoutHistories[index + 1]
+                        }
+                    },
+                    enabled = canGoForward,
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = "Next"
+                    )
+                }
             }
         }
     }
@@ -544,21 +566,36 @@ fun WorkoutHistoryScreen(
             workoutSelector()
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                HeartRateChart(
-                    modifier = Modifier.fillMaxWidth(),
-                    cartesianChartModel = heartRateEntryModel!!,
-                    title = "Heart Rate during Workout",
-                    userAge = userAge,
-                )
-
                 StyledCard {
                     ExpandableContainer(
-                        isOpen = false,
+                        isOpen = true,
                         modifier = Modifier.fillMaxWidth(),
-                        isExpandable =  zoneCounter != null,
-                        title = { modifier ->
+                        isExpandable = zoneCounter != null,
+                        title = {
+                            Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 10.dp),
+                                text = "Heart Rate during Workout",
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        },
+                        subContent = {
+                            HeartRateChartContent(
+                                modifier = Modifier.fillMaxWidth(),
+                                cartesianChartModel = heartRateEntryModel!!,
+                                userAge = userAge,
+                            )
+                            
+                            Spacer(modifier = Modifier.height(15.dp))
+                            
                             Row(
-                                modifier = modifier.padding(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp)
+                                    .padding(bottom = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
@@ -569,11 +606,11 @@ fun WorkoutHistoryScreen(
 
                                 Text(
                                     text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
-                                    Modifier.weight(2f),
+                                    modifier = Modifier.weight(2f),
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
-                                Column(modifier = Modifier.weight(1f),) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
@@ -606,7 +643,7 @@ fun WorkoutHistoryScreen(
                                             textAlign = TextAlign.End
                                         )
                                     }
-                                    if (kiloCaloriesBurned != 0.0 || !kiloCaloriesBurned.isNaN()) {
+                                    if (kiloCaloriesBurned != 0.0 && !kiloCaloriesBurned.isNaN()) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween
@@ -632,7 +669,6 @@ fun WorkoutHistoryScreen(
                                 modifier = Modifier.padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                //Invert the order of the zones
                                 zoneCounter!!.forEach { (zone, count) ->
                                     Column(modifier = Modifier.fillMaxWidth()) {
                                         val total = zoneCounter!!.values.sum()
@@ -653,17 +689,15 @@ fun WorkoutHistoryScreen(
                                             val highHr =
                                                 getHeartRateFromPercentage(upperBound, userAge)
                                             Text(
-                                                "$lowHr - $highHr bpm",
-                                                Modifier.weight(1f),
+                                                text = "$lowHr - $highHr bpm",
+                                                modifier = Modifier.weight(1f),
                                                 color = MaterialTheme.colorScheme.onBackground,
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
                                             Spacer(Modifier.weight(1f))
                                             Text(
-                                                text = "${(progress * 100).toInt()}% ${
-                                                    formatTime(count)
-                                                }",
-                                                Modifier.weight(1f),
+                                                text = "${(progress * 100).toInt()}% ${formatTime(count)}",
+                                                modifier = Modifier.weight(1f),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 textAlign = TextAlign.End,
                                                 color = MaterialTheme.colorScheme.onBackground,
@@ -682,10 +716,9 @@ fun WorkoutHistoryScreen(
                                     }
                                 }
                             }
-                        })
+                        }
+                    )
                 }
-
-
             }
             Column {
                 Text(
@@ -901,13 +934,15 @@ fun WorkoutHistoryScreen(
     }
 
     val customBottomBar = @Composable {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp), // Fill the width of the container
-            horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-        ) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp), // Fill the width of the container
+                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
+                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+            ) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
@@ -956,6 +991,7 @@ fun WorkoutHistoryScreen(
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
                 }
+            }
             }
         }
     }
@@ -1131,6 +1167,7 @@ fun WorkoutHistoryScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = 10.dp)
+                                .padding(bottom = 10.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
                                 .padding(horizontal = 15.dp),

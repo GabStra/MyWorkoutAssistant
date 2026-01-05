@@ -165,6 +165,48 @@ fun HeartRateChart(
     cartesianChartModel: CartesianChartModel,
     title: String,
     userAge: Int,
+    includeCard: Boolean = true,
+) {
+    val chartContent = @Composable {
+        HeartRateChartContent(
+            modifier = modifier,
+            cartesianChartModel = cartesianChartModel,
+            userAge = userAge,
+        )
+    }
+
+    if (includeCard) {
+        StyledCard {
+            ExpandableContainer(
+                isOpen = true,
+                modifier = modifier,
+                isExpandable = false,
+                title = {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp),
+                        text = title,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                },
+                content = {
+                    chartContent()
+                }
+            )
+        }
+    } else {
+        chartContent()
+    }
+}
+
+@Composable
+fun HeartRateChartContent(
+    modifier: Modifier = Modifier,
+    cartesianChartModel: CartesianChartModel,
+    userAge: Int,
 ) {
     val startAxisValueFormatter =
         CartesianValueFormatter { _, value, _ ->
@@ -189,86 +231,65 @@ fun HeartRateChart(
         indicator = { _ -> shapeComponent }
     )
 
-
     val bottomAxisValueFormatter =
         CartesianValueFormatter { _, value, _ ->
             formatTime((value).toInt())
         }
 
-    StyledCard {
-        ExpandableContainer(
-            isOpen = true,
-            modifier = modifier,
-            isExpandable = false,
-            title = {
-                Text(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp),
-                    text = title,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            },
-            content = {
-                CartesianChartHost(
-                    modifier = Modifier.padding(10.dp),
-                    zoomState = rememberVicoZoomState(
-                        initialZoom = Zoom.Content,
-                        zoomEnabled = true
-                    ),
-                    scrollState = rememberVicoScrollState(scrollEnabled = true),
-                    chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(
-                            LineCartesianLayer.LineProvider.series(
-                                listOf(
-                                    LineCartesianLayer.rememberLine(
-                                        fill = LineCartesianLayer.LineFill.single(
-                                            fill(
-                                                Color(
-                                                    0xFFff6700
-                                                )
-                                            )
-                                        ),
-                                        areaFill = null,
-                                        pointProvider = null,
-                                        pointConnector = LineCartesianLayer.PointConnector.cubic(),
+    CartesianChartHost(
+        modifier = modifier.padding(10.dp),
+        zoomState = rememberVicoZoomState(
+            initialZoom = Zoom.Content,
+            zoomEnabled = true
+        ),
+        scrollState = rememberVicoScrollState(scrollEnabled = true),
+        chart = rememberCartesianChart(
+            rememberLineCartesianLayer(
+                LineCartesianLayer.LineProvider.series(
+                    listOf(
+                        LineCartesianLayer.rememberLine(
+                            fill = LineCartesianLayer.LineFill.single(
+                                fill(
+                                    Color(
+                                        0xFFff6700
                                     )
                                 )
                             ),
+                            areaFill = null,
+                            pointProvider = null,
+                            pointConnector = LineCartesianLayer.PointConnector.cubic(),
+                        )
+                    )
+                ),
 
-                            rangeProvider = CartesianLayerRangeProvider.fixed(
-                                minY = 40.0,
-                                maxY = 105.0
-                            ),
-                        ),
-                        decorations = listOf(
-                            rememberHorizontalLine(colorsByZone[1].copy(alpha = 0.75f), 50.0),
-                            rememberHorizontalLine(colorsByZone[2].copy(alpha = 0.75f), 60.0),
-                            rememberHorizontalLine(colorsByZone[3].copy(alpha = 0.75f), 70.0),
-                            rememberHorizontalLine(colorsByZone[4].copy(alpha = 0.75f), 80.0),
-                            rememberHorizontalLine(colorsByZone[5].copy(alpha = 0.75f), 90.0),
-                            rememberHorizontalLine(Color.Black, 100.0),
-                        ),
-                        startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                            guideline = null,
-                            valueFormatter = startAxisValueFormatter,
-                            itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
-                        bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                            guideline = null,
-                            valueFormatter = bottomAxisValueFormatter,
-                            itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
-                        marker = marker,
-                        fadingEdges = rememberFadingEdges()
-                    ),
-                    model = cartesianChartModel,
-                )
-            }
-        )
-    }
+                rangeProvider = CartesianLayerRangeProvider.fixed(
+                    minY = 40.0,
+                    maxY = 105.0
+                ),
+            ),
+            decorations = listOf(
+                rememberHorizontalLine(colorsByZone[1].copy(alpha = 0.75f), 50.0),
+                rememberHorizontalLine(colorsByZone[2].copy(alpha = 0.75f), 60.0),
+                rememberHorizontalLine(colorsByZone[3].copy(alpha = 0.75f), 70.0),
+                rememberHorizontalLine(colorsByZone[4].copy(alpha = 0.75f), 80.0),
+                rememberHorizontalLine(colorsByZone[5].copy(alpha = 0.75f), 90.0),
+                rememberHorizontalLine(Color.Black, 100.0),
+            ),
+            startAxis = VerticalAxis.rememberStart(
+                line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                guideline = null,
+                valueFormatter = startAxisValueFormatter,
+                itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
+            bottomAxis = HorizontalAxis.rememberBottom(
+                line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                guideline = null,
+                valueFormatter = bottomAxisValueFormatter,
+                itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
+            marker = marker,
+            fadingEdges = rememberFadingEdges()
+        ),
+        model = cartesianChartModel,
+    )
 }

@@ -90,6 +90,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(vertical = 10.dp)
                                 .verticalColumnScrollbar(
                                     scrollState = scrollState,
                                     scrollBarColor = Color.Transparent,

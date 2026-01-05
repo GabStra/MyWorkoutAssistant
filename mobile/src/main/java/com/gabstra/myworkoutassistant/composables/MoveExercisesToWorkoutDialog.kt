@@ -46,6 +46,7 @@ fun MoveExercisesToWorkoutDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 5.dp)
+                        .padding(vertical = 10.dp)
                         .verticalColumnScrollbar(scrollState)
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(10.dp)

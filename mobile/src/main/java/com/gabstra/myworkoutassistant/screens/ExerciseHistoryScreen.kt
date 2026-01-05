@@ -34,6 +34,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -305,58 +307,79 @@ fun ExerciseHistoryScreen(
             historiesToShow.filter{setHistoriesByWorkoutHistoryId.containsKey(it.id)}
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically
+        val canGoBack = selectedWorkoutHistory != selectableWorkoutHistories.first()
+        val canGoForward = selectedWorkoutHistory != selectableWorkoutHistories.last()
+        
+        val navIconColors = IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onBackground,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        
+        StyledCard(
+            modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(
-                modifier = Modifier.size(25.dp),
-                onClick = {
-                    val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index > 0) {
-                        selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != selectableWorkoutHistories.first()
-            ) {
-                val color = MaterialTheme.colorScheme.onBackground
-
-                Icon(imageVector = Icons.Filled.ArrowBack, contentDescription = "Previous",tint = color)
-            }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
+            Row(
                 modifier = Modifier
-                    .weight(1f),
-                text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onBackground,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            IconButton(
-                modifier = Modifier.size(25.dp),
-                onClick = {
-                    val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                    if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                        selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                    }
-                },
-                enabled = selectedWorkoutHistory != selectableWorkoutHistories.last()
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val color = MaterialTheme.colorScheme.onBackground
-
-                Icon(imageVector = Icons.Filled.ArrowForward, contentDescription = "Next",tint = color)
+                IconButton(
+                    modifier = Modifier.size(25.dp),
+                    onClick = {
+                        val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index > 0) {
+                            selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+                        }
+                    },
+                    enabled = canGoBack,
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "Previous"
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    modifier = Modifier
+                        .weight(1f),
+                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                IconButton(
+                    modifier = Modifier.size(25.dp),
+                    onClick = {
+                        val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                        if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                            selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                        }
+                    },
+                    enabled = canGoForward,
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = "Next"
+                    )
+                }
             }
         }
     }
 
     val customBottomBar = @Composable {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp), // Fill the width of the container
-            horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-        ) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp), // Fill the width of the container
+                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
+                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
+            ) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
@@ -405,6 +428,7 @@ fun ExerciseHistoryScreen(
                     Spacer(modifier = Modifier.width(5.dp))
                     Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
                 }
+            }
             }
         }
     }
@@ -543,6 +567,7 @@ fun ExerciseHistoryScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = 10.dp)
+                                .padding(bottom = 10.dp)
                                 .verticalColumnScrollbar(scrollState)
                                 .verticalScroll(scrollState)
                                 .padding(horizontal = 15.dp),

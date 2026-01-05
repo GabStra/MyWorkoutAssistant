@@ -146,6 +146,7 @@ fun BodyWeightSetForm(
                             Column(
                                 modifier = Modifier
                                     .padding(top = 5.dp)
+                                    .padding(bottom = 5.dp)
                                     .height(300.dp)
                                     .fillMaxWidth()
                                     .verticalColumnScrollbar(scrollState)
