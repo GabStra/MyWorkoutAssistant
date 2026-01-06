@@ -275,7 +275,7 @@ fun WorkoutForm(
             // ---- Schedules --------------------------------------------------
             Spacer(Modifier.height(Spacing.lg))
             Text(
-                text = "Workout schedule",
+                text = "Alarm",
                 style = MaterialTheme.typography.titleMedium,
             )
 
@@ -283,7 +283,7 @@ fun WorkoutForm(
 
             if (schedules.value.isEmpty()) {
                 Text(
-                    text = "No schedules set",
+                    text = "No alarms set",
                     style = MaterialTheme.typography.bodyMedium
                 )
             } else {
