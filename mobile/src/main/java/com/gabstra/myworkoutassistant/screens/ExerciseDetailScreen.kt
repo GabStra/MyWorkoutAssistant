@@ -828,7 +828,8 @@ fun ExerciseDetailScreen(
                             isDragDisabled = true,
                             itemContent = { it ->
                                 ComponentRenderer(it, appViewModel, exercise)
-                            }
+                            },
+                            keySelector = { set -> set.id }
                         )
                         Row(
                             modifier = Modifier

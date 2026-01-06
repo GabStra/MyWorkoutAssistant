@@ -1542,10 +1542,10 @@ fun WorkoutsScreen(
                                         }
                                     } else {
                                         GenericSelectableList(
-                                            PaddingValues(0.dp, 10.dp),
+                                            it = PaddingValues(0.dp, 10.dp),
                                             items = activeWorkouts,
                                             selectedItems = selectedWorkouts,
-                                            isWorkoutSelectionModeActive,
+                                            isSelectionModeActive = isWorkoutSelectionModeActive,
                                             onItemClick = {
                                                 if (isCardExpanded) return@GenericSelectableList
                                                 appViewModel.setScreenData(
@@ -1582,7 +1582,8 @@ fun WorkoutsScreen(
                                                     )
                                                 }
                                             },
-                                            isDragDisabled = true
+                                            isDragDisabled = true,
+                                            keySelector = { workout -> workout.id }
                                         )
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -1645,10 +1646,10 @@ fun WorkoutsScreen(
                                         }
                                     } else {
                                         GenericSelectableList(
-                                            PaddingValues(0.dp, 10.dp),
+                                            it = PaddingValues(0.dp, 10.dp),
                                             items = equipments,
                                             selectedItems = selectedEquipments,
-                                            isEquipmentSelectionModeActive,
+                                            isSelectionModeActive = isEquipmentSelectionModeActive,
                                             onItemClick = { equipment ->
                                                 appViewModel.setScreenData(
                                                     ScreenData.EditEquipment(
@@ -1680,7 +1681,8 @@ fun WorkoutsScreen(
                                                     )
                                                 }
                                             },
-                                            isDragDisabled = true
+                                            isDragDisabled = true,
+                                            keySelector = { equipment -> equipment.id }
                                         )
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),

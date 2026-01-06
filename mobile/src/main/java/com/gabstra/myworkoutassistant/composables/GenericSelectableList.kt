@@ -46,9 +46,24 @@ fun findNewIndex(
 }
 
 
+internal fun <T, K> toggleSelectionById(
+    selection: List<T>,
+    item: T,
+    keySelector: (T) -> K
+): List<T> {
+    val targetKey = keySelector(item)
+    val existingKeys = selection.map(keySelector).toSet()
+
+    return if (existingKeys.contains(targetKey)) {
+        selection.filterNot { keySelector(it) == targetKey }
+    } else {
+        selection + item
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun <T> GenericSelectableList(
+fun <T, K> GenericSelectableList(
     it: PaddingValues? = null,
     items: List<T>,
     selectedItems: List<T>,
@@ -59,7 +74,8 @@ fun <T> GenericSelectableList(
     onDisableSelection: () -> Unit,
     onSelectionChange: (List<T>) -> Unit,
     onOrderChange: (List<T>) -> Unit,
-    isDragDisabled: Boolean = false
+    isDragDisabled: Boolean = false,
+    keySelector: (T) -> K
 ) {
     val centerPointByIndex = remember { mutableMapOf<Int, Pair<Float, Float>>() }
     val itemToRenderByIndex =
@@ -187,19 +203,18 @@ fun <T> GenericSelectableList(
             }
         }
 
+    val selectedIds = selectedItems.map(keySelector).toSet()
+
     SelectableList(
-        isSelectionModeActive,
+        selectionMode = isSelectionModeActive,
         modifier = Modifier
             .fillMaxSize()
             .padding(it ?: PaddingValues(0.dp)),
         items = items,
-        selection = selectedItems,
+        selectedIds = selectedIds,
+        keySelector = keySelector,
         onItemSelectionToggle = { item ->
-            val newSelection = if (selectedItems.any { it === item }) {
-                selectedItems.filter { it !== item }
-            } else {
-                selectedItems + item
-            }
+            val newSelection = toggleSelectionById(selectedItems, item, keySelector)
             onSelectionChange(newSelection)
         },
         itemContent = { item ->
@@ -234,11 +249,7 @@ fun <T> GenericSelectableList(
                             .combinedClickable(
                                 onClick = {
                                     if (isSelectionModeActive) {
-                                        val newSelection = if (selectedItems.any { it === item }) {
-                                            selectedItems.filter { it !== item }
-                                        } else {
-                                            selectedItems + item
-                                        }
+                                        val newSelection = toggleSelectionById(selectedItems, item, keySelector)
                                         onSelectionChange(newSelection)
                                     } else {
                                         onItemClick(item)

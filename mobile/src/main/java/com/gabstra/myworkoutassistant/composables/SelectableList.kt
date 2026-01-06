@@ -16,11 +16,12 @@ import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
-fun <T> SelectableList(
-    selectionMode: Boolean ,
-    modifier : Modifier,
+fun <T, K> SelectableList(
+    selectionMode: Boolean,
+    modifier: Modifier,
     items: List<T>,
-    selection: List<T>,
+    selectedIds: Set<K>,
+    keySelector: (T) -> K,
     itemContent: @Composable (T) -> Unit,
     onItemSelectionToggle: ((T) -> Unit)? = null,
 ) {
@@ -28,7 +29,7 @@ fun <T> SelectableList(
         modifier = modifier
     ) {
         for (item in items) {
-            val isSelected = selection.any { it === item }
+            val isSelected = selectedIds.contains(keySelector(item))
 
             Row(
                 modifier = Modifier

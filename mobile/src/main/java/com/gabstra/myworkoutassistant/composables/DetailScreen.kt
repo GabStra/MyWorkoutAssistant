@@ -211,8 +211,10 @@ fun <T> DetailScreen(
                 textAlign = TextAlign.Center
             )
         } else {
+            val selectedIds = selectedItems.toSet()
+
             SelectableList(
-                selectionMode,
+                selectionMode = selectionMode,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(it)
@@ -223,10 +225,11 @@ fun <T> DetailScreen(
                         }
                     },
                 items = items,
-                selection = selectedItems,
+                selectedIds = selectedIds,
+                keySelector = { item -> item },
                 onItemSelectionToggle = { item ->
-                    selectedItems = if (selectedItems.any { it === item }) {
-                        selectedItems.filter { it !== item }
+                    selectedItems = if (selectedItems.contains(item)) {
+                        selectedItems - item
                     } else {
                         selectedItems + item
                     }

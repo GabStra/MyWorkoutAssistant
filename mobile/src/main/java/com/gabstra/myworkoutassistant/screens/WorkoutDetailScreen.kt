@@ -1232,7 +1232,8 @@ fun WorkoutDetailScreen(
                                     appViewModel = appViewModel
                                 )
                             },
-                            isDragDisabled = true
+                            isDragDisabled = true,
+                            keySelector = { component -> component.id }
                         )
                         GenericButtonWithMenu(
                             menuItems = listOf(
