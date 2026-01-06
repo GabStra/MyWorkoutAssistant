@@ -15,7 +15,6 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
-import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
@@ -43,7 +42,9 @@ private val DarkColorScheme = darkColorScheme(
     surface = MediumDarkerGray,
     onSurface = LighterGray,
     surfaceVariant = MediumDarkGray,
-    onSurfaceVariant = MediumGray,
+    // Use a lighter variant for texts/icons on surface variants so labels and
+    // outlined text field details have stronger contrast on the dark background.
+    onSurfaceVariant = LighterGray,
     surfaceTint = Orange,
     inverseSurface = LighterGray,
     inverseOnSurface = DarkGray,
@@ -53,7 +54,9 @@ private val DarkColorScheme = darkColorScheme(
     errorContainer = MediumDarkerGray,
     onErrorContainer = Color.White,
 
-    outline = MediumGray,
+    // Strengthen outline colors so outlined components (e.g., text fields)
+    // stand out clearly against the dark surfaces.
+    outline = LighterGray,
     outlineVariant = MediumLightGray,
     scrim = DarkGray
 )

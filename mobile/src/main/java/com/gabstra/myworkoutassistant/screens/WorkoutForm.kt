@@ -256,7 +256,7 @@ fun WorkoutForm(
                 },
                 label = { Text("Target sessions per week", style = MaterialTheme.typography.labelLarge) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
+                 modifier = Modifier.fillMaxWidth()
             )
 
             // Use Polar toggle (aligned style)

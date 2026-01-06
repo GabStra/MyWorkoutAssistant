@@ -201,7 +201,7 @@ fun ExerciseForm(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = if (exercise == null) "Insert Exercise" else "Edit Exercise",
+                        text = if (exercise == null) "Create exercise" else "Edit exercise",
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleLarge
                     )
@@ -295,7 +295,7 @@ fun ExerciseForm(
             // Toggles
             ListItem(
                 colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                headlineContent = { Text("Keep screen on", style = MaterialTheme.typography.bodyLarge) },
+                headlineContent = { Text("Keep screen awake", style = MaterialTheme.typography.bodyLarge) },
                 trailingContent = {
                     Switch(
                         checked = keepScreenOn.value,
@@ -308,7 +308,7 @@ fun ExerciseForm(
             if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Show count-down timer", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text("Show countdown timer", style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = showCountDownTimer.value,
@@ -374,7 +374,7 @@ fun ExerciseForm(
             // Muscle Groups Selection
             Spacer(Modifier.height(Spacing.lg))
             Text(
-                text = "Muscle Groups",
+                text = "Target muscles",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = Spacing.sm)
             )
@@ -394,7 +394,12 @@ fun ExerciseForm(
                             MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Text("Primary", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Primary muscles",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center
+                    )
                 }
                 Button(
                     onClick = { isSelectingSecondary = true },
@@ -406,7 +411,12 @@ fun ExerciseForm(
                             MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Text("Secondary", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Secondary muscles",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
             
@@ -494,7 +504,7 @@ fun ExerciseForm(
             ) {
                 Spacer(Modifier.height(Spacing.lg))
                 Text(
-                    text = "Load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
+                    text = "Target load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 RangeSlider(
@@ -508,7 +518,7 @@ fun ExerciseForm(
 
                 Spacer(Modifier.height(Spacing.md))
                 Text(
-                    text = "Reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
+                    text = "Target reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 RangeSlider(
@@ -531,7 +541,7 @@ fun ExerciseForm(
                             bodyWeightPercentage.value = it
                         }
                     },
-                    label = { Text("Bodyweight %", style = MaterialTheme.typography.labelLarge) },
+                    label = { Text("Bodyweight load (%)", style = MaterialTheme.typography.labelLarge) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -542,10 +552,12 @@ fun ExerciseForm(
                 // Track current intra-set rest in seconds for validation and persistence
                 val intraSetRestSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
 
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 // Auto warmups
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Auto-generate warm-up sets", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text("Automatically generate warm-up sets", style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = generateWarmupSets.value,
@@ -558,7 +570,7 @@ fun ExerciseForm(
                 // Enable progression
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Enable progression", style = MaterialTheme.typography.bodyLarge) },
+                    headlineContent = { Text("Enable double progression", style = MaterialTheme.typography.bodyLarge) },
                     trailingContent = {
                         Switch(
                             checked = enableProgression.value,
@@ -566,12 +578,12 @@ fun ExerciseForm(
                         )
                     }
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
 
                 if (enableProgression.value) {
                     Spacer(Modifier.height(Spacing.lg))
                     Text(
-                        text = "Default load jump: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
+                        text = "Default load increase: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Slider(
@@ -587,7 +599,7 @@ fun ExerciseForm(
                     }
 
                     Text(
-                        text = "Max load jump: ${(loadJumpMaxPctState.floatValue * 100).roundToInt()}%",
+                        text = "Maximum load increase: ${(loadJumpMaxPctState.floatValue * 100).roundToInt()}%",
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(top = Spacing.md)
                     )
@@ -598,7 +610,7 @@ fun ExerciseForm(
                     )
 
                     Text(
-                        text = "Overcap reps: ${loadJumpOvercapUntilState.intValue}",
+                        text = "Overcap reps threshold: ${loadJumpOvercapUntilState.intValue}",
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(top = Spacing.md)
                     )
@@ -607,7 +619,10 @@ fun ExerciseForm(
                         onValueChange = { loadJumpOvercapUntilState.intValue = it.roundToInt().coerceIn(0, 5) },
                         valueRange = 0f..5f
                     )
+
                 }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 Spacer(Modifier.height(Spacing.lg))
                 // Unilateral toggle
@@ -615,13 +630,13 @@ fun ExerciseForm(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
                     headlineContent = {
                         Text(
-                            "Unilateral exercise",
+                            "Unilateral exercise (left/right sides)",
                             style = MaterialTheme.typography.bodyLarge
                         )
                     },
                     supportingContent = {
                         Text(
-                            "Treat each set as left and right sides with rest in between.",
+                            "Treat each set as left and right sides with rest between sides.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     },
@@ -648,7 +663,7 @@ fun ExerciseForm(
                     if (intraSetRestSeconds == 0) {
                         Spacer(Modifier.height(Spacing.sm))
                         Text(
-                            text = "Please set a non-zero rest between sides for unilateral exercises.",
+                            text = "Set a non-zero rest between sides for unilateral exercises.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -661,7 +676,7 @@ fun ExerciseForm(
             } else {
                 // Cardio HR target zone
                 Text(
-                    text = "Target HR zone",
+                    text = "Target heart-rate zone",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = Spacing.sm)
                 )
@@ -725,7 +740,7 @@ fun ExerciseForm(
                     val lb = selectedLowerBoundMaxHRPercent.value ?: 50f
                     val ub = selectedUpperBoundMaxHRPercent.value ?: 60f
                     Text(
-                        text = "Custom HR zone (${lb.toInt()}% – ${ub.toInt()}%)",
+                        text = "Custom heart-rate zone (${lb.toInt()}% – ${ub.toInt()}%)",
                         style = MaterialTheme.typography.titleMedium
                     )
                     RangeSlider(
@@ -743,7 +758,7 @@ fun ExerciseForm(
             // Do not store history
             ListItem(
                 colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                headlineContent = { Text("Skip history tracking", style = MaterialTheme.typography.bodyLarge) },
+                headlineContent = { Text("Skip exercise history tracking", style = MaterialTheme.typography.bodyLarge) },
                 trailingContent = {
                     Switch(
                         checked = doNotStoreHistory.value,
@@ -823,7 +838,7 @@ fun ExerciseForm(
                     enabled = canBeSaved,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (exercise == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge)
+                    Text(if (exercise == null) "Create" else "Save", style = MaterialTheme.typography.bodyLarge)
                 }
             }
 
