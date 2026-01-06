@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
@@ -268,10 +268,10 @@ fun BarbellForm(
 
     // Add plate dialog
     if (showAvailablePlateDialog.value) {
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showAvailablePlateDialog.value = false },
-            title = { Text("Add plate", style = MaterialTheme.typography.titleMedium) },
-            text = {
+            title = "Add plate",
+            body = {
                 Column {
                     OutlinedTextField(
                         value = newPlateWeightState.value,
@@ -298,30 +298,22 @@ fun BarbellForm(
                     )
                 }
             },
-            confirmButton = {
-                DialogTextButton(
-                    text = "Add",
-                    onClick = {
-                        val weight = newPlateWeightState.value.toDoubleOrNull()
-                        val thickness = newPlateThicknessState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0 && thickness != null) {
-                            availablePlatesState.value =
-                                availablePlatesState.value + Plate(weight, thickness)
-                            newPlateWeightState.value = ""
-                            newPlateThicknessState.value = ""
-                            showAvailablePlateDialog.value = false
-                        }
-                    },
-                    enabled = newPlateWeightState.value.isNotEmpty() &&
-                            newPlateThicknessState.value.isNotEmpty()
-                )
+            confirmText = "Add",
+            onConfirm = {
+                val weight = newPlateWeightState.value.toDoubleOrNull()
+                val thickness = newPlateThicknessState.value.toDoubleOrNull()
+                if (weight != null && weight > 0 && thickness != null) {
+                    availablePlatesState.value =
+                        availablePlatesState.value + Plate(weight, thickness)
+                    newPlateWeightState.value = ""
+                    newPlateThicknessState.value = ""
+                    showAvailablePlateDialog.value = false
+                }
             },
-            dismissButton = {
-                DialogTextButton(
-                    text = "Cancel",
-                    onClick = { showAvailablePlateDialog.value = false }
-                )
-            }
+            confirmEnabled = newPlateWeightState.value.isNotEmpty() &&
+                    newPlateThicknessState.value.isNotEmpty(),
+            dismissText = "Cancel",
+            onDismissButton = { showAvailablePlateDialog.value = false }
         )
     }
 }

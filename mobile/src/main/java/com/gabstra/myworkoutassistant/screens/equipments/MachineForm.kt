@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
@@ -311,10 +311,10 @@ fun MachineForm(
     }
     // Dialog for adding new available plate
     if (showAvailableWeightsDialog.value) {
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showAvailableWeightsDialog.value = false },
-            title = { Text("Add Weight", color = MaterialTheme.colorScheme.onSurface) },
-            text = {
+            title = "Add Weight",
+            body = {
                 Column {
                     OutlinedTextField(
                         value = newWeightState.value,
@@ -329,35 +329,27 @@ fun MachineForm(
                     )
                 }
             },
-            confirmButton = {
-                DialogTextButton(
-                    text = "Add",
-                    onClick = {
-                        val weight = newWeightState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0) {
-                            availableWeightsState.value = availableWeightsState.value + BaseWeight(weight)
-                            availableWeightsState.value = availableWeightsState.value.distinctBy { it.weight }
-                            newWeightState.value = ""
-                            showAvailableWeightsDialog.value = false
-                        }
-                    },
-                    enabled = newWeightState.value.isNotEmpty()
-                )
+            confirmText = "Add",
+            onConfirm = {
+                val weight = newWeightState.value.toDoubleOrNull()
+                if (weight != null && weight > 0) {
+                    availableWeightsState.value = availableWeightsState.value + BaseWeight(weight)
+                    availableWeightsState.value = availableWeightsState.value.distinctBy { it.weight }
+                    newWeightState.value = ""
+                    showAvailableWeightsDialog.value = false
+                }
             },
-            dismissButton = {
-                DialogTextButton(
-                    text = "Cancel",
-                    onClick = { showAvailableWeightsDialog.value = false }
-                )
-            }
+            confirmEnabled = newWeightState.value.isNotEmpty(),
+            dismissText = "Cancel",
+            onDismissButton = { showAvailableWeightsDialog.value = false }
         )
     }
 
     if (showExtraWeightDialog.value) {
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onSurface) },
-            text = {
+            title = "Add Extra Weight",
+            body = {
                 Column {
                     OutlinedTextField(
                         value = newExtraWeightState.value,
@@ -372,26 +364,18 @@ fun MachineForm(
                     )
                 }
             },
-            confirmButton = {
-                DialogTextButton(
-                    text = "Add",
-                    onClick = {
-                        val weight = newExtraWeightState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0) {
-                            extraWeightsState.value = extraWeightsState.value + BaseWeight(weight)
-                            newExtraWeightState.value = ""
-                            showExtraWeightDialog.value = false
-                        }
-                    },
-                    enabled = newExtraWeightState.value.isNotEmpty()
-                )
+            confirmText = "Add",
+            onConfirm = {
+                val weight = newExtraWeightState.value.toDoubleOrNull()
+                if (weight != null && weight > 0) {
+                    extraWeightsState.value = extraWeightsState.value + BaseWeight(weight)
+                    newExtraWeightState.value = ""
+                    showExtraWeightDialog.value = false
+                }
             },
-            dismissButton = {
-                DialogTextButton(
-                    text = "Cancel",
-                    onClick = { showExtraWeightDialog.value = false }
-                )
-            }
+            confirmEnabled = newExtraWeightState.value.isNotEmpty(),
+            dismissText = "Cancel",
+            onDismissButton = { showExtraWeightDialog.value = false }
         )
     }
 }

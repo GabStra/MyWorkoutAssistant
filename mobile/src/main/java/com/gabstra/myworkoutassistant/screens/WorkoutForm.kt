@@ -19,7 +19,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -72,6 +71,7 @@ import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -457,10 +457,10 @@ fun ScheduleDialog(
     )
     val showTimePicker = remember { mutableStateOf(false) }
 
-    AlertDialog(
+    StandardDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "Edit schedule" else "Add schedule", color = MaterialTheme.colorScheme.onSurface) },
-        text = {
+        title = if (isEditing) "Edit schedule" else "Add schedule",
+        body = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -543,49 +543,41 @@ fun ScheduleDialog(
                 )
             }
         },
-        confirmButton = {
-            DialogTextButton(
-                text = "Save",
-                onClick = {
-                val specificDate = if (useSpecificDate.value) {
-                    datePickerState.selectedDateMillis?.let {
-                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                    }
-                } else null
-
-                val newSchedule = WorkoutSchedule(
-                    id = schedule?.id ?: UUID.randomUUID(),
-                    workoutId = workoutId,
-                    label = labelState.value,
-                    hour = hourState.intValue,
-                    minute = minuteState.intValue,
-                    isEnabled = isEnabledState.value,
-                    daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
-                    specificDate = specificDate,
-                    hasExecuted = schedule?.hasExecuted ?: false
-                )
-
-                // Check for conflicts
-                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                    newSchedules = listOf(newSchedule),
-                    existingSchedules = existingSchedules.filter { it.id != newSchedule.id }
-                )
-
-                if (conflicts.isNotEmpty()) {
-                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
-                } else {
-                    onSave(newSchedule)
+        confirmText = "Save",
+        onConfirm = {
+            val specificDate = if (useSpecificDate.value) {
+                datePickerState.selectedDateMillis?.let {
+                    Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                 }
+            } else null
+
+            val newSchedule = WorkoutSchedule(
+                id = schedule?.id ?: UUID.randomUUID(),
+                workoutId = workoutId,
+                label = labelState.value,
+                hour = hourState.intValue,
+                minute = minuteState.intValue,
+                isEnabled = isEnabledState.value,
+                daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
+                specificDate = specificDate,
+                hasExecuted = schedule?.hasExecuted ?: false
+            )
+
+            // Check for conflicts
+            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                newSchedules = listOf(newSchedule),
+                existingSchedules = existingSchedules.filter { it.id != newSchedule.id }
+            )
+
+            if (conflicts.isNotEmpty()) {
+                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+            } else {
+                onSave(newSchedule)
             }
-            )
         },
-        dismissButton = {
-            DialogTextButton(
-                text = "Cancel",
-                onClick = onDismiss
-            )
-        }
+        dismissText = "Cancel",
+        onDismissButton = onDismiss
     )
 
     if (showTimePicker.value) {
@@ -657,22 +649,14 @@ fun TimePickerDialog(
     onConfirm: () -> Unit,
     timePickerState: TimePickerState
 ) {
-    AlertDialog(
+    StandardDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select time") },
-        text = { TimePicker(state = timePickerState) },
-        confirmButton = {
-            DialogTextButton(
-                text = "OK",
-                onClick = onConfirm
-            )
-        },
-        dismissButton = {
-            DialogTextButton(
-                text = "Cancel",
-                onClick = onDismiss
-            )
-        }
+        title = "Select time",
+        body = { TimePicker(state = timePickerState) },
+        confirmText = "OK",
+        onConfirm = onConfirm,
+        dismissText = "Cancel",
+        onDismissButton = onDismiss
     )
 }
 
@@ -771,10 +755,10 @@ fun BatchScheduleDialog(
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
     val showDatePicker = remember { mutableStateOf(false) }
 
-    AlertDialog(
+    StandardDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add multiple schedules", color = MaterialTheme.colorScheme.onSurface) },
-        text = {
+        title = "Add multiple schedules",
+        body = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -926,66 +910,58 @@ fun BatchScheduleDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
-        confirmButton = {
-            DialogTextButton(
-                text = "Save",
-                onClick = {
-                val list = mutableListOf<WorkoutSchedule>()
-                val startTotal = startHourState.intValue * 60 + startMinuteState.intValue
-                val endTotal = endHourState.intValue * 60 + endMinuteState.intValue
-                val interval = ((intervalHoursState.value.toIntOrNull() ?: 0) * 60 + (intervalMinutesState.value.toIntOrNull()
-                    ?: 30)).coerceAtLeast(1)
+        confirmText = "Save",
+        onConfirm = {
+            val list = mutableListOf<WorkoutSchedule>()
+            val startTotal = startHourState.intValue * 60 + startMinuteState.intValue
+            val endTotal = endHourState.intValue * 60 + endMinuteState.intValue
+            val interval = ((intervalHoursState.value.toIntOrNull() ?: 0) * 60 + (intervalMinutesState.value.toIntOrNull()
+                ?: 30)).coerceAtLeast(1)
 
-                var t = startTotal
-                var count = 1
-                while (t <= endTotal) {
-                    val hour = t / 60
-                    val minute = t % 60
-                    val specificDate = if (selectedTabIndex.value == 1) {
-                        datePickerState.selectedDateMillis?.let {
-                            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                        }
-                    } else null
+            var t = startTotal
+            var count = 1
+            while (t <= endTotal) {
+                val hour = t / 60
+                val minute = t % 60
+                val specificDate = if (selectedTabIndex.value == 1) {
+                    datePickerState.selectedDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                    }
+                } else null
 
-                    list.add(
-                        WorkoutSchedule(
-                            id = UUID.randomUUID(),
-                            workoutId = workoutId,
-                            label = "${labelPrefixState.value} $count",
-                            hour = hour,
-                            minute = minute,
-                            isEnabled = isEnabledState.value,
-                            daysOfWeek = if (selectedTabIndex.value == 0) daysOfWeekState.intValue else 0,
-                            specificDate = specificDate,
-                            hasExecuted = false
-                        )
+                list.add(
+                    WorkoutSchedule(
+                        id = UUID.randomUUID(),
+                        workoutId = workoutId,
+                        label = "${labelPrefixState.value} $count",
+                        hour = hour,
+                        minute = minute,
+                        isEnabled = isEnabledState.value,
+                        daysOfWeek = if (selectedTabIndex.value == 0) daysOfWeekState.intValue else 0,
+                        specificDate = specificDate,
+                        hasExecuted = false
                     )
-
-                    t += interval
-                    count++
-                }
-
-                // Check for conflicts
-                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                    newSchedules = list,
-                    existingSchedules = existingSchedules
                 )
 
-                if (conflicts.isNotEmpty()) {
-                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
-                } else {
-                    onSave(list)
-                }
+                t += interval
+                count++
             }
+
+            // Check for conflicts
+            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                newSchedules = list,
+                existingSchedules = existingSchedules
             )
+
+            if (conflicts.isNotEmpty()) {
+                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+            } else {
+                onSave(list)
+            }
         },
-        dismissButton = {
-            DialogTextButton(
-                text = "Cancel",
-                onClick = onDismiss
-            )
-        }
+        dismissText = "Cancel",
+        onDismissButton = onDismiss
     )
 
     if (showTimePicker.value) {

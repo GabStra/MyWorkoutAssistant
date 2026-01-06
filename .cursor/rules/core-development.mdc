@@ -1,0 +1,56 @@
+---
+description: Core workflow for large, multi-file features
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Core principle
+Prefer small, verified change-sets over big rewrites. Minimize assumptions.
+
+# For multi-file features (required workflow)
+1) Spec first:
+- Restate goal, non-goals, constraints
+- Define acceptance criteria
+- Define test plan (what proves it works)
+
+2) Repo map second (no code yet):
+- List likely entry points and files to touch (with reasons)
+- Describe current end-to-end flow
+- Identify extension points + constraints
+
+3) Implement in vertical slices:
+- Propose slices (smallest end-to-end increments)
+- Implement ONE slice per change-set
+
+# Change discipline
+- Minimal diff. No unrelated refactors, renames, formatting, or “cleanup”.
+- Contracts first: lock DTOs/interfaces/errors before cascading edits.
+- If a slice needs many files, split it until each change-set is small and reviewable.
+
+# Context handling
+- Do not request or rely on full-file dumps.
+- Ask for the smallest needed excerpts: file path + relevant sections + referenced types.
+- If uncertain: state the assumption, request the confirming snippet, and avoid guessing.
+
+# Output format (mandatory)
+## Working Memory
+- Feature:
+- Current slice:
+- Decisions locked:
+- In-scope files:
+- Open questions:
+
+## Plan (max 5 bullets)
+
+## Changeset
+- Files to change (intent per file)
+- Patch/diff per file
+
+## Tests
+- Tests to add/update
+- Commands to run
+- Verification checklist
+
+# Anti-drift
+- If the request is ambiguous, restate acceptance criteria and ask only what blocks progress.
+- If work starts diverging from the slice or touching unrelated code, stop and re-scope.

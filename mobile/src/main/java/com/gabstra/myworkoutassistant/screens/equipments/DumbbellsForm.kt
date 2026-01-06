@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -305,10 +305,10 @@ fun DumbbellsForm(
     }
     // Dialog for adding new dumbbell
     if (showDumbbellDialog.value) {
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showDumbbellDialog.value = false },
-            title = { Text("Add Dumbbell", color = MaterialTheme.colorScheme.onSurface) },
-            text = {
+            title = "Add Dumbbell",
+            body = {
                 Column {
                     OutlinedTextField(
                         value = newDumbbellWeightState.value,
@@ -323,36 +323,28 @@ fun DumbbellsForm(
                     )
                 }
             },
-            confirmButton = {
-                DialogTextButton(
-                    text = "Add",
-                    onClick = {
-                        val weight = newDumbbellWeightState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0) {
-                            availableDumbbellsState.value += BaseWeight(weight)
-                            availableDumbbellsState.value = availableDumbbellsState.value.distinctBy { it.weight }
-                            newDumbbellWeightState.value = ""
-                            showDumbbellDialog.value = false
-                        }
-                    },
-                    enabled = newDumbbellWeightState.value.isNotEmpty()
-                )
+            confirmText = "Add",
+            onConfirm = {
+                val weight = newDumbbellWeightState.value.toDoubleOrNull()
+                if (weight != null && weight > 0) {
+                    availableDumbbellsState.value += BaseWeight(weight)
+                    availableDumbbellsState.value = availableDumbbellsState.value.distinctBy { it.weight }
+                    newDumbbellWeightState.value = ""
+                    showDumbbellDialog.value = false
+                }
             },
-            dismissButton = {
-                DialogTextButton(
-                    text = "Cancel",
-                    onClick = { showDumbbellDialog.value = false }
-                )
-            }
+            confirmEnabled = newDumbbellWeightState.value.isNotEmpty(),
+            dismissText = "Cancel",
+            onDismissButton = { showDumbbellDialog.value = false }
         )
     }
 
     // Dialog for adding new additional plate
     if (showExtraWeightDialog.value) {
-        AlertDialog(
+        StandardDialog(
             onDismissRequest = { showExtraWeightDialog.value = false },
-            title = { Text("Add Extra Weight", color = MaterialTheme.colorScheme.onSurface) },
-            text = {
+            title = "Add Extra Weight",
+            body = {
                 Column {
                     OutlinedTextField(
                         value = newExtraWeightState.value,
@@ -367,26 +359,18 @@ fun DumbbellsForm(
                     )
                 }
             },
-            confirmButton = {
-                DialogTextButton(
-                    text = "Add",
-                    onClick = {
-                        val weight = newExtraWeightState.value.toDoubleOrNull()
-                        if (weight != null && weight > 0) {
-                            extraWeightsState.value = extraWeightsState.value + BaseWeight(weight)
-                            newExtraWeightState.value = ""
-                            showExtraWeightDialog.value = false
-                        }
-                    },
-                    enabled = newExtraWeightState.value.isNotEmpty()
-                )
+            confirmText = "Add",
+            onConfirm = {
+                val weight = newExtraWeightState.value.toDoubleOrNull()
+                if (weight != null && weight > 0) {
+                    extraWeightsState.value = extraWeightsState.value + BaseWeight(weight)
+                    newExtraWeightState.value = ""
+                    showExtraWeightDialog.value = false
+                }
             },
-            dismissButton = {
-                DialogTextButton(
-                    text = "Cancel",
-                    onClick = { showExtraWeightDialog.value = false }
-                )
-            }
+            confirmEnabled = newExtraWeightState.value.isNotEmpty(),
+            dismissText = "Cancel",
+            onDismissButton = { showExtraWeightDialog.value = false }
         )
     }
 }
