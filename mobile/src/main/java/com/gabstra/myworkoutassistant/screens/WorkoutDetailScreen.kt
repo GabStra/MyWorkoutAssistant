@@ -177,15 +177,6 @@ fun WorkoutComponentRenderer(
         }
 
         is Rest -> {
-            val allRests = workout.workoutComponents.filterIsInstance<Rest>()
-            val restIndex = allRests.indexOf(workoutComponent)
-            val restCount = allRests.size
-            val restText = if (restCount > 1) {
-                "REST ${restIndex + 1} of $restCount - ${formatTime(workoutComponent.timeInSeconds)}"
-            } else {
-                "REST ${formatTime(workoutComponent.timeInSeconds)}"
-            }
-            
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RectangleShape,
@@ -208,7 +199,7 @@ fun WorkoutComponentRenderer(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
                     Text(
-                        text = restText,
+                        text = "REST ${formatTime(workoutComponent.timeInSeconds)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = restColor,
                         textAlign = TextAlign.Center

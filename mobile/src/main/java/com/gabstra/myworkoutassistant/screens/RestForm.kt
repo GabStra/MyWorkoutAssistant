@@ -56,18 +56,7 @@ fun RestForm(
     val titleText = if (rest == null) {
         "Insert Rest"
     } else {
-        val allRests = workout?.workoutComponents?.filterIsInstance<Rest>() ?: emptyList()
-        val restCount = allRests.size
-        if (restCount > 1) {
-            val restIndex = allRests.indexOf(rest)
-            if (restIndex >= 0) {
-                "Edit Rest (${restIndex + 1} of $restCount)"
-            } else {
-                "Edit Rest"
-            }
-        } else {
-            "Edit Rest"
-        }
+        "Edit Rest"
     }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
