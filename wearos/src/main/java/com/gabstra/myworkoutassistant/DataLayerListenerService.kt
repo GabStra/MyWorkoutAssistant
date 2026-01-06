@@ -7,8 +7,8 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
-import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.combineChunks
+import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
@@ -23,13 +23,12 @@ import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
+import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
-import com.google.android.gms.tasks.Tasks
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
@@ -350,7 +349,6 @@ class DataLayerListenerService : WearableListenerService() {
                             backupChunks = backupChunks.toMutableList().apply {
                                 add(backupChunk)
                             }
-                            
 
                             val progress = backupChunks.size.toFloat() / expectedChunks
 

@@ -129,6 +129,7 @@ class MyApplication : Application() {
             try {
                 val intent = Intent(ERROR_LOGGED_ACTION).apply {
                     putExtra("error_count", updatedLogs.size)
+                    setPackage(packageName)
                 }
                 sendBroadcast(intent)
             } catch (e: Exception) {

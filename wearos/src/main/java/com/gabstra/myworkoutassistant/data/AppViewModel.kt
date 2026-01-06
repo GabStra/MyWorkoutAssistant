@@ -96,6 +96,9 @@ open class AppViewModel : WorkoutViewModel() {
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
 
+    private val _isSyncingToPhone = mutableStateOf(false)
+    val isSyncingToPhone: State<Boolean> = _isSyncingToPhone
+
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
         rebuildScreenState()
@@ -210,11 +213,16 @@ open class AppViewModel : WorkoutViewModel() {
     fun sendWorkoutHistoryToPhone(context: Context, onEnd: (Boolean) -> Unit = {}) {
         viewModelScope.launch(coroutineExceptionHandler + Dispatchers.IO) {
             try {
+                withContext(Dispatchers.Main) {
+                    _isSyncingToPhone.value = true
+                }
+                
                 val workoutHistory =
                     workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(selectedWorkout.value.id)
 
                 if (workoutHistory == null) {
                     withContext(Dispatchers.Main) {
+                        _isSyncingToPhone.value = false
                         onEnd(false)
                     }
                     return@launch
@@ -247,11 +255,13 @@ open class AppViewModel : WorkoutViewModel() {
                 } ?: false
 
                 withContext(Dispatchers.Main) {
+                    _isSyncingToPhone.value = false
                     onEnd(result)
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error sending workout history to phone", e)
                 withContext(Dispatchers.Main) {
+                    _isSyncingToPhone.value = false
                     if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
                         Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
                     }
@@ -305,6 +315,10 @@ open class AppViewModel : WorkoutViewModel() {
 
                 if (shouldSendData && dataClient != null) {
                     try {
+                        withContext(Dispatchers.Main) {
+                            _isSyncingToPhone.value = true
+                        }
+                        
                         val exerciseInfos = mutableListOf<ExerciseInfo>()
                         val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
                                 selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
@@ -345,6 +359,10 @@ open class AppViewModel : WorkoutViewModel() {
                             }
                         }
 
+                        withContext(Dispatchers.Main) {
+                            _isSyncingToPhone.value = false
+                        }
+
                         // Don't show immediate success toast - wait for completion message
                         // Success toast will be shown when SYNC_COMPLETE is received
                         if (context != null && !result) {
@@ -354,8 +372,9 @@ open class AppViewModel : WorkoutViewModel() {
                         }
                     } catch (e: Exception) {
                         Log.e("AppViewModel", "Error in pushAndStoreWorkoutData", e)
-                        if (context != null) {
-                            withContext(Dispatchers.Main) {
+                        withContext(Dispatchers.Main) {
+                            _isSyncingToPhone.value = false
+                            if (context != null) {
                                 if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
                                     Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
                                 } else {

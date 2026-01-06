@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -65,6 +66,7 @@ fun WorkoutScreen(
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
     val isResuming = screenState.isResuming
     val isRefreshing = screenState.isRefreshing
+    val isSyncingToPhone by viewModel.isSyncingToPhone
 
     val triggerMobileNotification = screenState.enableWorkoutNotificationFlow
 
@@ -358,5 +360,7 @@ fun WorkoutScreen(
                 }
             }
         }
+        
+        LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
     }
 }
