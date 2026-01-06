@@ -45,7 +45,7 @@ fun CustomButton(
 
     Box(
         modifier = modifier
-            .heightIn(min = 40.dp)
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(50))
             .background(
                 when {
