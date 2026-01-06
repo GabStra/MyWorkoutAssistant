@@ -293,7 +293,11 @@ open class AppViewModel : WorkoutViewModel() {
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
             if (!forceNotSend) {
                 val currentState = workoutState.value
-                val shouldSendData = (currentState != setStates.lastOrNull() || isDone)
+                // We want to send workout history whenever we finish storing a set
+                // (including the last set), so that incomplete workouts can be resumed
+                // on mobile. The completion screen will call this again with
+                // isDone=true but forceNotSend=true so we won't resend.
+                val shouldSendData = currentState is WorkoutState.Set
 
                 if(currentState is WorkoutState.Set){
                     upsertWorkoutRecord(currentState.exerciseId,currentState.setIndex)

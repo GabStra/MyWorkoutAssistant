@@ -41,8 +41,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import com.gabstra.myworkoutassistant.saveWorkoutStoreToDownloads
-import com.gabstra.myworkoutassistant.SyncHandshakeManager
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -126,6 +124,7 @@ class DataLayerListenerService : WearableListenerService() {
             // Process other data events
             eventsList.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
+                val eventType = dataEvent.type
                 when (uri.path) {
                     SYNC_REQUEST_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
@@ -153,11 +152,17 @@ class DataLayerListenerService : WearableListenerService() {
                     }
 
                     WORKOUT_HISTORY_STORE_PATH -> {
+                        // Only process CHANGED events, ignore DELETED
+                        if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
+                            return@forEach
+                        }
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val compressedJson = dataMap.getByteArray("compressedJson")
                         val transactionId = dataMap.getString("transactionId")
 
-                        scope.launch(Dispatchers.IO) {
+                        // Use a standalone IO scope for long-running DB work so it isn't
+                        // cancelled if the short-lived service instance is destroyed.
+                        CoroutineScope(Dispatchers.IO).launch {
                             try {
                                 val workoutHistoryStoreJson = decompressToString(compressedJson!!)
 

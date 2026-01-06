@@ -577,8 +577,13 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
         if (!handshakeSuccess) {
-            Log.e("DataLayerSync", "Failed to establish connection for workout history sync")
-            throw Exception("Handshake failed - unable to establish connection with phone")
+            // Handshake (ACK) failed or timed out, but the phone clearly received the request
+            // in our logs, so fall back to best-effort send instead of aborting.
+            // This avoids blocking sync when the ACK data item doesn't make it back to the watch.
+            Log.w(
+                "DataLayerSync",
+                "Handshake failed (no ACK) for transaction: $transactionId - proceeding with best-effort send"
+            )
         }
 
         // Register completion waiter BEFORE sending data

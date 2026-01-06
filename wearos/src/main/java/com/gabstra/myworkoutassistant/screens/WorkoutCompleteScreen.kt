@@ -106,9 +106,15 @@ fun WorkoutCompleteScreen(
         }
         cancelWorkoutInProgressNotification(context)
 
-        viewModel.pushAndStoreWorkoutData(true,context){
-            if(hasWorkoutRecord) viewModel.deleteWorkoutRecord()
-
+        // Mark the workout history as done (isDone = true) but don't resend it here.
+        // The last set completion already sent the history to mobile.
+        viewModel.pushAndStoreWorkoutData(
+            isDone = true,
+            context = context,
+            forceNotSend = true
+        ) {
+            // Workout just finished – always clear any in‑progress record on the watch
+            viewModel.deleteWorkoutRecord()
             // Timer will start after progression data is calculated
         }
     }
