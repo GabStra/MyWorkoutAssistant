@@ -1,9 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun StandardDialog(
@@ -32,7 +35,13 @@ fun StandardDialog(
             }
         },
         text = {
-            body()
+            ProvideTextStyle(
+                value = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            ) {
+                body()
+            }
         },
         confirmButton = {
             if (showConfirm && confirmText != null && onConfirm != null) {
@@ -50,7 +59,12 @@ fun StandardDialog(
                     onClick = onDismissButton ?: onDismissRequest
                 )
             }
-        }
+        },
+        shape = RoundedCornerShape(4.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = 0.dp,
     )
 }
 

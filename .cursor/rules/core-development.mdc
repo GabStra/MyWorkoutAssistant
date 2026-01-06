@@ -1,36 +1,31 @@
 ---
-description: Core workflow for large, multi-file features
+description: ALWAYS for coding tasks. Especially multi-file features: spec → repo map → vertical slices. Minimal diffs. Tests/verification required. No unrelated refactors.
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Core principle
-Prefer small, verified change-sets over big rewrites. Minimize assumptions.
+# When to apply
+Apply to any coding request. If the request spans multiple files or is ambiguous, enforce the workflow below.
 
-# For multi-file features (required workflow)
-1) Spec first:
-- Restate goal, non-goals, constraints
-- Define acceptance criteria
-- Define test plan (what proves it works)
+# Workflow (mandatory)
+1) Spec first (no code):
+- Goal, non-goals, constraints
+- Acceptance criteria
+- Test plan (what proves it works)
 
-2) Repo map second (no code yet):
-- List likely entry points and files to touch (with reasons)
-- Describe current end-to-end flow
-- Identify extension points + constraints
+2) Repo map second (no code):
+- Entry points + files likely to change (with reasons)
+- Current flow relevant to the feature
+- Contracts to lock (DTOs/interfaces/errors)
 
 3) Implement in vertical slices:
-- Propose slices (smallest end-to-end increments)
+- Propose slices; pick the smallest end-to-end slice
 - Implement ONE slice per change-set
 
-# Change discipline
-- Minimal diff. No unrelated refactors, renames, formatting, or “cleanup”.
-- Contracts first: lock DTOs/interfaces/errors before cascading edits.
-- If a slice needs many files, split it until each change-set is small and reviewable.
-
-# Context handling
-- Do not request or rely on full-file dumps.
-- Ask for the smallest needed excerpts: file path + relevant sections + referenced types.
-- If uncertain: state the assumption, request the confirming snippet, and avoid guessing.
+# Scope limits (anti-getting-lost)
+- Max 5 files per slice. If more: split into smaller slices.
+- No unrelated renames/reformatting/cleanup.
+- If context is missing: ask for the smallest relevant snippets (paths + relevant sections), do not guess.
 
 # Output format (mandatory)
 ## Working Memory
@@ -40,17 +35,13 @@ Prefer small, verified change-sets over big rewrites. Minimize assumptions.
 - In-scope files:
 - Open questions:
 
-## Plan (max 5 bullets)
+## Plan (≤5 bullets)
 
 ## Changeset
 - Files to change (intent per file)
 - Patch/diff per file
 
-## Tests
+## Tests & Verification
 - Tests to add/update
 - Commands to run
-- Verification checklist
-
-# Anti-drift
-- If the request is ambiguous, restate acceptance criteria and ask only what blocks progress.
-- If work starts diverging from the slice or touching unrelated code, stop and re-scope.
+- Checklist of acceptance criteria
