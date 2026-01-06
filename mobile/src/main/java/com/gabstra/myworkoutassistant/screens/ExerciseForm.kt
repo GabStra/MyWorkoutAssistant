@@ -3,8 +3,6 @@ package com.gabstra.myworkoutassistant.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +18,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -36,7 +33,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,7 +41,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,8 +54,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
@@ -130,6 +125,11 @@ fun ExerciseForm(
     val enableProgression = rememberSaveable { mutableStateOf(exercise?.enableProgression ?: false) }
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
+
+    // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
+    val isUnilateral = rememberSaveable {
+        mutableStateOf(exercise?.intraSetRestInSeconds?.let { it > 0 } ?: false)
+    }
 
     val bodyWeightPercentage = rememberSaveable { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
@@ -539,6 +539,9 @@ fun ExerciseForm(
             }
 
             if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                // Track current intra-set rest in seconds for validation and persistence
+                val intraSetRestSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
+
                 // Auto warmups
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
@@ -607,17 +610,54 @@ fun ExerciseForm(
                 }
 
                 Spacer(Modifier.height(Spacing.lg))
-                Text("Intra-set rest", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(Spacing.sm))
-                CustomTimePicker(
-                    initialHour = hours,
-                    initialMinute = minutes,
-                    initialSecond = seconds,
-                    onTimeChange = { h, m, s -> hms.value = Triple(h, m, s) }
+                // Unilateral toggle
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = {
+                        Text(
+                            "Unilateral exercise",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    },
+                    supportingContent = {
+                        Text(
+                            "Treat each set as left and right sides with rest in between.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = isUnilateral.value,
+                            onCheckedChange = { isUnilateral.value = it }
+                        )
+                    }
                 )
-
-                Spacer(Modifier.height(Spacing.lg))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                if (isUnilateral.value) {
+                    Spacer(Modifier.height(Spacing.lg))
+                    Text("Rest between sides", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    CustomTimePicker(
+                        initialHour = hours,
+                        initialMinute = minutes,
+                        initialSecond = seconds,
+                        onTimeChange = { h, m, s -> hms.value = Triple(h, m, s) }
+                    )
+
+                    if (intraSetRestSeconds == 0) {
+                        Spacer(Modifier.height(Spacing.sm))
+                        Text(
+                            text = "Please set a non-zero rest between sides for unilateral exercises.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    Spacer(Modifier.height(Spacing.lg))
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
             } else {
                 // Cardio HR target zone
                 Text(
@@ -703,7 +743,7 @@ fun ExerciseForm(
             // Do not store history
             ListItem(
                 colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                headlineContent = { Text("Do not store history", style = MaterialTheme.typography.bodyLarge) },
+                headlineContent = { Text("Skip history tracking", style = MaterialTheme.typography.bodyLarge) },
                 trailingContent = {
                     Switch(
                         checked = doNotStoreHistory.value,
@@ -727,9 +767,11 @@ fun ExerciseForm(
 
             Spacer(Modifier.height(Spacing.xl))
 
+            val intraSetRestSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
             val canBeSaved =
                 nameState.value.isNotBlank() &&
-                        (if (selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true)
+                        (if (selectedExerciseType.value == ExerciseType.WEIGHT) selectedEquipmentId.value != null else true) &&
+                        (!isUnilateral.value || intraSetRestSeconds > 0)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -765,7 +807,11 @@ fun ExerciseForm(
                             enableProgression = enableProgression.value,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
-                            intraSetRestInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
+                            intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {
+                                intraSetRestSeconds
+                            } else {
+                                null
+                            },
                             loadJumpDefaultPct = loadJumpDefaultPctState.floatValue.toDouble().round(2),
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble().round(2),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
