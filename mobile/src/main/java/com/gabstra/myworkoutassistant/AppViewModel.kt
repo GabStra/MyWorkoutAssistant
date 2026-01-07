@@ -206,9 +206,15 @@ class AppViewModel() : ViewModel() {
             val adjustedWorkouts = value.map { workout ->
                 val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
                     when (workoutComponent) {
-                        is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                        is Exercise -> workoutComponent.copy(
+                            sets = ensureRestSeparatedBySets(workoutComponent.sets),
+                            requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds ?: emptyList()
+                        )
                         is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                            exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                            exercise.copy(
+                                sets = ensureRestSeparatedBySets(exercise.sets),
+                                requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                            )
                         })
                         is Rest -> workoutComponent
                     }
@@ -254,9 +260,15 @@ class AppViewModel() : ViewModel() {
         val adjustedWorkouts = newWorkoutStore.workouts.map { workout ->
             val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
                 when (workoutComponent) {
-                    is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                    is Exercise -> workoutComponent.copy(
+                        sets = ensureRestSeparatedBySets(workoutComponent.sets),
+                        requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds ?: emptyList()
+                    )
                     is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                        exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                        exercise.copy(
+                            sets = ensureRestSeparatedBySets(exercise.sets),
+                            requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                        )
                     })
                     is Rest -> workoutComponent
                 }

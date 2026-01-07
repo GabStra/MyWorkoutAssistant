@@ -159,6 +159,7 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
     val gson = GsonBuilder()
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())

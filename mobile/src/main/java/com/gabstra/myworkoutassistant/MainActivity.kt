@@ -408,7 +408,10 @@ fun MyWorkoutAssistantNavHost(
                                 workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories ?: emptyList()).any { it.workoutId == workout.id })
                             }
 
-                            val newWorkoutStore = appBackup.WorkoutStore.copy(workouts = allowedWorkouts)
+                            val newWorkoutStore = appBackup.WorkoutStore.copy(
+                                workouts = allowedWorkouts,
+                                accessoryEquipments = appBackup.WorkoutStore.accessoryEquipments ?: emptyList()
+                            )
 
                             val deleteAndInsertJob = async {
                                 try {
@@ -533,9 +536,15 @@ fun MyWorkoutAssistantNavHost(
                     val adjustedWorkouts = allowedWorkouts.map { workout ->
                         val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
                             when (workoutComponent) {
-                                is Exercise -> workoutComponent.copy(sets = ensureRestSeparatedBySets(workoutComponent.sets))
+                                is Exercise -> workoutComponent.copy(
+                                    sets = ensureRestSeparatedBySets(workoutComponent.sets),
+                                    requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds ?: emptyList()
+                                )
                                 is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                                    exercise.copy(sets = ensureRestSeparatedBySets(exercise.sets))
+                                    exercise.copy(
+                                        sets = ensureRestSeparatedBySets(exercise.sets),
+                                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                                    )
                                 })
                                 is Rest -> workoutComponent
                             }
