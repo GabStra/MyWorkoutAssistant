@@ -70,6 +70,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackup
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -331,6 +332,56 @@ fun MyWorkoutAssistantNavHost(
     val scope = rememberCoroutineScope()
 
     var isSyncing by remember { mutableStateOf(false) }
+
+    val workoutStorePickerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri?.let {
+                try {
+                    context.contentResolver.openInputStream(it)?.use { inputStream ->
+                        val reader = inputStream.bufferedReader()
+                        val content = reader.readText()
+                        val importedWorkoutStore = fromJSONToWorkoutStore(content)
+                        
+                        scope.launch {
+                            try {
+                                val existingWorkoutsCount = appViewModel.workouts.size
+                                val existingEquipmentCount = appViewModel.equipments.size
+                                
+                                appViewModel.importWorkoutStore(importedWorkoutStore)
+                                
+                                // Save to repository
+                                workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
+                                
+                                val newWorkoutsCount = appViewModel.workouts.size
+                                val newEquipmentCount = appViewModel.equipments.size
+                                val addedWorkouts = newWorkoutsCount - existingWorkoutsCount
+                                val addedEquipment = newEquipmentCount - existingEquipmentCount
+                                
+                                Toast.makeText(
+                                    context,
+                                    "Imported: $addedWorkouts workout(s), $addedEquipment equipment item(s)",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error importing workout store", e)
+                                Toast.makeText(
+                                    context,
+                                    "Failed to import workouts: ${e.message}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error reading workout store file", e)
+                    Toast.makeText(
+                        context,
+                        "Failed to read file: ${e.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
 
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -610,6 +661,9 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onRestoreClick = {
                         jsonPickerLauncher.launch(arrayOf("application/json"))
+                    },
+                    onImportWorkoutsClick = {
+                        workoutStorePickerLauncher.launch(arrayOf("application/json"))
                     },
                     onExportWorkouts = {
                         val sdf = SimpleDateFormat("dd_MM_yyyy_HH_mm_ss", Locale.getDefault())

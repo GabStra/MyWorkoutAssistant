@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.util.Calendar
 import java.util.UUID
+import com.gabstra.myworkoutassistant.mergeWorkoutStore
+import com.gabstra.myworkoutassistant.ConflictResolution
 
 sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
@@ -371,6 +373,20 @@ class AppViewModel() : ViewModel() {
 
     fun addNewWorkout(newWorkout: Workout) {
         workouts = workouts + newWorkout.copy(order = workouts.size)
+    }
+
+    /**
+     * Imports a WorkoutStore and merges it with the existing one.
+     * 
+     * @param importedWorkoutStore The WorkoutStore to import
+     * @param conflictResolution How to handle ID conflicts (default: GENERATE_NEW_IDS)
+     */
+    fun importWorkoutStore(
+        importedWorkoutStore: WorkoutStore,
+        conflictResolution: ConflictResolution = ConflictResolution.GENERATE_NEW_IDS
+    ) {
+        val merged = mergeWorkoutStore(workoutStore, importedWorkoutStore, conflictResolution)
+        updateWorkoutStore(merged)
     }
 }
 

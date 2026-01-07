@@ -59,6 +59,7 @@ import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -1948,4 +1949,122 @@ object Spacing {
     val md = 12.dp
     val lg = 16.dp
     val xl = 24.dp
+}
+
+/**
+ * Conflict resolution strategy for merging WorkoutStore data.
+ */
+enum class ConflictResolution {
+    SKIP_DUPLICATES,      // Skip items with duplicate IDs
+    GENERATE_NEW_IDS,     // Generate new UUIDs for conflicts
+    REPLACE_EXISTING      // Replace existing items with same ID
+}
+
+/**
+ * Merges an imported WorkoutStore with an existing WorkoutStore.
+ * 
+ * @param existing The current WorkoutStore in the app
+ * @param imported The WorkoutStore to import/merge
+ * @param conflictResolution How to handle ID conflicts (default: GENERATE_NEW_IDS)
+ * @return Merged WorkoutStore
+ */
+fun mergeWorkoutStore(
+    existing: WorkoutStore,
+    imported: WorkoutStore,
+    conflictResolution: ConflictResolution = ConflictResolution.GENERATE_NEW_IDS
+): WorkoutStore {
+    // Merge workouts
+    val existingWorkoutIds = existing.workouts.map { it.id }.toSet()
+    val mergedWorkouts = mutableListOf<Workout>()
+    mergedWorkouts.addAll(existing.workouts)
+    
+    imported.workouts.forEach { importedWorkout ->
+        when {
+            !existingWorkoutIds.contains(importedWorkout.id) -> {
+                // New workout, add it
+                mergedWorkouts.add(importedWorkout)
+            }
+            conflictResolution == ConflictResolution.REPLACE_EXISTING -> {
+                // Replace existing workout
+                val index = mergedWorkouts.indexOfFirst { it.id == importedWorkout.id }
+                if (index >= 0) {
+                    mergedWorkouts[index] = importedWorkout
+                }
+            }
+            conflictResolution == ConflictResolution.GENERATE_NEW_IDS -> {
+                // Generate new ID for imported workout
+                val newId = UUID.randomUUID()
+                val newGlobalId = UUID.randomUUID()
+                mergedWorkouts.add(
+                    importedWorkout.copy(
+                        id = newId,
+                        globalId = newGlobalId,
+                        previousVersionId = null,
+                        nextVersionId = null
+                    )
+                )
+            }
+            // SKIP_DUPLICATES: do nothing, skip this workout
+        }
+    }
+    
+    // Merge equipment
+    val existingEquipmentIds = existing.equipments.map { it.id }.toSet()
+    val mergedEquipment = mutableListOf<WeightLoadedEquipment>()
+    mergedEquipment.addAll(existing.equipments)
+    
+    imported.equipments.forEach { importedEquipment ->
+        when {
+            !existingEquipmentIds.contains(importedEquipment.id) -> {
+                // New equipment, add it
+                mergedEquipment.add(importedEquipment)
+            }
+            conflictResolution == ConflictResolution.REPLACE_EXISTING -> {
+                // Replace existing equipment
+                val index = mergedEquipment.indexOfFirst { it.id == importedEquipment.id }
+                if (index >= 0) {
+                    mergedEquipment[index] = importedEquipment
+                }
+            }
+            conflictResolution == ConflictResolution.GENERATE_NEW_IDS -> {
+                // For equipment, skip duplicates when generating new IDs
+                // Updating all equipment references in workouts would be complex
+                // User can manually add equipment if needed
+                // SKIP_DUPLICATES: do nothing, skip this equipment
+            }
+            // SKIP_DUPLICATES: do nothing, skip this equipment
+        }
+    }
+    
+    // Handle user data: preserve existing values (Option A from plan)
+    // Only update if imported values are non-zero/non-default (Option B)
+    val mergedBirthDateYear = if (imported.birthDateYear > 0 && imported.birthDateYear != existing.birthDateYear) {
+        imported.birthDateYear
+    } else {
+        existing.birthDateYear
+    }
+    
+    val mergedWeightKg = if (imported.weightKg > 0.0 && imported.weightKg != existing.weightKg) {
+        imported.weightKg
+    } else {
+        existing.weightKg
+    }
+    
+    val mergedProgressionPercentageAmount = if (imported.progressionPercentageAmount > 0.0 && imported.progressionPercentageAmount != existing.progressionPercentageAmount) {
+        imported.progressionPercentageAmount
+    } else {
+        existing.progressionPercentageAmount
+    }
+    
+    // Preserve existing polarDeviceId unless imported has a value
+    val mergedPolarDeviceId = imported.polarDeviceId ?: existing.polarDeviceId
+    
+    return WorkoutStore(
+        workouts = mergedWorkouts,
+        equipments = mergedEquipment,
+        birthDateYear = mergedBirthDateYear,
+        weightKg = mergedWeightKg,
+        progressionPercentageAmount = mergedProgressionPercentageAmount,
+        polarDeviceId = mergedPolarDeviceId
+    )
 }

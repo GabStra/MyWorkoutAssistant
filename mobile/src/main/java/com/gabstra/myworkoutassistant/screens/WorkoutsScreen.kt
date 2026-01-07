@@ -144,6 +144,7 @@ fun Menu(
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
+    onImportWorkoutsClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
@@ -222,6 +223,13 @@ fun Menu(
                 text = { Text("Restore Backup") },
                 onClick = {
                     onRestoreClick()
+                    expanded = false
+                }
+            )
+            AppDropdownMenuItem(
+                text = { Text("Import Workouts") },
+                onClick = {
+                    onImportWorkoutsClick()
                     expanded = false
                 }
             )
@@ -394,6 +402,7 @@ fun WorkoutsScreen(
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
+    onImportWorkoutsClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
@@ -1094,6 +1103,7 @@ fun WorkoutsScreen(
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
                         onRestoreClick = onRestoreClick,
+                        onImportWorkoutsClick = onImportWorkoutsClick,
                         onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories,
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,

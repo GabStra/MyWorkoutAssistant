@@ -31,3 +31,12 @@ mobile/release/baselineProfiles/0/mobile-release.dm
 mobile/release/
 test_output.txt
 wearos/wearos/build/e2e-logs/
+
+# Workout generator script (contains API key)
+workout_generator.py
+
+# Workout generator output files
+workouts/
+errors/
+conversation_history.json
+*.pyc
