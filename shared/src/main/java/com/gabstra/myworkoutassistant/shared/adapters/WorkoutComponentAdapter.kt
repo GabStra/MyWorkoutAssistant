@@ -171,25 +171,25 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     0
                 }
 
-                val lowerBoundMaxHRPercent = if (jsonObject.has("lowerBoundMaxHRPercent")) {
+                val lowerBoundMaxHRPercent = if (jsonObject.has("lowerBoundMaxHRPercent") && !jsonObject.get("lowerBoundMaxHRPercent").isJsonNull) {
                     jsonObject.get("lowerBoundMaxHRPercent").asFloat
                 } else {
                     null
                 }
 
-                val upperBoundMaxHRPercent = if (jsonObject.has("upperBoundMaxHRPercent")) {
+                val upperBoundMaxHRPercent = if (jsonObject.has("upperBoundMaxHRPercent") && !jsonObject.get("upperBoundMaxHRPercent").isJsonNull) {
                     jsonObject.get("upperBoundMaxHRPercent").asFloat
                 } else {
                     null
                 }
 
-                val equipmentId = if (jsonObject.has("equipmentId")) {
+                val equipmentId = if (jsonObject.has("equipmentId") && !jsonObject.get("equipmentId").isJsonNull) {
                     UUID.fromString(jsonObject.get("equipmentId").asString)
                 } else {
                     null
                 }
 
-                val bodyWeightPercentage = if (jsonObject.has("bodyWeightPercentage")) {
+                val bodyWeightPercentage = if (jsonObject.has("bodyWeightPercentage") && !jsonObject.get("bodyWeightPercentage").isJsonNull) {
                     jsonObject.get("bodyWeightPercentage").asDouble
                 } else {
                     null
@@ -213,7 +213,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
-                val intraSetRestInSeconds = if (jsonObject.has("intraSetRestInSeconds")) {
+                val intraSetRestInSeconds = if (jsonObject.has("intraSetRestInSeconds") && !jsonObject.get("intraSetRestInSeconds").isJsonNull) {
                     jsonObject.get("intraSetRestInSeconds").asInt
                 } else {
                     null
@@ -225,17 +225,17 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
-                val loadJumpDefaultPct = if (jsonObject.has("loadJumpDefaultPct")) {
+                val loadJumpDefaultPct = if (jsonObject.has("loadJumpDefaultPct") && !jsonObject.get("loadJumpDefaultPct").isJsonNull) {
                     jsonObject.get("loadJumpDefaultPct").asDouble
                 } else {
                     null
                 }
-                val loadJumpMaxPct = if (jsonObject.has("loadJumpMaxPct")) {
+                val loadJumpMaxPct = if (jsonObject.has("loadJumpMaxPct") && !jsonObject.get("loadJumpMaxPct").isJsonNull) {
                     jsonObject.get("loadJumpMaxPct").asDouble
                 } else {
                     null
                 }
-                val loadJumpOvercapUntil = if (jsonObject.has("loadJumpOvercapUntil")) {
+                val loadJumpOvercapUntil = if (jsonObject.has("loadJumpOvercapUntil") && !jsonObject.get("loadJumpOvercapUntil").isJsonNull) {
                     jsonObject.get("loadJumpOvercapUntil").asInt
                 } else {
                     null

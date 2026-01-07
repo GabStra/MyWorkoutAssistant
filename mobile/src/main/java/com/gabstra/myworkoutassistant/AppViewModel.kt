@@ -405,7 +405,7 @@ class AppViewModel() : ViewModel() {
      */
     fun importWorkoutStore(
         importedWorkoutStore: WorkoutStore,
-        conflictResolution: ConflictResolution = ConflictResolution.GENERATE_NEW_IDS
+        conflictResolution: ConflictResolution = ConflictResolution.SKIP_DUPLICATES
     ) {
         val merged = mergeWorkoutStore(workoutStore, importedWorkoutStore, conflictResolution)
         updateWorkoutStore(merged)

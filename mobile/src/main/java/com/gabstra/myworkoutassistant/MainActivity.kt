@@ -348,6 +348,7 @@ fun MyWorkoutAssistantNavHost(
                             try {
                                 val existingWorkoutsCount = appViewModel.workouts.size
                                 val existingEquipmentCount = appViewModel.equipments.size
+                                val existingAccessoriesCount = appViewModel.accessoryEquipments.size
                                 
                                 appViewModel.importWorkoutStore(importedWorkoutStore)
                                 
@@ -356,12 +357,20 @@ fun MyWorkoutAssistantNavHost(
                                 
                                 val newWorkoutsCount = appViewModel.workouts.size
                                 val newEquipmentCount = appViewModel.equipments.size
+                                val newAccessoriesCount = appViewModel.accessoryEquipments.size
                                 val addedWorkouts = newWorkoutsCount - existingWorkoutsCount
                                 val addedEquipment = newEquipmentCount - existingEquipmentCount
+                                val addedAccessories = newAccessoriesCount - existingAccessoriesCount
+                                
+                                val message = buildString {
+                                    append("Imported: $addedWorkouts workout(s)")
+                                    if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
+                                    if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
+                                }
                                 
                                 Toast.makeText(
                                     context,
-                                    "Imported: $addedWorkouts workout(s), $addedEquipment equipment item(s)",
+                                    message,
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } catch (e: Exception) {

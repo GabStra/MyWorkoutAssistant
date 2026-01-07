@@ -1759,6 +1759,14 @@ fun WorkoutsScreen(
                                         .verticalScroll(scrollState)
                                         .padding(horizontal = 15.dp)
                                 ) {
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = "Equipment:",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    
                                     if (equipments.isEmpty()) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(5.dp),
@@ -1844,95 +1852,98 @@ fun WorkoutsScreen(
                                             )
                                         }
                                     }
-                                }
-                                
-                                // Accessories Section
-                                Spacer(Modifier.height(Spacing.xl))
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                Spacer(Modifier.height(Spacing.lg))
-                                
-                                Text(
-                                    text = "Accessories",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    modifier = Modifier.padding(bottom = Spacing.md)
-                                )
-                                
-                                if (accessories.isEmpty()) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(5.dp),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Button(
-                                            onClick = {
-                                                appViewModel.setScreenData(
-                                                    ScreenData.NewEquipment(EquipmentType.ACCESSORY)
-                                                )
-                                            }
-                                        ) {
-                                            Text(
-                                                "Add Accessory",
-                                                color = MaterialTheme.colorScheme.background
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    GenericSelectableList(
-                                        it = PaddingValues(0.dp, 10.dp),
-                                        items = accessories,
-                                        selectedItems = selectedAccessories,
-                                        isSelectionModeActive = isAccessorySelectionModeActive,
-                                        onItemClick = { accessory ->
-                                            appViewModel.setScreenData(
-                                                ScreenData.EditEquipment(
-                                                    accessory.id,
-                                                    EquipmentType.ACCESSORY
-                                                )
-                                            )
-                                        },
-                                        onEnableSelection = {
-                                            isAccessorySelectionModeActive = true
-                                        },
-                                        onDisableSelection = {
-                                            isAccessorySelectionModeActive = false
-                                        },
-                                        onSelectionChange = { newSelection ->
-                                            selectedAccessories = newSelection
-                                        },
-                                        onOrderChange = { },
-                                        itemContent = { it ->
-                                            StyledCard {
-                                                Text(
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .padding(15.dp)
-                                                        .basicMarquee(iterations = Int.MAX_VALUE),
-                                                    text = it.name,
-                                                    color = Color.White.copy(alpha = .87f),
-                                                    style = MaterialTheme.typography.bodyLarge,
-                                                )
-                                            }
-                                        },
-                                        isDragDisabled = true,
-                                        keySelector = { accessory -> accessory.id }
-                                    )
-                                    Row(
+                                    
+                                    // Accessories Section
+                                    Spacer(Modifier.height(Spacing.xl))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Spacer(Modifier.height(Spacing.lg))
+                                    
+                                    Text(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Button(
-                                            onClick = {
-                                                appViewModel.setScreenData(
-                                                    ScreenData.NewEquipment(EquipmentType.ACCESSORY)
+                                        text = "Accessories:",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    Spacer(Modifier.height(Spacing.md))
+                                    
+                                    if (accessories.isEmpty()) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Button(
+                                                onClick = {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewEquipment(EquipmentType.ACCESSORY)
+                                                    )
+                                                }
+                                            ) {
+                                                Text(
+                                                    "Add Accessory",
+                                                    color = MaterialTheme.colorScheme.background
                                                 )
                                             }
+                                        }
+                                    } else {
+                                        GenericSelectableList(
+                                            it = PaddingValues(0.dp, 10.dp),
+                                            items = accessories,
+                                            selectedItems = selectedAccessories,
+                                            isSelectionModeActive = isAccessorySelectionModeActive,
+                                            onItemClick = { accessory ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditEquipment(
+                                                        accessory.id,
+                                                        EquipmentType.ACCESSORY
+                                                    )
+                                                )
+                                            },
+                                            onEnableSelection = {
+                                                isAccessorySelectionModeActive = true
+                                            },
+                                            onDisableSelection = {
+                                                isAccessorySelectionModeActive = false
+                                            },
+                                            onSelectionChange = { newSelection ->
+                                                selectedAccessories = newSelection
+                                            },
+                                            onOrderChange = { },
+                                            itemContent = { it ->
+                                                StyledCard {
+                                                    Text(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .padding(15.dp)
+                                                            .basicMarquee(iterations = Int.MAX_VALUE),
+                                                        text = it.name,
+                                                        color = Color.White.copy(alpha = .87f),
+                                                        style = MaterialTheme.typography.bodyLarge,
+                                                    )
+                                                }
+                                            },
+                                            isDragDisabled = true,
+                                            keySelector = { accessory -> accessory.id }
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Add,
-                                                contentDescription = "Add",
-                                                tint = MaterialTheme.colorScheme.background,
-                                            )
+                                            Button(
+                                                onClick = {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewEquipment(EquipmentType.ACCESSORY)
+                                                    )
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Add,
+                                                    contentDescription = "Add",
+                                                    tint = MaterialTheme.colorScheme.background,
+                                                )
+                                            }
                                         }
                                     }
                                 }

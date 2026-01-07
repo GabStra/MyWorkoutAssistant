@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
+import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
@@ -1971,7 +1972,7 @@ enum class ConflictResolution {
 fun mergeWorkoutStore(
     existing: WorkoutStore,
     imported: WorkoutStore,
-    conflictResolution: ConflictResolution = ConflictResolution.GENERATE_NEW_IDS
+    conflictResolution: ConflictResolution = ConflictResolution.SKIP_DUPLICATES
 ): WorkoutStore {
     // Merge workouts
     val existingWorkoutIds = existing.workouts.map { it.id }.toSet()
@@ -2036,6 +2037,34 @@ fun mergeWorkoutStore(
         }
     }
     
+    // Merge accessory equipment
+    val existingAccessoryIds = existing.accessoryEquipments.map { it.id }.toSet()
+    val mergedAccessories = mutableListOf<AccessoryEquipment>()
+    mergedAccessories.addAll(existing.accessoryEquipments)
+    
+    imported.accessoryEquipments.forEach { importedAccessory ->
+        when {
+            !existingAccessoryIds.contains(importedAccessory.id) -> {
+                // New accessory, add it
+                mergedAccessories.add(importedAccessory)
+            }
+            conflictResolution == ConflictResolution.REPLACE_EXISTING -> {
+                // Replace existing accessory
+                val index = mergedAccessories.indexOfFirst { it.id == importedAccessory.id }
+                if (index >= 0) {
+                    mergedAccessories[index] = importedAccessory
+                }
+            }
+            conflictResolution == ConflictResolution.GENERATE_NEW_IDS -> {
+                // For accessories, skip duplicates when generating new IDs
+                // Updating all accessory references in exercises would be complex
+                // User can manually add accessories if needed
+                // SKIP_DUPLICATES: do nothing, skip this accessory
+            }
+            // SKIP_DUPLICATES: do nothing, skip this accessory
+        }
+    }
+    
     // Handle user data: preserve existing values (Option A from plan)
     // Only update if imported values are non-zero/non-default (Option B)
     val mergedBirthDateYear = if (imported.birthDateYear > 0 && imported.birthDateYear != existing.birthDateYear) {
@@ -2062,6 +2091,7 @@ fun mergeWorkoutStore(
     return WorkoutStore(
         workouts = mergedWorkouts,
         equipments = mergedEquipment,
+        accessoryEquipments = mergedAccessories,
         birthDateYear = mergedBirthDateYear,
         weightKg = mergedWeightKg,
         progressionPercentageAmount = mergedProgressionPercentageAmount,
