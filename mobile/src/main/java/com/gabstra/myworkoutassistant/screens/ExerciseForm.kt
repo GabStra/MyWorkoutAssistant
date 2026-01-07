@@ -18,6 +18,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -134,6 +136,11 @@ fun ExerciseForm(
     val bodyWeightPercentage = rememberSaveable { mutableStateOf(exercise?.bodyWeightPercentage?.toString() ?: "") }
 
     val equipments by viewModel.equipmentsFlowWithGeneric.collectAsState()
+    val accessories by viewModel.accessoryEquipmentsFlow.collectAsState()
+
+    val selectedAccessoryIds = rememberSaveable { 
+        mutableStateOf(exercise?.requiredAccessoryEquipmentIds ?: emptyList<UUID>())
+    }
 
     val heartRateZones = listOf("None", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Custom")
     val selectedLowerBoundMaxHRPercent = rememberSaveable { mutableStateOf(exercise?.lowerBoundMaxHRPercent) }
@@ -369,6 +376,45 @@ fun ExerciseForm(
                     }
                 }
 
+                // Accessories selection
+                Spacer(Modifier.height(Spacing.lg))
+                Text(
+                    text = "Accessories",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = Spacing.sm)
+                )
+                if (accessories.isEmpty()) {
+                    Text(
+                        text = "No accessories available. Add accessories in the Equipment tab.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    accessories.forEach { accessory ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = selectedAccessoryIds.value.contains(accessory.id),
+                                onCheckedChange = { checked ->
+                                    selectedAccessoryIds.value = if (checked) {
+                                        selectedAccessoryIds.value + accessory.id
+                                    } else {
+                                        selectedAccessoryIds.value - accessory.id
+                                    }
+                                }
+                            )
+                            Text(
+                                text = accessory.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             // Muscle Groups Selection
@@ -831,7 +877,8 @@ fun ExerciseForm(
                             loadJumpMaxPct = loadJumpMaxPctState.floatValue.toDouble().round(2),
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
                             muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
-                            secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value
+                            secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value,
+                            requiredAccessoryEquipmentIds = selectedAccessoryIds.value
                         )
                         onExerciseUpsert(newExercise)
                     },

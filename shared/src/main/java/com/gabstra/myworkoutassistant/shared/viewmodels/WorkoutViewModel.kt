@@ -32,6 +32,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
+import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
@@ -164,6 +165,10 @@ open class WorkoutViewModel(
 
     fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
         return workoutStore.equipments.find { it.id == id }
+    }
+
+    fun getAccessoryEquipmentById(id: UUID): AccessoryEquipment? {
+        return workoutStore.accessoryEquipments.find { it.id == id }
     }
 
     private val _isPaused = mutableStateOf(false) // Private mutable state

@@ -30,6 +30,10 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
 
             when (src.type) {
                 EquipmentType.GENERIC -> {}
+                EquipmentType.ACCESSORY -> {
+                    // AccessoryEquipment is handled by AccessoryEquipmentAdapter, not this adapter
+                    throw IllegalArgumentException("AccessoryEquipment should be serialized using AccessoryEquipmentAdapter")
+                }
                 EquipmentType.BARBELL -> {
                     val barbell = src as Barbell
                     add("availablePlates", context.serialize(barbell.availablePlates))
@@ -77,6 +81,10 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
         val baseWeightListType = object : TypeToken<List<BaseWeight>>() {}.type
 
         return when (EquipmentType.valueOf(obj.get("type").asString)) {
+            EquipmentType.ACCESSORY -> {
+                // AccessoryEquipment is handled by AccessoryEquipmentAdapter, not this adapter
+                throw IllegalArgumentException("AccessoryEquipment should be deserialized using AccessoryEquipmentAdapter")
+            }
             EquipmentType.GENERIC -> {
                 Generic(
                     id = id,

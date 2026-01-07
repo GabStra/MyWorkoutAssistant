@@ -84,6 +84,9 @@ fun ExerciseRenderer(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val equipment = if(exercise.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
+                    val accessoryEquipments = exercise.requiredAccessoryEquipmentIds.mapNotNull { id ->
+                        appViewModel.getAccessoryEquipmentById(id)
+                    }
                     val textColor = if (exercise.enabled) {
                         MaterialTheme.colorScheme.onBackground
                     } else {
@@ -98,6 +101,16 @@ fun ExerciseRenderer(
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
                             text = "Equipment: ${equipment.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textColor
+                        )
+                    }
+                    if(accessoryEquipments.isNotEmpty()){
+                        val accessoryNames = accessoryEquipments.joinToString(", ") { it.name }
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                            text = "Accessory: $accessoryNames",
                             style = MaterialTheme.typography.bodyMedium,
                             color = textColor
                         )

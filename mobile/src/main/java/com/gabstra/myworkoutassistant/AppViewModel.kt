@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -160,6 +161,7 @@ class AppViewModel() : ViewModel() {
         birthDateYear = 0,
         weightKg = 0.0,
         equipments = emptyList(),
+        accessoryEquipments = emptyList(),
         progressionPercentageAmount = 0.0
     ))
         private set
@@ -169,6 +171,10 @@ class AppViewModel() : ViewModel() {
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
         return (equipments + generic).find { it.id == equipmentId }
+    }
+
+    fun getAccessoryEquipmentById(equipmentId: UUID): AccessoryEquipment? {
+        return workoutStore.accessoryEquipments.find { it.id == equipmentId }
     }
 
     fun getWorkoutById(workoutId: UUID): Workout? {
@@ -264,11 +270,27 @@ class AppViewModel() : ViewModel() {
         _userAge.intValue =  currentYear - workoutStore.birthDateYear
         _workoutsFlow.value = newWorkoutStore.workouts
         _equipmentsFlow.value = newWorkoutStore.equipments
+        _accessoryEquipmentsFlow.value = newWorkoutStore.accessoryEquipments
         if(triggerSend) triggerMobile()
     }
 
     fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {
         equipments = newEquipments
+    }
+
+    var accessoryEquipments: List<AccessoryEquipment>
+        get() = workoutStore.accessoryEquipments
+        private set(value) {
+            _accessoryEquipmentsFlow.value = value
+            workoutStore = workoutStore.copy(accessoryEquipments = value)
+            triggerMobile()
+        }
+
+    private val _accessoryEquipmentsFlow = MutableStateFlow(workoutStore.accessoryEquipments)
+    val accessoryEquipmentsFlow = _accessoryEquipmentsFlow.asStateFlow()
+
+    fun updateAccessoryEquipments(newAccessories: List<AccessoryEquipment>) {
+        accessoryEquipments = newAccessories
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {

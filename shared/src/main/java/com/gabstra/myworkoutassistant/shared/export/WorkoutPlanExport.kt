@@ -416,6 +416,7 @@ private fun EquipmentType.toDisplayText(): String {
         EquipmentType.WEIGHTVEST -> "Weight Vest"
         EquipmentType.MACHINE -> "Machine"
         EquipmentType.IRONNECK -> "Iron Neck"
+        EquipmentType.ACCESSORY -> "Accessory"
     }
 }
 

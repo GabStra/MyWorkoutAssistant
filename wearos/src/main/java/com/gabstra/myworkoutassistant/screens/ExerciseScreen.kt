@@ -99,6 +99,12 @@ fun ExerciseScreen(
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
 
+    val accessoryEquipments = remember(exercise) {
+        exercise.requiredAccessoryEquipmentIds.mapNotNull { id ->
+            viewModel.getAccessoryEquipmentById(id)
+        }
+    }
+
     val showPlatesPage = remember(exercise, equipment) {
         equipment != null
                 && equipment.type == EquipmentType.BARBELL
@@ -432,6 +438,13 @@ fun ExerciseScreen(
                                                         append("Eq: ")
                                                     }
                                                     append(equipment.name)
+                                                }
+                                                if (accessoryEquipments.isNotEmpty()) {
+                                                    sep()
+                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LighterGray)) {
+                                                        append("Acc: ")
+                                                    }
+                                                    append(accessoryEquipments.joinToString(", ") { it.name })
                                                 }
                                                 val isWarmupSet =
                                                     when (val set = updatedState.set) {

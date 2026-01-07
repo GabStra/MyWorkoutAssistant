@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
@@ -110,6 +111,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -420,6 +422,7 @@ fun WorkoutsScreen(
     val workouts by appViewModel.workoutsFlow.collectAsState()
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
+    val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
 
     val enabledWorkouts = workouts.filter { it.enabled }
 
@@ -441,6 +444,9 @@ fun WorkoutsScreen(
 
     var selectedEquipments by remember { mutableStateOf(listOf<WeightLoadedEquipment>()) }
     var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
+    
+    var selectedAccessories by remember { mutableStateOf(listOf<AccessoryEquipment>()) }
+    var isAccessorySelectionModeActive by remember { mutableStateOf(false) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
 
@@ -918,6 +924,117 @@ fun WorkoutsScreen(
     }
 
     @Composable
+    fun accessoriesBottomBar(){
+        if(selectedAccessories.isNotEmpty()){
+            Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                BottomAppBar(
+                    contentPadding = PaddingValues(0.dp),
+                    containerColor = Color.Transparent,
+                    actions = {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedAccessories = emptyList()
+                                    isAccessorySelectionModeActive = false
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Cancel selection",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Cancel selection",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedAccessories = accessories
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBox,
+                                        contentDescription = "Select all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Select all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    selectedAccessories = emptyList()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                        contentDescription = "Deselect all",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                                Text(
+                                    "Deselect all",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Box(
+                                modifier = Modifier.fillMaxHeight(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                VerticalDivider(
+                                    modifier = Modifier.height(48.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(onClick = {
+                                    val newAccessories = accessories.filter { item ->
+                                        selectedAccessories.none { it.id == item.id }
+                                    }
+                                    appViewModel.updateAccessoryEquipments(newAccessories)
+                                    isAccessorySelectionModeActive = false
+                                }) {
+                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
+                                }
+                                Text(
+                                    "Delete",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    @Composable
     fun equipmentsBottomBar(){
         if(selectedEquipments.isNotEmpty()){
             Column {
@@ -1023,6 +1140,7 @@ fun WorkoutsScreen(
                                             EquipmentType.WEIGHTVEST -> TODO()
                                             EquipmentType.MACHINE -> TODO()
                                             EquipmentType.IRONNECK -> TODO()
+                                            EquipmentType.ACCESSORY -> throw IllegalArgumentException("Accessories cannot be copied here")
                                         }
                                     }
 
@@ -1124,7 +1242,10 @@ fun WorkoutsScreen(
         bottomBar = {
             when(pagerState.currentPage){
                 1 -> workoutsBottomBar()
-                2 -> equipmentsBottomBar()
+                2 -> {
+                    equipmentsBottomBar()
+                    accessoriesBottomBar()
+                }
             }
         },
     ) { paddingValues ->
@@ -1720,6 +1841,97 @@ fun WorkoutsScreen(
                                                         tint = MaterialTheme.colorScheme.background,
                                                     )
                                                 }
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                // Accessories Section
+                                Spacer(Modifier.height(Spacing.xl))
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                Spacer(Modifier.height(Spacing.lg))
+                                
+                                Text(
+                                    text = "Accessories",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    modifier = Modifier.padding(bottom = Spacing.md)
+                                )
+                                
+                                if (accessories.isEmpty()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(5.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.NewEquipment(EquipmentType.ACCESSORY)
+                                                )
+                                            }
+                                        ) {
+                                            Text(
+                                                "Add Accessory",
+                                                color = MaterialTheme.colorScheme.background
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    GenericSelectableList(
+                                        it = PaddingValues(0.dp, 10.dp),
+                                        items = accessories,
+                                        selectedItems = selectedAccessories,
+                                        isSelectionModeActive = isAccessorySelectionModeActive,
+                                        onItemClick = { accessory ->
+                                            appViewModel.setScreenData(
+                                                ScreenData.EditEquipment(
+                                                    accessory.id,
+                                                    EquipmentType.ACCESSORY
+                                                )
+                                            )
+                                        },
+                                        onEnableSelection = {
+                                            isAccessorySelectionModeActive = true
+                                        },
+                                        onDisableSelection = {
+                                            isAccessorySelectionModeActive = false
+                                        },
+                                        onSelectionChange = { newSelection ->
+                                            selectedAccessories = newSelection
+                                        },
+                                        onOrderChange = { },
+                                        itemContent = { it ->
+                                            StyledCard {
+                                                Text(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(15.dp)
+                                                        .basicMarquee(iterations = Int.MAX_VALUE),
+                                                    text = it.name,
+                                                    color = Color.White.copy(alpha = .87f),
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                )
+                                            }
+                                        },
+                                        isDragDisabled = true,
+                                        keySelector = { accessory -> accessory.id }
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.NewEquipment(EquipmentType.ACCESSORY)
+                                                )
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Add,
+                                                contentDescription = "Add",
+                                                tint = MaterialTheme.colorScheme.background,
                                             )
                                         }
                                     }

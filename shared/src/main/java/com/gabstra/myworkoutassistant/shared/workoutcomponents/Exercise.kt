@@ -33,4 +33,5 @@ data class Exercise (
     val loadJumpOvercapUntil: Int? = null,
     val muscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     val secondaryMuscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
+    val requiredAccessoryEquipmentIds: List<UUID> = emptyList(),
     ): WorkoutComponent(id,enabled)

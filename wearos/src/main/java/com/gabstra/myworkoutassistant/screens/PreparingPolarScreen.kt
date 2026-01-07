@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -128,7 +129,14 @@ fun PreparingPolarScreen(
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(15.dp))
-            Row (modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center){
+
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(8.dp))
                 LoadingText(baseText = "Connecting")
             }
 

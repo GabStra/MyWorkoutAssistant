@@ -52,6 +52,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutForm
 import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
+import com.gabstra.myworkoutassistant.screens.equipments.AccessoryForm
 import com.gabstra.myworkoutassistant.screens.equipments.BarbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellForm
 import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
@@ -61,6 +62,7 @@ import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -1572,6 +1574,14 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.updateEquipments(newEquipments)
                         appViewModel.goBack()
                     }, onCancel = { appViewModel.goBack() })
+                    EquipmentType.ACCESSORY -> {
+                        val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
+                        AccessoryForm(onUpsert = { new ->
+                            val newAccessories = accessories + new
+                            appViewModel.updateAccessoryEquipments(newAccessories)
+                            appViewModel.goBack()
+                        }, onCancel = { appViewModel.goBack() })
+                    }
                     EquipmentType.IRONNECK -> appViewModel.goBack()
                 }
             }
@@ -1579,6 +1589,7 @@ fun MyWorkoutAssistantNavHost(
             is ScreenData.EditEquipment -> {
                 val screenData = currentScreen as ScreenData.EditEquipment
                 val equipments by appViewModel.equipmentsFlow.collectAsState()
+                val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
 
                 when (screenData.equipmentType) {
                     EquipmentType.GENERIC -> throw NotImplementedError()
@@ -1646,6 +1657,16 @@ fun MyWorkoutAssistantNavHost(
                             appViewModel.updateEquipments(updatedEquipments)
                             appViewModel.goBack()
                         }, onCancel = { appViewModel.goBack() }, machine = selectedMachine)
+                    }
+                    EquipmentType.ACCESSORY -> {
+                        val selectedAccessory = accessories.find { it.id == screenData.equipmentId }!!
+                        AccessoryForm(onUpsert = { updatedAccessory ->
+                            val updatedAccessories = accessories.map { accessory ->
+                                if (accessory.id == selectedAccessory.id) updatedAccessory else accessory
+                            }
+                            appViewModel.updateAccessoryEquipments(updatedAccessories)
+                            appViewModel.goBack()
+                        }, onCancel = { appViewModel.goBack() }, accessory = selectedAccessory)
                     }
                     EquipmentType.IRONNECK -> TODO()
                 }

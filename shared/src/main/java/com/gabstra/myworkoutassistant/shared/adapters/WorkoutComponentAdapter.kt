@@ -87,6 +87,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.secondaryMuscleGroups != null && src.secondaryMuscleGroups.isNotEmpty()) {
                     jsonObject.add("secondaryMuscleGroups", context.serialize(src.secondaryMuscleGroups))
                 }
+                if (src.requiredAccessoryEquipmentIds.isNotEmpty()) {
+                    jsonObject.add("requiredAccessoryEquipmentIds", context.serialize(src.requiredAccessoryEquipmentIds))
+                }
             }
 
             is Rest -> {
@@ -252,6 +255,13 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     null
                 }
 
+                val requiredAccessoryEquipmentIds = if (jsonObject.has("requiredAccessoryEquipmentIds")) {
+                    val uuidListType = object : TypeToken<List<UUID>>() {}.type
+                    context.deserialize<List<UUID>>(jsonObject.get("requiredAccessoryEquipmentIds"), uuidListType)
+                } else {
+                    emptyList<UUID>()
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -277,7 +287,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     loadJumpMaxPct,
                     loadJumpOvercapUntil,
                     muscleGroups,
-                    secondaryMuscleGroups
+                    secondaryMuscleGroups,
+                    requiredAccessoryEquipmentIds
                 )
             }
 
