@@ -153,7 +153,7 @@ class WorkoutViewModelSessionTest {
             id = testEquipmentId,
             name = "Test Barbell",
             availablePlates = plates,
-            barLength = 200,
+            sleeveLength = 200,
             barWeight = 20.0
         )
     }

@@ -34,7 +34,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                     val barbell = src as Barbell
                     add("availablePlates", context.serialize(barbell.availablePlates))
                     addProperty("barWeight", barbell.barWeight)
-                    addProperty("barLength", barbell.barLength)
+                    addProperty("sleeveLength", barbell.sleeveLength)
                 }
                 EquipmentType.DUMBBELLS -> {
                     val dumbbells = src as Dumbbells
@@ -51,7 +51,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                 EquipmentType.PLATELOADEDCABLE -> {
                     val plateLoadedCable = src as PlateLoadedCable
                     add("availablePlates", context.serialize(plateLoadedCable.availablePlates))
-                    addProperty("barLength", plateLoadedCable.barLength)
+                    addProperty("sleeveLength", plateLoadedCable.sleeveLength)
                 }
                 EquipmentType.WEIGHTVEST -> {
                     val weightVest = src as WeightVest
@@ -97,12 +97,13 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
 
             EquipmentType.BARBELL -> {
                 val plateListType = object : TypeToken<List<Plate>>() {}.type
+                val sleeveLength = obj.getSleeveLength()
 
                 Barbell(
                     id = id,
                     name = name,
                     availablePlates = context.deserialize(obj.get("availablePlates"), plateListType),
-                    barLength = obj.get("barLength").asInt,
+                    sleeveLength = sleeveLength,
                     barWeight = if(obj.has("barWeight")){  obj.get("barWeight").asDouble } else{ 0.0 },
                 )
             }
@@ -139,14 +140,24 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
             EquipmentType.IRONNECK -> TODO()
             EquipmentType.PLATELOADEDCABLE -> {
                 val plateListType = object : TypeToken<List<Plate>>() {}.type
+                val sleeveLength = obj.getSleeveLength()
 
                 PlateLoadedCable(
                     id = id,
                     name = name,
                     availablePlates = context.deserialize(obj.get("availablePlates"), plateListType),
-                    barLength = obj.get("barLength").asInt,
+                    sleeveLength = sleeveLength,
                 )
             }
         }
+    }
+}
+
+private fun JsonObject.getSleeveLength(): Int {
+    // Backwards compatibility: older persisted JSON used "barLength" for sleeve length.
+    return when {
+        has("sleeveLength") -> get("sleeveLength").asInt
+        has("barLength") -> get("barLength").asInt
+        else -> 0
     }
 }

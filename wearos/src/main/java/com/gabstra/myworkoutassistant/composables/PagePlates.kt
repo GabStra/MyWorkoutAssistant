@@ -459,12 +459,12 @@ private fun BarbellVisualization(
 
     val isFinalState = (currentStepIndex == totalSteps) || (totalSteps == 0)
 
-    val barLength = barbell.barLength.toFloat()
-    // Total logical thickness of the *current* plates on the sleeve (in the same unit as barLength)
+    val sleeveLength = barbell.sleeveLength.toFloat()
+    // Total logical thickness of the *current* plates on the sleeve (in the same unit as sleeveLength)
     val currentTotalThickness = plateData.sumOf { it.thickness }.toFloat()
     // Extra logical length reserved beyond the outermost plate so we always show a bit of empty sleeve.
     // This is expressed as a fraction of the sleeve length per side and capped at non‑negative.
-    val extraLogicalOffset = (barLength * 0.15f).coerceAtLeast(0f)
+    val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
 
     val maxPlateWeight = remember(plateData) {
         plateData.maxOfOrNull { it.weight } ?: 25.0
@@ -568,19 +568,19 @@ private fun BarbellVisualization(
         // Dynamically scale the logical sleeve length so plates use more of the visible width.
         // We base this on the maximum total thickness encountered across all configurations in
         // the animation (if provided), plus a small offset, but never exceed the physical sleeve
-        // length per side (barLength).
+        // length per side (sleeveLength).
         val baseThickness = (maxLogicalThickness ?: currentTotalThickness).coerceAtLeast(0f)
         val logicalUsedLength = if (baseThickness > 0f) {
             val desired = baseThickness + extraLogicalOffset
-            if (barLength > 0f) {
-                desired.coerceAtMost(barLength)
+            if (sleeveLength > 0f) {
+                desired.coerceAtMost(sleeveLength)
             } else {
                 desired
             }
         } else {
             // If there are no plates, fall back to showing the whole physical sleeve if known,
             // otherwise just map 1:1 to the canvas sleeve width.
-            if (barLength > 0f) barLength else sleeveWidth
+            if (sleeveLength > 0f) sleeveLength else sleeveWidth
         }.coerceAtLeast(1f)
 
         val scaleFactor = sleeveWidth / logicalUsedLength

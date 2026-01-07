@@ -149,7 +149,7 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 Plate(5.0, 10.0),
                 Plate(2.5, 5.0)
             ),
-            barLength = 200
+            sleeveLength = 200
         )
     }
 

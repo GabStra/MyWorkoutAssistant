@@ -6,13 +6,13 @@ class Barbell(
     id : UUID,
     override val name: String,
     val availablePlates: List<Plate>, // List of available plates
-    val barLength: Int,
+    val sleeveLength: Int,
     val barWeight: Double, // Weight of the bar in kg
 ) : WeightLoadedEquipment(id, EquipmentType.BARBELL, loadingPoints =  2) {
 
     override fun isCombinationValid(combination: List<BaseWeight>): Boolean {
         val plates = combination.filterIsInstance<Plate>()
-        return plates.sumOf { it.thickness } <= barLength
+        return plates.sumOf { it.thickness } <= sleeveLength
     }
 
     override fun getWeightsCombinations(): Set<Double> {

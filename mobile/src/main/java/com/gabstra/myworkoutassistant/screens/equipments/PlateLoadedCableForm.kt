@@ -62,7 +62,7 @@ fun PlateLoadedCableForm(
 ) {
     // Mutable state for form fields
     val nameState = remember { mutableStateOf(plateLoadedCable?.name ?: "") }
-    val barLengthState = remember { mutableStateOf(plateLoadedCable?.barLength?.toString() ?: "") }
+    val sleeveLengthState = remember { mutableStateOf(plateLoadedCable?.sleeveLength?.toString() ?: "") }
 
     // State for plates
     val availablePlatesState = remember { mutableStateOf(plateLoadedCable?.availablePlates ?: emptyList<Plate>()) }
@@ -143,15 +143,15 @@ fun PlateLoadedCableForm(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Bar length field
+            // Sleeve length field
             OutlinedTextField(
-                value = barLengthState.value,
+                value = sleeveLengthState.value,
                 onValueChange = {
                     if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                        barLengthState.value = it
+                        sleeveLengthState.value = it
                     }
                 },
-                label = { Text("Bar Length (mm)") },
+                label = { Text("Sleeve length (mm)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -222,14 +222,14 @@ fun PlateLoadedCableForm(
                         id = plateLoadedCable?.id ?: UUID.randomUUID(),
                         name = nameState.value.trim(),
                         availablePlates = availablePlatesState.value,
-                        barLength = barLengthState.value.toIntOrNull() ?: 0,
+                        sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
                     )
                     onUpsert(newPlateLoadedCable)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = nameState.value.isNotBlank() &&
-                        barLengthState.value.isNotBlank() &&
-                        barLengthState.value.toIntOrNull() != null &&
+                        sleeveLengthState.value.isNotBlank() &&
+                        sleeveLengthState.value.toIntOrNull() != null &&
                         availablePlatesState.value.isNotEmpty()
             ) {
                 if (plateLoadedCable == null) Text("Add Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary)

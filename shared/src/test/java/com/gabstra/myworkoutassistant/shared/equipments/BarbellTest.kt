@@ -22,7 +22,7 @@ class BarbellTest {
             id = UUID.randomUUID(),
             name = "Test Barbell",
             availablePlates = plates,
-            barLength = 100,
+            sleeveLength = 100,
             barWeight = barWeight
         )
 
@@ -60,7 +60,7 @@ class BarbellTest {
             id = UUID.randomUUID(),
             name = "Test Barbell",
             availablePlates = plates,
-            barLength = 100,
+            sleeveLength = 100,
             barWeight = barWeight
         )
 
@@ -79,7 +79,7 @@ class BarbellTest {
             id = UUID.randomUUID(),
             name = "Test Barbell",
             availablePlates = plates,
-            barLength = 100,
+            sleeveLength = 100,
             barWeight = barWeight
         )
 

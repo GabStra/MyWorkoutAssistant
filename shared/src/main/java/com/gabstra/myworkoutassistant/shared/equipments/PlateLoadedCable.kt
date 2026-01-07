@@ -6,12 +6,12 @@ class PlateLoadedCable(
     id : UUID,
     override val name: String,
     val availablePlates: List<Plate>,
-    val barLength: Int,
+    val sleeveLength: Int,
 ) : WeightLoadedEquipment(id, EquipmentType.PLATELOADEDCABLE, loadingPoints = 1) {
 
     override fun isCombinationValid(combination: List<BaseWeight>): Boolean {
         val plates = combination.filterIsInstance<Plate>()
-        return plates.sumOf { it.thickness } <= barLength
+        return plates.sumOf { it.thickness } <= sleeveLength
     }
 
     override fun getBaseCombinations(): Set< List<BaseWeight>> {

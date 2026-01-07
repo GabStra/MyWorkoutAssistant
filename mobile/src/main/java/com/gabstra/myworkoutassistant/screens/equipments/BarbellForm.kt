@@ -64,7 +64,7 @@ fun BarbellForm(
 ) {
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(barbell?.name ?: "") }
-    val barLengthState = rememberSaveable { mutableStateOf(barbell?.barLength?.toString() ?: "") }
+    val sleeveLengthState = rememberSaveable { mutableStateOf(barbell?.sleeveLength?.toString() ?: "") }
     val barWeightState = rememberSaveable { mutableStateOf(barbell?.barWeight?.toString() ?: "") }
 
     // Saveable for primitives/strings only. Keep complex types as remember.
@@ -141,15 +141,15 @@ fun BarbellForm(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Bar length (mm, integers only)
+            // Sleeve length (mm, integers only)
             OutlinedTextField(
-                value = barLengthState.value,
+                value = sleeveLengthState.value,
                 onValueChange = {
                     if (it.isEmpty() || it.all { ch -> ch.isDigit() }) {
-                        barLengthState.value = it
+                        sleeveLengthState.value = it
                     }
                 },
-                label = { Text("Bar length (mm)", style = MaterialTheme.typography.labelLarge) },
+                label = { Text("Sleeve length (mm)", style = MaterialTheme.typography.labelLarge) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -237,7 +237,7 @@ fun BarbellForm(
                         id = barbell?.id ?: UUID.randomUUID(),
                         name = nameState.value.trim(),
                         availablePlates = availablePlatesState.value,
-                        barLength = barLengthState.value.toIntOrNull() ?: 0,
+                        sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
                         barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0
                     )
                     onUpsert(newBarbell)
@@ -245,7 +245,7 @@ fun BarbellForm(
                 modifier = Modifier.fillMaxWidth(),
                 enabled =
                     nameState.value.isNotBlank() &&
-                            barLengthState.value.toIntOrNull() != null &&
+                            sleeveLengthState.value.toIntOrNull() != null &&
                             availablePlatesState.value.isNotEmpty()
             ) {
                 Text(if (barbell == null) "Add Barbell" else "Save", color = MaterialTheme.colorScheme.onPrimary)

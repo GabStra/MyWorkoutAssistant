@@ -1010,7 +1010,13 @@ fun WorkoutsScreen(
                                     val newEquipments = selectedEquipments.map { it ->
                                         when (it.type){
                                             EquipmentType.GENERIC -> throw NotImplementedError()
-                                            EquipmentType.BARBELL -> Barbell(UUID.randomUUID(), it.name + " (Copy)", (it as Barbell).availablePlates, it.barLength,it.barWeight)
+                                            EquipmentType.BARBELL -> Barbell(
+                                                id = UUID.randomUUID(),
+                                                name = it.name + " (Copy)",
+                                                availablePlates = (it as Barbell).availablePlates,
+                                                sleeveLength = it.sleeveLength,
+                                                barWeight = it.barWeight
+                                            )
                                             EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
                                             EquipmentType.DUMBBELL -> TODO()
                                             EquipmentType.PLATELOADEDCABLE -> TODO()
