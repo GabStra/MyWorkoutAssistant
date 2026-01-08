@@ -531,10 +531,14 @@ fun MyWorkoutAssistantNavHost(
                                 db = db
                             )*/
 
-                                appViewModel.updateWorkoutStore(newWorkoutStore)
-                                workoutViewModel.updateWorkoutStore(newWorkoutStore)
+                                // Migrate the workout store before updating view models to ensure
+                                // "Unassigned" plan is created for workouts without a plan
+                                val migratedWorkoutStore = workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
 
-                                workoutStoreRepository.saveWorkoutStore(newWorkoutStore)
+                                appViewModel.updateWorkoutStore(migratedWorkoutStore)
+                                workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+
+                                workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
                                 appViewModel.triggerUpdate()
 
                                 // Show the success toast after all operations are complete
@@ -653,25 +657,10 @@ fun MyWorkoutAssistantNavHost(
                         // Success toast will be shown when completion message is received
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error syncing with watch", e)
+                        // Log detailed error for debugging but show generic message to user
+                        Log.d("MainActivity", "Detailed sync error: ${e.message}")
                         withContext(Dispatchers.Main) {
-                            val errorMessage = when {
-                                e.message?.contains("Handshake failed") == true || 
-                                e.message?.contains("unable to establish connection") == true -> {
-                                    "Unable to connect to watch"
-                                }
-                                e.message?.contains("Sync timed out") == true || 
-                                e.message?.contains("timeout") == true -> {
-                                    "Sync timed out - data may not have been received"
-                                }
-                                e.message?.contains("Sync failed:") == true -> {
-                                    // Extract error message after "Sync failed: "
-                                    e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
-                                }
-                                else -> {
-                                    "Failed to sync with watch: ${e.message ?: "Unknown error"}"
-                                }
-                            }
-                            Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
                         }
                     }
                 }

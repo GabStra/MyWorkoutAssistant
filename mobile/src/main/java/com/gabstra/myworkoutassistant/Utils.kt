@@ -492,7 +492,7 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
 suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {
     withContext(Dispatchers.IO) {
         try {
-            val fileName = "workout_store.json"
+            val baseFileName = "workout_store.json"
             val resolver = context.contentResolver
 
             // Get all DAOs
@@ -549,50 +549,40 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
 
             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
 
-            // Query for existing file with the same name in downloads folder
-            val projection = arrayOf(MediaStore.Downloads._ID)
-            var deletedCount = 0
-            
-            // First, try to find and delete existing file(s) with the same name
-            // Try with RELATIVE_PATH filter first
-            val selectionWithPath = "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
-            val selectionArgsWithPath = arrayOf(fileName, Environment.DIRECTORY_DOWNLOADS)
-            
-            resolver.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                projection,
-                selectionWithPath,
-                selectionArgsWithPath,
-                null
-            )?.use { cursor ->
-                // Delete existing file(s) with the same name
-                while (cursor.moveToNext()) {
-                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-                    val id = cursor.getLong(idIndex)
-                    val deleteUri = android.content.ContentUris.withAppendedId(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                        id
-                    )
-                    val deleteResult = resolver.delete(deleteUri, null, null)
-                    if (deleteResult > 0) {
-                        deletedCount++
-                    } else {
-                        Log.w("Utils", "Failed to delete existing file with ID: $id")
-                    }
+            // Helper function to try inserting a file with a given filename
+            fun tryInsertFile(fileNameToTry: String): android.net.Uri? {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileNameToTry)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+
+                return try {
+                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                } catch (e: IllegalStateException) {
+                    // MediaStore couldn't create unique file, likely because file already exists
+                    Log.w("Utils", "Failed to insert file with name $fileNameToTry: ${e.message}")
+                    null
+                } catch (e: Exception) {
+                    Log.e("Utils", "Unexpected error inserting file with name $fileNameToTry", e)
+                    null
                 }
             }
 
-            // Fallback: if no files found with path filter, try without path filter
-            // (in case MediaStore stored the path differently)
-            if (deletedCount == 0) {
-                val selectionByName = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-                val selectionArgsByName = arrayOf(fileName)
+            // Helper function to delete existing files with a given name
+            fun deleteExistingFiles(fileNameToDelete: String): Int {
+                val projection = arrayOf(MediaStore.Downloads._ID)
+                var deletedCount = 0
+                
+                // Try with RELATIVE_PATH filter first
+                val selectionWithPath = "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+                val selectionArgsWithPath = arrayOf(fileNameToDelete, Environment.DIRECTORY_DOWNLOADS)
                 
                 resolver.query(
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                     projection,
-                    selectionByName,
-                    selectionArgsByName,
+                    selectionWithPath,
+                    selectionArgsWithPath,
                     null
                 )?.use { cursor ->
                     while (cursor.moveToNext()) {
@@ -605,37 +595,82 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                         val deleteResult = resolver.delete(deleteUri, null, null)
                         if (deleteResult > 0) {
                             deletedCount++
-                        } else {
-                            Log.w("Utils", "Failed to delete existing file with ID: $id (fallback query)")
                         }
                     }
                 }
+
+                // Fallback: try without path filter if nothing was found
+                if (deletedCount == 0) {
+                    val selectionByName = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+                    val selectionArgsByName = arrayOf(fileNameToDelete)
+                    
+                    resolver.query(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        projection,
+                        selectionByName,
+                        selectionArgsByName,
+                        null
+                    )?.use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                            val id = cursor.getLong(idIndex)
+                            val deleteUri = android.content.ContentUris.withAppendedId(
+                                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                id
+                            )
+                            val deleteResult = resolver.delete(deleteUri, null, null)
+                            if (deleteResult > 0) {
+                                deletedCount++
+                            }
+                        }
+                    }
+                }
+
+                return deletedCount
             }
 
+            // First, try to delete existing file with base name
+            val deletedCount = deleteExistingFiles(baseFileName)
             if (deletedCount > 0) {
                 Log.d("Utils", "Deleted $deletedCount existing backup file(s) before creating new one")
-                // Small delay to ensure MediaStore processes the deletion
-                delay(100)
+                // Delay to ensure MediaStore processes the deletion
+                delay(200)
             }
 
-            // Insert or overwrite the file
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            // Try to insert with base filename first
+            var uri = tryInsertFile(baseFileName)
+            var finalFileName = baseFileName
+
+            // If that fails, use a timestamp-based unique filename
+            if (uri == null) {
+                val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                val timestamp = sdf.format(java.util.Date())
+                finalFileName = "workout_store_$timestamp.json"
+                uri = tryInsertFile(finalFileName)
+                if (uri != null) {
+                    Log.d("Utils", "Created backup with unique filename: $finalFileName")
+                }
+            } else {
+                Log.d("Utils", "Created backup with filename: $finalFileName")
             }
 
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            // Write the content if we successfully created the file
             if (uri != null) {
                 try {
                     resolver.openOutputStream(uri)?.use { outputStream ->
                         outputStream.write(jsonString.toByteArray())
                         outputStream.flush()
                     } ?: run {
-                        Log.e("Utils", "Failed to open output stream for new backup file")
+                        Log.e("Utils", "Failed to open output stream for backup file: $finalFileName")
+                        // Clean up the failed file
+                        try {
+                            resolver.delete(uri, null, null)
+                        } catch (deleteException: Exception) {
+                            Log.e("Utils", "Error cleaning up failed file insert", deleteException)
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.e("Utils", "Error writing to backup file", e)
+                    Log.e("Utils", "Error writing to backup file: $finalFileName", e)
                     // Try to clean up the failed insert
                     try {
                         resolver.delete(uri, null, null)
@@ -644,7 +679,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                     }
                 }
             } else {
-                Log.e("Utils", "Failed to create backup file - insert returned null URI")
+                Log.e("Utils", "Failed to create backup file - could not insert with any filename")
             }
         } catch (e: Exception) {
             Log.e("Utils", "Error saving workout store to Downloads folder", e)

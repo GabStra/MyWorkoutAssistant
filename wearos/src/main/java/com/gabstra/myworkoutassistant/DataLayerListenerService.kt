@@ -400,12 +400,25 @@ class DataLayerListenerService : WearableListenerService() {
                                 removeTimeout()
                                 
                                 scope.launch(Dispatchers.IO) {
+                                    var processingStep = "initialization"
                                     try {
+                                        processingStep = "combining chunks"
+                                        Log.d("DataLayerSync", "Starting backup processing: combining ${backupChunks.size} chunks for transaction: $transactionId")
                                         val backupData = combineChunks(backupChunks)
+                                        
+                                        processingStep = "decompressing backup data"
+                                        Log.d("DataLayerSync", "Decompressing backup data (size: ${backupData.size} bytes) for transaction: $transactionId")
                                         val jsonBackup = decompressToString(backupData)
+                                        
+                                        processingStep = "parsing JSON backup"
+                                        Log.d("DataLayerSync", "Parsing JSON backup (length: ${jsonBackup.length} chars) for transaction: $transactionId")
                                         val appBackup = fromJSONtoAppBackup(jsonBackup)
+                                        
+                                        processingStep = "saving workout store"
+                                        Log.d("DataLayerSync", "Saving workout store for transaction: $transactionId")
                                         workoutStoreRepository.saveWorkoutStore(appBackup.WorkoutStore)
 
+                                        processingStep = "database operations"
                                         runBlocking {
                                             val allSchedules = workoutScheduleDao.getAllSchedules()
 
@@ -500,14 +513,60 @@ class DataLayerListenerService : WearableListenerService() {
                                             currentTransactionId = null
                                         }
                                     } catch (exception: Exception) {
-                                        Log.e("DataLayerSync", "Error processing backup", exception)
+                                        // Build comprehensive error message
+                                        val exceptionClassName = exception.javaClass.simpleName
+                                        val exceptionMessage = exception.message
+                                        
+                                        // Build error message with safe length limit (DataMap has ~100KB limit, but keep errors reasonable)
+                                        val fullErrorMessage = when {
+                                            exceptionMessage != null && exceptionMessage.isNotEmpty() -> {
+                                                "$exceptionClassName at $processingStep: $exceptionMessage"
+                                            }
+                                            else -> {
+                                                "$exceptionClassName at $processingStep: Unknown error processing backup"
+                                            }
+                                        }
+                                        
+                                        // Truncate if too long (keep under 1000 chars to be safe, leaving room for other DataMap fields)
+                                        val errorMessage = if (fullErrorMessage.length > 1000) {
+                                            fullErrorMessage.take(997) + "..."
+                                        } else {
+                                            fullErrorMessage
+                                        }
+                                        
+                                        Log.e("DataLayerSync", "Error processing backup at step: $processingStep", exception)
+                                        Log.e("DataLayerSync", "Exception type: $exceptionClassName, message: $exceptionMessage")
+                                        Log.e("DataLayerSync", "Full error message to send: $fullErrorMessage")
+                                        Log.e("DataLayerSync", "Truncated error message (if needed): $errorMessage")
                                         exception.printStackTrace()
+                                        
+                                        // Log additional context for common error types
+                                        when (exception) {
+                                            is com.google.gson.JsonSyntaxException -> {
+                                                Log.e("DataLayerSync", "JSON parsing error - backup data may be corrupted or incompatible")
+                                                Log.e("DataLayerSync", "JSON error details: ${exception.cause?.message ?: "No cause available"}")
+                                            }
+                                            is OutOfMemoryError -> {
+                                                Log.e("DataLayerSync", "Out of memory error - backup may be too large for device")
+                                                Log.e("DataLayerSync", "Available memory info: maxMemory=${Runtime.getRuntime().maxMemory()}, freeMemory=${Runtime.getRuntime().freeMemory()}")
+                                            }
+                                            is java.util.zip.DataFormatException -> {
+                                                Log.e("DataLayerSync", "Data decompression error - compressed backup data may be corrupted")
+                                            }
+                                            is NullPointerException -> {
+                                                Log.e("DataLayerSync", "NullPointerException - possible missing data in backup")
+                                                Log.e("DataLayerSync", "Stack trace may indicate which field was null")
+                                            }
+                                            is IllegalStateException -> {
+                                                Log.e("DataLayerSync", "IllegalStateException - possible state corruption or invalid data")
+                                            }
+                                        }
                                         
                                         // Send error response back to sender
                                         transactionId?.let { tid ->
                                             try {
                                                 Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to backup processing error")
-                                                val errorMessage = exception.message ?: "Unknown error processing backup"
+                                                Log.e("DataLayerSync", "Error message being sent: $errorMessage")
                                                 val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
                                                 errorDataMapRequest.dataMap.putString("transactionId", tid)
                                                 errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
@@ -517,16 +576,27 @@ class DataLayerListenerService : WearableListenerService() {
                                                 val task = dataClient.putDataItem(errorRequest)
                                                 Tasks.await(task)
                                                 Log.e("DataLayerSync", "Successfully sent SYNC_ERROR for transaction: $tid")
+                                                Log.e("DataLayerSync", "Sent error message: $errorMessage")
                                             } catch (sendErrorException: Exception) {
                                                 Log.e("DataLayerSync", "Failed to send SYNC_ERROR for transaction: $tid", sendErrorException)
+                                                Log.e("DataLayerSync", "Original error was: $errorMessage")
                                             }
                                         }
                                         
+                                        // Clean up state and notify UI of failure
                                         backupChunks = mutableListOf()
                                         expectedChunks = 0
                                         hasStartedSync = false
                                         ignoreUntilStartOrEnd = false
                                         currentTransactionId = null
+                                        
+                                        // Send broadcast to reset UI state (dismiss loading screen)
+                                        val failedIntent = Intent(INTENT_ID).apply {
+                                            putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                            setPackage(packageName)
+                                        }
+                                        sendBroadcast(failedIntent)
+                                        Log.d("DataLayerSync", "Sent APP_BACKUP_FAILED broadcast to reset UI state")
                                     }
                                 }
                             }

@@ -20,7 +20,7 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         return migrateWorkoutStore(result)
     }
     
-    private fun migrateWorkoutStore(workoutStore: WorkoutStore): WorkoutStore {
+    fun migrateWorkoutStore(workoutStore: WorkoutStore): WorkoutStore {
         val workoutPlans = workoutStore.workoutPlans
         val workouts = workoutStore.workouts
         
@@ -91,7 +91,10 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
     }
 
     override fun saveWorkoutStore(workoutStore: WorkoutStore) {
-        val jsonString = fromWorkoutStoreToJSON(workoutStore)
+        // Migrate the workout store before saving to ensure it's in a valid state
+        // (e.g., create "Unassigned" plan for workouts without a plan)
+        val migratedWorkoutStore = migrateWorkoutStore(workoutStore)
+        val jsonString = fromWorkoutStoreToJSON(migratedWorkoutStore)
         val filename = "workout_store.json"  // Assuming a single file for the workout store
         val file = File(filesDir, filename)
         file.writeText(jsonString)  // Write the JSON string to the file

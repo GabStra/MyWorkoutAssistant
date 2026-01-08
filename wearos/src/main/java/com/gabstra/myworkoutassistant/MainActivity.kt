@@ -145,12 +145,17 @@ class MyReceiver(
 
                 if (appBackupFailed != null) {
                     Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
+                    // Reset backup progress state
+                    appViewModel.setBackupProgress(0f)
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute == Screen.Loading.route) {
                         Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
+                    } else {
+                        // If we're not on the loading screen, still show a toast and reset state
+                        Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                     }
                 }
 
