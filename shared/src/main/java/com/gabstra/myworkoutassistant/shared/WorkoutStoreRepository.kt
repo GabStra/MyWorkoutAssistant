@@ -16,22 +16,26 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         }
 
         val result = workoutStore ?: WorkoutStore(emptyList(), emptyList(), emptyList(), emptyList(), null, 0, 0.0, 0.0)
+        // WorkoutStoreAdapter ensures lists are never null, so we can directly migrate
         return migrateWorkoutStore(result)
     }
     
     private fun migrateWorkoutStore(workoutStore: WorkoutStore): WorkoutStore {
+        val workoutPlans = workoutStore.workoutPlans
+        val workouts = workoutStore.workouts
+        
         // If workoutPlans is empty, create default "Unassigned" plan and assign all workouts to it
-        if (workoutStore.workoutPlans.isEmpty() && workoutStore.workouts.isNotEmpty()) {
+        if (workoutPlans.isEmpty() && workouts.isNotEmpty()) {
             val unassignedPlanId = UUID.randomUUID()
             val unassignedPlan = WorkoutPlan(
                 id = unassignedPlanId,
                 name = "Unassigned",
-                workoutIds = workoutStore.workouts.map { it.id },
+                workoutIds = workouts.map { it.id },
                 order = 0
             )
             
             // Update all workouts to have the workoutPlanId
-            val migratedWorkouts = workoutStore.workouts.map { workout ->
+            val migratedWorkouts = workouts.map { workout ->
                 if (workout.workoutPlanId == null) {
                     workout.copy(workoutPlanId = unassignedPlanId)
                 } else {
@@ -46,9 +50,9 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         }
         
         // If workouts exist but some don't have workoutPlanId, assign them to Unassigned plan
-        val workoutsWithoutPlan = workoutStore.workouts.filter { it.workoutPlanId == null }
+        val workoutsWithoutPlan = workouts.filter { it.workoutPlanId == null }
         if (workoutsWithoutPlan.isNotEmpty()) {
-            val unassignedPlan = workoutStore.workoutPlans.find { it.name == "Unassigned" }
+            val unassignedPlan = workoutPlans.find { it.name == "Unassigned" }
             val unassignedPlanId = unassignedPlan?.id ?: UUID.randomUUID()
             
             val updatedPlans = if (unassignedPlan == null) {
@@ -56,11 +60,11 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
                     id = unassignedPlanId,
                     name = "Unassigned",
                     workoutIds = workoutsWithoutPlan.map { it.id },
-                    order = (workoutStore.workoutPlans.maxOfOrNull { it.order } ?: -1) + 1
+                    order = (workoutPlans.maxOfOrNull { it.order } ?: -1) + 1
                 )
-                workoutStore.workoutPlans + newUnassignedPlan
+                workoutPlans + newUnassignedPlan
             } else {
-                workoutStore.workoutPlans.map { plan ->
+                workoutPlans.map { plan ->
                     if (plan.id == unassignedPlanId) {
                         plan.copy(workoutIds = plan.workoutIds + workoutsWithoutPlan.map { it.id })
                     } else {
@@ -69,7 +73,7 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
                 }
             }
             
-            val migratedWorkouts = workoutStore.workouts.map { workout ->
+            val migratedWorkouts = workouts.map { workout ->
                 if (workout.workoutPlanId == null) {
                     workout.copy(workoutPlanId = unassignedPlanId)
                 } else {

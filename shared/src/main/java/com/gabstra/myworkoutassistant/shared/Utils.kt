@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
@@ -79,6 +80,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
 
 fun fromJSONToWorkoutStore(json: String): WorkoutStore {
     val gson = GsonBuilder()
+        .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
@@ -157,6 +159,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 
 fun fromJSONtoAppBackup(json: String) : AppBackup {
     val gson = GsonBuilder()
+        .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
         .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
         .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())

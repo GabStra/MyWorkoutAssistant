@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -212,7 +213,7 @@ fun WeightSetForm(
         Button(
             colors = ButtonDefaults.buttonColors(
                 contentColor = MaterialTheme.colorScheme.background,
-                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                disabledContentColor = DisabledContentGray
             ),
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0

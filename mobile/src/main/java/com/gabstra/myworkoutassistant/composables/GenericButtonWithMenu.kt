@@ -24,6 +24,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 data class MenuItem(
     val label: String,
@@ -53,7 +54,7 @@ fun GenericButtonWithMenu(
             Button(
                 colors = ButtonDefaults.buttonColors(
                     contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    disabledContentColor = DisabledContentGray
                 ),
                 onClick = { expanded = !expanded },
                 enabled = enabled

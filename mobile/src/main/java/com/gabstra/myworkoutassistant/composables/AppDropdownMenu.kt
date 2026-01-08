@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
 fun AppDropdownMenu(
@@ -88,7 +89,7 @@ fun AppDropdownMenuItem(
     enabled: Boolean = true
 ) {
     val baseColor = MaterialTheme.colorScheme.onSurface
-    val contentColor = if (enabled) baseColor else MaterialTheme.colorScheme.onSurfaceVariant
+    val contentColor = if (enabled) baseColor else DisabledContentGray
 
     fun wrapContent(content: @Composable () -> Unit): @Composable () -> Unit = {
         CompositionLocalProvider(LocalContentColor provides contentColor) {

@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
@@ -201,7 +202,7 @@ fun WeightVestForm(
             Button(
                 colors = ButtonDefaults.buttonColors(
                     contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    disabledContentColor = DisabledContentGray
                 ),
                 onClick = {
                     val newMachine = WeightVest(

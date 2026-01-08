@@ -22,6 +22,7 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
 fun HealthConnectHandler(
@@ -70,7 +71,7 @@ fun HealthConnectHandler(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         contentColor = MaterialTheme.colorScheme.background,
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        disabledContentColor = DisabledContentGray
                     ),
                     onClick = {
                         try {

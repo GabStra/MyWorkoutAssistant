@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -175,7 +176,7 @@ fun SettingsScreen(
             Button(
                 colors = ButtonDefaults.buttonColors(
                     contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    disabledContentColor = DisabledContentGray
                 ),
                 onClick = {
                     val birthDateYear = birthDateYearState.value.toIntOrNull()

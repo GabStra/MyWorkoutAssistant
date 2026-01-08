@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
 fun DialogTextButton(
@@ -17,7 +18,7 @@ fun DialogTextButton(
         enabled = enabled,
         colors = ButtonDefaults.textButtonColors(
             contentColor = MaterialTheme.colorScheme.onSurface,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            disabledContentColor = DisabledContentGray
         )
     ) {
         Text(text)

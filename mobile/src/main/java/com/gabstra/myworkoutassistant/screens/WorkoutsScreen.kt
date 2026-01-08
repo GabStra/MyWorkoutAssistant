@@ -108,6 +108,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -390,7 +391,7 @@ fun WorkoutTitle(
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = workout.name,
-            color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
             style = style,
         )
         content()
@@ -865,7 +866,7 @@ fun WorkoutsScreen(
                                     },
                                     colors = IconButtonDefaults.iconButtonColors(
                                         contentColor = MaterialTheme.colorScheme.onBackground,
-                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        disabledContentColor = DisabledContentGray
                                     )
                                 ) {
                                     Icon(
@@ -892,7 +893,7 @@ fun WorkoutsScreen(
                                     },
                                     colors = IconButtonDefaults.iconButtonColors(
                                         contentColor = MaterialTheme.colorScheme.onBackground,
-                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                        disabledContentColor = DisabledContentGray
                                     )
                                 ) {
                                     Icon(
@@ -1552,7 +1553,7 @@ fun WorkoutsScreen(
                                                                             .weight(1f)
                                                                             .basicMarquee(iterations = Int.MAX_VALUE),
                                                                         text = if(workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
-                                                                        color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                        color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                                         style = MaterialTheme.typography.bodyLarge,
                                                                     )
 
@@ -1600,7 +1601,7 @@ fun WorkoutsScreen(
                                                                                     .padding(start = 5.dp)
                                                                                     .basicMarquee(iterations = Int.MAX_VALUE),
                                                                                 text = workout.name,
-                                                                                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                                                 style = MaterialTheme.typography.bodyLarge,
                                                                             )
                                                                         }
@@ -1709,7 +1710,7 @@ fun WorkoutsScreen(
                                             Button(
                                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    disabledContentColor = DisabledContentGray
                                 ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
@@ -1740,8 +1741,7 @@ fun WorkoutsScreen(
                                                                         showEditPlanNameDialog = true
                                                                     }
                                                                 ),
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            fontWeight = FontWeight.Bold
+                                                            color = MaterialTheme.colorScheme.onBackground
                                                         )
                                                     } else {
                                                         Text(
@@ -1750,8 +1750,7 @@ fun WorkoutsScreen(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
                                                                 .padding(horizontal = 15.dp, vertical = 8.dp),
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            fontWeight = FontWeight.Bold
+                                                            color = MaterialTheme.colorScheme.onBackground
                                                         )
                                                     }
                                                     
@@ -1822,7 +1821,7 @@ fun WorkoutsScreen(
                                             Button(
                                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    disabledContentColor = DisabledContentGray
                                 ),
                                                 onClick = {
                                                     appViewModel.setScreenData(ScreenData.NewWorkout());
@@ -2161,7 +2160,7 @@ fun WorkoutsScreen(
                                                     },
                                                     colors = ButtonDefaults.buttonColors(
                                                         contentColor = MaterialTheme.colorScheme.background,
-                                                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        disabledContentColor = DisabledContentGray
                                                     )
                                                 ) {
                                                     Text(

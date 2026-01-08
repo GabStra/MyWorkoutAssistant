@@ -452,8 +452,7 @@ fun MyWorkoutAssistantNavHost(
                             }
 
                             val newWorkoutStore = appBackup.WorkoutStore.copy(
-                                workouts = allowedWorkouts,
-                                accessoryEquipments = appBackup.WorkoutStore.accessoryEquipments ?: emptyList()
+                                workouts = allowedWorkouts
                             )
 
                             val deleteAndInsertJob = async {

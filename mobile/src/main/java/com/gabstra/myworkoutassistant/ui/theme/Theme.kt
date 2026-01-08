@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -11,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -81,3 +83,9 @@ fun MyWorkoutAssistantTheme(
     )
 }
 
+/**
+ * Extension property to access the disabled content color.
+ * This provides a darker, more subtle color for disabled UI elements.
+ */
+val ColorScheme.disabledContent: Color
+    get() = DisabledContentGray

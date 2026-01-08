@@ -81,6 +81,7 @@ import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -385,7 +386,7 @@ fun ExerciseDetailScreen(
                         actions = {
                             val selectionIconColors = IconButtonDefaults.iconButtonColors(
                                 contentColor = MaterialTheme.colorScheme.onBackground,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                disabledContentColor = DisabledContentGray
                             )
                             val scrollState = rememberScrollState()
                             Row(
@@ -737,7 +738,7 @@ fun ExerciseDetailScreen(
                             Button(
                                 colors = ButtonDefaults.buttonColors(
                                     contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    disabledContentColor = DisabledContentGray
                                 ),
                                 onClick = {
                                     appViewModel.setScreenData(

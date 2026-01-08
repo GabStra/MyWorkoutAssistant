@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -55,7 +56,7 @@ fun ExerciseRenderer(
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = exercise.name,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
             )
         }
     }else{
@@ -74,7 +75,7 @@ fun ExerciseRenderer(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         text = exercise.name,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                     )
                 }
             },
@@ -90,7 +91,7 @@ fun ExerciseRenderer(
                     val textColor = if (exercise.enabled) {
                         MaterialTheme.colorScheme.onBackground
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        DisabledContentGray
                     }
                     val headerStyle = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
                     val headerColor = MaterialTheme.colorScheme.onSurface

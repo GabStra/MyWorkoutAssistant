@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.Spacing
@@ -133,7 +134,7 @@ fun RestSetForm(
             Button(
                 colors = ButtonDefaults.buttonColors(
                     contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    disabledContentColor = DisabledContentGray
                 ),
                 onClick = {
                     val newRest = RestSet(

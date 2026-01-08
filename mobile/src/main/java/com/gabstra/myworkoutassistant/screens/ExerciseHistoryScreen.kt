@@ -78,6 +78,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -313,7 +314,7 @@ fun ExerciseHistoryScreen(
         
         val navIconColors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            disabledContentColor = DisabledContentGray
         )
         
         StyledCard(

@@ -88,6 +88,7 @@ import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.formatTimeHourMinutes
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -499,7 +500,7 @@ fun WorkoutHistoryScreen(
         
         val navIconColors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            disabledContentColor = DisabledContentGray
         )
         
         StyledCard(
@@ -881,7 +882,7 @@ fun WorkoutHistoryScreen(
                                                                     .basicMarquee(iterations = Int.MAX_VALUE),
                                                                 text = exercise.name,
                                                                 style = MaterialTheme.typography.bodyLarge,
-                                                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                             )
                                                         }
                                                     }
@@ -921,7 +922,7 @@ fun WorkoutHistoryScreen(
                                                         .basicMarquee(iterations = Int.MAX_VALUE),
                                                     text = exercise.name,
                                                     style = MaterialTheme.typography.bodyLarge,
-                                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                 )
                                             }
                                         }

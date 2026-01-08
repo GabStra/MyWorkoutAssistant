@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import java.util.UUID
@@ -94,7 +95,7 @@ fun TimedDurationSetForm(
         Button(
             colors = ButtonDefaults.buttonColors(
                 contentColor = MaterialTheme.colorScheme.background,
-                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                disabledContentColor = DisabledContentGray
             ),
             onClick = {
                 val newTimedDurationSet = TimedDurationSet(

@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
@@ -176,7 +177,7 @@ fun SimpleCalendarTitle(
     ) {
         val navIconColors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            disabledContentColor = DisabledContentGray
         )
         IconButton(
             onClick = {

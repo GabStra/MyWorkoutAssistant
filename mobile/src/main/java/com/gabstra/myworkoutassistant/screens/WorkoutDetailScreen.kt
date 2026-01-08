@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
@@ -358,7 +359,7 @@ fun WorkoutDetailScreen(
             actions = {
                 val selectionIconColors = IconButtonDefaults.iconButtonColors(
                     contentColor = MaterialTheme.colorScheme.onBackground,
-                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    disabledContentColor = DisabledContentGray
                 )
                 val scrollState = rememberScrollState()
                 val canScrollForward by remember {

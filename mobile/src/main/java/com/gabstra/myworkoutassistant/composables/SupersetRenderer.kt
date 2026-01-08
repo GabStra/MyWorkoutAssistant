@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -63,7 +64,7 @@ fun SupersetRenderer(
     val borderColor = if (superset.enabled) {
         MaterialTheme.colorScheme.outlineVariant
     } else {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+        DisabledContentGray.copy(alpha = 0.38f)
     }
     
     ExpandableContainer(
@@ -80,7 +81,7 @@ fun SupersetRenderer(
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = titleText,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (superset.enabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (superset.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
             )
         },
         content = {
@@ -93,7 +94,7 @@ fun SupersetRenderer(
                 val textColor = if (superset.enabled) {
                     MaterialTheme.colorScheme.onBackground
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    DisabledContentGray
                 }
 
                 // Legend section

@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 
@@ -33,7 +34,7 @@ fun ActiveScheduleCard(
                 Text(
                     text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (schedule.isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (schedule.isEnabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
                 )
                 Text(
                     text = if (schedule.specificDate != null) {
@@ -43,7 +44,7 @@ fun ActiveScheduleCard(
                         "$days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (schedule.isEnabled) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (schedule.isEnabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
                 )
             }
             Text(
