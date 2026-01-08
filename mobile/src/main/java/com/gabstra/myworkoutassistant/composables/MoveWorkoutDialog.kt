@@ -28,10 +28,12 @@ import java.util.UUID
 fun MoveWorkoutDialog(
     show: Boolean,
     workoutName: String,
+    workoutCount: Int = 1,
     currentPlanId: UUID?,
     availablePlans: List<WorkoutPlan>,
     onDismiss: () -> Unit,
-    onMoveToPlan: (UUID?) -> Unit
+    onMoveToPlan: (UUID?) -> Unit,
+    onCreateNewPlan: () -> Unit
 ) {
     if (show) {
         Dialog(onDismissRequest = onDismiss) {
@@ -42,7 +44,11 @@ fun MoveWorkoutDialog(
                 verticalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 Text(
-                    text = "Move \"$workoutName\"",
+                    text = if (workoutCount > 1) {
+                        "Move $workoutCount workouts"
+                    } else {
+                        "Move \"$workoutName\""
+                    },
                     style = MaterialTheme.typography.titleLarge
                 )
                 
@@ -75,8 +81,25 @@ fun MoveWorkoutDialog(
                         }
                     }
                     
-                    // List of plans
-                    items(availablePlans) { plan ->
+                    // Create New Plan option
+                    item {
+                        OutlinedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onCreateNewPlan()
+                                }
+                        ) {
+                            Text(
+                                text = "+ Create New Plan",
+                                modifier = Modifier.padding(Spacing.md),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                    
+                    // List of plans (deduplicated by ID)
+                    items(availablePlans.distinctBy { it.id }) { plan ->
                         OutlinedCard(
                             modifier = Modifier
                                 .fillMaxWidth()

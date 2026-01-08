@@ -870,6 +870,7 @@ fun MyWorkoutAssistantNavHost(
             }
 
             is ScreenData.NewWorkout -> {
+                val screenData = currentScreen as ScreenData.NewWorkout
                 var isSaving by remember { mutableStateOf(false) }
                 WorkoutForm(
                     onWorkoutUpsert = { newWorkout, schedules ->
@@ -896,6 +897,17 @@ fun MyWorkoutAssistantNavHost(
                                 }
 
                                 appViewModel.addNewWorkout(newWorkout)
+                                
+                                // Update plan's workoutIds if workoutPlanId is set
+                                val workoutPlanId = newWorkout.workoutPlanId
+                                if (workoutPlanId != null) {
+                                    val plan = appViewModel.getWorkoutPlanById(workoutPlanId)
+                                    if (plan != null && !plan.workoutIds.contains(newWorkout.id)) {
+                                        val updatedPlan = plan.copy(workoutIds = plan.workoutIds + newWorkout.id)
+                                        appViewModel.updateWorkoutPlan(updatedPlan)
+                                    }
+                                }
+                                
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                 }
@@ -908,6 +920,7 @@ fun MyWorkoutAssistantNavHost(
                     },
                     onCancel = { appViewModel.goBack() },
                     isSaving = isSaving,
+                    workoutPlanId = screenData.workoutPlanId,
                 )
             }
 

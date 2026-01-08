@@ -36,7 +36,7 @@ sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
     class Settings() : ScreenData()
     class ErrorLogs() : ScreenData()
-    class NewWorkout() : ScreenData()
+    class NewWorkout(val workoutPlanId: UUID? = null) : ScreenData()
     class Workout(val workoutId: UUID) : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
     class WorkoutDetail(val workoutId: UUID) : ScreenData()

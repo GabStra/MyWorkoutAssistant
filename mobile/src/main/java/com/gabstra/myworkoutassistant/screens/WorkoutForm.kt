@@ -94,7 +94,8 @@ fun WorkoutForm(
     onCancel: () -> Unit,
     workout: Workout? = null,
     isSaving: Boolean = false,
-    existingSchedules: List<WorkoutSchedule> = emptyList()
+    existingSchedules: List<WorkoutSchedule> = emptyList(),
+    workoutPlanId: UUID? = null
 ) {
     // ---- state ----
     val workoutNameState = rememberSaveable { mutableStateOf(workout?.name ?: "") }
@@ -358,7 +359,8 @@ fun WorkoutForm(
                                 order = workout?.order ?: 0,
                                 timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),
                                 globalId = newGlobalId,
-                                type = selectedWorkoutType.value
+                                type = selectedWorkoutType.value,
+                                workoutPlanId = workoutPlanId ?: workout?.workoutPlanId
                             )
                             onWorkoutUpsert(newWorkout, schedules.value)
                         },

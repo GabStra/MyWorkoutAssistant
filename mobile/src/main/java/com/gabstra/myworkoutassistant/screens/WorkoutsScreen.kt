@@ -7,55 +7,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CheckBox
-import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -65,11 +30,9 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,58 +41,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.DashedCard
-import com.gabstra.myworkoutassistant.composables.ExpandableContainer
-import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
+import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
-import com.gabstra.myworkoutassistant.composables.GenericSelectableList
+import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
-import com.gabstra.myworkoutassistant.composables.MenuItem
-import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
-import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
+import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
+import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
+import com.gabstra.myworkoutassistant.composables.WorkoutsMenu
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
-import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
-import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
-import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
-import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.workout.MuscleHeatMap
-import com.gabstra.myworkoutassistant.workout.MuscleViewMode
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import com.kizitonwose.calendar.core.DayPosition
@@ -145,258 +78,6 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 
-
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-fun Menu(
-    onSyncClick: () -> Unit,
-    onBackupClick: () -> Unit,
-    onRestoreClick: () -> Unit,
-    onImportWorkoutsClick: () -> Unit,
-    onOpenSettingsClick: () -> Unit,
-    onClearUnfinishedWorkouts: () -> Unit,
-    onClearAllHistories: () -> Unit,
-    onSyncWithHealthConnectClick: () -> Unit,
-    onExportWorkouts: () -> Unit,
-    onExportWorkoutPlan: () -> Unit,
-    onClearAllExerciseInfo: () -> Unit,
-    onViewErrorLogs: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    var showClearIncompleteDialog by remember { mutableStateOf(false) }
-    var showClearHistoryDialog by remember { mutableStateOf(false) }
-    var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = Modifier.wrapContentSize(Alignment.TopEnd)
-    ) {
-        IconButton(onClick = { expanded = !expanded }) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
-            )
-        }
-        AppDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            MenuSectionHeader("Settings", showDivider = false)
-            AppDropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    onOpenSettingsClick()
-                    expanded = false
-                }
-            )
-
-            MenuSectionHeader("Sync")
-            AppDropdownMenuItem(
-                text = { Text("Sync with Watch") },
-                onClick = {
-                    onSyncClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Sync with Health Connect") },
-                onClick = {
-                    onSyncWithHealthConnectClick()
-                    expanded = false
-                }
-            )
-
-            MenuSectionHeader("Data")
-            AppDropdownMenuItem(
-                text = { Text("Export Workouts") },
-                onClick = {
-                    onExportWorkouts()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Export Workout Plan (Markdown)") },
-                onClick = {
-                    onExportWorkoutPlan()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Save Backup") },
-                onClick = {
-                    onBackupClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Restore Backup") },
-                onClick = {
-                    onRestoreClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Import Workout Plan") },
-                onClick = {
-                    onImportWorkoutsClick()
-                    expanded = false
-                }
-            )
-
-            MenuSectionHeader("Maintenance")
-            AppDropdownMenuItem(
-                text = { Text("Clear incomplete workouts") },
-                onClick = {
-                    showClearIncompleteDialog = true
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Clear workout history") },
-                onClick = {
-                    showClearHistoryDialog = true
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Clear all exercise info") },
-                onClick = {
-                    showClearExerciseInfoDialog = true
-                    expanded = false
-                }
-            )
-
-            MenuSectionHeader("Diagnostics")
-            AppDropdownMenuItem(
-                text = { Text("View Error Logs") },
-                onClick = {
-                    onViewErrorLogs()
-                    expanded = false
-                }
-            )
-        }
-    }
-
-    CustomDialogYesOnLongPress(
-        show = showClearIncompleteDialog,
-        title = "Clear All Incomplete Workouts",
-        message = "Are you sure you want to clear all incomplete workouts? This action cannot be undone.",
-        handleYesClick = {
-            onClearUnfinishedWorkouts()
-            showClearIncompleteDialog = false
-        },
-        handleNoClick = {
-            showClearIncompleteDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showClearIncompleteDialog = false
-        }
-    )
-
-    CustomDialogYesOnLongPress(
-        show = showClearHistoryDialog,
-        title = "Clear Workout History",
-        message = "Are you sure you want to clear all workout history? This action cannot be undone.",
-        handleYesClick = {
-            onClearAllHistories()
-            showClearHistoryDialog = false
-        },
-        handleNoClick = {
-            showClearHistoryDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showClearHistoryDialog = false
-        }
-    )
-
-    CustomDialogYesOnLongPress(
-        show = showClearExerciseInfoDialog,
-        title = "Clear Exercise Info",
-        message = "Are you sure you want to clear all exercise info? This action cannot be undone.",
-        handleYesClick = {
-            onClearAllExerciseInfo()
-            showClearExerciseInfoDialog = false
-        },
-        handleNoClick = {
-            showClearExerciseInfoDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showClearExerciseInfoDialog = false
-        }
-    )
-}
-
-@Composable
-private fun MenuSectionHeader(title: String, showDivider: Boolean = true) {
-    val dividerColor = LocalContentColor.current.copy(alpha = 0.2f)
-    if (showDivider) {
-        HorizontalDivider(color = dividerColor)
-    }
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelSmall.copy(
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.8.sp
-        ),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-    )
-}
-
-/**
- * Aggregates all muscle groups from all workouts.
- * Includes muscle groups from exercises and exercises within Supersets.
- */
-fun aggregateAllMuscleGroups(workouts: List<Workout>): Set<MuscleGroup> {
-    val allMuscleGroups = mutableSetOf<MuscleGroup>()
-    
-    workouts.forEach { workout ->
-        workout.workoutComponents.forEach { component ->
-            when (component) {
-                is Exercise -> {
-                    component.muscleGroups?.let { muscleGroups ->
-                        allMuscleGroups.addAll(muscleGroups)
-                    }
-                }
-                is Superset -> {
-                    component.exercises.forEach { exercise ->
-                        exercise.muscleGroups?.let { muscleGroups ->
-                            allMuscleGroups.addAll(muscleGroups)
-                        }
-                    }
-                }
-                else -> { /* Rest or other components don't have muscle groups */ }
-            }
-        }
-    }
-    
-    return allMuscleGroups
-}
-
-@Composable
-fun WorkoutTitle(
-    modifier: Modifier,
-    workout: Workout,
-    content: @Composable () -> Unit = {},
-    style: TextStyle = MaterialTheme.typography.bodyLarge
-) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            modifier = Modifier
-                .weight(1f)
-                .basicMarquee(iterations = Int.MAX_VALUE),
-            text = workout.name,
-            color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-            style = style,
-        )
-        content()
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -436,19 +117,34 @@ fun WorkoutsScreen(
         workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
 
     val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
-    
+
     // Group workouts by plan
     val allPlans = appViewModel.getAllWorkoutPlans()
+
+    // Filter state - default to first plan by order
+    var selectedPlanFilter by remember {
+        mutableStateOf<UUID?>(allPlans.firstOrNull()?.id)
+    }
+
+    // Update selectedPlanFilter when plans change (if current selection is invalid)
+    LaunchedEffect(allPlans) {
+        if (selectedPlanFilter != null && allPlans.none { it.id == selectedPlanFilter }) {
+            selectedPlanFilter = allPlans.firstOrNull()?.id
+        } else if (selectedPlanFilter == null && allPlans.isNotEmpty()) {
+            selectedPlanFilter = allPlans.firstOrNull()?.id
+        }
+    }
+
     val workoutsByPlan = remember(activeWorkouts, allPlans) {
         val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
-        
+
         // Initialize with all plans
         allPlans.forEach { plan ->
             grouped[plan] = mutableListOf()
         }
         // Add unassigned group
         grouped[null] = mutableListOf()
-        
+
         // Group workouts
         activeWorkouts.forEach { workout ->
             val plan = workout.workoutPlanId?.let { planId ->
@@ -456,12 +152,12 @@ fun WorkoutsScreen(
             }
             grouped[plan]?.add(workout)
         }
-        
+
         // Sort workouts within each plan by order
         grouped.values.forEach { workoutList ->
             workoutList.sortBy { it.order }
         }
-        
+
         // Return sorted by plan order, with unassigned at the end
         grouped.toList().sortedBy { (plan, _) ->
             plan?.order ?: Int.MAX_VALUE
@@ -481,14 +177,14 @@ fun WorkoutsScreen(
 
     var selectedEquipments by remember { mutableStateOf(listOf<WeightLoadedEquipment>()) }
     var isEquipmentSelectionModeActive by remember { mutableStateOf(false) }
-    
+
     var selectedAccessories by remember { mutableStateOf(listOf<AccessoryEquipment>()) }
     var isAccessorySelectionModeActive by remember { mutableStateOf(false) }
-    
+
     var showEditPlanNameDialog by remember { mutableStateOf(false) }
     var planToEdit by remember { mutableStateOf<WorkoutPlan?>(null) }
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
-    var workoutToMove by remember { mutableStateOf<Workout?>(null) }
+    var showCreateNewPlanDialog by remember { mutableStateOf(false) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
 
@@ -667,7 +363,7 @@ fun WorkoutsScreen(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     var isSaving by remember { mutableStateOf(false) }
-    
+
     fun updateWorkoutsEnabledState(enabled: Boolean) {
         val workoutsToUpdate = selectedWorkouts.toList()
         if (workoutsToUpdate.isEmpty()) return
@@ -694,537 +390,6 @@ fun WorkoutsScreen(
     }
 
 
-    @Composable
-    fun workoutsBottomBar(){
-        if (selectedWorkouts.isNotEmpty()) {
-            Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        val scrollState = rememberScrollState()
-                        val canScrollForward by remember {
-                            derivedStateOf { scrollState.canScrollForward }
-                        }
-                        val canScrollBackward by remember {
-                            derivedStateOf { scrollState.canScrollBackward }
-                        }
-                        val density = LocalDensity.current
-                        
-                        LaunchedEffect(scrollState.value) {
-                            // Trigger recomposition when scroll state changes
-                        }
-                        
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .horizontalScroll(scrollState),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedWorkouts = emptyList()
-                                    isWorkoutSelectionModeActive = false
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Cancel selection",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Cancel selection",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedWorkouts = activeWorkouts
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBox,
-                                        contentDescription = "Select all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Select all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedWorkouts = emptyList()
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = "Deselect all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Deselect all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier.fillMaxHeight(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                VerticalDivider(
-                                    modifier = Modifier.height(48.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        val newWorkouts =
-                                            activeAndEnabledWorkouts.filter { workout ->
-                                                selectedWorkouts.none { it.id == workout.id }
-                                            }
-
-                                        val newWorkoutsWithUpdatedOrder =
-                                            newWorkouts.mapIndexed { index, workout ->
-                                                workout.copy(
-                                                    order = index
-                                                )
-                                            }
-
-                                        appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
-                                        scope.launch(Dispatchers.IO) {
-                                            for (workout in selectedWorkouts) {
-                                                val workoutHistories =
-                                                    workoutHistoryDao.getWorkoutsByWorkoutId(
-                                                        workout.id
-                                                    )
-                                                for (workoutHistory in workoutHistories) {
-                                                    setHistoryDao.deleteByWorkoutHistoryId(
-                                                        workoutHistory.id
-                                                    )
-                                                }
-                                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                            }
-                                            groupedWorkoutsHistories =
-                                                workoutHistoryDao.getAllWorkoutHistories()
-                                                    .groupBy { it.date }
-                                        }
-                                        selectedWorkouts = emptyList()
-                                        isWorkoutSelectionModeActive = false
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Delete",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        updateWorkoutsEnabledState(true)
-                                    },
-                                    colors = IconButtonDefaults.iconButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.onBackground,
-                                        disabledContentColor = DisabledContentGray
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = "Enable",
-                                    )
-                                }
-                                Text(
-                                    "Enable",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        updateWorkoutsEnabledState(false)
-                                    },
-                                    colors = IconButtonDefaults.iconButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.onBackground,
-                                        disabledContentColor = DisabledContentGray
-                                    )
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Block,
-                                        contentDescription = "Disable",
-                                    )
-                                }
-                                Text(
-                                    "Disable",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 2,
-                                    modifier = Modifier.heightIn(min = 0.dp)
-                                )
-                            }
-                            }
-                            
-                            // Right side chevron
-                            if (canScrollForward) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .background(
-                                            brush = Brush.horizontalGradient(
-                                                colors = listOf(Color.Transparent, Color.Black),
-                                                startX = 0f,
-                                                endX = with(density) { 32.dp.toPx() }
-                                            )
-                                        )
-                                        .padding(horizontal = 4.dp)
-                                        .align(Alignment.CenterEnd),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.ChevronRight,
-                                        contentDescription = "Scroll right",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                            }
-                            
-                            // Left side chevron
-                            if (canScrollBackward) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .background(
-                                            brush = Brush.horizontalGradient(
-                                                colors = listOf(Color.Black, Color.Transparent),
-                                                startX = 0f,
-                                                endX = with(density) { 32.dp.toPx() }
-                                            )
-                                        )
-                                        .padding(horizontal = 4.dp)
-                                        .align(Alignment.CenterStart),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.ChevronLeft,
-                                        contentDescription = "Scroll left",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    @Composable
-    fun accessoriesBottomBar(){
-        if(selectedAccessories.isNotEmpty()){
-            Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedAccessories = emptyList()
-                                    isAccessorySelectionModeActive = false
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Cancel selection",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Cancel selection",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedAccessories = accessories
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBox,
-                                        contentDescription = "Select all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Select all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedAccessories = emptyList()
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = "Deselect all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Deselect all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Box(
-                                modifier = Modifier.fillMaxHeight(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                VerticalDivider(
-                                    modifier = Modifier.height(48.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    val newAccessories = accessories.filter { item ->
-                                        selectedAccessories.none { it.id == item.id }
-                                    }
-                                    appViewModel.updateAccessoryEquipments(newAccessories)
-                                    isAccessorySelectionModeActive = false
-                                }) {
-                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
-                                }
-                                Text(
-                                    "Delete",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    @Composable
-    fun equipmentsBottomBar(){
-        if(selectedEquipments.isNotEmpty()){
-            Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                BottomAppBar(
-                    contentPadding = PaddingValues(0.dp),
-                    containerColor = Color.Transparent,
-                    actions = {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedEquipments = emptyList()
-                                    isEquipmentSelectionModeActive = false
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Cancel selection",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Cancel selection",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedEquipments = equipments
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBox,
-                                        contentDescription = "Select all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Select all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    selectedEquipments = emptyList()
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = "Deselect all",
-                                        tint = MaterialTheme.colorScheme.onBackground
-                                    )
-                                }
-                                Text(
-                                    "Deselect all",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Box(
-                                modifier = Modifier.fillMaxHeight(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                VerticalDivider(
-                                    modifier = Modifier.height(48.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    val newEquipments = selectedEquipments.map { it ->
-                                        when (it.type){
-                                            EquipmentType.GENERIC -> throw NotImplementedError()
-                                            EquipmentType.BARBELL -> Barbell(
-                                                id = UUID.randomUUID(),
-                                                name = it.name + " (Copy)",
-                                                availablePlates = (it as Barbell).availablePlates,
-                                                sleeveLength = it.sleeveLength,
-                                                barWeight = it.barWeight
-                                            )
-                                            EquipmentType.DUMBBELLS -> Dumbbells(UUID.randomUUID(), it.name + " (Copy)", (it as Dumbbells).availableDumbbells, it.extraWeights, it.maxExtraWeightsPerLoadingPoint)
-                                            EquipmentType.DUMBBELL -> TODO()
-                                            EquipmentType.PLATELOADEDCABLE -> TODO()
-                                            EquipmentType.WEIGHTVEST -> TODO()
-                                            EquipmentType.MACHINE -> TODO()
-                                            EquipmentType.IRONNECK -> TODO()
-                                            EquipmentType.ACCESSORY -> throw IllegalArgumentException("Accessories cannot be copied here")
-                                        }
-                                    }
-
-                                    val newTotalEquipments = equipments + newEquipments
-
-                                    appViewModel.updateEquipments(newTotalEquipments)
-                                    isEquipmentSelectionModeActive = false
-                                }) {
-                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy",tint = MaterialTheme.colorScheme.onBackground)
-                                }
-                                Text(
-                                    "Copy",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .width(56.dp)
-                            ) {
-                                IconButton(onClick = {
-                                    val newEquipments = equipments.filter { item ->
-                                        selectedEquipments.none { it.id == item.id }
-                                    }
-                                    appViewModel.updateEquipments(newEquipments)
-                                    isEquipmentSelectionModeActive = false
-                                }) {
-                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete",tint = MaterialTheme.colorScheme.onBackground)
-                                }
-                                Text(
-                                    "Delete",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
 
     val pagerState = rememberPagerState(
         initialPage = selectedTabIndex,
@@ -1264,7 +429,7 @@ fun WorkoutsScreen(
                     }
                 },
                 actions = {
-                    Menu(
+                    WorkoutsMenu(
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
                         onBackupClick = onBackupClick,
@@ -1283,10 +448,36 @@ fun WorkoutsScreen(
         },
         bottomBar = {
             when(pagerState.currentPage){
-                1 -> workoutsBottomBar()
+                1 -> WorkoutsBottomBar(
+                    selectedWorkouts = selectedWorkouts,
+                    activeWorkouts = activeWorkouts,
+                    activeAndEnabledWorkouts = activeAndEnabledWorkouts,
+                    appViewModel = appViewModel,
+                    workoutHistoryDao = workoutHistoryDao,
+                    setHistoryDao = setHistoryDao,
+                    scope = scope,
+                    context = context,
+                    onSelectionChange = { selectedWorkouts = it },
+                    onSelectionModeChange = { isWorkoutSelectionModeActive = it },
+                    onShowMoveWorkoutDialogChange = { showMoveWorkoutDialog = it },
+                    onUpdateWorkoutsEnabledState = { enabled -> updateWorkoutsEnabledState(enabled) },
+                    onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it }
+                )
                 2 -> {
-                    equipmentsBottomBar()
-                    accessoriesBottomBar()
+                    EquipmentsBottomBar(
+                        selectedEquipments = selectedEquipments,
+                        equipments = equipments,
+                        appViewModel = appViewModel,
+                        onSelectionChange = { selectedEquipments = it },
+                        onSelectionModeChange = { isEquipmentSelectionModeActive = it }
+                    )
+                    AccessoriesBottomBar(
+                        selectedAccessories = selectedAccessories,
+                        accessories = accessories,
+                        appViewModel = appViewModel,
+                        onSelectionChange = { selectedAccessories = it },
+                        onSelectionModeChange = { isAccessorySelectionModeActive = it }
+                    )
                 }
             }
         },
@@ -1360,865 +551,53 @@ fun WorkoutsScreen(
                     ) { updatedSelectedTab ->
                         when (updatedSelectedTab) {
                             0 -> {
-                                val scrollState = rememberScrollState()
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 10.dp)
-                                        .padding(bottom = 10.dp)
-                                        .verticalColumnScrollbar(scrollState)
-                                        .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    StyledCard {
-                                        WorkoutsCalendar(
-                                            selectedDate = selectedDate,
-                                            onDayClicked = { calendarState, day ->
-                                                onDayClicked(calendarState, day)
-                                            },
-                                            shouldHighlight = { day -> highlightDay(day) },
-                                        )
-                                    }
-                                    if (isLoading) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize().padding(10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.width(32.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                trackColor = MediumDarkGray,
-                                            )
-                                        }
-                                    } else {
-                                        if (hasObjectives) {
-                                            val currentDate = selectedDate.date
-
-                                            val startWeekDate =  getStartOfWeek(currentDate)
-                                            val startWeekMonth = startWeekDate.format(DateTimeFormatter.ofPattern("MMM"))
-                                            val endWeekDate = getEndOfWeek(currentDate)
-                                            val endWeekMonth = endWeekDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                            val dateText = if(startWeekMonth == endWeekMonth) {
-                                                "${startWeekDate.dayOfMonth} - ${endWeekDate.dayOfMonth} $startWeekMonth"
-                                            }else{
-                                                "${startWeekDate.dayOfMonth} $startWeekMonth - ${endWeekDate.dayOfMonth} $endWeekMonth"
-                                            }
-
-                                            StyledCard {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                                                ) {
-                                                    Text(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        text = "Weekly progress (${dateText}):",
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        textAlign = TextAlign.Center,
-                                                        color = MaterialTheme.colorScheme.onBackground
-                                                    )
-                                                    ExpandableContainer(
-                                                        isOpen = false,
-                                                        isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
-                                                        title = { modifier ->
-                                                            Row(
-                                                                modifier = modifier
-                                                                    .fillMaxWidth()
-                                                                    .padding(10.dp),
-                                                                horizontalArrangement = Arrangement.Center,
-                                                                verticalAlignment = Alignment.CenterVertically
-                                                            ) {
-                                                                Text(
-                                                                    text = "${(objectiveProgress * 100).toInt()}%",
-                                                                    style = MaterialTheme.typography.titleMedium,
-                                                                    textAlign = TextAlign.Center,
-                                                                    color = MaterialTheme.colorScheme.onBackground,
-                                                                )
-                                                                Spacer(modifier = Modifier.width(10.dp))
-                                                                ObjectiveProgressBar(
-                                                                    Modifier.weight(1f),
-                                                                    progress = objectiveProgress.toFloat()
-                                                                )
-                                                            }
-                                                        }, content = {
-                                                            Column(
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .padding(10.dp),
-                                                                verticalArrangement = Arrangement.spacedBy(
-                                                                    10.dp
-                                                                )
-                                                            ) {
-                                                                weeklyWorkoutsByActualTarget?.entries?.forEachIndexed { index, (workout, pair) ->
-                                                                    Row(
-                                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                                    ) {
-                                                                        Text(
-                                                                            text = workout.name,
-                                                                            modifier = Modifier.weight(
-                                                                                1f
-                                                                            ),
-                                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                                            style = MaterialTheme.typography.bodyLarge,
-                                                                        )
-                                                                        Text(
-                                                                            text = "${pair.first}/${pair.second}",
-                                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                                            style = MaterialTheme.typography.bodyLarge,
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                        })
-                                                }
-                                            }
-                                        }
-                                        StyledCard {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(10.dp),
-                                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                val currentDate = selectedDate.date
-                                                val currentMonth =
-                                                    currentDate.format(DateTimeFormatter.ofPattern("MMM"))
-
-                                                Text(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    textAlign = TextAlign.Center,
-                                                    color = MaterialTheme.colorScheme.onBackground
-                                                )
-
-                                                if (selectedCalendarWorkouts.isNullOrEmpty()) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxSize(),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Text(
-                                                            modifier = Modifier
-                                                                .padding(15.dp),
-                                                            text = "No workouts on this day",
-                                                            textAlign = TextAlign.Center,
-                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                        )
-                                                    }
-                                                } else {
-                                                    val timeFormatter = remember(currentLocale) {
-                                                        DateTimeFormatter.ofPattern(
-                                                            "HH:mm",
-                                                            currentLocale
-                                                        )
-                                                    }
-                                                    selectedCalendarWorkouts!!
-                                                        .groupBy { it.second.id } // Group by workout.id
-                                                        .forEach { (workoutId, historyAndWorkoutList) ->
-                                                            val moreThanOneWorkout = historyAndWorkoutList.size > 1
-
-                                                            //create a composable that takes workout history and workout
-                                                            @Composable
-                                                            fun WorkoutHistoryCard(workoutHistory: WorkoutHistory, workout: Workout){
-                                                                Row(
-                                                                    verticalAlignment = Alignment.CenterVertically,
-                                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                                ) {
-                                                                    IconButton(
-                                                                        modifier= Modifier.clip(CircleShape).size(35.dp),
-                                                                        onClick = {
-                                                                            appViewModel.setScreenData(
-                                                                                ScreenData.WorkoutHistory(
-                                                                                    workout.id,
-                                                                                    workoutHistory.id
-                                                                                )
-                                                                            )
-                                                                        }) {
-                                                                        Icon(
-
-                                                                            imageVector = Icons.Filled.Search,
-                                                                            contentDescription = "Details",
-                                                                            tint = MaterialTheme.colorScheme.onBackground
-                                                                        )
-                                                                    }
-
-                                                                    Text(
-                                                                        modifier = Modifier
-                                                                            .weight(1f)
-                                                                            .basicMarquee(iterations = Int.MAX_VALUE),
-                                                                        text = if(workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
-                                                                        color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                                                                        style = MaterialTheme.typography.bodyLarge,
-                                                                    )
-
-                                                                    if (workoutHistory.isDone) {
-                                                                        Text(
-                                                                            text = workoutHistory.time.format(
-                                                                                timeFormatter
-                                                                            ),
-                                                                            textAlign = TextAlign.End,
-                                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                                            style = MaterialTheme.typography.bodyLarge,
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            if(moreThanOneWorkout){
-                                                                val workout = historyAndWorkoutList[0].second
-                                                                ExpandableContainer(
-                                                                    title = { modifier ->
-                                                                        Row(
-                                                                            modifier = modifier,
-                                                                            verticalAlignment = Alignment.CenterVertically,
-                                                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                                        ) {
-                                                                            Box(
-                                                                                modifier = Modifier
-                                                                                    .clip(CircleShape)
-                                                                                    .size(30.dp)
-                                                                                    .background(MaterialTheme.colorScheme.primary),
-                                                                                contentAlignment = Alignment.Center
-                                                                            ){
-                                                                                Text(
-                                                                                    modifier = Modifier.fillMaxWidth(),
-                                                                                    text =  historyAndWorkoutList.size.toString(),
-                                                                                    color = MaterialTheme.colorScheme.background,
-                                                                                    textAlign = TextAlign.Center,
-                                                                                    style = MaterialTheme.typography.titleMedium
-                                                                                )
-                                                                            }
-
-                                                                            Text(
-                                                                                modifier = Modifier
-                                                                                    .weight(1f)
-                                                                                    .padding(start = 5.dp)
-                                                                                    .basicMarquee(iterations = Int.MAX_VALUE),
-                                                                                text = workout.name,
-                                                                                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                                                                                style = MaterialTheme.typography.bodyLarge,
-                                                                            )
-                                                                        }
-                                                                    },
-                                                                    content = {
-                                                                        DashedCard {
-                                                                            Column(
-                                                                                modifier = Modifier
-                                                                                    .fillMaxWidth()
-                                                                                    .padding(10.dp),
-                                                                                verticalArrangement = Arrangement.spacedBy(
-                                                                                    10.dp
-                                                                                )
-                                                                            ) {
-                                                                                historyAndWorkoutList.forEach { (workoutHistory, workout) ->
-                                                                                    WorkoutHistoryCard(
-                                                                                        workoutHistory,
-                                                                                        workout
-                                                                                    )
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                )
-                                                            }else{
-                                                                val workoutHistory = historyAndWorkoutList[0].first
-                                                                val workout = historyAndWorkoutList[0].second
-
-                                                                WorkoutHistoryCard(workoutHistory,workout)
-                                                            }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            1 -> {
-                                val scrollState = rememberScrollState()
-                                
-                                // Aggregate all muscle groups from all workouts
-                                val allMuscleGroups = remember(workouts) {
-                                    aggregateAllMuscleGroups(workouts)
-                                }
-                                
-                                // Determine view mode based on available muscle groups
-                                val hasFrontMuscles = remember(allMuscleGroups) {
-                                    allMuscleGroups.any { it.name.startsWith("FRONT_") }
-                                }
-                                val hasBackMuscles = remember(allMuscleGroups) {
-                                    allMuscleGroups.any { it.name.startsWith("BACK_") }
-                                }
-                                val effectiveViewMode = remember(hasFrontMuscles, hasBackMuscles) {
-                                    when {
-                                        hasFrontMuscles && hasBackMuscles -> MuscleViewMode.BOTH
-                                        hasFrontMuscles -> MuscleViewMode.FRONT_ONLY
-                                        hasBackMuscles -> MuscleViewMode.BACK_ONLY
-                                        else -> MuscleViewMode.BOTH
-                                    }
-                                }
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(top = 10.dp)
-                                        .padding(bottom = 10.dp)
-                                        .verticalColumnScrollbar(scrollState)
-                                        .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp),
-                                ) {
-
-                                    if (allMuscleGroups.isNotEmpty()) {
-                                        StyledCard{
-                                            Column(
-                                                modifier = Modifier.padding(vertical = 5.dp)
-                                            ) {
-                                                Text(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    text = "Trained Muscle Groups",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    textAlign = TextAlign.Center,
-                                                    color = MaterialTheme.colorScheme.onBackground
-                                                )
-
-                                                MuscleHeatMap(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(300.dp),
-                                                    activeMuscles = allMuscleGroups,
-                                                    viewMode = effectiveViewMode,
-                                                    highlightColor = MaterialTheme.colorScheme.primary,
-                                                    baseColor = MaterialTheme.colorScheme.surface,
-                                                    outlineColor = MaterialTheme.colorScheme.surface
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (activeAndEnabledWorkouts.isEmpty()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Button(
-                                                colors = ButtonDefaults.buttonColors(
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = DisabledContentGray
-                                ),
-                                                onClick = {
-                                                    appViewModel.setScreenData(ScreenData.NewWorkout());
-                                                },
-                                            ) {
-                                                Text("Add Workout", color = MaterialTheme.colorScheme.onPrimary)
-                                            }
-                                        }
-                                    } else {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            workoutsByPlan.forEach { (plan, planWorkouts) ->
-                                                if (planWorkouts.isNotEmpty()) {
-                                                    // Plan header (long-press to edit if plan is not null)
-                                                    if (plan != null) {
-                                                        Text(
-                                                            text = plan.name,
-                                                            style = MaterialTheme.typography.titleMedium,
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .padding(horizontal = 15.dp, vertical = 8.dp)
-                                                                .combinedClickable(
-                                                                    onClick = {},
-                                                                    onLongClick = {
-                                                                        planToEdit = plan
-                                                                        showEditPlanNameDialog = true
-                                                                    }
-                                                                ),
-                                                            color = MaterialTheme.colorScheme.onBackground
-                                                        )
-                                                    } else {
-                                                        Text(
-                                                            text = "Unassigned",
-                                                            style = MaterialTheme.typography.titleMedium,
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .padding(horizontal = 15.dp, vertical = 8.dp),
-                                                            color = MaterialTheme.colorScheme.onBackground
-                                                        )
-                                                    }
-                                                    
-                                                    // Workouts in this plan
-                                                    GenericSelectableList(
-                                                        it = PaddingValues(0.dp, 10.dp),
-                                                        items = planWorkouts,
-                                                        selectedItems = selectedWorkouts,
-                                                        isSelectionModeActive = isWorkoutSelectionModeActive,
-                                                        onItemClick = {
-                                                            if (isCardExpanded) return@GenericSelectableList
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.WorkoutDetail(
-                                                                    it.id
-                                                                )
-                                                            )
-                                                        },
-                                                        onEnableSelection = {
-                                                            isWorkoutSelectionModeActive = true
-                                                        },
-                                                        onDisableSelection = {
-                                                            isWorkoutSelectionModeActive = false
-                                                        },
-                                                        onSelectionChange = { newSelection ->
-                                                            selectedWorkouts = newSelection
-                                                        },
-                                                        onOrderChange = { newWorkouts ->
-                                                            val workoutsWithOrderUpdated =
-                                                                newWorkouts.mapIndexed { index, workout ->
-                                                                    workout.copy(
-                                                                        order = index
-                                                                    )
-                                                                }
-                                                            appViewModel.updateWorkouts(workoutsWithOrderUpdated)
-                                                        },
-                                                        itemContent = { workout ->
-                                                            StyledCard(
-                                                                enabled = workout.enabled,
-                                                                modifier = Modifier.combinedClickable(
-                                                                    onClick = {},
-                                                                    onLongClick = {
-                                                                        if (!isWorkoutSelectionModeActive) {
-                                                                            workoutToMove = workout
-                                                                            showMoveWorkoutDialog = true
-                                                                        }
-                                                                    }
-                                                                )
-                                                            ) {
-                                                                WorkoutTitle(
-                                                                    Modifier
-                                                                        .fillMaxWidth()
-                                                                        .padding(15.dp),
-                                                                    workout
-                                                                )
-                                                            }
-                                                        },
-                                                        isDragDisabled = true,
-                                                        keySelector = { workout -> workout.id }
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                        ) {
-                                            Button(
-                                                colors = ButtonDefaults.buttonColors(
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = DisabledContentGray
-                                ),
-                                                onClick = {
-                                                    appViewModel.setScreenData(ScreenData.NewWorkout());
-                                                },
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Add,
-                                                    contentDescription = "Add",
-                                                    tint = MaterialTheme.colorScheme.background,
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                }
+                                WorkoutsStatusTab(
+                                    isLoading = isLoading,
+                                    hasObjectives = hasObjectives,
+                                    selectedDate = selectedDate,
+                                    selectedCalendarWorkouts = selectedCalendarWorkouts,
+                                    weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
+                                    objectiveProgress = objectiveProgress,
+                                    appViewModel = appViewModel,
+                                    onDayClicked = { calendarState, day -> onDayClicked(calendarState, day) },
+                                    highlightDay = { day -> highlightDay(day) }
+                                )
                             }
 
                             2 -> {
-                                val scrollState = rememberScrollState()
-
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(vertical = 10.dp)
-                                        .verticalColumnScrollbar(scrollState)
-                                        .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp)
-                                ) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = "Equipment:",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    
-                                    if (equipments.isEmpty()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
-                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                        ) {
-                                            GenericButtonWithMenu(
-                                                menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
-                                                    MenuItem("Add ${equipmentType.toDisplayText()}") {
-                                                        appViewModel.setScreenData(
-                                                            ScreenData.NewEquipment(equipmentType)
-                                                        )
-                                                    }
-                                                }.toList(),
-                                                content = {
-                                                    Text(
-                                                        "Add Equipment",
-                                                        color = MaterialTheme.colorScheme.background
-                                                    )
-                                                }
-                                            )
-                                        }
-                                    } else {
-                                        GenericSelectableList(
-                                            it = PaddingValues(0.dp, 10.dp),
-                                            items = equipments,
-                                            selectedItems = selectedEquipments,
-                                            isSelectionModeActive = isEquipmentSelectionModeActive,
-                                            onItemClick = { equipment ->
-                                                appViewModel.setScreenData(
-                                                    ScreenData.EditEquipment(
-                                                        equipment.id,
-                                                        equipment.type
-                                                    )
-                                                )
-                                            },
-                                            onEnableSelection = {
-                                                isEquipmentSelectionModeActive = true
-                                            },
-                                            onDisableSelection = {
-                                                isEquipmentSelectionModeActive = false
-                                            },
-                                            onSelectionChange = { newSelection ->
-                                                selectedEquipments = newSelection
-                                            },
-                                            onOrderChange = { },
-                                            itemContent = { it ->
-                                                StyledCard {
-                                                    Text(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .padding(15.dp)
-                                                            .basicMarquee(iterations = Int.MAX_VALUE),
-                                                        text = it.name,
-                                                        color = Color.White.copy(alpha = .87f),
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                    )
-                                                }
-                                            },
-                                            isDragDisabled = true,
-                                            keySelector = { equipment -> equipment.id }
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                                        ) {
-                                            GenericButtonWithMenu(
-                                                menuItems = EquipmentType.entries.filter { it != EquipmentType.GENERIC }.map { equipmentType ->
-                                                    MenuItem("Add ${equipmentType.toDisplayText()}") {
-                                                        appViewModel.setScreenData(
-                                                            ScreenData.NewEquipment(equipmentType)
-                                                        )
-                                                    }
-                                                }.toList(),
-                                                content = {
-                                                    Icon(
-                                                        imageVector = Icons.Filled.Add,
-                                                        contentDescription = "Add",
-                                                        tint = MaterialTheme.colorScheme.background,
-                                                    )
-                                                }
-                                            )
-                                        }
-                                    }
-                                    
-                                    // Accessories Section
-                                    Spacer(Modifier.height(Spacing.xl))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                    Spacer(Modifier.height(Spacing.lg))
-                                    
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = "Accessories:",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    Spacer(Modifier.height(Spacing.md))
-                                    
-                                    if (accessories.isEmpty()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Button(
-                                                onClick = {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.NewEquipment(EquipmentType.ACCESSORY)
-                                                    )
-                                                }
-                                            ) {
-                                                Text(
-                                                    "Add Accessory",
-                                                    color = MaterialTheme.colorScheme.background
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        GenericSelectableList(
-                                            it = PaddingValues(0.dp, 10.dp),
-                                            items = accessories,
-                                            selectedItems = selectedAccessories,
-                                            isSelectionModeActive = isAccessorySelectionModeActive,
-                                            onItemClick = { accessory ->
-                                                appViewModel.setScreenData(
-                                                    ScreenData.EditEquipment(
-                                                        accessory.id,
-                                                        EquipmentType.ACCESSORY
-                                                    )
-                                                )
-                                            },
-                                            onEnableSelection = {
-                                                isAccessorySelectionModeActive = true
-                                            },
-                                            onDisableSelection = {
-                                                isAccessorySelectionModeActive = false
-                                            },
-                                            onSelectionChange = { newSelection ->
-                                                selectedAccessories = newSelection
-                                            },
-                                            onOrderChange = { },
-                                            itemContent = { it ->
-                                                StyledCard {
-                                                    Text(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .padding(15.dp)
-                                                            .basicMarquee(iterations = Int.MAX_VALUE),
-                                                        text = it.name,
-                                                        color = Color.White.copy(alpha = .87f),
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                    )
-                                                }
-                                            },
-                                            isDragDisabled = true,
-                                            keySelector = { accessory -> accessory.id }
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Button(
-                                                onClick = {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.NewEquipment(EquipmentType.ACCESSORY)
-                                                    )
-                                                }
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Add,
-                                                    contentDescription = "Add",
-                                                    tint = MaterialTheme.colorScheme.background,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                WorkoutsGearTab(
+                                    equipments = equipments,
+                                    accessories = accessories,
+                                    selectedEquipments = selectedEquipments,
+                                    selectedAccessories = selectedAccessories,
+                                    isEquipmentSelectionModeActive = isEquipmentSelectionModeActive,
+                                    isAccessorySelectionModeActive = isAccessorySelectionModeActive,
+                                    appViewModel = appViewModel,
+                                    onEquipmentSelectionChange = { selectedEquipments = it },
+                                    onAccessorySelectionChange = { selectedAccessories = it },
+                                    onEquipmentSelectionModeChange = { isEquipmentSelectionModeActive = it },
+                                    onAccessorySelectionModeChange = { isAccessorySelectionModeActive = it }
+                                )
                             }
 
                             3 -> {
-                                val scrollState = rememberScrollState()
-                                
-                                var allSchedules by remember { mutableStateOf<List<WorkoutSchedule>>(emptyList()) }
-                                var isLoadingSchedules by remember { mutableStateOf(true) }
-                                
-                                // Check if any schedules have previousEnabledState set (meaning they were bulk disabled)
-                                val hasBulkDisabledSchedules = remember(allSchedules) {
-                                    allSchedules.any { it.previousEnabledState != null }
-                                }
-                                
-                                LaunchedEffect(Unit) {
-                                    withContext(Dispatchers.IO) {
-                                        allSchedules = workoutScheduleDao.getAllSchedules()
-                                        isLoadingSchedules = false
-                                    }
-                                }
-                                
-                                // Refresh schedules when update message changes
-                                LaunchedEffect(updateMessage) {
-                                    withContext(Dispatchers.IO) {
-                                        allSchedules = workoutScheduleDao.getAllSchedules()
-                                    }
-                                }
-                                
-                                // Group schedules by workout
-                                val schedulesByWorkout = remember(allSchedules, enabledWorkouts) {
-                                    val enabledByGlobalId = enabledWorkouts.associateBy { it.globalId }
-                                    allSchedules.groupBy { schedule ->
-                                        enabledByGlobalId[schedule.workoutId]?.globalId
-                                    }.filterKeys { it != null }
-                                }
-                                
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(top = 10.dp)
-                                        .padding(bottom = 10.dp)
-                                        .verticalColumnScrollbar(scrollState)
-                                        .verticalScroll(scrollState)
-                                        .padding(horizontal = 15.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    if (isLoadingSchedules) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.width(32.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                trackColor = MediumDarkGray,
-                                            )
-                                        }
-                                    } else if (allSchedules.isEmpty()) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(15.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "No alarms found",
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                            )
-                                        }
-                                    } else {
-                                        // Bulk toggle button
-                                        StyledCard {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(15.dp),
-                                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Button(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    onClick = {
-                                                        scope.launch(Dispatchers.IO) {
-                                                            if (hasBulkDisabledSchedules) {
-                                                                // Restore all schedules
-                                                                val updatedSchedules = allSchedules.map { schedule ->
-                                                                    val previousState = schedule.previousEnabledState
-                                                                    if (previousState != null) {
-                                                                        schedule.copy(
-                                                                            isEnabled = previousState,
-                                                                            previousEnabledState = null
-                                                                        )
-                                                                    } else {
-                                                                        schedule
-                                                                    }
-                                                                }
-                                                                updatedSchedules.forEach { schedule ->
-                                                                    workoutScheduleDao.update(schedule)
-                                                                }
-                                                                allSchedules = workoutScheduleDao.getAllSchedules()
-                                                            } else {
-                                                                // Disable all schedules
-                                                                val updatedSchedules = allSchedules.map { schedule ->
-                                                                    schedule.copy(
-                                                                        previousEnabledState = schedule.isEnabled,
-                                                                        isEnabled = false
-                                                                    )
-                                                                }
-                                                                updatedSchedules.forEach { schedule ->
-                                                                    workoutScheduleDao.update(schedule)
-                                                                }
-                                                                allSchedules = workoutScheduleDao.getAllSchedules()
-                                                            }
-                                                            // Trigger sync to watch
-                                                            withContext(Dispatchers.Main) {
-                                                                onSyncClick()
-                                                            }
-                                                        }
-                                                    },
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        contentColor = MaterialTheme.colorScheme.background,
-                                                        disabledContentColor = DisabledContentGray
-                                                    )
-                                                ) {
-                                                    Text(
-                                                        text = if (hasBulkDisabledSchedules) "Restore All Alarms" else "Disable All Alarms",
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        schedulesByWorkout.forEach { (workoutGlobalId, schedules) ->
-                                            val workout = workouts.find { it.globalId == workoutGlobalId && it.isActive }
-                                            if (workout != null && schedules.isNotEmpty()) {
-                                                StyledCard {
-                                                    Column(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(15.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = workout.name,
-                                                            style = MaterialTheme.typography.titleMedium,
-                                                            color = MaterialTheme.colorScheme.onBackground
-                                                        )
-                                                        
-                                                        schedules.forEachIndexed { index, schedule ->
-                                                            ActiveScheduleCard(
-                                                                schedule = schedule,
-                                                                index = index,
-                                                                workout = workout
-                                                            )
-                                                            if (index < schedules.size - 1) {
-                                                                HorizontalDivider(
-                                                                    color = MaterialTheme.colorScheme.outlineVariant,
-                                                                    modifier = Modifier.padding(vertical = 5.dp)
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                WorkoutsAlarmsTab(
+                                    workouts = workouts,
+                                    enabledWorkouts = enabledWorkouts,
+                                    workoutScheduleDao = workoutScheduleDao,
+                                    scope = scope,
+                                    onSyncClick = onSyncClick,
+                                    updateMessage = updateMessage
+                                )
                             }
                         }
                     }
 
                 }
             }
-
         }
-
-
     }
-    
+
     // Edit Plan Name Dialog
     EditPlanNameDialog(
         show = showEditPlanNameDialog,
@@ -2238,29 +617,73 @@ fun WorkoutsScreen(
             planToEdit = null
         }
     )
-    
+
     // Move Workout Dialog
     MoveWorkoutDialog(
         show = showMoveWorkoutDialog,
-        workoutName = workoutToMove?.name ?: "",
-        currentPlanId = workoutToMove?.workoutPlanId,
+        workoutName = selectedWorkouts.firstOrNull()?.name ?: "",
+        workoutCount = selectedWorkouts.size,
+        currentPlanId = if (selectedWorkouts.isNotEmpty() && selectedWorkouts.all { it.workoutPlanId == selectedWorkouts.first().workoutPlanId }) {
+            selectedWorkouts.first().workoutPlanId
+        } else {
+            null
+        },
         availablePlans = appViewModel.getAllWorkoutPlans(),
         onDismiss = {
             showMoveWorkoutDialog = false
-            workoutToMove = null
         },
         onMoveToPlan = { targetPlanId ->
-            workoutToMove?.let { workout ->
+            selectedWorkouts.forEach { workout ->
                 appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
-                scope.launch {
-                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
-                }
+            }
+            scope.launch {
+                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
             }
             showMoveWorkoutDialog = false
-            workoutToMove = null
+            selectedWorkouts = emptyList()
+            isWorkoutSelectionModeActive = false
+        },
+        onCreateNewPlan = {
+            showMoveWorkoutDialog = false
+            showCreateNewPlanDialog = true
         }
     )
-    
+
+    // Create New Plan Dialog
+    WorkoutPlanNameDialog(
+        show = showCreateNewPlanDialog,
+        confirmButtonText = "Create",
+        onDismiss = {
+            showCreateNewPlanDialog = false
+        },
+        onConfirm = { planName ->
+            showCreateNewPlanDialog = false
+            val newPlanId = java.util.UUID.randomUUID()
+            val nextOrder = (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
+            val newPlan = WorkoutPlan(
+                id = newPlanId,
+                name = planName,
+                workoutIds = selectedWorkouts.map { it.id },
+                order = nextOrder
+            )
+
+            // Add the new plan
+            appViewModel.addWorkoutPlan(newPlan)
+
+            // Move all selected workouts to the new plan
+            selectedWorkouts.forEach { workout ->
+                appViewModel.moveWorkoutToPlan(workout.id, newPlanId)
+            }
+
+            scope.launch {
+                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+            }
+
+            selectedWorkouts = emptyList()
+            isWorkoutSelectionModeActive = false
+        }
+    )
+
     LoadingOverlay(isVisible = isSaving, text = "Saving...")
     LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }

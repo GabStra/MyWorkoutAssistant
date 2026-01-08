@@ -28,6 +28,7 @@ import com.gabstra.myworkoutassistant.Spacing
 fun WorkoutPlanNameDialog(
     show: Boolean,
     initialName: String = "",
+    confirmButtonText: String = "Import",
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
@@ -72,7 +73,7 @@ fun WorkoutPlanNameDialog(
                         },
                         enabled = planName.isNotBlank()
                     ) {
-                        Text("Import")
+                        Text(confirmButtonText)
                     }
                 }
             }
