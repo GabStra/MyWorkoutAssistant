@@ -157,6 +157,7 @@ open class WorkoutViewModel(
             birthDateYear = 0,
             weightKg = 0.0,
             equipments = emptyList(),
+            workoutPlans = emptyList(),
             progressionPercentageAmount = 0.0,
         )
     )
@@ -217,6 +218,7 @@ open class WorkoutViewModel(
                 birthDateYear = 0,
                 weightKg = 0.0,
                 equipments = emptyList(),
+                workoutPlans = emptyList(),
                 progressionPercentageAmount = 0.0,
             )
         )

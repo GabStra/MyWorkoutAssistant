@@ -140,13 +140,39 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     // Workout Plans Section
     markdown.append("## Workout Plans\n\n")
     
-    val workouts = workoutStore.workouts.sortedBy { it.order }
+    val sortedPlans = workoutStore.workoutPlans.sortedBy { it.order }
+    val workoutsById = workoutStore.workouts.associateBy { it.id }
     
-    if (workouts.isEmpty()) {
+    if (sortedPlans.isEmpty() && workoutStore.workouts.isEmpty()) {
         markdown.append("No workouts configured.\n\n")
     } else {
-        workouts.forEachIndexed { index, workout ->
-            appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
+        // Group workouts by plan
+        sortedPlans.forEach { plan ->
+            markdown.append("### ${plan.name}\n\n")
+            
+            val planWorkouts = plan.workoutIds
+                .mapNotNull { workoutsById[it] }
+                .sortedBy { it.order }
+            
+            if (planWorkouts.isEmpty()) {
+                markdown.append("No workouts in this plan.\n\n")
+            } else {
+                planWorkouts.forEachIndexed { index, workout ->
+                    appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
+                }
+            }
+        }
+        
+        // Show unassigned workouts
+        val unassignedWorkouts = workoutStore.workouts
+            .filter { it.workoutPlanId == null }
+            .sortedBy { it.order }
+        
+        if (unassignedWorkouts.isNotEmpty()) {
+            markdown.append("### Unassigned\n\n")
+            unassignedWorkouts.forEachIndexed { index, workout ->
+                appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
+            }
         }
     }
     

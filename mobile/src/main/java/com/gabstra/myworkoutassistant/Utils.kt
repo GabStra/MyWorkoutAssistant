@@ -49,6 +49,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
@@ -2088,10 +2089,43 @@ fun mergeWorkoutStore(
     // Preserve existing polarDeviceId unless imported has a value
     val mergedPolarDeviceId = imported.polarDeviceId ?: existing.polarDeviceId
     
+    // Merge workout plans
+    val existingPlanIds = existing.workoutPlans.map { it.id }.toSet()
+    val mergedPlans = mutableListOf<WorkoutPlan>()
+    mergedPlans.addAll(existing.workoutPlans)
+    
+    imported.workoutPlans.forEach { importedPlan ->
+        when {
+            !existingPlanIds.contains(importedPlan.id) -> {
+                // New plan, add it
+                mergedPlans.add(importedPlan)
+            }
+            conflictResolution == ConflictResolution.REPLACE_EXISTING -> {
+                // Replace existing plan
+                val index = mergedPlans.indexOfFirst { it.id == importedPlan.id }
+                if (index >= 0) {
+                    mergedPlans[index] = importedPlan
+                }
+            }
+            conflictResolution == ConflictResolution.GENERATE_NEW_IDS -> {
+                // Generate new ID for imported plan
+                val newId = UUID.randomUUID()
+                mergedPlans.add(
+                    importedPlan.copy(
+                        id = newId,
+                        workoutIds = importedPlan.workoutIds.map { UUID.randomUUID() } // Also generate new IDs for workouts in plan
+                    )
+                )
+            }
+            // SKIP_DUPLICATES: do nothing, skip this plan
+        }
+    }
+    
     return WorkoutStore(
         workouts = mergedWorkouts,
         equipments = mergedEquipment,
         accessoryEquipments = mergedAccessories,
+        workoutPlans = mergedPlans,
         birthDateYear = mergedBirthDateYear,
         weightKg = mergedWeightKg,
         progressionPercentageAmount = mergedProgressionPercentageAmount,

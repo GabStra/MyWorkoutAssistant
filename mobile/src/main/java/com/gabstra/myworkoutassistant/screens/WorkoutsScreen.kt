@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -95,9 +97,11 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
+import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -110,6 +114,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -229,7 +234,7 @@ fun Menu(
                 }
             )
             AppDropdownMenuItem(
-                text = { Text("Import Workouts") },
+                text = { Text("Import Workout Plan") },
                 onClick = {
                     onImportWorkoutsClick()
                     expanded = false
@@ -430,6 +435,37 @@ fun WorkoutsScreen(
         workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
 
     val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
+    
+    // Group workouts by plan
+    val allPlans = appViewModel.getAllWorkoutPlans()
+    val workoutsByPlan = remember(activeWorkouts, allPlans) {
+        val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
+        
+        // Initialize with all plans
+        allPlans.forEach { plan ->
+            grouped[plan] = mutableListOf()
+        }
+        // Add unassigned group
+        grouped[null] = mutableListOf()
+        
+        // Group workouts
+        activeWorkouts.forEach { workout ->
+            val plan = workout.workoutPlanId?.let { planId ->
+                allPlans.find { it.id == planId }
+            }
+            grouped[plan]?.add(workout)
+        }
+        
+        // Sort workouts within each plan by order
+        grouped.values.forEach { workoutList ->
+            workoutList.sortBy { it.order }
+        }
+        
+        // Return sorted by plan order, with unassigned at the end
+        grouped.toList().sortedBy { (plan, _) ->
+            plan?.order ?: Int.MAX_VALUE
+        }
+    }
 
     val timesCompletedInAWeekObjective =
         enabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
@@ -447,6 +483,11 @@ fun WorkoutsScreen(
     
     var selectedAccessories by remember { mutableStateOf(listOf<AccessoryEquipment>()) }
     var isAccessorySelectionModeActive by remember { mutableStateOf(false) }
+    
+    var showEditPlanNameDialog by remember { mutableStateOf(false) }
+    var planToEdit by remember { mutableStateOf<WorkoutPlan?>(null) }
+    var showMoveWorkoutDialog by remember { mutableStateOf(false) }
+    var workoutToMove by remember { mutableStateOf<Workout?>(null) }
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
 
@@ -1678,50 +1719,101 @@ fun WorkoutsScreen(
                                             }
                                         }
                                     } else {
-                                        GenericSelectableList(
-                                            it = PaddingValues(0.dp, 10.dp),
-                                            items = activeWorkouts,
-                                            selectedItems = selectedWorkouts,
-                                            isSelectionModeActive = isWorkoutSelectionModeActive,
-                                            onItemClick = {
-                                                if (isCardExpanded) return@GenericSelectableList
-                                                appViewModel.setScreenData(
-                                                    ScreenData.WorkoutDetail(
-                                                        it.id
-                                                    )
-                                                )
-                                            },
-                                            onEnableSelection = {
-                                                isWorkoutSelectionModeActive = true
-                                            },
-                                            onDisableSelection = {
-                                                isWorkoutSelectionModeActive = false
-                                            },
-                                            onSelectionChange = { newSelection ->
-                                                selectedWorkouts = newSelection
-                                            },
-                                            onOrderChange = { newWorkouts ->
-                                                val workoutsWithOrderUpdated =
-                                                    newWorkouts.mapIndexed { index, workout ->
-                                                        workout.copy(
-                                                            order = index
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            workoutsByPlan.forEach { (plan, planWorkouts) ->
+                                                if (planWorkouts.isNotEmpty()) {
+                                                    // Plan header (long-press to edit if plan is not null)
+                                                    if (plan != null) {
+                                                        Text(
+                                                            text = plan.name,
+                                                            style = MaterialTheme.typography.titleMedium,
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 15.dp, vertical = 8.dp)
+                                                                .combinedClickable(
+                                                                    onClick = {},
+                                                                    onLongClick = {
+                                                                        planToEdit = plan
+                                                                        showEditPlanNameDialog = true
+                                                                    }
+                                                                ),
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    } else {
+                                                        Text(
+                                                            text = "Unassigned",
+                                                            style = MaterialTheme.typography.titleMedium,
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 15.dp, vertical = 8.dp),
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            fontWeight = FontWeight.Bold
                                                         )
                                                     }
-                                                appViewModel.updateWorkouts(workoutsWithOrderUpdated)
-                                            },
-                                            itemContent = { it ->
-                                                StyledCard(enabled = it.enabled) {
-                                                    WorkoutTitle(
-                                                        Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(15.dp),
-                                                        it
+                                                    
+                                                    // Workouts in this plan
+                                                    GenericSelectableList(
+                                                        it = PaddingValues(0.dp, 10.dp),
+                                                        items = planWorkouts,
+                                                        selectedItems = selectedWorkouts,
+                                                        isSelectionModeActive = isWorkoutSelectionModeActive,
+                                                        onItemClick = {
+                                                            if (isCardExpanded) return@GenericSelectableList
+                                                            appViewModel.setScreenData(
+                                                                ScreenData.WorkoutDetail(
+                                                                    it.id
+                                                                )
+                                                            )
+                                                        },
+                                                        onEnableSelection = {
+                                                            isWorkoutSelectionModeActive = true
+                                                        },
+                                                        onDisableSelection = {
+                                                            isWorkoutSelectionModeActive = false
+                                                        },
+                                                        onSelectionChange = { newSelection ->
+                                                            selectedWorkouts = newSelection
+                                                        },
+                                                        onOrderChange = { newWorkouts ->
+                                                            val workoutsWithOrderUpdated =
+                                                                newWorkouts.mapIndexed { index, workout ->
+                                                                    workout.copy(
+                                                                        order = index
+                                                                    )
+                                                                }
+                                                            appViewModel.updateWorkouts(workoutsWithOrderUpdated)
+                                                        },
+                                                        itemContent = { workout ->
+                                                            StyledCard(
+                                                                enabled = workout.enabled,
+                                                                modifier = Modifier.combinedClickable(
+                                                                    onClick = {},
+                                                                    onLongClick = {
+                                                                        if (!isWorkoutSelectionModeActive) {
+                                                                            workoutToMove = workout
+                                                                            showMoveWorkoutDialog = true
+                                                                        }
+                                                                    }
+                                                                )
+                                                            ) {
+                                                                WorkoutTitle(
+                                                                    Modifier
+                                                                        .fillMaxWidth()
+                                                                        .padding(15.dp),
+                                                                    workout
+                                                                )
+                                                            }
+                                                        },
+                                                        isDragDisabled = true,
+                                                        keySelector = { workout -> workout.id }
                                                     )
                                                 }
-                                            },
-                                            isDragDisabled = true,
-                                            keySelector = { workout -> workout.id }
-                                        )
+                                            }
+                                        }
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
@@ -2127,6 +2219,49 @@ fun WorkoutsScreen(
 
 
     }
+    
+    // Edit Plan Name Dialog
+    EditPlanNameDialog(
+        show = showEditPlanNameDialog,
+        currentName = planToEdit?.name ?: "",
+        onDismiss = {
+            showEditPlanNameDialog = false
+            planToEdit = null
+        },
+        onConfirm = { newName ->
+            planToEdit?.let { plan ->
+                appViewModel.updateWorkoutPlanName(plan.id, newName)
+                scope.launch {
+                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+                }
+            }
+            showEditPlanNameDialog = false
+            planToEdit = null
+        }
+    )
+    
+    // Move Workout Dialog
+    MoveWorkoutDialog(
+        show = showMoveWorkoutDialog,
+        workoutName = workoutToMove?.name ?: "",
+        currentPlanId = workoutToMove?.workoutPlanId,
+        availablePlans = appViewModel.getAllWorkoutPlans(),
+        onDismiss = {
+            showMoveWorkoutDialog = false
+            workoutToMove = null
+        },
+        onMoveToPlan = { targetPlanId ->
+            workoutToMove?.let { workout ->
+                appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
+                scope.launch {
+                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+                }
+            }
+            showMoveWorkoutDialog = false
+            workoutToMove = null
+        }
+    )
+    
     LoadingOverlay(isVisible = isSaving, text = "Saving...")
     LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }

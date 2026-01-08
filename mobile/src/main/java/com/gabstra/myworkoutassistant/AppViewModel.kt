@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
+import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -162,6 +163,7 @@ class AppViewModel() : ViewModel() {
         weightKg = 0.0,
         equipments = emptyList(),
         accessoryEquipments = emptyList(),
+        workoutPlans = emptyList(),
         progressionPercentageAmount = 0.0
     ))
         private set
@@ -421,6 +423,137 @@ class AppViewModel() : ViewModel() {
     ) {
         val merged = mergeWorkoutStore(workoutStore, importedWorkoutStore, conflictResolution)
         updateWorkoutStore(merged)
+    }
+
+    // Workout Plan Helper Methods
+    
+    fun getWorkoutPlanById(planId: UUID): WorkoutPlan? {
+        return workoutStore.workoutPlans.find { it.id == planId }
+    }
+    
+    fun getAllWorkoutPlans(): List<WorkoutPlan> {
+        return workoutStore.workoutPlans.sortedBy { it.order }
+    }
+    
+    fun getWorkoutsByPlan(planId: UUID?): List<Workout> {
+        return if (planId == null) {
+            workouts.filter { it.workoutPlanId == null }
+        } else {
+            workouts.filter { it.workoutPlanId == planId }
+        }
+    }
+    
+    fun updateWorkoutPlanName(planId: UUID, newName: String) {
+        val updatedPlans = workoutStore.workoutPlans.map { plan ->
+            if (plan.id == planId) {
+                plan.copy(name = newName)
+            } else {
+                plan
+            }
+        }
+        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
+        triggerMobile()
+    }
+    
+    fun moveWorkoutToPlan(workoutId: UUID, targetPlanId: UUID?) {
+        val workout = workouts.find { it.id == workoutId } ?: return
+        val oldPlanId = workout.workoutPlanId
+        
+        // Update workout's workoutPlanId
+        val updatedWorkouts = workouts.map { w ->
+            if (w.id == workoutId) {
+                w.copy(workoutPlanId = targetPlanId)
+            } else {
+                w
+            }
+        }
+        
+        // Update plans: remove from old plan, add to new plan
+        val updatedPlans = workoutStore.workoutPlans.map { plan ->
+            when {
+                oldPlanId != null && plan.id == oldPlanId -> {
+                    // Remove workout from old plan
+                    plan.copy(workoutIds = plan.workoutIds.filter { it != workoutId })
+                }
+                targetPlanId != null && plan.id == targetPlanId -> {
+                    // Add workout to new plan
+                    if (!plan.workoutIds.contains(workoutId)) {
+                        plan.copy(workoutIds = plan.workoutIds + workoutId)
+                    } else {
+                        plan
+                    }
+                }
+                else -> plan
+            }
+        }
+        
+        workouts = updatedWorkouts
+        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
+        triggerMobile()
+    }
+    
+    fun getEquipmentForPlan(planId: UUID): List<WeightLoadedEquipment> {
+        val planWorkouts = getWorkoutsByPlan(planId)
+        val equipmentIds = mutableSetOf<UUID>()
+        
+        planWorkouts.forEach { workout ->
+            workout.workoutComponents.forEach { component ->
+                when (component) {
+                    is Exercise -> {
+                        component.equipmentId?.let { equipmentIds.add(it) }
+                    }
+                    is Superset -> {
+                        component.exercises.forEach { exercise ->
+                            exercise.equipmentId?.let { equipmentIds.add(it) }
+                        }
+                    }
+                    is Rest -> { /* No equipment */ }
+                }
+            }
+        }
+        
+        return workoutStore.equipments.filter { it.id in equipmentIds }
+    }
+    
+    fun getAccessoriesForPlan(planId: UUID): List<AccessoryEquipment> {
+        val planWorkouts = getWorkoutsByPlan(planId)
+        val accessoryIds = mutableSetOf<UUID>()
+        
+        planWorkouts.forEach { workout ->
+            workout.workoutComponents.forEach { component ->
+                when (component) {
+                    is Exercise -> {
+                        component.requiredAccessoryEquipmentIds?.forEach { accessoryIds.add(it) }
+                    }
+                    is Superset -> {
+                        component.exercises.forEach { exercise ->
+                            exercise.requiredAccessoryEquipmentIds?.forEach { accessoryIds.add(it) }
+                        }
+                    }
+                    is Rest -> { /* No accessories */ }
+                }
+            }
+        }
+        
+        return workoutStore.accessoryEquipments.filter { it.id in accessoryIds }
+    }
+    
+    fun addWorkoutPlan(plan: WorkoutPlan) {
+        val updatedPlans = workoutStore.workoutPlans + plan
+        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
+        triggerMobile()
+    }
+    
+    fun updateWorkoutPlan(updatedPlan: WorkoutPlan) {
+        val updatedPlans = workoutStore.workoutPlans.map { plan ->
+            if (plan.id == updatedPlan.id) {
+                updatedPlan
+            } else {
+                plan
+            }
+        }
+        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
+        triggerMobile()
     }
 }
 

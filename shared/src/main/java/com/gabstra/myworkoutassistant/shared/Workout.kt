@@ -20,5 +20,6 @@ data class Workout(
     val isActive: Boolean = true,
     val timesCompletedInAWeek: Int? = null,
     val globalId: UUID,
-    val type: Int
+    val type: Int,
+    val workoutPlanId: UUID? = null
 )

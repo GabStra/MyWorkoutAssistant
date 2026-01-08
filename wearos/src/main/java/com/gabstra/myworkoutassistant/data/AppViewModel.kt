@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -386,6 +387,25 @@ open class AppViewModel : WorkoutViewModel() {
                 }
             }
             onEnd()
+        }
+    }
+    
+    // Workout Plan Helper Methods
+    
+    fun getWorkoutPlanById(planId: UUID): WorkoutPlan? {
+        return workoutStore.workoutPlans.find { it.id == planId }
+    }
+    
+    fun getAllWorkoutPlans(): List<WorkoutPlan> {
+        return workoutStore.workoutPlans.sortedBy { it.order }
+    }
+    
+    fun getWorkoutsByPlan(planId: UUID?): List<com.gabstra.myworkoutassistant.shared.Workout> {
+        val allWorkouts = workoutStore.workouts.filter { it.enabled && it.isActive }
+        return if (planId == null) {
+            allWorkouts.filter { it.workoutPlanId == null }
+        } else {
+            allWorkouts.filter { it.workoutPlanId == planId }
         }
     }
 }

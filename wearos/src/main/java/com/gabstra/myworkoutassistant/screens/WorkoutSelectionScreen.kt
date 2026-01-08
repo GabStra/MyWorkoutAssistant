@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.getVersionName
 import com.google.android.gms.wearable.DataClient
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -182,8 +183,41 @@ fun WorkoutSelectionScreen(
     }
     
     val workouts by viewModel.workouts.collectAsState()
-
-    val sortedWorkouts = workouts.sortedBy { it.order }
+    
+    // Get workout plans from workoutStore - access directly since it's a mutableStateOf
+    val allPlans = remember { 
+        viewModel.workoutStore.workoutPlans.sortedBy { plan: WorkoutPlan -> plan.order } 
+    }
+    
+    // Group workouts by plan
+    val workoutsByPlan = remember(workouts, allPlans) {
+        val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
+        
+        // Initialize with all plans
+        allPlans.forEach { plan ->
+            grouped[plan] = mutableListOf()
+        }
+        // Add unassigned group
+        grouped[null] = mutableListOf()
+        
+        // Group workouts
+        workouts.forEach { workout ->
+            val plan = workout.workoutPlanId?.let { planId ->
+                allPlans.find { it.id == planId }
+            }
+            grouped[plan]?.add(workout)
+        }
+        
+        // Sort workouts within each plan by order
+        grouped.values.forEach { workoutList ->
+            workoutList.sortBy { it.order }
+        }
+        
+        // Return sorted by plan order, with unassigned at the end
+        grouped.toList().sortedBy { (plan, _) ->
+            plan?.order ?: Int.MAX_VALUE
+        }
+    }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
     val userAge by viewModel.userAge
@@ -359,7 +393,7 @@ fun WorkoutSelectionScreen(
                         }
                     }
                 } else {
-                    if (sortedWorkouts.isEmpty()) {
+                    if (workouts.isEmpty()) {
                         item {
                             Text(
                                 modifier = Modifier.fillMaxWidth(),
@@ -369,23 +403,46 @@ fun WorkoutSelectionScreen(
                             )
                         }
                     } else {
-                        items(
-                            items = sortedWorkouts,
-                            key = { workout -> workout.id }
-                        ) { workout ->
-                            WorkoutListItem(
-                                workout = workout,
-                                onItemClick = {
-                                    hapticsViewModel.doGentleVibration()
-                                    navController.navigate(Screen.WorkoutDetail.route)
-                                    viewModel.setSelectedWorkoutId(workout.id)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec)
-                                    .animateItem(),
-                                transformation = SurfaceTransformation(spec)
-                            )
+                        // Group workouts by plan and display with headers
+                        workoutsByPlan.forEach { (plan, planWorkouts) ->
+                            if (planWorkouts.isNotEmpty()) {
+                                // Plan header
+                                item {
+                                    ListHeader(
+                                        modifier = Modifier
+                                            .transformedHeight(this, spec)
+                                            .animateItem(),
+                                        transformation = SurfaceTransformation(spec),
+                                    ) {
+                                        Text(
+                                            text = plan?.name ?: "Unassigned",
+                                            textAlign = TextAlign.Center,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                }
+                                
+                                // Workouts in this plan
+                                items(
+                                    items = planWorkouts,
+                                    key = { workout -> workout.id }
+                                ) { workout ->
+                                    WorkoutListItem(
+                                        workout = workout,
+                                        onItemClick = {
+                                            hapticsViewModel.doGentleVibration()
+                                            navController.navigate(Screen.WorkoutDetail.route)
+                                            viewModel.setSelectedWorkoutId(workout.id)
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .transformedHeight(this, spec)
+                                            .animateItem(),
+                                        transformation = SurfaceTransformation(spec)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
