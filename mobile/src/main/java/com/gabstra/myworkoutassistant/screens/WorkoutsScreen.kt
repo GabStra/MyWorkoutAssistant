@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.Interaction
@@ -19,9 +20,12 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -45,7 +49,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
@@ -111,13 +118,6 @@ fun WorkoutsScreen(
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
 
-    val enabledWorkouts = workouts.filter { it.enabled }
-
-    val activeAndEnabledWorkouts =
-        workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
-
-    val activeWorkouts = workouts.filter { it.isActive }.sortedBy { it.order }
-
     // Group workouts by plan
     val allPlans = appViewModel.getAllWorkoutPlans()
 
@@ -135,22 +135,71 @@ fun WorkoutsScreen(
         }
     }
 
-    val workoutsByPlan = remember(activeWorkouts, allPlans) {
+    // Filter workouts by selected plan
+    val filteredWorkouts = remember(workouts, selectedPlanFilter) {
+        val planId = selectedPlanFilter
+        if (planId != null) {
+            appViewModel.getWorkoutsByPlan(planId)
+        } else {
+            workouts.filter { it.workoutPlanId == null }
+        }
+    }
+
+    val enabledWorkouts = remember(filteredWorkouts) {
+        filteredWorkouts.filter { it.enabled }
+    }
+
+    val activeAndEnabledWorkouts = remember(filteredWorkouts) {
+        filteredWorkouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
+    }
+
+    val activeWorkouts = remember(filteredWorkouts) {
+        filteredWorkouts.filter { it.isActive }.sortedBy { it.order }
+    }
+
+    // Filter equipment and accessories by selected plan
+    val filteredEquipments = remember(equipments, selectedPlanFilter) {
+        val planId = selectedPlanFilter
+        if (planId != null) {
+            appViewModel.getEquipmentForPlan(planId)
+        } else {
+            emptyList()
+        }
+    }
+
+    val filteredAccessories = remember(accessories, selectedPlanFilter) {
+        val planId = selectedPlanFilter
+        if (planId != null) {
+            appViewModel.getAccessoriesForPlan(planId)
+        } else {
+            emptyList()
+        }
+    }
+
+    val workoutsByPlan = remember(activeWorkouts, allPlans, selectedPlanFilter) {
         val grouped = mutableMapOf<WorkoutPlan?, MutableList<Workout>>()
 
-        // Initialize with all plans
-        allPlans.forEach { plan ->
-            grouped[plan] = mutableListOf()
-        }
-        // Add unassigned group
-        grouped[null] = mutableListOf()
-
-        // Group workouts
-        activeWorkouts.forEach { workout ->
-            val plan = workout.workoutPlanId?.let { planId ->
-                allPlans.find { it.id == planId }
+        // If a plan is selected, only show that plan's workouts
+        if (selectedPlanFilter != null) {
+            val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
+            if (selectedPlan != null) {
+                grouped[selectedPlan] = activeWorkouts.filter { it.workoutPlanId == selectedPlanFilter }.toMutableList()
             }
-            grouped[plan]?.add(workout)
+        } else {
+            // Initialize with all plans
+            allPlans.forEach { plan ->
+                grouped[plan] = mutableListOf()
+            }
+            // Add unassigned group
+            grouped[null] = mutableListOf()
+
+            // Group workouts
+            activeWorkouts.forEach { workout ->
+                val plan = workout.workoutPlanId?.let { planId ->
+                    allPlans.find { it.id == planId }
+                }
+                grouped[plan]?.add(workout)
+            }
         }
 
         // Sort workouts within each plan by order
@@ -298,7 +347,7 @@ fun WorkoutsScreen(
         objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
 
-    LaunchedEffect(enabledWorkouts, updateMessage) {
+    LaunchedEffect(enabledWorkouts, updateMessage, selectedPlanFilter) {
         isLoading = true
         groupedWorkoutsHistories =
             workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
@@ -321,7 +370,7 @@ fun WorkoutsScreen(
         isLoading = false
     }
 
-    LaunchedEffect(selectedDate) {
+    LaunchedEffect(selectedDate, selectedPlanFilter) {
         if (selectedDate == null) return@LaunchedEffect
 
         isLoading = true
@@ -466,14 +515,14 @@ fun WorkoutsScreen(
                 2 -> {
                     EquipmentsBottomBar(
                         selectedEquipments = selectedEquipments,
-                        equipments = equipments,
+                        equipments = filteredEquipments,
                         appViewModel = appViewModel,
                         onSelectionChange = { selectedEquipments = it },
                         onSelectionModeChange = { isEquipmentSelectionModeActive = it }
                     )
                     AccessoriesBottomBar(
                         selectedAccessories = selectedAccessories,
-                        accessories = accessories,
+                        accessories = filteredAccessories,
                         appViewModel = appViewModel,
                         onSelectionChange = { selectedAccessories = it },
                         onSelectionModeChange = { isAccessorySelectionModeActive = it }
@@ -524,6 +573,64 @@ fun WorkoutsScreen(
                 }
             }
 
+            // Plan Selector
+            if (allPlans.isNotEmpty()) {
+                var planSelectorExpanded by remember { mutableStateOf(false) }
+                val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
+                val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+                val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
+
+                ExposedDropdownMenuBox(
+                    expanded = planSelectorExpanded,
+                    onExpandedChange = { planSelectorExpanded = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 15.dp, vertical = 8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = selectedPlan?.name ?: "Select Plan",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Workout Plan", style = MaterialTheme.typography.labelMedium) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = planSelectorExpanded,
+                        modifier = Modifier.background(dropdownBackground),
+                        border = BorderStroke(1.dp, dropdownBorderColor),
+                        onDismissRequest = { planSelectorExpanded = false }
+                    ) {
+                        AppMenuContent {
+                            allPlans.distinctBy { it.id }.forEach { plan ->
+                                AppDropdownMenuItem(
+                                    text = { Text(plan.name) },
+                                    onClick = {
+                                        selectedPlanFilter = plan.id
+                                        planSelectorExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Show message when no plans exist
+                Text(
+                    text = "No workout plans available",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 15.dp, vertical = 8.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+
             HorizontalPager(
                 modifier = Modifier
                     .fillMaxSize()
@@ -564,10 +671,26 @@ fun WorkoutsScreen(
                                 )
                             }
 
+                            1 -> {
+                                WorkoutsListTab(
+                                    workouts = activeWorkouts,
+                                    selectedWorkouts = selectedWorkouts,
+                                    isSelectionModeActive = isWorkoutSelectionModeActive,
+                                    appViewModel = appViewModel,
+                                    onWorkoutClick = { workout ->
+                                        appViewModel.setScreenData(
+                                            ScreenData.WorkoutDetail(workout.id)
+                                        )
+                                    },
+                                    onSelectionChange = { selectedWorkouts = it },
+                                    onSelectionModeChange = { isWorkoutSelectionModeActive = it }
+                                )
+                            }
+
                             2 -> {
                                 WorkoutsGearTab(
-                                    equipments = equipments,
-                                    accessories = accessories,
+                                    equipments = filteredEquipments,
+                                    accessories = filteredAccessories,
                                     selectedEquipments = selectedEquipments,
                                     selectedAccessories = selectedAccessories,
                                     isEquipmentSelectionModeActive = isEquipmentSelectionModeActive,
@@ -582,7 +705,7 @@ fun WorkoutsScreen(
 
                             3 -> {
                                 WorkoutsAlarmsTab(
-                                    workouts = workouts,
+                                    workouts = filteredWorkouts,
                                     enabledWorkouts = enabledWorkouts,
                                     workoutScheduleDao = workoutScheduleDao,
                                     scope = scope,

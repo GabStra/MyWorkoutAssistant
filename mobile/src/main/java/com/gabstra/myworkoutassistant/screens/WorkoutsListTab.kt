@@ -1,0 +1,106 @@
+package com.gabstra.myworkoutassistant.screens
+
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.composables.GenericSelectableList
+import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.verticalScroll
+
+@Composable
+fun WorkoutsListTab(
+    workouts: List<Workout>,
+    selectedWorkouts: List<Workout>,
+    isSelectionModeActive: Boolean,
+    appViewModel: AppViewModel,
+    onWorkoutClick: (Workout) -> Unit,
+    onSelectionChange: (List<Workout>) -> Unit,
+    onSelectionModeChange: (Boolean) -> Unit
+) {
+    val scrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(vertical = 10.dp)
+            .verticalColumnScrollbar(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = 15.dp)
+    ) {
+        Text(
+            modifier = Modifier.fillMaxWidth(),
+            text = "Workouts:",
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        if (workouts.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(15.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No workouts in this plan",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+        } else {
+            GenericSelectableList(
+                it = PaddingValues(0.dp, 10.dp),
+                items = workouts,
+                selectedItems = selectedWorkouts,
+                isSelectionModeActive = isSelectionModeActive,
+                onItemClick = { workout ->
+                    onWorkoutClick(workout)
+                },
+                onEnableSelection = {
+                    onSelectionModeChange(true)
+                },
+                onDisableSelection = {
+                    onSelectionModeChange(false)
+                },
+                onSelectionChange = { newSelection ->
+                    onSelectionChange(newSelection)
+                },
+                onOrderChange = { },
+                itemContent = { workout ->
+                    StyledCard {
+                        Text(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(15.dp)
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            text = workout.name,
+                            color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+                },
+                isDragDisabled = true,
+                keySelector = { workout -> workout.id }
+            )
+        }
+    }
+}

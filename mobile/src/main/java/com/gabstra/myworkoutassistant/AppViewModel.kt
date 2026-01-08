@@ -432,7 +432,8 @@ class AppViewModel() : ViewModel() {
     }
     
     fun getAllWorkoutPlans(): List<WorkoutPlan> {
-        return workoutStore.workoutPlans.sortedBy { it.order }
+        // Safety net: deduplicate by ID before sorting to prevent displaying duplicates
+        return workoutStore.workoutPlans.distinctBy { it.id }.sortedBy { it.order }
     }
     
     fun getWorkoutsByPlan(planId: UUID?): List<Workout> {
@@ -539,6 +540,11 @@ class AppViewModel() : ViewModel() {
     }
     
     fun addWorkoutPlan(plan: WorkoutPlan) {
+        // Check if plan with same ID already exists (idempotent behavior)
+        if (workoutStore.workoutPlans.any { it.id == plan.id }) {
+            // Plan already exists, skip adding to prevent duplicates
+            return
+        }
         val updatedPlans = workoutStore.workoutPlans + plan
         workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
         triggerMobile()

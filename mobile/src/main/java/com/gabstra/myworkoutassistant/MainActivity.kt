@@ -398,10 +398,8 @@ fun MyWorkoutAssistantNavHost(
                     )
                     
                     // Merge with existing data
+                    // The merge function correctly handles adding the plan from importedWorkoutStoreWithPlan
                     appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
-                    
-                    // Add the new plan to existing plans (merge might not handle it correctly)
-                    appViewModel.addWorkoutPlan(newPlan)
                     
                     // Save to repository
                     workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
