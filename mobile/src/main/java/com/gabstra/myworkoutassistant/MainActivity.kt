@@ -654,11 +654,24 @@ fun MyWorkoutAssistantNavHost(
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error syncing with watch", e)
                         withContext(Dispatchers.Main) {
-                            if (e.message?.contains("Handshake failed") == true) {
-                                Toast.makeText(context, "Sync failed: Unable to connect to watch", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(context, "Failed to sync with watch: ${e.message}", Toast.LENGTH_LONG).show()
+                            val errorMessage = when {
+                                e.message?.contains("Handshake failed") == true || 
+                                e.message?.contains("unable to establish connection") == true -> {
+                                    "Unable to connect to watch"
+                                }
+                                e.message?.contains("Sync timed out") == true || 
+                                e.message?.contains("timeout") == true -> {
+                                    "Sync timed out - data may not have been received"
+                                }
+                                e.message?.contains("Sync failed:") == true -> {
+                                    // Extract error message after "Sync failed: "
+                                    e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
+                                }
+                                else -> {
+                                    "Failed to sync with watch: ${e.message ?: "Unknown error"}"
+                                }
                             }
+                            Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                         }
                     }
                 }

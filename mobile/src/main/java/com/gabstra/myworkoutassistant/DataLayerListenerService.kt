@@ -118,6 +118,17 @@ class DataLayerListenerService : WearableListenerService() {
                             Log.w("DataLayerSync", "Received SYNC_COMPLETE without transactionId, timestamp: $timestamp")
                         }
                     }
+                    SYNC_ERROR_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val transactionId = dataMap.getString("transactionId")
+                        val errorMessage = dataMap.getString("errorMessage", "Unknown error")
+                        if (transactionId != null) {
+                            Log.e("DataLayerSync", "Received SYNC_ERROR for transaction: $transactionId, error: $errorMessage")
+                            SyncHandshakeManager.completeError(transactionId, errorMessage)
+                        } else {
+                            Log.w("DataLayerSync", "Received SYNC_ERROR without transactionId, error: $errorMessage")
+                        }
+                    }
                 }
             }
             
@@ -269,14 +280,34 @@ class DataLayerListenerService : WearableListenerService() {
                                         Tasks.await(task)
                                         Log.d("DataLayerSync", "Successfully sent SYNC_COMPLETE for transaction: $tid (workout history)")
                                         // Note: Toast is shown on WearOS when it receives this completion message
-                                    } catch (exception: Exception) {
-                                        Log.e("DataLayerSync", "Failed to send SYNC_COMPLETE for transaction: $tid", exception)
-                                    }
+                                } catch (exception: Exception) {
+                                    Log.e("DataLayerSync", "Failed to send SYNC_COMPLETE for transaction: $tid", exception)
                                 }
-
-                            } catch (exception: Exception) {
-                                Log.e("DataLayerSync", "Error processing workout history store", exception)
                             }
+
+                        } catch (exception: Exception) {
+                            Log.e("DataLayerSync", "Error processing workout history store", exception)
+                            exception.printStackTrace()
+                            
+                            // Send error response back to sender
+                            transactionId?.let { tid ->
+                                try {
+                                    Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to processing error")
+                                    val errorMessage = exception.message ?: "Unknown error processing workout history store"
+                                    val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
+                                    errorDataMapRequest.dataMap.putString("transactionId", tid)
+                                    errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
+                                    errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                                    
+                                    val errorRequest = errorDataMapRequest.asPutDataRequest().setUrgent()
+                                    val task = dataClient.putDataItem(errorRequest)
+                                    Tasks.await(task)
+                                    Log.e("DataLayerSync", "Successfully sent SYNC_ERROR for transaction: $tid")
+                                } catch (sendErrorException: Exception) {
+                                    Log.e("DataLayerSync", "Failed to send SYNC_ERROR for transaction: $tid", sendErrorException)
+                                }
+                            }
+                        }
                         }
                     }
 
@@ -369,6 +400,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val SYNC_REQUEST_PATH = "/syncRequest"
         const val SYNC_ACK_PATH = "/syncAck"
         const val SYNC_COMPLETE_PATH = "/syncComplete"
+        const val SYNC_ERROR_PATH = "/syncError"
         const val HANDSHAKE_TIMEOUT_MS = 5000L
         const val COMPLETION_TIMEOUT_MS = 30000L
     }

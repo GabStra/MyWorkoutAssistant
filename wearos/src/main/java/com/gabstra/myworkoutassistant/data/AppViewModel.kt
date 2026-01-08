@@ -186,11 +186,26 @@ open class AppViewModel : WorkoutViewModel() {
                         } catch (e: Exception) {
                             Log.e("AppViewModel", "Error sending workout data for ${it.id}", e)
                             statuses.add(false)
-                            // Show toast for handshake failure
-                            if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
-                                withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                            // Show specific error message based on failure type
+                            withContext(Dispatchers.Main) {
+                                val errorMessage = when {
+                                    e.message?.contains("Handshake failed") == true || 
+                                    e.message?.contains("unable to establish connection") == true -> {
+                                        "Unable to connect to phone"
+                                    }
+                                    e.message?.contains("Sync timed out") == true || 
+                                    e.message?.contains("timeout") == true -> {
+                                        "Sync timed out - data may not have been received"
+                                    }
+                                    e.message?.contains("Sync failed:") == true -> {
+                                        // Extract error message after "Sync failed: "
+                                        e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
+                                    }
+                                    else -> {
+                                        "Failed to send data to phone: ${e.message ?: "Unknown error"}"
+                                    }
                                 }
+                                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                             }
                         }
                     }
@@ -201,11 +216,24 @@ open class AppViewModel : WorkoutViewModel() {
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error in sendAll", e)
                 withContext(Dispatchers.Main) {
-                    if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
-                        Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
-                    } else {
-                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    val errorMessage = when {
+                        e.message?.contains("Handshake failed") == true || 
+                        e.message?.contains("unable to establish connection") == true -> {
+                            "Unable to connect to phone"
+                        }
+                        e.message?.contains("Sync timed out") == true || 
+                        e.message?.contains("timeout") == true -> {
+                            "Sync timed out - data may not have been received"
+                        }
+                        e.message?.contains("Sync failed:") == true -> {
+                            // Extract error message after "Sync failed: "
+                            e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
+                        }
+                        else -> {
+                            "Failed to send data to phone: ${e.message ?: "Unknown error"}"
+                        }
                     }
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -263,9 +291,24 @@ open class AppViewModel : WorkoutViewModel() {
                 Log.e("AppViewModel", "Error sending workout history to phone", e)
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = false
-                    if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
-                        Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
+                    val errorMessage = when {
+                        e.message?.contains("Handshake failed") == true || 
+                        e.message?.contains("unable to establish connection") == true -> {
+                            "Unable to connect to phone"
+                        }
+                        e.message?.contains("Sync timed out") == true || 
+                        e.message?.contains("timeout") == true -> {
+                            "Sync timed out - data may not have been received"
+                        }
+                        e.message?.contains("Sync failed:") == true -> {
+                            // Extract error message after "Sync failed: "
+                            e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
+                        }
+                        else -> {
+                            "Failed to send data to phone: ${e.message ?: "Unknown error"}"
+                        }
                     }
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                     onEnd(false)
                 }
             }
@@ -376,11 +419,24 @@ open class AppViewModel : WorkoutViewModel() {
                         withContext(Dispatchers.Main) {
                             _isSyncingToPhone.value = false
                             if (context != null) {
-                                if (e.message?.contains("Handshake failed") == true || e.message?.contains("unable to establish connection") == true) {
-                                    Toast.makeText(context, "Sync failed: Unable to connect to phone", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                                val errorMessage = when {
+                                    e.message?.contains("Handshake failed") == true || 
+                                    e.message?.contains("unable to establish connection") == true -> {
+                                        "Unable to connect to phone"
+                                    }
+                                    e.message?.contains("Sync timed out") == true || 
+                                    e.message?.contains("timeout") == true -> {
+                                        "Sync timed out - data may not have been received"
+                                    }
+                                    e.message?.contains("Sync failed:") == true -> {
+                                        // Extract error message after "Sync failed: "
+                                        e.message?.substringAfter("Sync failed: ") ?: "Sync failed"
+                                    }
+                                    else -> {
+                                        "Failed to send data to phone: ${e.message ?: "Unknown error"}"
+                                    }
                                 }
+                                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                             }
                         }
                     }

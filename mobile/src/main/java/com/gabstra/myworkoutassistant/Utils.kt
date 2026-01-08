@@ -88,6 +88,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
@@ -110,6 +111,7 @@ import kotlin.math.pow
 object SyncHandshakeManager {
     private val pendingAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val pendingCompletions = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val pendingErrors = ConcurrentHashMap<String, CompletableDeferred<String>>()
 
     fun registerAckWaiter(transactionId: String): CompletableDeferred<Unit> {
         val deferred = CompletableDeferred<Unit>()
@@ -123,6 +125,12 @@ object SyncHandshakeManager {
         return deferred
     }
 
+    fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
+        val deferred = CompletableDeferred<String>()
+        pendingErrors[transactionId] = deferred
+        return deferred
+    }
+
     fun completeAck(transactionId: String) {
         pendingAcks.remove(transactionId)?.complete(Unit)
     }
@@ -131,9 +139,14 @@ object SyncHandshakeManager {
         pendingCompletions.remove(transactionId)?.complete(Unit)
     }
 
+    fun completeError(transactionId: String, errorMessage: String) {
+        pendingErrors.remove(transactionId)?.complete(errorMessage)
+    }
+
     fun cleanup(transactionId: String) {
         pendingAcks.remove(transactionId)?.cancel()
         pendingCompletions.remove(transactionId)?.cancel()
+        pendingErrors.remove(transactionId)?.cancel()
     }
 }
 
@@ -209,8 +222,9 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
             throw Exception("Handshake failed - unable to establish connection with watch")
         }
 
-        // Register completion waiter BEFORE sending data
+        // Register completion and error waiters BEFORE sending data
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
         // Send workout store data
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
@@ -226,17 +240,38 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         // Small delay to allow message delivery
         delay(100)
 
-        // Wait for completion acknowledgment
-        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
-            completionWaiter.await()
-            true
-        } ?: false
-        
-        if (!completionReceived) {
-            Log.w("DataLayerSync", "Completion timeout for workout store transaction: $transactionId (data may have been received)")
+        // Wait for either completion, error, or timeout
+        val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            select<Pair<Boolean, String?>> {
+                completionWaiter.onAwait.invoke {
+                    Pair(true, null)
+                }
+                errorWaiter.onAwait.invoke { errorMessage ->
+                    Pair(false, errorMessage)
+                }
+            }
         }
         
-        SyncHandshakeManager.cleanup(transactionId)
+        when {
+            result == null -> {
+                // Timeout occurred
+                Log.e("DataLayerSync", "Completion timeout for workout store transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+                throw Exception("Sync timed out - data may not have been received")
+            }
+            result.first -> {
+                // Completion received
+                Log.d("DataLayerSync", "Sync completed successfully for transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+            }
+            else -> {
+                // Error received
+                val errorMessage = result.second ?: "Unknown error"
+                Log.e("DataLayerSync", "Sync error for workout store transaction: $transactionId, error: $errorMessage")
+                SyncHandshakeManager.cleanup(transactionId)
+                throw Exception("Sync failed: $errorMessage")
+            }
+        }
     } catch (cancellationException: CancellationException) {
         SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()
@@ -258,8 +293,9 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
             throw Exception("Handshake failed - unable to establish connection with watch")
         }
 
-        // Register completion waiter BEFORE sending data
+        // Register completion and error waiters BEFORE sending data
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
         val jsonString = fromAppBackupToJSON(appBackup)
         val chunkSize = 50000 // Adjust the chunk size as needed
@@ -299,17 +335,38 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Small delay after last chunk to allow message delivery
         delay(100)
 
-        // Wait for completion acknowledgment
-        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
-            completionWaiter.await()
-            true
-        } ?: false
-        
-        if (!completionReceived) {
-            Log.w("DataLayerSync", "Completion timeout for backup transaction: $transactionId (data may have been received)")
+        // Wait for either completion, error, or timeout
+        val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            select<Pair<Boolean, String?>> {
+                completionWaiter.onAwait.invoke {
+                    Pair(true, null)
+                }
+                errorWaiter.onAwait.invoke { errorMessage ->
+                    Pair(false, errorMessage)
+                }
+            }
         }
         
-        SyncHandshakeManager.cleanup(transactionId)
+        when {
+            result == null -> {
+                // Timeout occurred
+                Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+                throw Exception("Sync timed out - data may not have been received")
+            }
+            result.first -> {
+                // Completion received
+                Log.d("DataLayerSync", "Sync completed successfully for backup transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+            }
+            else -> {
+                // Error received
+                val errorMessage = result.second ?: "Unknown error"
+                Log.e("DataLayerSync", "Sync error for backup transaction: $transactionId, error: $errorMessage")
+                SyncHandshakeManager.cleanup(transactionId)
+                throw Exception("Sync failed: $errorMessage")
+            }
+        }
     } catch (cancellationException: CancellationException) {
         SyncHandshakeManager.cleanup(transactionId)
         cancellationException.printStackTrace()

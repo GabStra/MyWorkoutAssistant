@@ -71,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -482,6 +483,7 @@ fun Context.findActivity(): Activity? {
 object SyncHandshakeManager {
     private val pendingAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val pendingCompletions = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val pendingErrors = ConcurrentHashMap<String, CompletableDeferred<String>>()
 
     fun registerAckWaiter(transactionId: String): CompletableDeferred<Unit> {
         val deferred = CompletableDeferred<Unit>()
@@ -495,6 +497,12 @@ object SyncHandshakeManager {
         return deferred
     }
 
+    fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
+        val deferred = CompletableDeferred<String>()
+        pendingErrors[transactionId] = deferred
+        return deferred
+    }
+
     fun completeAck(transactionId: String) {
         pendingAcks.remove(transactionId)?.complete(Unit)
     }
@@ -503,9 +511,14 @@ object SyncHandshakeManager {
         pendingCompletions.remove(transactionId)?.complete(Unit)
     }
 
+    fun completeError(transactionId: String, errorMessage: String) {
+        pendingErrors.remove(transactionId)?.complete(errorMessage)
+    }
+
     fun cleanup(transactionId: String) {
         pendingAcks.remove(transactionId)?.cancel()
         pendingCompletions.remove(transactionId)?.cancel()
+        pendingErrors.remove(transactionId)?.cancel()
     }
 }
 
@@ -586,8 +599,9 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
             )
         }
 
-        // Register completion waiter BEFORE sending data
+        // Register completion and error waiters BEFORE sending data
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
@@ -612,18 +626,39 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Small delay to allow message delivery
         delay(100)
 
-        // Wait for completion acknowledgment
-        val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
-            completionWaiter.await()
-            true
-        } ?: false
-        
-        if (!completionReceived) {
-            Log.w("DataLayerSync", "Completion timeout for workout history transaction: $transactionId (data may have been received)")
+        // Wait for either completion, error, or timeout
+        val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            select<Pair<Boolean, String?>> {
+                completionWaiter.onAwait.invoke {
+                    Pair(true, null)
+                }
+                errorWaiter.onAwait.invoke { errorMessage ->
+                    Pair(false, errorMessage)
+                }
+            }
         }
         
-        SyncHandshakeManager.cleanup(transactionId)
-        return true
+        when {
+            result == null -> {
+                // Timeout occurred - treat as failure
+                Log.e("DataLayerSync", "Completion timeout for workout history transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+                return false
+            }
+            result.first -> {
+                // Completion received
+                Log.d("DataLayerSync", "Sync completed successfully for workout history transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+                return true
+            }
+            else -> {
+                // Error received
+                val errorMessage = result.second ?: "Unknown error"
+                Log.e("DataLayerSync", "Sync error for workout history transaction: $transactionId, error: $errorMessage")
+                SyncHandshakeManager.cleanup(transactionId)
+                return false
+            }
+        }
     } catch(exception: Exception) {
         SyncHandshakeManager.cleanup(transactionId)
         Log.e("DataLayerSync", "Error sending workout history store", exception)

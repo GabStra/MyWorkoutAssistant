@@ -97,7 +97,7 @@ fun PreparingStandardScreen(
             Spacer(modifier = Modifier.height(15.dp))
 
             Column(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
