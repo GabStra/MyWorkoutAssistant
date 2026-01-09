@@ -654,6 +654,7 @@ fun MyWorkoutAssistantNavHost(
                     val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
                     try {
                         sendAppBackup(dataClient, appBackup)
+                        Log.d("DataLayerSync", "sendAppBackup completed successfully")
                         // Success toast will be shown when completion message is received
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error syncing with watch", e)
@@ -665,8 +666,10 @@ fun MyWorkoutAssistantNavHost(
                     }
                 }
             } finally {
+                Log.d("DataLayerSync", "syncWithWatch finally block executing - setting isSyncing = false")
                 withContext(Dispatchers.Main) {
                     isSyncing = false
+                    Log.d("DataLayerSync", "isSyncing set to false")
                 }
             }
         }

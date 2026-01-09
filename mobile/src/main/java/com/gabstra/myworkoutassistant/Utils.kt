@@ -120,9 +120,18 @@ object SyncHandshakeManager {
     }
 
     fun registerCompletionWaiter(transactionId: String): CompletableDeferred<Unit> {
-        val deferred = CompletableDeferred<Unit>()
-        pendingCompletions[transactionId] = deferred
-        return deferred
+        // Use compute to atomically check if there's already a completed deferred
+        // This prevents race conditions where completion arrives between registration and wait
+        return pendingCompletions.compute(transactionId) { _, existing ->
+            if (existing != null && existing.isCompleted) {
+                // Reuse the already-completed deferred
+                existing
+            } else {
+                // Create new deferred, but cancel the old one if it exists and isn't completed
+                existing?.cancel()
+                CompletableDeferred<Unit>()
+            }
+        } ?: CompletableDeferred<Unit>()
     }
 
     fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
@@ -136,7 +145,22 @@ object SyncHandshakeManager {
     }
 
     fun completeCompletion(transactionId: String) {
-        pendingCompletions.remove(transactionId)?.complete(Unit)
+        // Use compute to atomically complete and handle race conditions
+        // This ensures we complete the deferred even if it's being checked/waiting concurrently
+        pendingCompletions.compute(transactionId) { _, deferred ->
+            deferred?.let {
+                if (!it.isCompleted) {
+                    it.complete(Unit)
+                }
+            }
+            // Return null to remove from map after completion
+            null
+        }
+    }
+
+    fun hasCompletion(transactionId: String): Boolean {
+        val deferred = pendingCompletions[transactionId]
+        return deferred?.isCompleted == true
     }
 
     fun completeError(transactionId: String, errorMessage: String) {
@@ -194,6 +218,15 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Bool
 suspend fun waitForSyncCompletion(transactionId: String): Boolean {
     return try {
         val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        
+        // await() handles already-completed deferreds correctly, so we can use it directly
+        // But check first for early return and logging
+        if (completionWaiter.isCompleted) {
+            Log.d("DataLayerSync", "Completion waiter already completed for transaction: $transactionId")
+            SyncHandshakeManager.cleanup(transactionId)
+            return true
+        }
+        
         val completionReceived = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
             completionWaiter.await()
             true
@@ -344,6 +377,8 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         var currentErrorWaiter = errorWaiter
 
         while (retryAttempt <= maxRetries) {
+            // Use select which handles already-completed deferreds correctly
+            // onAwait will immediately return if the deferred is already completed
             val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
                 select<Pair<Boolean, String?>> {
                     currentCompletionWaiter.onAwait.invoke {
@@ -353,6 +388,13 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                         Pair(false, errorMessage)
                     }
                 }
+            }
+            
+            // Check if completion was already received (select handles this, but we check for logging)
+            if (currentCompletionWaiter.isCompleted && result?.first != true) {
+                Log.d("DataLayerSync", "Completion waiter was already completed for backup transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+                return
             }
             
             when {
@@ -377,16 +419,40 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                     if (errorMessage.startsWith("MISSING_CHUNKS:") && retryAttempt < maxRetries) {
                         val missingIndices = parseMissingChunks(errorMessage)
                         if (missingIndices.isNotEmpty()) {
+                            // Check if completion was already received before starting retry
+                            if (SyncHandshakeManager.hasCompletion(transactionId)) {
+                                Log.d("DataLayerSync", "Completion already received before retry for transaction: $transactionId")
+                                SyncHandshakeManager.cleanup(transactionId)
+                                return
+                            }
+                            
                             Log.d("DataLayerSync", "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices")
                             try {
                                 // Register new waiters for the retry attempt
+                                // registerCompletionWaiter now handles race conditions atomically
                                 currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
                                 currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                                
+                                // Check immediately after registration if completion was already received
+                                // This handles the case where completion arrives between error and retry registration
+                                if (currentCompletionWaiter.isCompleted) {
+                                    Log.d("DataLayerSync", "Completion already received when registering retry waiter for transaction: $transactionId")
+                                    SyncHandshakeManager.cleanup(transactionId)
+                                    return
+                                }
                                 
                                 retryMissingChunks(dataClient, transactionId, missingIndices, chunks)
                                 retryAttempt++
                                 // Wait again for completion/error after retry
                                 delay(500)
+                                
+                                // Check again before continuing loop (completion might have arrived during retry)
+                                if (currentCompletionWaiter.isCompleted) {
+                                    Log.d("DataLayerSync", "Completion received during retry for transaction: $transactionId")
+                                    SyncHandshakeManager.cleanup(transactionId)
+                                    return
+                                }
+                                
                                 continue
                             } catch (retryException: Exception) {
                                 Log.e("DataLayerSync", "Retry failed: ${retryException.message}", retryException)

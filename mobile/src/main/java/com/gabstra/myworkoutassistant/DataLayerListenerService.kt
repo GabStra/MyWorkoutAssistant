@@ -214,12 +214,31 @@ class DataLayerListenerService : WearableListenerService() {
                     SYNC_ACK_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val transactionId = dataMap.getString("transactionId")
-                        if (transactionId != null) {
-                            Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $transactionId")
-                            SyncHandshakeManager.completeAck(transactionId)
-                        } else {
-                            Log.w("DataLayerSync", "Received SYNC_ACK without transactionId")
+                        val timestampStr = dataMap.getString("timestamp")
+                        
+                        // Ignore ACKs without transactionId
+                        if (transactionId == null) {
+                            Log.w("DataLayerSync", "Received SYNC_ACK without transactionId - ignoring stale message")
+                            return@forEach
                         }
+                        
+                        // Ignore stale ACKs (older than 30 seconds)
+                        if (timestampStr != null) {
+                            try {
+                                val timestamp = timestampStr.toLong()
+                                val currentTime = System.currentTimeMillis()
+                                val age = currentTime - timestamp
+                                if (age > 30000) {
+                                    Log.w("DataLayerSync", "Received stale SYNC_ACK for transaction: $transactionId (age: ${age}ms) - ignoring")
+                                    return@forEach
+                                }
+                            } catch (e: NumberFormatException) {
+                                Log.w("DataLayerSync", "Received SYNC_ACK with invalid timestamp format for transaction: $transactionId")
+                            }
+                        }
+                        
+                        Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $transactionId")
+                        SyncHandshakeManager.completeAck(transactionId)
                     }
                     SYNC_COMPLETE_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
