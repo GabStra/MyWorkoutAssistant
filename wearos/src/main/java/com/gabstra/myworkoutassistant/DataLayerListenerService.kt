@@ -58,28 +58,29 @@ class DataLayerListenerService : WearableListenerService() {
     private val gson = Gson()
 
     @OptIn(ExperimentalEncodingApi::class)
-    private var backupChunks: MutableList<ByteArray>
+    private var backupChunks: MutableMap<Int, ByteArray>
         get() {
             val jsonString = sharedPreferences.getString("backup_chunks", null)
             if (jsonString.isNullOrEmpty()) {
-                return mutableListOf()
+                return mutableMapOf()
             }
             return try {
-                val typeToken = object : TypeToken<List<String>>() {}.type
-                val base64Strings: List<String> = gson.fromJson(jsonString, typeToken)
-                base64Strings.mapNotNull { base64String ->
+                val typeToken = object : TypeToken<Map<String, String>>() {}.type
+                val base64Map: Map<String, String> = gson.fromJson(jsonString, typeToken)
+                base64Map.mapNotNull { (indexStr, base64String) ->
                     try {
-                        Base64.decode(base64String)
-                    } catch (e: IllegalArgumentException) {
-                        Log.e("DataLayerListenerService", "Failed to decode Base64 string for a chunk: ${e.message}")
-                        null // Skip corrupted chunk data
+                        val index = indexStr.toInt()
+                        val chunkData = Base64.decode(base64String)
+                        Pair(index, chunkData)
+                    } catch (e: Exception) {
+                        Log.e("DataLayerListenerService", "Failed to decode chunk at index $indexStr: ${e.message}")
+                        null
                     }
-                }.toMutableList()
-            } catch (e: Exception) { // Catching broader exceptions from Gson parsing or list mapping
+                }.toMap().toMutableMap()
+            } catch (e: Exception) {
                 Log.e("DataLayerListenerService", "Failed to parse backupChunks from SharedPreferences with Gson: ${e.message}", e)
-                // Clear corrupted data and return an empty list
                 sharedPreferences.edit { remove("backup_chunks") }
-                mutableListOf()
+                mutableMapOf()
             }
         }
         set(value) {
@@ -87,14 +88,13 @@ class DataLayerListenerService : WearableListenerService() {
                 sharedPreferences.edit { remove("backup_chunks") }
             } else {
                 try {
-                    val base64Strings = value.map { byteArray ->
+                    val base64Map = value.mapKeys { it.key.toString() }.mapValues { (_, byteArray) ->
                         Base64.encode(byteArray)
                     }
-                    val jsonString = gson.toJson(base64Strings)
+                    val jsonString = gson.toJson(base64Map)
                     sharedPreferences.edit { putString("backup_chunks", jsonString) }
-                } catch (e: Exception) { // Catching broader exceptions from Gson parsing or list mapping
+                } catch (e: Exception) {
                     Log.e("DataLayerListenerService", "Failed to save backupChunks to SharedPreferences with Gson: ${e.message}", e)
-                    // Potentially clear or leave stale data depending on desired error handling
                 }
             }
         }
@@ -124,6 +124,35 @@ class DataLayerListenerService : WearableListenerService() {
                 sharedPreferences.edit() { remove("currentTransactionId") }
             } else {
                 sharedPreferences.edit() { putString("currentTransactionId", value) }
+            }
+        }
+
+    private var receivedChunkIndices: MutableSet<Int>
+        get() {
+            val indicesString = sharedPreferences.getString("receivedChunkIndices", null)
+            if (indicesString.isNullOrEmpty()) {
+                return mutableSetOf()
+            }
+            return try {
+                val typeToken = object : TypeToken<List<Int>>() {}.type
+                val indices: List<Int> = gson.fromJson(indicesString, typeToken)
+                indices.toMutableSet()
+            } catch (e: Exception) {
+                Log.e("DataLayerListenerService", "Failed to parse receivedChunkIndices: ${e.message}", e)
+                sharedPreferences.edit { remove("receivedChunkIndices") }
+                mutableSetOf()
+            }
+        }
+        set(value) {
+            if (value.isEmpty()) {
+                sharedPreferences.edit { remove("receivedChunkIndices") }
+            } else {
+                try {
+                    val jsonString = gson.toJson(value.toList())
+                    sharedPreferences.edit { putString("receivedChunkIndices", jsonString) }
+                } catch (e: Exception) {
+                    Log.e("DataLayerListenerService", "Failed to save receivedChunkIndices: ${e.message}", e)
+                }
             }
         }
 
@@ -160,7 +189,8 @@ class DataLayerListenerService : WearableListenerService() {
         }
         sendBroadcast(intent)
 
-        backupChunks = mutableListOf()
+        backupChunks = mutableMapOf()
+        receivedChunkIndices = mutableSetOf()
         expectedChunks = 0
         hasStartedSync = false
         currentTransactionId = null
@@ -330,16 +360,20 @@ class DataLayerListenerService : WearableListenerService() {
                         val isLastChunk = dataMap.getBoolean("isLastChunk", false)
                         val backupChunk = dataMap.getByteArray("chunk")
                         val transactionId = dataMap.getString("transactionId")
-                        
+                        val isRetry = dataMap.getBoolean("isRetry", false)
+                        val isLastRetryChunk = dataMap.getBoolean("isLastRetryChunk", false)
+                        val chunkIndex = if (dataMap.containsKey("chunkIndex")) dataMap.getInt("chunkIndex", -1) else -1
 
-
-                        val shouldStop = (isStart && hasStartedSync) ||
+                        // Retry chunks with same transaction ID should not trigger shouldStop
+                        val shouldStop = !isRetry && (
+                                (isStart && hasStartedSync) ||
                                 (backupChunk != null && !hasStartedSync) ||
                                 (currentTransactionId != null && currentTransactionId != transactionId)
+                        )
 
-                        Log.d("DataLayerListenerService", "ignoreUntilStartOrEnd: $ignoreUntilStartOrEnd hasBackupChunk: ${backupChunk != null} isStart: $isStart isLastChunk: $isLastChunk transactionId: $transactionId shouldStop: $shouldStop")
+                        Log.d("DataLayerListenerService", "ignoreUntilStartOrEnd: $ignoreUntilStartOrEnd hasBackupChunk: ${backupChunk != null} isStart: $isStart isLastChunk: $isLastChunk isRetry: $isRetry chunkIndex: $chunkIndex transactionId: $transactionId shouldStop: $shouldStop")
 
-                        if (!ignoreUntilStartOrEnd && shouldStop) {
+                        if (!ignoreUntilStartOrEnd && shouldStop && !isRetry) {
                             removeTimeout()
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
@@ -348,7 +382,8 @@ class DataLayerListenerService : WearableListenerService() {
 
                             sendBroadcast(intent)
 
-                            backupChunks = mutableListOf()
+                            backupChunks = mutableMapOf()
+                            receivedChunkIndices = mutableSetOf()
                             expectedChunks = 0
                             hasStartedSync = false
                             currentTransactionId = null
@@ -364,7 +399,8 @@ class DataLayerListenerService : WearableListenerService() {
 
                             Log.d("DataLayerSync", "Backup started with expected chunks: $expectedChunks, transactionId: $transactionId")
 
-                            backupChunks = mutableListOf()
+                            backupChunks = mutableMapOf()
+                            receivedChunkIndices = mutableSetOf()
                             hasStartedSync = true
                             ignoreUntilStartOrEnd = false
                             currentTransactionId = transactionId
@@ -378,15 +414,36 @@ class DataLayerListenerService : WearableListenerService() {
                             removeTimeout()
                         }
 
-                        if (backupChunk != null && !ignoreUntilStartOrEnd) {
+                        if (backupChunk != null && (!ignoreUntilStartOrEnd || isRetry)) {
+                            // Extend timeout for retry chunks or regular chunks
                             removeTimeout()
                             postTimeout()
 
-                            backupChunks = backupChunks.toMutableList().apply {
-                                add(backupChunk)
+                            // Handle chunk with index
+                            if (chunkIndex >= 0) {
+                                val currentChunks = backupChunks.toMutableMap()
+                                currentChunks[chunkIndex] = backupChunk
+                                backupChunks = currentChunks
+
+                                val currentIndices = receivedChunkIndices.toMutableSet()
+                                currentIndices.add(chunkIndex)
+                                receivedChunkIndices = currentIndices
+
+                                Log.d("DataLayerSync", "Received chunk at index $chunkIndex. Total chunks: ${backupChunks.size}, expected: $expectedChunks, isRetry: $isRetry")
+                            } else {
+                                // Fallback for backwards compatibility - should not happen with new implementation
+                                Log.w("DataLayerSync", "Received chunk without index! Falling back to append behavior.")
+                                val currentChunks = backupChunks.toMutableMap()
+                                val nextIndex = currentChunks.keys.maxOrNull()?.plus(1) ?: 0
+                                currentChunks[nextIndex] = backupChunk
+                                backupChunks = currentChunks
+
+                                val currentIndices = receivedChunkIndices.toMutableSet()
+                                currentIndices.add(nextIndex)
+                                receivedChunkIndices = currentIndices
                             }
 
-                            val progress = backupChunks.size.toFloat() / expectedChunks
+                            val progress = receivedChunkIndices.size.toFloat() / expectedChunks
 
                             val progressIntent = Intent(INTENT_ID).apply {
                                 putExtra(APP_BACKUP_PROGRESS_UPDATE, "$progress")
@@ -394,17 +451,70 @@ class DataLayerListenerService : WearableListenerService() {
                             sendBroadcast(progressIntent)
                         }
 
-                        if (isLastChunk) {
-                            Log.d("DataLayerSync", "Received last backup chunk. Total chunks received: ${backupChunks.size}, expected: $expectedChunks")
+                        if (isLastChunk || isLastRetryChunk) {
+                            Log.d("DataLayerSync", "Received last backup chunk (isLastChunk: $isLastChunk, isLastRetryChunk: $isLastRetryChunk). Total chunks received: ${backupChunks.size}, expected: $expectedChunks")
                             if (!ignoreUntilStartOrEnd) {
                                 removeTimeout()
                                 
                                 scope.launch(Dispatchers.IO) {
                                     var processingStep = "initialization"
                                     try {
+                                        processingStep = "validating chunks"
+                                        
+                                        // Validate that all expected chunks are present
+                                        val missingIndices = mutableListOf<Int>()
+                                        for (i in 0 until expectedChunks) {
+                                            if (i !in receivedChunkIndices) {
+                                                missingIndices.add(i)
+                                            }
+                                        }
+                                        
+                                        if (missingIndices.isNotEmpty()) {
+                                            Log.e("DataLayerSync", "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${backupChunks.size}, Missing indices: $missingIndices")
+                                            
+                                            // Send SYNC_ERROR with missing chunk information
+                                            transactionId?.let { tid ->
+                                                try {
+                                                    val errorMessage = "MISSING_CHUNKS: Expected $expectedChunks chunks, received ${backupChunks.size}. Missing indices: $missingIndices"
+                                                    Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to missing chunks")
+                                                    val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
+                                                    errorDataMapRequest.dataMap.putString("transactionId", tid)
+                                                    errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
+                                                    errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
+                                                    
+                                                    val errorRequest = errorDataMapRequest.asPutDataRequest().setUrgent()
+                                                    val task = dataClient.putDataItem(errorRequest)
+                                                    Tasks.await(task)
+                                                    Log.e("DataLayerSync", "Successfully sent SYNC_ERROR for transaction: $tid")
+                                                } catch (sendErrorException: Exception) {
+                                                    Log.e("DataLayerSync", "Failed to send SYNC_ERROR for transaction: $tid", sendErrorException)
+                                                }
+                                            }
+                                            
+                                            // Don't clear chunk state yet - may receive retry chunks
+                                            // Only send broadcast to indicate failure
+                                            val failedIntent = Intent(INTENT_ID).apply {
+                                                putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+                                                setPackage(packageName)
+                                            }
+                                            sendBroadcast(failedIntent)
+                                            return@launch
+                                        }
+                                        
+                                        // All chunks present - proceed with processing
                                         processingStep = "combining chunks"
-                                        Log.d("DataLayerSync", "Starting backup processing: combining ${backupChunks.size} chunks for transaction: $transactionId")
-                                        val backupData = combineChunks(backupChunks)
+                                        Log.d("DataLayerSync", "All chunks validated. Combining ${backupChunks.size} chunks for transaction: $transactionId")
+                                        
+                                        // Combine chunks in index order
+                                        val sortedChunks = (0 until expectedChunks).mapNotNull { index ->
+                                            backupChunks[index]
+                                        }
+                                        
+                                        if (sortedChunks.size != expectedChunks) {
+                                            throw IllegalStateException("Expected $expectedChunks chunks but only ${sortedChunks.size} found after validation")
+                                        }
+                                        
+                                        val backupData = combineChunks(sortedChunks)
                                         
                                         processingStep = "decompressing backup data"
                                         Log.d("DataLayerSync", "Decompressing backup data (size: ${backupData.size} bytes) for transaction: $transactionId")
@@ -506,7 +616,8 @@ class DataLayerListenerService : WearableListenerService() {
                                                 }
                                             }
 
-                                            backupChunks = mutableListOf()
+                                            backupChunks = mutableMapOf()
+                                            receivedChunkIndices = mutableSetOf()
                                             expectedChunks = 0
                                             hasStartedSync = false
                                             ignoreUntilStartOrEnd = false
@@ -584,7 +695,8 @@ class DataLayerListenerService : WearableListenerService() {
                                         }
                                         
                                         // Clean up state and notify UI of failure
-                                        backupChunks = mutableListOf()
+                                        backupChunks = mutableMapOf()
+                                        receivedChunkIndices = mutableSetOf()
                                         expectedChunks = 0
                                         hasStartedSync = false
                                         ignoreUntilStartOrEnd = false
@@ -601,7 +713,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
                             }
 
-                            backupChunks = mutableListOf()
+                            backupChunks = mutableMapOf()
+                            receivedChunkIndices = mutableSetOf()
                             expectedChunks = 0
                             hasStartedSync = false
                             ignoreUntilStartOrEnd = false
@@ -629,7 +742,8 @@ class DataLayerListenerService : WearableListenerService() {
                 setPackage(packageName)
             }
             sendBroadcast(intent)
-            backupChunks = mutableListOf()
+            backupChunks = mutableMapOf()
+            receivedChunkIndices = mutableSetOf()
             expectedChunks = 0
             hasStartedSync = false
             ignoreUntilStartOrEnd = true

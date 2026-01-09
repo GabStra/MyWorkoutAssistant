@@ -427,6 +427,14 @@ class AppViewModel() : ViewModel() {
 
     // Workout Plan Helper Methods
     
+    /**
+     * Checks if a workout plan is the special "Unassigned" plan.
+     * "Unassigned" is a system-managed plan that users cannot move workouts to.
+     */
+    fun isUnassignedPlan(plan: WorkoutPlan?): Boolean {
+        return plan?.name == "Unassigned"
+    }
+    
     fun getWorkoutPlanById(planId: UUID): WorkoutPlan? {
         return workoutStore.workoutPlans.find { it.id == planId }
     }
@@ -459,6 +467,14 @@ class AppViewModel() : ViewModel() {
     fun moveWorkoutToPlan(workoutId: UUID, targetPlanId: UUID?) {
         val workout = workouts.find { it.id == workoutId } ?: return
         val oldPlanId = workout.workoutPlanId
+        
+        // Prevent moving workouts to "Unassigned" plan
+        if (targetPlanId != null) {
+            val targetPlan = getWorkoutPlanById(targetPlanId)
+            if (isUnassignedPlan(targetPlan)) {
+                return // Reject move to "Unassigned" plan
+            }
+        }
         
         // Update workout's workoutPlanId
         val updatedWorkouts = workouts.map { w ->

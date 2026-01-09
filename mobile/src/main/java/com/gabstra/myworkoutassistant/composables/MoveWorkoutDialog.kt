@@ -46,10 +46,12 @@ fun MoveWorkoutDialog(
                     modifier = Modifier.padding(bottom = Spacing.md)
                 )
                 
-                // Filter out current plan and deduplicate
+                // Filter out current plan, "Unassigned" plans, and deduplicate
                 val filteredPlans = remember(currentPlanId, availablePlans) {
                     availablePlans
-                        .filter { plan -> plan.id != currentPlanId }
+                        .filter { plan -> 
+                            plan.id != currentPlanId && plan.name != "Unassigned"
+                        }
                         .distinctBy { it.id }
                 }
                 
@@ -59,24 +61,6 @@ fun MoveWorkoutDialog(
                         .height(300.dp),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    // Option for Unassigned
-                    item {
-                        OutlinedCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onMoveToPlan(null)
-                                    onDismiss()
-                                }
-                        ) {
-                            Text(
-                                text = "Unassigned",
-                                modifier = Modifier.padding(Spacing.md),
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
-                    }
-                    
                     // List of plans (filtered and deduplicated)
                     items(filteredPlans) { plan ->
                         OutlinedCard(

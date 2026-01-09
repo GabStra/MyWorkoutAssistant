@@ -300,7 +300,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         val jsonString = fromAppBackupToJSON(appBackup)
         val chunkSize = 50000 // Adjust the chunk size as needed
         val compressedData = compressString(jsonString)
-        val chunks = compressedData.asList().chunked(chunkSize)
+        val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
 
         val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
             dataMap.putBoolean("isStart", true)
@@ -313,11 +313,13 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
 
         delay(500)
 
+        // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.size - 1
 
             val request = PutDataMapRequest.create("/backupChunkPath").apply {
-                dataMap.putByteArray("chunk", chunk.toByteArray())
+                dataMap.putByteArray("chunk", chunk)
+                dataMap.putInt("chunkIndex", index)
                 if(isLastChunk) {
                     dataMap.putBoolean("isLastChunk", true)
                 }
@@ -335,36 +337,73 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Small delay after last chunk to allow message delivery
         delay(100)
 
-        // Wait for either completion, error, or timeout
-        val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
-            select<Pair<Boolean, String?>> {
-                completionWaiter.onAwait.invoke {
-                    Pair(true, null)
+        // Wait for either completion, error, or timeout - with retry logic
+        var retryAttempt = 0
+        val maxRetries = 3
+        var currentCompletionWaiter = completionWaiter
+        var currentErrorWaiter = errorWaiter
+
+        while (retryAttempt <= maxRetries) {
+            val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+                select<Pair<Boolean, String?>> {
+                    currentCompletionWaiter.onAwait.invoke {
+                        Pair(true, null)
+                    }
+                    currentErrorWaiter.onAwait.invoke { errorMessage ->
+                        Pair(false, errorMessage)
+                    }
                 }
-                errorWaiter.onAwait.invoke { errorMessage ->
-                    Pair(false, errorMessage)
+            }
+            
+            when {
+                result == null -> {
+                    // Timeout occurred
+                    Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId (attempt $retryAttempt)")
+                    SyncHandshakeManager.cleanup(transactionId)
+                    throw Exception("Sync timed out - data may not have been received")
                 }
-            }
-        }
-        
-        when {
-            result == null -> {
-                // Timeout occurred
-                Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId")
-                SyncHandshakeManager.cleanup(transactionId)
-                throw Exception("Sync timed out - data may not have been received")
-            }
-            result.first -> {
-                // Completion received
-                Log.d("DataLayerSync", "Sync completed successfully for backup transaction: $transactionId")
-                SyncHandshakeManager.cleanup(transactionId)
-            }
-            else -> {
-                // Error received
-                val errorMessage = result.second ?: "Unknown error"
-                Log.e("DataLayerSync", "Sync error for backup transaction: $transactionId, error: $errorMessage")
-                SyncHandshakeManager.cleanup(transactionId)
-                throw Exception("Sync failed: $errorMessage")
+                result.first -> {
+                    // Completion received
+                    Log.d("DataLayerSync", "Sync completed successfully for backup transaction: $transactionId")
+                    SyncHandshakeManager.cleanup(transactionId)
+                    return
+                }
+                else -> {
+                    // Error received
+                    val errorMessage = result.second ?: "Unknown error"
+                    Log.e("DataLayerSync", "Sync error for backup transaction: $transactionId, error: $errorMessage (attempt $retryAttempt)")
+                    
+                    // Check if it's a missing chunks error and we can retry
+                    if (errorMessage.startsWith("MISSING_CHUNKS:") && retryAttempt < maxRetries) {
+                        val missingIndices = parseMissingChunks(errorMessage)
+                        if (missingIndices.isNotEmpty()) {
+                            Log.d("DataLayerSync", "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices")
+                            try {
+                                // Register new waiters for the retry attempt
+                                currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+                                currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                                
+                                retryMissingChunks(dataClient, transactionId, missingIndices, chunks)
+                                retryAttempt++
+                                // Wait again for completion/error after retry
+                                delay(500)
+                                continue
+                            } catch (retryException: Exception) {
+                                Log.e("DataLayerSync", "Retry failed: ${retryException.message}", retryException)
+                                SyncHandshakeManager.cleanup(transactionId)
+                                throw Exception("Sync failed after retry attempt: ${retryException.message}")
+                            }
+                        }
+                    }
+                    
+                    // Not a retryable error or max retries reached
+                    SyncHandshakeManager.cleanup(transactionId)
+                    if (retryAttempt >= maxRetries) {
+                        throw Exception("Sync failed after $maxRetries retry attempts: $errorMessage")
+                    } else {
+                        throw Exception("Sync failed: $errorMessage")
+                    }
+                }
             }
         }
     } catch (cancellationException: CancellationException) {
@@ -376,6 +415,74 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         Log.e("DataLayerSync", "Error sending app backup", exception)
         throw exception
     }
+}
+
+/**
+ * Parses missing chunk indices from error message
+ * Expected format: "MISSING_CHUNKS: Expected 10 chunks, received 7. Missing indices: [2, 5, 7]"
+ */
+private fun parseMissingChunks(errorMessage: String): List<Int> {
+    return try {
+        val indicesPattern = Regex("Missing indices: \\[(\\d+(?:, \\d+)*)\\]")
+        val match = indicesPattern.find(errorMessage)
+        match?.groupValues?.get(1)?.split(", ")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
+    } catch (e: Exception) {
+        Log.e("DataLayerSync", "Failed to parse missing chunks from error message: $errorMessage", e)
+        emptyList()
+    }
+}
+
+/**
+ * Retries sending specific missing chunks
+ */
+private suspend fun retryMissingChunks(
+    dataClient: DataClient,
+    transactionId: String,
+    missingIndices: List<Int>,
+    chunks: List<ByteArray>
+) {
+    if (missingIndices.isEmpty()) {
+        Log.w("DataLayerSync", "retryMissingChunks called with empty missing indices list")
+        return
+    }
+
+    Log.d("DataLayerSync", "Retrying ${missingIndices.size} missing chunks for transaction: $transactionId, indices: $missingIndices")
+
+    // Register new waiters for retry attempt
+    val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+    val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+
+    // Send missing chunks one by one
+    missingIndices.forEachIndexed { retryIndex, chunkIndex ->
+        if (chunkIndex < 0 || chunkIndex >= chunks.size) {
+            Log.e("DataLayerSync", "Invalid chunk index in retry: $chunkIndex (total chunks: ${chunks.size})")
+            return@forEachIndexed
+        }
+
+        val chunk = chunks[chunkIndex]
+        val isLastRetryChunk = retryIndex == missingIndices.size - 1
+
+        val request = PutDataMapRequest.create("/backupChunkPath").apply {
+            dataMap.putByteArray("chunk", chunk)
+            dataMap.putInt("chunkIndex", chunkIndex)
+            dataMap.putBoolean("isRetry", true)
+            if (isLastRetryChunk) {
+                dataMap.putBoolean("isLastRetryChunk", true)
+            }
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
+        }.asPutDataRequest().setUrgent()
+
+        dataClient.putDataItem(request)
+
+        if (!isLastRetryChunk) {
+            delay(500)
+        }
+    }
+
+    // Small delay after last retry chunk
+    delay(100)
+    Log.d("DataLayerSync", "Finished sending retry chunks for transaction: $transactionId")
 }
 
 fun formatSecondsToMinutesSeconds(seconds: Int): String {
