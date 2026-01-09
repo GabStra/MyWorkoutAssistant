@@ -58,7 +58,14 @@ fun ExerciseIndicator(
     selectedExerciseId: UUID? = null
 ) {
     // --- Flattened order: every exercise once; supersets kept contiguous ---
-    val exerciseIds = remember { viewModel.setsByExerciseId.keys.toList() }
+    // Derive exerciseIds from allWorkoutStates to ensure workout order (not map key order)
+    val exerciseIds = remember(viewModel.allWorkoutStates) {
+        viewModel.allWorkoutStates
+            .filterIsInstance<WorkoutState.Set>()
+            .map { it.exerciseId }
+            .distinct()
+            .toList()
+    }
 
     val indicatorProgressByExerciseId by remember(exerciseIds, set) {
         derivedStateOf {
