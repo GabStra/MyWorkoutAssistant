@@ -12,9 +12,16 @@ import android.widget.Toast
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -67,6 +74,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
@@ -115,8 +124,8 @@ fun Modifier.verticalColumnScrollbar(
     thumbGap: Dp = 2.dp,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
-    enableTopFade: Boolean = false,
-    enableBottomFade: Boolean = false,
+    enableTopFade: Boolean = true,
+    enableBottomFade: Boolean = true,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color = MaterialTheme.colorScheme.background
 ): Modifier {
@@ -134,7 +143,40 @@ fun Modifier.verticalColumnScrollbar(
     val rememberedThumbGap by rememberUpdatedState(thumbGap)
     val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
-    return this.drawWithContent {
+    // State for scrollbar visibility
+    var scrollbarVisible by remember { mutableStateOf(false) }
+    var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Animate scrollbar opacity
+    val scrollbarAlpha by animateFloatAsState(
+        targetValue = if (scrollbarVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "scrollbar_fade"
+    )
+
+    // Show scrollbar on scroll interaction
+    LaunchedEffect(scrollState.value) {
+        scrollbarVisible = true
+        hideTimeoutJob?.cancel()
+        hideTimeoutJob = coroutineScope.launch {
+            delay(2500) // 2.5 seconds
+            scrollbarVisible = false
+        }
+    }
+
+    return this
+        .pointerInput(Unit) {
+            detectTapGestures {
+                scrollbarVisible = true
+                hideTimeoutJob?.cancel()
+                hideTimeoutJob = coroutineScope.launch {
+                    delay(2500)
+                    scrollbarVisible = false
+                }
+            }
+        }
+        .drawWithContent {
         // Draw content first
         drawContent()
 
@@ -219,44 +261,47 @@ fun Modifier.verticalColumnScrollbar(
 
         val x = componentWidth - paddingPx - barWidthPx
 
-        // 1) TRACK ABOVE (rounded at both ends)
-        if (rememberedShowTrack) {
-            val topSegTop = trackTop
-            val topSegBottom = (thumbTop - gapPx).coerceAtLeast(topSegTop)
-            val topHeight = (topSegBottom - topSegTop).coerceAtLeast(0f)
-            if (topHeight > 0f) {
-                // Limit radius to half height to keep ends nicely rounded for short segments
-                val r = minOf(radiusPx, topHeight / 2f)
-                drawRoundRect(
-                    color = rememberedTrackColor,
-                    topLeft = Offset(x, topSegTop),
-                    size = Size(barWidthPx, topHeight),
-                    cornerRadius = CornerRadius(r, r)
-                )
+        // Only draw scrollbar if alpha > 0
+        if (scrollbarAlpha > 0f) {
+            // 1) TRACK ABOVE (rounded at both ends)
+            if (rememberedShowTrack) {
+                val topSegTop = trackTop
+                val topSegBottom = (thumbTop - gapPx).coerceAtLeast(topSegTop)
+                val topHeight = (topSegBottom - topSegTop).coerceAtLeast(0f)
+                if (topHeight > 0f) {
+                    // Limit radius to half height to keep ends nicely rounded for short segments
+                    val r = minOf(radiusPx, topHeight / 2f)
+                    drawRoundRect(
+                        color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                        topLeft = Offset(x, topSegTop),
+                        size = Size(barWidthPx, topHeight),
+                        cornerRadius = CornerRadius(r, r)
+                    )
+                }
+
+                // 2) TRACK BELOW (rounded at both ends)
+                val botSegTop = (thumbBottom + gapPx).coerceAtMost(trackBottom)
+                val botSegBottom = trackBottom
+                val botHeight = (botSegBottom - botSegTop).coerceAtLeast(0f)
+                if (botHeight > 0f) {
+                    val r = minOf(radiusPx, botHeight / 2f)
+                    drawRoundRect(
+                        color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                        topLeft = Offset(x, botSegTop),
+                        size = Size(barWidthPx, botHeight),
+                        cornerRadius = CornerRadius(r, r)
+                    )
+                }
             }
 
-            // 2) TRACK BELOW (rounded at both ends)
-            val botSegTop = (thumbBottom + gapPx).coerceAtMost(trackBottom)
-            val botSegBottom = trackBottom
-            val botHeight = (botSegBottom - botSegTop).coerceAtLeast(0f)
-            if (botHeight > 0f) {
-                val r = minOf(radiusPx, botHeight / 2f)
-                drawRoundRect(
-                    color = rememberedTrackColor,
-                    topLeft = Offset(x, botSegTop),
-                    size = Size(barWidthPx, botHeight),
-                    cornerRadius = CornerRadius(r, r)
-                )
-            }
+            // 3) THUMB (rounded at both ends)
+            drawRoundRect(
+                color = rememberedScrollBarColor.copy(alpha = scrollbarAlpha),
+                topLeft = Offset(x, thumbTop),
+                size = Size(barWidthPx, thumbHeight),
+                cornerRadius = corner
+            )
         }
-
-        // 3) THUMB (rounded at both ends)
-        drawRoundRect(
-            color = rememberedScrollBarColor,
-            topLeft = Offset(x, thumbTop),
-            size = Size(barWidthPx, thumbHeight),
-            cornerRadius = corner
-        )
     }
 }
 
@@ -274,8 +319,8 @@ fun Modifier.verticalLazyColumnScrollbar(
     thumbGap: Dp = 2.dp,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
-    enableTopFade: Boolean = false,
-    enableBottomFade: Boolean = false,
+    enableTopFade: Boolean = true,
+    enableBottomFade: Boolean = true,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color = MaterialTheme.colorScheme.background
 ): Modifier {
@@ -293,10 +338,44 @@ fun Modifier.verticalLazyColumnScrollbar(
     val rememberedThumbGap by rememberUpdatedState(thumbGap)
     val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
+    // State for scrollbar visibility
+    var scrollbarVisible by remember { mutableStateOf(false) }
+    var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Animate scrollbar opacity
+    val scrollbarAlpha by animateFloatAsState(
+        targetValue = if (scrollbarVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "scrollbar_fade"
+    )
+
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
 
-    return this.drawWithContent {
+    // Show scrollbar on scroll interaction - use firstVisibleItemIndex to track scroll changes
+    val firstVisibleItemIndex = visibleItemsInfo.firstOrNull()?.index ?: 0
+    LaunchedEffect(firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+        scrollbarVisible = true
+        hideTimeoutJob?.cancel()
+        hideTimeoutJob = coroutineScope.launch {
+            delay(2500) // 2.5 seconds
+            scrollbarVisible = false
+        }
+    }
+
+    return this
+        .pointerInput(Unit) {
+            detectTapGestures {
+                scrollbarVisible = true
+                hideTimeoutJob?.cancel()
+                hideTimeoutJob = coroutineScope.launch {
+                    delay(2500)
+                    scrollbarVisible = false
+                }
+            }
+        }
+        .drawWithContent {
         drawContent()
 
         val componentWidth = size.width
@@ -409,43 +488,46 @@ fun Modifier.verticalLazyColumnScrollbar(
 
         val x = componentWidth - paddingPx - barWidthPx
 
-        // 1) TRACK ABOVE
-        if (rememberedShowTrack) {
-            val topSegTop = trackTop
-            val topSegBottom = (thumbTop - gapPx).coerceAtLeast(topSegTop)
-            val topHeight = (topSegBottom - topSegTop).coerceAtLeast(0f)
-            if (topHeight > 0f) {
-                val r = minOf(radiusPx, topHeight / 2f)
-                drawRoundRect(
-                    color = rememberedTrackColor,
-                    topLeft = Offset(x, topSegTop),
-                    size = Size(barWidthPx, topHeight),
-                    cornerRadius = CornerRadius(r, r)
-                )
+        // Only draw scrollbar if alpha > 0
+        if (scrollbarAlpha > 0f) {
+            // 1) TRACK ABOVE
+            if (rememberedShowTrack) {
+                val topSegTop = trackTop
+                val topSegBottom = (thumbTop - gapPx).coerceAtLeast(topSegTop)
+                val topHeight = (topSegBottom - topSegTop).coerceAtLeast(0f)
+                if (topHeight > 0f) {
+                    val r = minOf(radiusPx, topHeight / 2f)
+                    drawRoundRect(
+                        color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                        topLeft = Offset(x, topSegTop),
+                        size = Size(barWidthPx, topHeight),
+                        cornerRadius = CornerRadius(r, r)
+                    )
+                }
+
+                // 2) TRACK BELOW
+                val botSegTop = (thumbBottom + gapPx).coerceAtMost(trackBottom)
+                val botSegBottom = trackBottom
+                val botHeight = (botSegBottom - botSegTop).coerceAtLeast(0f)
+                if (botHeight > 0f) {
+                    val r = minOf(radiusPx, botHeight / 2f)
+                    drawRoundRect(
+                        color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                        topLeft = Offset(x, botSegTop),
+                        size = Size(barWidthPx, botHeight),
+                        cornerRadius = CornerRadius(r, r)
+                    )
+                }
             }
 
-            // 2) TRACK BELOW
-            val botSegTop = (thumbBottom + gapPx).coerceAtMost(trackBottom)
-            val botSegBottom = trackBottom
-            val botHeight = (botSegBottom - botSegTop).coerceAtLeast(0f)
-            if (botHeight > 0f) {
-                val r = minOf(radiusPx, botHeight / 2f)
-                drawRoundRect(
-                    color = rememberedTrackColor,
-                    topLeft = Offset(x, botSegTop),
-                    size = Size(barWidthPx, botHeight),
-                    cornerRadius = CornerRadius(r, r)
-                )
-            }
+            // 3) THUMB
+            drawRoundRect(
+                color = rememberedScrollBarColor.copy(alpha = scrollbarAlpha),
+                topLeft = Offset(x, thumbTop),
+                size = Size(barWidthPx, thumbHeight),
+                cornerRadius = corner
+            )
         }
-
-        // 3) THUMB
-        drawRoundRect(
-            color = rememberedScrollBarColor,
-            topLeft = Offset(x, thumbTop),
-            size = Size(barWidthPx, thumbHeight),
-            cornerRadius = corner
-        )
     }
 }
 

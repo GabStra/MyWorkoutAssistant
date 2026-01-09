@@ -12,9 +12,16 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +91,8 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -1184,14 +1193,14 @@ fun Modifier.verticalColumnScrollbar(
     trackHeight: Dp? = null,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
-    enableTopFade: Boolean = false,
-    enableBottomFade: Boolean = false,
+    enableTopFade: Boolean = true,
+    enableBottomFade: Boolean = true,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {
     val defaultTrackColor = scrollBarTrackColor ?: MediumDarkGray
     val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onBackground
-    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
+    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.background
     // Remember updated state for all parameters accessed within draw lambda
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
     val rememberedTrackColor by rememberUpdatedState(defaultTrackColor)
@@ -1206,7 +1215,40 @@ fun Modifier.verticalColumnScrollbar(
     val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
     val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
-    return this.drawWithContent {
+    // State for scrollbar visibility
+    var scrollbarVisible by remember { mutableStateOf(false) }
+    var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Animate scrollbar opacity
+    val scrollbarAlpha by animateFloatAsState(
+        targetValue = if (scrollbarVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "scrollbar_fade"
+    )
+
+    // Show scrollbar on scroll interaction
+    LaunchedEffect(scrollState.value) {
+        scrollbarVisible = true
+        hideTimeoutJob?.cancel()
+        hideTimeoutJob = coroutineScope.launch {
+            delay(2500) // 2.5 seconds
+            scrollbarVisible = false
+        }
+    }
+
+    return this
+        .pointerInput(Unit) {
+            detectTapGestures {
+                scrollbarVisible = true
+                hideTimeoutJob?.cancel()
+                hideTimeoutJob = coroutineScope.launch {
+                    delay(2500)
+                    scrollbarVisible = false
+                }
+            }
+        }
+        .drawWithContent {
         // --- Draw the actual content first ---
         drawContent()
 
@@ -1302,21 +1344,24 @@ fun Modifier.verticalColumnScrollbar(
         val barWidthPx = rememberedWidth.toPx()
         val paddingPx = rememberedEndPadding
 
-        if (rememberedShowTrack) {
+        // Only draw scrollbar if alpha > 0
+        if (scrollbarAlpha > 0f) {
+            if (rememberedShowTrack) {
+                drawRoundRect(
+                    color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                    topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
+                    size = Size(barWidthPx, actualTrackHeight),
+                    cornerRadius = cornerRadius
+                )
+            }
+
             drawRoundRect(
-                color = rememberedTrackColor,
-                topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
-                size = Size(barWidthPx, actualTrackHeight),
+                color = rememberedScrollBarColor.copy(alpha = scrollbarAlpha),
+                topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
+                size = Size(barWidthPx, scrollBarHeight),
                 cornerRadius = cornerRadius
             )
         }
-
-        drawRoundRect(
-            color = rememberedScrollBarColor,
-            topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
-            size = Size(barWidthPx, scrollBarHeight),
-            cornerRadius = cornerRadius
-        )
     }
 }
 
@@ -1332,14 +1377,14 @@ fun Modifier.verticalLazyColumnScrollbar(
     trackHeight: Dp? = null,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
-    enableTopFade: Boolean = false,
-    enableBottomFade: Boolean = false,
+    enableTopFade: Boolean = true,
+    enableBottomFade: Boolean = true,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {
     val defaultTrackColor = scrollBarTrackColor ?: MediumDarkGray
     val defaultScrollBarColor = scrollBarColor ?: MaterialTheme.colorScheme.onSurfaceVariant
-    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.scrim
+    val defaultFadeColor = contentFadeColor ?: MaterialTheme.colorScheme.background
     val rememberedShowTrack by rememberUpdatedState(showScrollBarTrack)
     val rememberedTrackColor by rememberUpdatedState(defaultTrackColor)
     val rememberedScrollBarColor by rememberUpdatedState(defaultScrollBarColor)
@@ -1353,10 +1398,44 @@ fun Modifier.verticalLazyColumnScrollbar(
     val rememberedContentFadeColor by rememberUpdatedState(defaultFadeColor)
     val rememberedMaxThumbHeightFraction by rememberUpdatedState(maxThumbHeightFraction)
 
+    // State for scrollbar visibility
+    var scrollbarVisible by remember { mutableStateOf(false) }
+    var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Animate scrollbar opacity
+    val scrollbarAlpha by animateFloatAsState(
+        targetValue = if (scrollbarVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "scrollbar_fade"
+    )
+
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
 
-    return this.drawWithContent {
+    // Show scrollbar on scroll interaction - use firstVisibleItemIndex to track scroll changes
+    val firstVisibleItemIndex = visibleItemsInfo.firstOrNull()?.index ?: 0
+    LaunchedEffect(firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+        scrollbarVisible = true
+        hideTimeoutJob?.cancel()
+        hideTimeoutJob = coroutineScope.launch {
+            delay(2500) // 2.5 seconds
+            scrollbarVisible = false
+        }
+    }
+
+    return this
+        .pointerInput(Unit) {
+            detectTapGestures {
+                scrollbarVisible = true
+                hideTimeoutJob?.cancel()
+                hideTimeoutJob = coroutineScope.launch {
+                    delay(2500)
+                    scrollbarVisible = false
+                }
+            }
+        }
+        .drawWithContent {
         drawContent()
 
         val componentWidth = size.width
@@ -1469,21 +1548,24 @@ fun Modifier.verticalLazyColumnScrollbar(
         val barWidthPx = rememberedWidth.toPx()
         val paddingPx = rememberedEndPadding
 
-        if (rememberedShowTrack) {
+        // Only draw scrollbar if alpha > 0
+        if (scrollbarAlpha > 0f) {
+            if (rememberedShowTrack) {
+                drawRoundRect(
+                    color = rememberedTrackColor.copy(alpha = scrollbarAlpha),
+                    topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
+                    size = Size(barWidthPx, actualTrackHeight),
+                    cornerRadius = cornerRadius
+                )
+            }
+
             drawRoundRect(
-                color = rememberedTrackColor,
-                topLeft = Offset(componentWidth - paddingPx - barWidthPx, trackTopOffset),
-                size = Size(barWidthPx, actualTrackHeight),
+                color = rememberedScrollBarColor.copy(alpha = scrollbarAlpha),
+                topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
+                size = Size(barWidthPx, scrollBarHeight),
                 cornerRadius = cornerRadius
             )
         }
-
-        drawRoundRect(
-            color = rememberedScrollBarColor,
-            topLeft = Offset(componentWidth - paddingPx - barWidthPx, scrollBarTopOffset),
-            size = Size(barWidthPx, scrollBarHeight),
-            cornerRadius = cornerRadius
-        )
     }
 }
 
