@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -188,7 +189,7 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
-    val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+    val dropdownBackground = DarkGray
     val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Box(modifier = Modifier.fillMaxSize()) {

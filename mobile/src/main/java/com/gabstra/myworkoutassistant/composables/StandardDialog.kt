@@ -7,6 +7,7 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DarkGray
 
 @Composable
 fun StandardDialog(
@@ -61,7 +62,7 @@ fun StandardDialog(
             }
         },
         shape = RoundedCornerShape(4.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = DarkGray,
         titleContentColor = MaterialTheme.colorScheme.onSurface,
         textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         tonalElevation = 0.dp,

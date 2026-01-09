@@ -73,6 +73,7 @@ import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.WorkoutTypes
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -116,7 +117,7 @@ fun WorkoutForm(
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-    val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+    val dropdownBackground = DarkGray
     val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Box(modifier = Modifier.fillMaxSize()) {

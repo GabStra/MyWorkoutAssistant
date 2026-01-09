@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsMenu
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
+import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -577,7 +578,7 @@ fun WorkoutsScreen(
             if (allPlans.size > 1) {
                 var planSelectorExpanded by remember { mutableStateOf(false) }
                 val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
-                val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
+                val dropdownBackground = DarkGray
                 val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
                 ExposedDropdownMenuBox(
