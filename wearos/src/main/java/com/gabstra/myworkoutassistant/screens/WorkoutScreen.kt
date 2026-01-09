@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.edit
 import androidx.navigation.NavController
+import android.widget.Toast
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
@@ -37,6 +38,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -165,14 +167,76 @@ fun WorkoutScreen(
         },
         onSinglePress = {
             if(showWorkoutInProgressDialog) return@CustomBackHandler
-            viewModel.openCustomDialog()
-            viewModel.lightScreenUp()
+            
+            when (workoutState) {
+                is WorkoutState.Set -> {
+                    Toast.makeText(context, "Double press to complete set", Toast.LENGTH_SHORT).show()
+                }
+                is WorkoutState.Rest -> {
+                    Toast.makeText(context, "Double press to skip rest", Toast.LENGTH_SHORT).show()
+                }
+                else -> {
+                    // Keep existing behavior for other states
+                    viewModel.openCustomDialog()
+                    viewModel.lightScreenUp()
+                }
+            }
         },
         onDoublePress = {
             if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
-            showWorkoutInProgressDialog = true
-            viewModel.pauseWorkout()
-            viewModel.lightScreenUp()
+            
+            when (workoutState) {
+                is WorkoutState.Set -> {
+                    val setState = workoutState as WorkoutState.Set
+                    
+                    // Handle intra-set counter if applicable
+                    if (setState.intraSetTotal != null) {
+                        setState.intraSetCounter++
+                    }
+                    
+                    hapticsViewModel.doGentleVibration()
+                    viewModel.storeSetData()
+                    val isDone = viewModel.isNextStateCompleted()
+                    viewModel.pushAndStoreWorkoutData(isDone, context) {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    }
+                }
+                is WorkoutState.Rest -> {
+                    val restState = workoutState as WorkoutState.Rest
+                    val restSetData = restState.currentSetData as RestSetData
+                    
+                    // Update currentSetData with current timer value (endTimer should already be current, but ensure it's set)
+                    // The endTimer is kept in sync by RestScreen's LaunchedEffect, so we can use it directly
+                    restState.currentSetData = restSetData.copy(
+                        endTimer = restSetData.endTimer
+                    )
+                    
+                    hapticsViewModel.doGentleVibration()
+                    
+                    // Execute the same logic as the skip rest dialog's onTimerEnd callback
+                    try {
+                        viewModel.storeSetData()
+                        val isDone = viewModel.isNextStateCompleted()
+                        viewModel.pushAndStoreWorkoutData(isDone, context) {
+                            try {
+                                viewModel.goToNextState()
+                                viewModel.lightScreenUp()
+                            } catch (exception: Exception) {
+                                android.util.Log.e("WorkoutScreen", "Error in skip rest callback", exception)
+                            }
+                        }
+                    } catch (exception: Exception) {
+                        android.util.Log.e("WorkoutScreen", "Error handling skip rest", exception)
+                    }
+                }
+                else -> {
+                    // Keep existing behavior for other states (pause workout)
+                    showWorkoutInProgressDialog = true
+                    viewModel.pauseWorkout()
+                    viewModel.lightScreenUp()
+                }
+            }
         }
     )
 

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.os.SystemClock
+import android.view.ViewConfiguration
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -18,13 +19,17 @@ fun CustomBackHandler(
     onPress: () -> Unit,
     onSinglePress: () -> Unit,
     onDoublePress: () -> Unit,
-    doublePressDuration: Long = 300L,
 ) {
     val scope = rememberCoroutineScope()
 
     val currentPress by rememberUpdatedState(onPress)
     val currentSingle by rememberUpdatedState(onSinglePress)
     val currentDouble by rememberUpdatedState(onDoublePress)
+
+    // Get platform double tap timeout once and cache it
+    val doubleTapTimeout = remember { 
+        ViewConfiguration.getDoubleTapTimeout().toLong() 
+    }
 
     // Non-UI state holder to avoid recompositions
     val state = remember { object {
@@ -46,7 +51,14 @@ fun CustomBackHandler(
 
         currentPress()
 
-        if (state.inWindow && dt < doublePressDuration) {
+        // Defensive check: ensure time delta is non-negative
+        if (dt < 0) {
+            reset()
+            return@BackHandler
+        }
+
+        // Changed < to <= for inclusive boundary (matches platform behavior)
+        if (state.inWindow && dt <= doubleTapTimeout) {
             reset()
             currentDouble()
         } else {
@@ -55,7 +67,7 @@ fun CustomBackHandler(
             state.job?.cancel()
             state.job = scope.launch {
                 try {
-                    delay(doublePressDuration)
+                    delay(doubleTapTimeout)
                     if (state.inWindow) currentSingle()
                 } finally {
                     reset()
