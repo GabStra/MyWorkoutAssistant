@@ -257,7 +257,14 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
 
                 val requiredAccessoryEquipmentIds = if (jsonObject.has("requiredAccessoryEquipmentIds") && !jsonObject.get("requiredAccessoryEquipmentIds").isJsonNull) {
                     val uuidListType = object : TypeToken<List<UUID>>() {}.type
-                    context.deserialize<List<UUID>>(jsonObject.get("requiredAccessoryEquipmentIds"), uuidListType) ?: emptyList()
+                    val jsonElement = jsonObject.get("requiredAccessoryEquipmentIds")
+                    try {
+                        val deserialized = context.deserialize<List<UUID>>(jsonElement, uuidListType)
+                        deserialized ?: emptyList()
+                    } catch (e: Exception) {
+                        // If deserialization fails, return empty list
+                        emptyList()
+                    }
                 } else {
                     emptyList<UUID>()
                 }
