@@ -26,6 +26,9 @@
                 <data android:pathPrefix="/workoutHistoryStore"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
+                <data android:pathPrefix="/workoutHistoryChunkPath"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
                 <data android:pathPrefix="/openPagePath"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
