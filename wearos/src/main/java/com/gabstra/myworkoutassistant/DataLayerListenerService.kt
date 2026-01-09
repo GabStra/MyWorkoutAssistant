@@ -34,11 +34,13 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -532,55 +534,70 @@ class DataLayerListenerService : WearableListenerService() {
                                                 scheduler.cancelSchedule(schedule)
                                             }
 
-                                            workoutScheduleDao.deleteAll()
-                                            exerciseSessionProgressionDao.deleteAll()
+                                            // Wrap database operations in NonCancellable to ensure they complete even if service is destroyed
+                                            withContext(NonCancellable) {
+                                                workoutScheduleDao.deleteAll()
+                                                exerciseSessionProgressionDao.deleteAll()
 
-                                            val insertWorkoutHistoriesJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
-                                                }
-
-                                            val insertSetHistoriesJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
-                                                }
-
-                                            val insertExerciseInfosJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
-                                                }
-
-                                            val insertWorkoutSchedulesJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    workoutScheduleDao.deleteAll()
-                                                    workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
-                                                }
-
-                                            val insertWorkoutRecordsJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    workoutRecordDao.deleteAll()
-                                                    workoutRecordDao.insertAll(*appBackup.WorkoutRecords.toTypedArray())
-                                                }
-
-                                            val insertExerciseSessionProgressionsJob =
-                                                scope.launch(start = CoroutineStart.LAZY) {
-                                                    val validExerciseSessionProgressions = appBackup.ExerciseSessionProgressions.filter { progression ->
-                                                        appBackup.WorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                                val insertWorkoutHistoriesJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            workoutHistoryDao.insertAllWithVersionCheck(*appBackup.WorkoutHistories.toTypedArray())
+                                                        }
                                                     }
-                                                    exerciseSessionProgressionDao.insertAll(*validExerciseSessionProgressions.toTypedArray())
-                                                }
 
-                                            joinAll(
-                                                insertWorkoutHistoriesJob,
-                                                insertSetHistoriesJob,
-                                                insertExerciseInfosJob,
-                                                insertWorkoutSchedulesJob,
-                                                insertWorkoutRecordsJob,
-                                                insertExerciseSessionProgressionsJob
-                                            )
+                                                val insertSetHistoriesJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            setHistoryDao.insertAllWithVersionCheck(*appBackup.SetHistories.toTypedArray())
+                                                        }
+                                                    }
 
-                                            // Clean up workout histories that are no longer needed
-                                            cleanupUnusedWorkoutHistories(appBackup.WorkoutStore.workouts, appBackup.WorkoutHistories.map { it.id }.toSet())
+                                                val insertExerciseInfosJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            exerciseInfoDao.insertAllWithVersionCheck(*appBackup.ExerciseInfos.toTypedArray())
+                                                        }
+                                                    }
+
+                                                val insertWorkoutSchedulesJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            workoutScheduleDao.deleteAll()
+                                                            workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
+                                                        }
+                                                    }
+
+                                                val insertWorkoutRecordsJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            workoutRecordDao.deleteAll()
+                                                            workoutRecordDao.insertAll(*appBackup.WorkoutRecords.toTypedArray())
+                                                        }
+                                                    }
+
+                                                val insertExerciseSessionProgressionsJob =
+                                                    scope.launch(start = CoroutineStart.LAZY) {
+                                                        withContext(NonCancellable) {
+                                                            val validExerciseSessionProgressions = appBackup.ExerciseSessionProgressions.filter { progression ->
+                                                                appBackup.WorkoutHistories.any { it.id == progression.workoutHistoryId }
+                                                            }
+                                                            exerciseSessionProgressionDao.insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                                        }
+                                                    }
+
+                                                joinAll(
+                                                    insertWorkoutHistoriesJob,
+                                                    insertSetHistoriesJob,
+                                                    insertExerciseInfosJob,
+                                                    insertWorkoutSchedulesJob,
+                                                    insertWorkoutRecordsJob,
+                                                    insertExerciseSessionProgressionsJob
+                                                )
+
+                                                // Clean up workout histories that are no longer needed
+                                                cleanupUnusedWorkoutHistories(appBackup.WorkoutStore.workouts, appBackup.WorkoutHistories.map { it.id }.toSet())
+                                            }
 
                                             val intent = Intent(INTENT_ID).apply {
                                                 putExtra(APP_BACKUP_END_JSON, APP_BACKUP_END_JSON)

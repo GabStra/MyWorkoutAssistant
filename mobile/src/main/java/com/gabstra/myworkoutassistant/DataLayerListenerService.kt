@@ -44,9 +44,11 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -596,66 +598,69 @@ class DataLayerListenerService : WearableListenerService() {
                                             throw IllegalStateException("Workout not found for workout history: ${workoutHistoryStore.WorkoutHistory.workoutId}")
                                         }
 
-                                        workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
-                                        setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
+                                        // Wrap database operations in NonCancellable to ensure they complete even if service is destroyed
+                                        withContext(NonCancellable) {
+                                            workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
+                                            setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
 
-                                        if(workoutHistoryStore.WorkoutRecord != null){
-                                            workoutRecordDao.deleteByWorkoutId(workout.id)
-                                            workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
-                                        }
-
-                                        if (workoutHistoryStore.WorkoutHistory.isDone) {
-                                            exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
-                                            exerciseSessionProgressionDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseSessionProgressions.toTypedArray())
-                                            workoutRecordDao.deleteByWorkoutId(workout.id)
-
-                                            val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
-                                                .filter { it.exerciseId != null }
-                                                .groupBy { it.exerciseId }
-
-                                            val exercises = workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-                                            var workoutComponents = workout.workoutComponents
-
-                                            for (exercise in exercises) {
-                                                if(exercise.doNotStoreHistory) continue
-                                                val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
-
-                                                workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
-
-                                                val validSetHistories = setHistories
-                                                    .dropWhile { it.setData is RestSetData }
-                                                    .dropLastWhile { it.setData is RestSetData }
-                                                    .filter { it ->
-                                                        when(val setData = it.setData){
-                                                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                            else -> true
-                                                        }
-                                                    }
-
-                                                for (setHistory in validSetHistories) {
-                                                    val newSet = getNewSetFromSetHistory(setHistory)
-                                                    workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
-                                                }
+                                            if(workoutHistoryStore.WorkoutRecord != null){
+                                                workoutRecordDao.deleteByWorkoutId(workout.id)
+                                                workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
                                             }
 
-                                            val newWorkout = workout.copy(workoutComponents = workoutComponents)
-                                            val updatedWorkoutStore = workoutStore.copy(
-                                                workouts = updateWorkoutOld(
-                                                    workoutStore.workouts,
-                                                    workout,
-                                                    newWorkout
-                                                )
-                                            )
-                                            workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-                                            val db = AppDatabase.getDatabase(this@DataLayerListenerService)
-                                            saveWorkoutStoreToDownloads(this@DataLayerListenerService, updatedWorkoutStore, db)
-                                        }
+                                            if (workoutHistoryStore.WorkoutHistory.isDone) {
+                                                exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
+                                                exerciseSessionProgressionDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseSessionProgressions.toTypedArray())
+                                                workoutRecordDao.deleteByWorkoutId(workout.id)
 
-                                        // Save error logs if present
-                                        if (workoutHistoryStore.ErrorLogs.isNotEmpty()) {
-                                            errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
+                                                val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
+                                                    .filter { it.exerciseId != null }
+                                                    .groupBy { it.exerciseId }
+
+                                                val exercises = workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                                                var workoutComponents = workout.workoutComponents
+
+                                                for (exercise in exercises) {
+                                                    if(exercise.doNotStoreHistory) continue
+                                                    val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
+
+                                                    workoutComponents = removeSetsFromExerciseRecursively(workoutComponents,exercise)
+
+                                                    val validSetHistories = setHistories
+                                                        .dropWhile { it.setData is RestSetData }
+                                                        .dropLastWhile { it.setData is RestSetData }
+                                                        .filter { it ->
+                                                            when(val setData = it.setData){
+                                                                is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                                                                is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                                                                is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                                                                else -> true
+                                                            }
+                                                        }
+
+                                                    for (setHistory in validSetHistories) {
+                                                        val newSet = getNewSetFromSetHistory(setHistory)
+                                                        workoutComponents = addSetToExerciseRecursively(workoutComponents,exercise,newSet,setHistory.order)
+                                                    }
+                                                }
+
+                                                val newWorkout = workout.copy(workoutComponents = workoutComponents)
+                                                val updatedWorkoutStore = workoutStore.copy(
+                                                    workouts = updateWorkoutOld(
+                                                        workoutStore.workouts,
+                                                        workout,
+                                                        newWorkout
+                                                    )
+                                                )
+                                                workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+                                                val db = AppDatabase.getDatabase(this@DataLayerListenerService)
+                                                saveWorkoutStoreToDownloads(this@DataLayerListenerService, updatedWorkoutStore, db)
+                                            }
+
+                                            // Save error logs if present
+                                            if (workoutHistoryStore.ErrorLogs.isNotEmpty()) {
+                                                errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
+                                            }
                                         }
 
                                         val intent = Intent(INTENT_ID).apply {
