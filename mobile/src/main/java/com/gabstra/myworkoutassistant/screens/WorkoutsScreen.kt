@@ -574,7 +574,7 @@ fun WorkoutsScreen(
             }
 
             // Plan Selector
-            if (allPlans.isNotEmpty()) {
+            if (allPlans.size > 1) {
                 var planSelectorExpanded by remember { mutableStateOf(false) }
                 val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
                 val dropdownBackground = MaterialTheme.colorScheme.surfaceVariant
@@ -618,17 +618,6 @@ fun WorkoutsScreen(
                         }
                     }
                 }
-            } else {
-                // Show message when no plans exist
-                Text(
-                    text = "No workout plans available",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 15.dp, vertical = 8.dp),
-                    textAlign = TextAlign.Center
-                )
             }
 
             HorizontalPager(

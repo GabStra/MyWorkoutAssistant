@@ -406,20 +406,22 @@ fun WorkoutSelectionScreen(
                         // Group workouts by plan and display with headers
                         workoutsByPlan.forEach { (plan, planWorkouts) ->
                             if (planWorkouts.isNotEmpty()) {
-                                // Plan header
-                                item {
-                                    ListHeader(
-                                        modifier = Modifier
-                                            .transformedHeight(this, spec)
-                                            .animateItem(),
-                                        transformation = SurfaceTransformation(spec),
-                                    ) {
-                                        Text(
-                                            text = plan?.name ?: "Unassigned",
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onBackground
-                                        )
+                                // Plan header (only show if there are multiple plans)
+                                if (allPlans.size > 1) {
+                                    item {
+                                        ListHeader(
+                                            modifier = Modifier
+                                                .transformedHeight(this, spec)
+                                                .animateItem(),
+                                            transformation = SurfaceTransformation(spec),
+                                        ) {
+                                            Text(
+                                                text = plan?.name ?: "Unassigned",
+                                                textAlign = TextAlign.Center,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onBackground
+                                            )
+                                        }
                                     }
                                 }
                                 
