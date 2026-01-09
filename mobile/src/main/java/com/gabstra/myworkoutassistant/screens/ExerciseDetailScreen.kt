@@ -501,7 +501,7 @@ fun ExerciseDetailScreen(
                                             }
 
                                             val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
                                             updateExerciseWithHistory(updatedExercise)
 
@@ -558,7 +558,7 @@ fun ExerciseDetailScreen(
                                             }
 
                                             val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
                                             sets = adjustedComponents
 
@@ -629,7 +629,7 @@ fun ExerciseDetailScreen(
                                             }
 
                                             val adjustedComponents = ensureRestSeparatedBySets(sets + copiedSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
                                             sets = adjustedComponents
 
@@ -822,7 +822,7 @@ fun ExerciseDetailScreen(
                             onOrderChange = { newComponents ->
                                 if (!showRest) return@GenericSelectableList
                                 val adjustedComponents = ensureRestSeparatedBySets(newComponents)
-                                val updatedExercise = exercise.copy(sets = adjustedComponents)
+                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                                 updateExerciseWithHistory(updatedExercise)
                                 sets = adjustedComponents
                             },

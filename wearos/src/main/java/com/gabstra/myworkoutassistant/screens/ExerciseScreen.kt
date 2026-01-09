@@ -100,7 +100,7 @@ fun ExerciseScreen(
     }
 
     val accessoryEquipments = remember(exercise) {
-        exercise.requiredAccessoryEquipmentIds.mapNotNull { id ->
+        (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
             viewModel.getAccessoryEquipmentById(id)
         }
     }

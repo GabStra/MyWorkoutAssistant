@@ -785,7 +785,7 @@ fun WorkoutHistoryScreen(
                                 .map { getNewSetFromSetHistory(it) }
                             
                             // Create an exercise with the historical sets
-                            val exerciseWithHistorySets = exercise.copy(sets = sets)
+                            val exerciseWithHistorySets = exercise.copy(sets = sets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                             
                             StyledCard {
                                 if (hasTarget) {

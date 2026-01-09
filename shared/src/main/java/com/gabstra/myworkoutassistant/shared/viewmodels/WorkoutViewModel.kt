@@ -1059,7 +1059,7 @@ open class WorkoutViewModel(
                 .dropWhile { it is RestSet }
                 .dropLastWhile { it is RestSet }
 
-            updateWorkout(exercise,exercise.copy(sets = validSets))
+            updateWorkout(exercise,exercise.copy(sets = validSets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()))
         }
 
         lastSessionWorkout = _selectedWorkout.value.copy()
@@ -1131,7 +1131,7 @@ open class WorkoutViewModel(
                 newSets.add(newSet)
             }
 
-            val newExercise = exercise.copy(sets = newSets)
+            val newExercise = exercise.copy(sets = newSets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
             updateWorkout(exercise, newExercise)
         }
 

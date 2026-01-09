@@ -33,7 +33,7 @@ data class Exercise (
     val loadJumpOvercapUntil: Int? = null,
     val muscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     val secondaryMuscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
-    val requiredAccessoryEquipmentIds: List<UUID> = emptyList(),
+    val requiredAccessoryEquipmentIds: List<UUID>? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds

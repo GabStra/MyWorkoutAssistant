@@ -107,7 +107,7 @@ class WorkoutManager {
                     } else {
                         mutableSets.add(newSet) // Add at the end if index is null or out of bounds
                     }
-                    exercise.copy(sets = mutableSets.toList())
+                    exercise.copy(sets = mutableSets.toList(), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 } else {
                     if(component is Superset){
                         component.copy(exercises = addSetToExerciseRecursively(component.exercises, parentExercise, newSet, index) as List<Exercise>)
@@ -122,7 +122,7 @@ class WorkoutManager {
             return components.map { component ->
                 if (component.id == parentExercise.id) {
                     val exercise = component as Exercise
-                    exercise.copy(sets = emptyList())
+                    exercise.copy(sets = emptyList(), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 } else {
                     if(component is Superset){
                         component.copy(exercises = removeSetsFromExerciseRecursively(component.exercises, parentExercise) as List<Exercise>)
@@ -137,7 +137,7 @@ class WorkoutManager {
             return components.map { component ->
                 if(component == parentExercise) {
                     val exercise = component as Exercise
-                    exercise.copy(sets = updateSet(component.sets,oldSet,updatedSet))
+                    exercise.copy(sets = updateSet(component.sets,oldSet,updatedSet), requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                 }else{
                     if(component is Superset){
                         component.copy(exercises = updateSetInExerciseRecursively(component.exercises, parentExercise, oldSet, updatedSet) as List<Exercise>)

@@ -85,7 +85,7 @@ fun ExerciseRenderer(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val equipment = if(exercise.equipmentId != null) appViewModel.getEquipmentById(exercise.equipmentId!!) else null
-                    val accessoryEquipments = exercise.requiredAccessoryEquipmentIds.mapNotNull { id ->
+                    val accessoryEquipments = (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
                         appViewModel.getAccessoryEquipmentById(id)
                     }
                     val textColor = if (exercise.enabled) {
