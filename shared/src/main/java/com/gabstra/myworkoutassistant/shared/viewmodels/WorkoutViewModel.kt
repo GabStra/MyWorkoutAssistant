@@ -2753,6 +2753,15 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    /**
+     * Checks if the next state after the current state is WorkoutState.Completed.
+     * Used to determine if we're completing the last set in the workout.
+     */
+    fun isNextStateCompleted(): Boolean {
+        val machine = stateMachine ?: return false
+        return machine.upcomingNext is WorkoutState.Completed
+    }
+
     open fun goToNextState() {
         val machine = stateMachine ?: return
         if (machine.isCompleted) return

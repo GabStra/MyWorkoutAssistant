@@ -542,7 +542,8 @@ fun ExerciseScreen(
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
-                viewModel.pushAndStoreWorkoutData(false, context) {
+                val isDone = viewModel.isNextStateCompleted()
+                viewModel.pushAndStoreWorkoutData(isDone, context) {
                     viewModel.goToNextState()
                     viewModel.lightScreenUp()
                 }

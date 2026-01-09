@@ -330,7 +330,8 @@ fun WorkoutScreen(
                                 onTimerEnd = {
                                     try {
                                         viewModel.storeSetData()
-                                        viewModel.pushAndStoreWorkoutData(false,context){
+                                        val isDone = viewModel.isNextStateCompleted()
+                                        viewModel.pushAndStoreWorkoutData(isDone, context){
                                             try {
                                                 viewModel.goToNextState()
                                                 viewModel.lightScreenUp()
