@@ -1,13 +1,11 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -16,11 +14,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gabstra.myworkoutassistant.shared.DarkOrange
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
@@ -39,119 +37,113 @@ fun WorkoutsMenu(
     onExportWorkoutPlan: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
+    onMenuItemClick: () -> Unit = {},
 ) {
-    var expanded by remember { mutableStateOf(false) }
     var showClearIncompleteDialog by remember { mutableStateOf(false) }
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier.wrapContentSize(Alignment.TopEnd)
+    val scrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(vertical = 8.dp)
     ) {
-        IconButton(onClick = { expanded = !expanded }) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "More"
-            )
-        }
-        AppDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            MenuSectionHeader("Settings", showDivider = false)
-            AppDropdownMenuItem(
-                text = { Text("Settings") },
-                onClick = {
-                    onOpenSettingsClick()
-                    expanded = false
-                }
-            )
+        MenuSectionHeader("Settings", showDivider = false)
+        AppDropdownMenuItem(
+            text = { Text("Settings") },
+            onClick = {
+                onOpenSettingsClick()
+                onMenuItemClick()
+            }
+        )
 
-            MenuSectionHeader("Sync")
-            AppDropdownMenuItem(
-                text = { Text("Sync with Watch") },
-                onClick = {
-                    onSyncClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Sync with Health Connect") },
-                onClick = {
-                    onSyncWithHealthConnectClick()
-                    expanded = false
-                }
-            )
+        MenuSectionHeader("Sync")
+        AppDropdownMenuItem(
+            text = { Text("Sync with Watch") },
+            onClick = {
+                onSyncClick()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Sync with Health Connect") },
+            onClick = {
+                onSyncWithHealthConnectClick()
+                onMenuItemClick()
+            }
+        )
 
-            MenuSectionHeader("Data")
-            AppDropdownMenuItem(
-                text = { Text("Export Workouts") },
-                onClick = {
-                    onExportWorkouts()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Export Workout Plan (Markdown)") },
-                onClick = {
-                    onExportWorkoutPlan()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Save Backup") },
-                onClick = {
-                    onBackupClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Restore Backup") },
-                onClick = {
-                    onRestoreClick()
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Import Workout Plan") },
-                onClick = {
-                    onImportWorkoutsClick()
-                    expanded = false
-                }
-            )
+        MenuSectionHeader("Data")
+        AppDropdownMenuItem(
+            text = { Text("Export Workouts") },
+            onClick = {
+                onExportWorkouts()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Export Workout Plan (Markdown)") },
+            onClick = {
+                onExportWorkoutPlan()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Save Backup") },
+            onClick = {
+                onBackupClick()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Restore Backup") },
+            onClick = {
+                onRestoreClick()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Import Workout Plan") },
+            onClick = {
+                onImportWorkoutsClick()
+                onMenuItemClick()
+            }
+        )
 
-            MenuSectionHeader("Maintenance")
-            AppDropdownMenuItem(
-                text = { Text("Clear incomplete workouts") },
-                onClick = {
-                    showClearIncompleteDialog = true
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Clear workout history") },
-                onClick = {
-                    showClearHistoryDialog = true
-                    expanded = false
-                }
-            )
-            AppDropdownMenuItem(
-                text = { Text("Clear all exercise info") },
-                onClick = {
-                    showClearExerciseInfoDialog = true
-                    expanded = false
-                }
-            )
+        MenuSectionHeader("Maintenance")
+        AppDropdownMenuItem(
+            text = { Text("Clear incomplete workouts") },
+            onClick = {
+                showClearIncompleteDialog = true
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Clear workout history") },
+            onClick = {
+                showClearHistoryDialog = true
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Clear all exercise info") },
+            onClick = {
+                showClearExerciseInfoDialog = true
+                onMenuItemClick()
+            }
+        )
 
-            MenuSectionHeader("Diagnostics")
-            AppDropdownMenuItem(
-                text = { Text("View Error Logs") },
-                onClick = {
-                    onViewErrorLogs()
-                    expanded = false
-                }
-            )
-        }
+        MenuSectionHeader("Diagnostics")
+        AppDropdownMenuItem(
+            text = { Text("View Error Logs") },
+            onClick = {
+                onViewErrorLogs()
+                onMenuItemClick()
+            }
+        )
     }
 
     CustomDialogYesOnLongPress(
@@ -214,6 +206,7 @@ fun MenuSectionHeader(title: String, showDivider: Boolean = true) {
     }
     Text(
         text = title,
+        color = DarkOrange,
         style = MaterialTheme.typography.labelSmall.copy(
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.8.sp

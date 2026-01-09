@@ -19,12 +19,16 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -34,6 +38,7 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -184,7 +189,8 @@ fun WorkoutsScreen(
         if (selectedPlanFilter != null) {
             val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
             if (selectedPlan != null) {
-                grouped[selectedPlan] = activeWorkouts.filter { it.workoutPlanId == selectedPlanFilter }.toMutableList()
+                grouped[selectedPlan] =
+                    activeWorkouts.filter { it.workoutPlanId == selectedPlanFilter }.toMutableList()
             }
         } else {
             // Initialize with all plans
@@ -273,6 +279,8 @@ fun WorkoutsScreen(
 
     val scope = rememberCoroutineScope()
 
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+
     val tabTitles = listOf("Status", "Workouts", "Gear", "Alarms")
 
     var selectedDate by remember {
@@ -317,9 +325,15 @@ fun WorkoutsScreen(
                 }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
-        val actualCountsByWorkoutId = workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
+        val actualCountsByWorkoutId =
+            workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
 
-        data class Fam(val active: Workout, val countedActual: Int, val totalTarget: Int, val progress: Double)
+        data class Fam(
+            val active: Workout,
+            val countedActual: Int,
+            val totalTarget: Int,
+            val progress: Double
+        )
 
         val families: List<Fam> = workoutsByGlobalId.map { (_, wsRaw) ->
             val ws = wsRaw.distinctBy { it.id } // <<< Safety de-dupe
@@ -327,7 +341,9 @@ fun WorkoutsScreen(
             val actuals = ws.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
 
             val totalTarget = targets.values.sum()
-            val allReached = ws.all { w -> (targets[w.id] ?: 0) <= 0 || (actuals[w.id] ?: 0) >= (targets[w.id] ?: 0) }
+            val allReached = ws.all { w ->
+                (targets[w.id] ?: 0) <= 0 || (actuals[w.id] ?: 0) >= (targets[w.id] ?: 0)
+            }
 
             val countedActual = if (allReached) {
                 actuals.values.sum()
@@ -345,7 +361,8 @@ fun WorkoutsScreen(
             .associate { it.active to (it.countedActual to it.totalTarget) }
             .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id })
 
-        objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
+        objectiveProgress =
+            if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
 
     LaunchedEffect(enabledWorkouts, updateMessage, selectedPlanFilter) {
@@ -421,24 +438,34 @@ fun WorkoutsScreen(
         isSaving = true
         scope.launch {
             try {
-            val historyById = withContext(Dispatchers.IO) {
-                workoutsToUpdate.associate { it.id to workoutHistoryDao.workoutHistoryExistsByWorkoutId(it.id) }
-            }
-            withContext(Dispatchers.Main) {
-                workoutsToUpdate.forEach { workout ->
-                    val hasHistory = historyById[workout.id] ?: false
-                    appViewModel.updateWorkoutVersioned(workout, workout.copy(enabled = enabled), hasHistory)
+                val historyById = withContext(Dispatchers.IO) {
+                    workoutsToUpdate.associate {
+                        it.id to workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                            it.id
+                        )
+                    }
                 }
-                selectedWorkouts = emptyList()
-                isWorkoutSelectionModeActive = false
-            }
-            com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+                withContext(Dispatchers.Main) {
+                    workoutsToUpdate.forEach { workout ->
+                        val hasHistory = historyById[workout.id] ?: false
+                        appViewModel.updateWorkoutVersioned(
+                            workout,
+                            workout.copy(enabled = enabled),
+                            hasHistory
+                        )
+                    }
+                    selectedWorkouts = emptyList()
+                    isWorkoutSelectionModeActive = false
+                }
+                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
+                    context,
+                    appViewModel.workoutStore
+                )
             } finally {
                 isSaving = false
             }
         }
     }
-
 
 
     val pagerState = rememberPagerState(
@@ -453,32 +480,12 @@ fun WorkoutsScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
-                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
-                ),
-                title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = "My Workout Assistant", textAlign = TextAlign.Center,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                actions = {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet(
+                    drawerContainerColor = DarkGray
+                ) {
                     WorkoutsMenu(
                         onSyncClick = onSyncClick,
                         onOpenSettingsClick = onOpenSettingsClick,
@@ -491,314 +498,402 @@ fun WorkoutsScreen(
                         onExportWorkouts = onExportWorkouts,
                         onExportWorkoutPlan = onExportWorkoutPlan,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
-                        onViewErrorLogs = onViewErrorLogs
-                    )
-                }
-            )
-        },
-        bottomBar = {
-            when(pagerState.currentPage){
-                1 -> WorkoutsBottomBar(
-                    selectedWorkouts = selectedWorkouts,
-                    activeWorkouts = activeWorkouts,
-                    activeAndEnabledWorkouts = activeAndEnabledWorkouts,
-                    appViewModel = appViewModel,
-                    workoutHistoryDao = workoutHistoryDao,
-                    setHistoryDao = setHistoryDao,
-                    scope = scope,
-                    context = context,
-                    onSelectionChange = { selectedWorkouts = it },
-                    onSelectionModeChange = { isWorkoutSelectionModeActive = it },
-                    onShowMoveWorkoutDialogChange = { showMoveWorkoutDialog = it },
-                    onUpdateWorkoutsEnabledState = { enabled -> updateWorkoutsEnabledState(enabled) },
-                    onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it }
-                )
-                2 -> {
-                    EquipmentsBottomBar(
-                        selectedEquipments = selectedEquipments,
-                        equipments = filteredEquipments,
-                        appViewModel = appViewModel,
-                        onSelectionChange = { selectedEquipments = it },
-                        onSelectionModeChange = { isEquipmentSelectionModeActive = it }
-                    )
-                    AccessoriesBottomBar(
-                        selectedAccessories = selectedAccessories,
-                        accessories = filteredAccessories,
-                        appViewModel = appViewModel,
-                        onSelectionChange = { selectedAccessories = it },
-                        onSelectionModeChange = { isAccessorySelectionModeActive = it }
-                    )
-                }
-            }
-        },
-    ) { paddingValues ->
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(paddingValues),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-
-            TabRow(
-                contentColor = MaterialTheme.colorScheme.background,
-                selectedTabIndex = pagerState.currentPage,
-                indicator = { tabPositions ->
-                    TabRowDefaults.Indicator(
-                        Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
-                        color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                        height = 2.dp,
-                    )
-                }
-            ) {
-                tabTitles.forEachIndexed { index, title ->
-                    val isSelected = index == pagerState.currentPage
-                    Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        selected = isSelected,
-                        onClick = {
-                            appViewModel.setHomeTab(index)
-                        },
-                        text = { Text(text = title, style = MaterialTheme.typography.bodySmall) },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
+                        onViewErrorLogs = onViewErrorLogs,
+                        onMenuItemClick = {
+                            scope.launch {
+                                drawerState.close()
                             }
-                            override fun tryEmit(interaction: Interaction): Boolean = true
                         }
                     )
                 }
             }
-
-            // Plan Selector
-            if (allPlans.size > 1) {
-                var planSelectorExpanded by remember { mutableStateOf(false) }
-                val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
-                val dropdownBackground = DarkGray
-                val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
-
-                ExposedDropdownMenuBox(
-                    expanded = planSelectorExpanded,
-                    onExpandedChange = { planSelectorExpanded = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 15.dp, vertical = 8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = selectedPlan?.name ?: "Select Plan",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Workout Plan", style = MaterialTheme.typography.labelMedium) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(),
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                    )
-
-                    ExposedDropdownMenu(
-                        expanded = planSelectorExpanded,
-                        modifier = Modifier.background(dropdownBackground),
-                        border = BorderStroke(1.dp, dropdownBorderColor),
-                        onDismissRequest = { planSelectorExpanded = false }
-                    ) {
-                        AppMenuContent {
-                            allPlans.distinctBy { it.id }.forEach { plan ->
-                                AppDropdownMenuItem(
-                                    text = { Text(plan.name) },
-                                    onClick = {
-                                        selectedPlanFilter = plan.id
-                                        planSelectorExpanded = false
+        ) {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.background,
+                            titleContentColor = MaterialTheme.colorScheme.onBackground,
+                            navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                            actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                        ),
+                        title = {
+                            Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                text = "My Workout Assistant", textAlign = TextAlign.Center,
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    drawerState.apply {
+                                        if (isClosed) open() else close()
                                     }
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Menu"
+                                )
+                            }
+                        },
+                        actions = {
+                            IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back"
                                 )
                             }
                         }
-                    }
-                }
-            }
+                    )
+                },
+                bottomBar = {
+                    when (pagerState.currentPage) {
+                        1 -> WorkoutsBottomBar(
+                            selectedWorkouts = selectedWorkouts,
+                            activeWorkouts = activeWorkouts,
+                            activeAndEnabledWorkouts = activeAndEnabledWorkouts,
+                            appViewModel = appViewModel,
+                            workoutHistoryDao = workoutHistoryDao,
+                            setHistoryDao = setHistoryDao,
+                            scope = scope,
+                            context = context,
+                            onSelectionChange = { selectedWorkouts = it },
+                            onSelectionModeChange = { isWorkoutSelectionModeActive = it },
+                            onShowMoveWorkoutDialogChange = { showMoveWorkoutDialog = it },
+                            onUpdateWorkoutsEnabledState = { enabled ->
+                                updateWorkoutsEnabledState(
+                                    enabled
+                                )
+                            },
+                            onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it }
+                        )
 
-            HorizontalPager(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
-                state = pagerState,
-            ) { pageIndex ->
+                        2 -> {
+                            EquipmentsBottomBar(
+                                selectedEquipments = selectedEquipments,
+                                equipments = filteredEquipments,
+                                appViewModel = appViewModel,
+                                onSelectionChange = { selectedEquipments = it },
+                                onSelectionModeChange = { isEquipmentSelectionModeActive = it }
+                            )
+                            AccessoriesBottomBar(
+                                selectedAccessories = selectedAccessories,
+                                accessories = filteredAccessories,
+                                appViewModel = appViewModel,
+                                onSelectionChange = { selectedAccessories = it },
+                                onSelectionModeChange = { isAccessorySelectionModeActive = it }
+                            )
+                        }
+                    }
+                },
+            ) { paddingValues ->
+
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background),
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(paddingValues),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    HealthConnectHandler(appViewModel, healthConnectClient)
 
-                    AnimatedContent(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        targetState = pageIndex,
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
-                                animationSpec = tween(
-                                    500
-                                )
+                    TabRow(
+                        contentColor = MaterialTheme.colorScheme.background,
+                        selectedTabIndex = pagerState.currentPage,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.Indicator(
+                                Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                                color = MaterialTheme.colorScheme.primary, // Set the indicator color
+                                height = 2.dp,
                             )
-                        }, label = ""
-                    ) { updatedSelectedTab ->
-                        when (updatedSelectedTab) {
-                            0 -> {
-                                WorkoutsStatusTab(
-                                    isLoading = isLoading,
-                                    hasObjectives = hasObjectives,
-                                    selectedDate = selectedDate,
-                                    selectedCalendarWorkouts = selectedCalendarWorkouts,
-                                    weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
-                                    objectiveProgress = objectiveProgress,
-                                    appViewModel = appViewModel,
-                                    onDayClicked = { calendarState, day -> onDayClicked(calendarState, day) },
-                                    highlightDay = { day -> highlightDay(day) }
-                                )
-                            }
+                        }
+                    ) {
+                        tabTitles.forEachIndexed { index, title ->
+                            val isSelected = index == pagerState.currentPage
+                            Tab(
+                                modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                                selected = isSelected,
+                                onClick = {
+                                    appViewModel.setHomeTab(index)
+                                },
+                                text = {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                },
+                                selectedContentColor = MaterialTheme.colorScheme.primary,
+                                unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                                interactionSource = object : MutableInteractionSource {
+                                    override val interactions: Flow<Interaction> = emptyFlow()
+                                    override suspend fun emit(interaction: Interaction) {
+                                        // Empty implementation
+                                    }
 
-                            1 -> {
-                                WorkoutsListTab(
-                                    workouts = activeWorkouts,
-                                    selectedWorkouts = selectedWorkouts,
-                                    isSelectionModeActive = isWorkoutSelectionModeActive,
-                                    appViewModel = appViewModel,
-                                    onWorkoutClick = { workout ->
-                                        appViewModel.setScreenData(
-                                            ScreenData.WorkoutDetail(workout.id)
+                                    override fun tryEmit(interaction: Interaction): Boolean = true
+                                }
+                            )
+                        }
+                    }
+
+                    // Plan Selector
+                    if (allPlans.size > 1) {
+                        var planSelectorExpanded by remember { mutableStateOf(false) }
+                        val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
+                        val dropdownBackground = DarkGray
+                        val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
+
+                        ExposedDropdownMenuBox(
+                            expanded = planSelectorExpanded,
+                            onExpandedChange = { planSelectorExpanded = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 15.dp, vertical = 8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = selectedPlan?.name ?: "Select Plan",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = {
+                                    Text(
+                                        "Workout Plan",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                            )
+
+                            ExposedDropdownMenu(
+                                expanded = planSelectorExpanded,
+                                modifier = Modifier.background(dropdownBackground),
+                                border = BorderStroke(1.dp, dropdownBorderColor),
+                                onDismissRequest = { planSelectorExpanded = false }
+                            ) {
+                                AppMenuContent {
+                                    allPlans.distinctBy { it.id }.forEach { plan ->
+                                        AppDropdownMenuItem(
+                                            text = { Text(plan.name) },
+                                            onClick = {
+                                                selectedPlanFilter = plan.id
+                                                planSelectorExpanded = false
+                                            }
                                         )
-                                    },
-                                    onSelectionChange = { selectedWorkouts = it },
-                                    onSelectionModeChange = { isWorkoutSelectionModeActive = it }
-                                )
-                            }
-
-                            2 -> {
-                                WorkoutsGearTab(
-                                    equipments = filteredEquipments,
-                                    accessories = filteredAccessories,
-                                    selectedEquipments = selectedEquipments,
-                                    selectedAccessories = selectedAccessories,
-                                    isEquipmentSelectionModeActive = isEquipmentSelectionModeActive,
-                                    isAccessorySelectionModeActive = isAccessorySelectionModeActive,
-                                    appViewModel = appViewModel,
-                                    onEquipmentSelectionChange = { selectedEquipments = it },
-                                    onAccessorySelectionChange = { selectedAccessories = it },
-                                    onEquipmentSelectionModeChange = { isEquipmentSelectionModeActive = it },
-                                    onAccessorySelectionModeChange = { isAccessorySelectionModeActive = it }
-                                )
-                            }
-
-                            3 -> {
-                                WorkoutsAlarmsTab(
-                                    workouts = filteredWorkouts,
-                                    enabledWorkouts = enabledWorkouts,
-                                    workoutScheduleDao = workoutScheduleDao,
-                                    scope = scope,
-                                    onSyncClick = onSyncClick,
-                                    updateMessage = updateMessage
-                                )
+                                    }
+                                }
                             }
                         }
                     }
 
+                    HorizontalPager(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background),
+                        state = pagerState,
+                    ) { pageIndex ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            HealthConnectHandler(appViewModel, healthConnectClient)
+
+                            AnimatedContent(
+                                modifier = Modifier.background(MaterialTheme.colorScheme.background),
+                                targetState = pageIndex,
+                                transitionSpec = {
+                                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(
+                                        animationSpec = tween(
+                                            500
+                                        )
+                                    )
+                                }, label = ""
+                            ) { updatedSelectedTab ->
+                                when (updatedSelectedTab) {
+                                    0 -> {
+                                        WorkoutsStatusTab(
+                                            isLoading = isLoading,
+                                            hasObjectives = hasObjectives,
+                                            selectedDate = selectedDate,
+                                            selectedCalendarWorkouts = selectedCalendarWorkouts,
+                                            weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
+                                            objectiveProgress = objectiveProgress,
+                                            appViewModel = appViewModel,
+                                            onDayClicked = { calendarState, day ->
+                                                onDayClicked(
+                                                    calendarState,
+                                                    day
+                                                )
+                                            },
+                                            highlightDay = { day -> highlightDay(day) }
+                                        )
+                                    }
+
+                                    1 -> {
+                                        WorkoutsListTab(
+                                            workouts = activeWorkouts,
+                                            selectedWorkouts = selectedWorkouts,
+                                            isSelectionModeActive = isWorkoutSelectionModeActive,
+                                            appViewModel = appViewModel,
+                                            onWorkoutClick = { workout ->
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(workout.id)
+                                                )
+                                            },
+                                            onSelectionChange = { selectedWorkouts = it },
+                                            onSelectionModeChange = {
+                                                isWorkoutSelectionModeActive = it
+                                            }
+                                        )
+                                    }
+
+                                    2 -> {
+                                        WorkoutsGearTab(
+                                            equipments = filteredEquipments,
+                                            accessories = filteredAccessories,
+                                            selectedEquipments = selectedEquipments,
+                                            selectedAccessories = selectedAccessories,
+                                            isEquipmentSelectionModeActive = isEquipmentSelectionModeActive,
+                                            isAccessorySelectionModeActive = isAccessorySelectionModeActive,
+                                            appViewModel = appViewModel,
+                                            onEquipmentSelectionChange = {
+                                                selectedEquipments = it
+                                            },
+                                            onAccessorySelectionChange = {
+                                                selectedAccessories = it
+                                            },
+                                            onEquipmentSelectionModeChange = {
+                                                isEquipmentSelectionModeActive = it
+                                            },
+                                            onAccessorySelectionModeChange = {
+                                                isAccessorySelectionModeActive = it
+                                            }
+                                        )
+                                    }
+
+                                    3 -> {
+                                        WorkoutsAlarmsTab(
+                                            workouts = filteredWorkouts,
+                                            enabledWorkouts = enabledWorkouts,
+                                            workoutScheduleDao = workoutScheduleDao,
+                                            scope = scope,
+                                            onSyncClick = onSyncClick,
+                                            updateMessage = updateMessage
+                                        )
+                                    }
+                                }
+                            }
+
+                        }
+                    }
                 }
             }
         }
-    }
 
-    // Edit Plan Name Dialog
-    EditPlanNameDialog(
-        show = showEditPlanNameDialog,
-        currentName = planToEdit?.name ?: "",
-        onDismiss = {
-            showEditPlanNameDialog = false
-            planToEdit = null
-        },
-        onConfirm = { newName ->
-            planToEdit?.let { plan ->
-                appViewModel.updateWorkoutPlanName(plan.id, newName)
+        // Edit Plan Name Dialog
+        EditPlanNameDialog(
+            show = showEditPlanNameDialog,
+            currentName = planToEdit?.name ?: "",
+            onDismiss = {
+                showEditPlanNameDialog = false
+                planToEdit = null
+            },
+            onConfirm = { newName ->
+                planToEdit?.let { plan ->
+                    appViewModel.updateWorkoutPlanName(plan.id, newName)
+                    scope.launch {
+                        com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
+                            context,
+                            appViewModel.workoutStore
+                        )
+                    }
+                }
+                showEditPlanNameDialog = false
+                planToEdit = null
+            }
+        )
+
+        // Move Workout Dialog
+        MoveWorkoutDialog(
+            show = showMoveWorkoutDialog,
+            workoutName = selectedWorkouts.firstOrNull()?.name ?: "",
+            workoutCount = selectedWorkouts.size,
+            currentPlanId = if (selectedWorkouts.isNotEmpty() && selectedWorkouts.all { it.workoutPlanId == selectedWorkouts.first().workoutPlanId }) {
+                selectedWorkouts.first().workoutPlanId
+            } else {
+                null
+            },
+            availablePlans = appViewModel.getAllWorkoutPlans(),
+            onDismiss = {
+                showMoveWorkoutDialog = false
+            },
+            onMoveToPlan = { targetPlanId ->
+                selectedWorkouts.forEach { workout ->
+                    appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
+                }
                 scope.launch {
-                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
+                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
+                        context,
+                        appViewModel.workoutStore
+                    )
                 }
+                showMoveWorkoutDialog = false
+                selectedWorkouts = emptyList()
+                isWorkoutSelectionModeActive = false
+            },
+            onCreateNewPlan = {
+                showMoveWorkoutDialog = false
+                showCreateNewPlanDialog = true
             }
-            showEditPlanNameDialog = false
-            planToEdit = null
-        }
-    )
+        )
 
-    // Move Workout Dialog
-    MoveWorkoutDialog(
-        show = showMoveWorkoutDialog,
-        workoutName = selectedWorkouts.firstOrNull()?.name ?: "",
-        workoutCount = selectedWorkouts.size,
-        currentPlanId = if (selectedWorkouts.isNotEmpty() && selectedWorkouts.all { it.workoutPlanId == selectedWorkouts.first().workoutPlanId }) {
-            selectedWorkouts.first().workoutPlanId
-        } else {
-            null
-        },
-        availablePlans = appViewModel.getAllWorkoutPlans(),
-        onDismiss = {
-            showMoveWorkoutDialog = false
-        },
-        onMoveToPlan = { targetPlanId ->
-            selectedWorkouts.forEach { workout ->
-                appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
+        // Create New Plan Dialog
+        WorkoutPlanNameDialog(
+            show = showCreateNewPlanDialog,
+            confirmButtonText = "Create",
+            onDismiss = {
+                showCreateNewPlanDialog = false
+            },
+            onConfirm = { planName ->
+                showCreateNewPlanDialog = false
+                val newPlanId = java.util.UUID.randomUUID()
+                val nextOrder =
+                    (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
+                val newPlan = WorkoutPlan(
+                    id = newPlanId,
+                    name = planName,
+                    workoutIds = selectedWorkouts.map { it.id },
+                    order = nextOrder
+                )
+
+                // Add the new plan
+                appViewModel.addWorkoutPlan(newPlan)
+
+                // Move all selected workouts to the new plan
+                selectedWorkouts.forEach { workout ->
+                    appViewModel.moveWorkoutToPlan(workout.id, newPlanId)
+                }
+
+                scope.launch {
+                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
+                        context,
+                        appViewModel.workoutStore
+                    )
+                }
+
+                selectedWorkouts = emptyList()
+                isWorkoutSelectionModeActive = false
             }
-            scope.launch {
-                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
-            }
-            showMoveWorkoutDialog = false
-            selectedWorkouts = emptyList()
-            isWorkoutSelectionModeActive = false
-        },
-        onCreateNewPlan = {
-            showMoveWorkoutDialog = false
-            showCreateNewPlanDialog = true
-        }
-    )
+        )
 
-    // Create New Plan Dialog
-    WorkoutPlanNameDialog(
-        show = showCreateNewPlanDialog,
-        confirmButtonText = "Create",
-        onDismiss = {
-            showCreateNewPlanDialog = false
-        },
-        onConfirm = { planName ->
-            showCreateNewPlanDialog = false
-            val newPlanId = java.util.UUID.randomUUID()
-            val nextOrder = (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
-            val newPlan = WorkoutPlan(
-                id = newPlanId,
-                name = planName,
-                workoutIds = selectedWorkouts.map { it.id },
-                order = nextOrder
-            )
-
-            // Add the new plan
-            appViewModel.addWorkoutPlan(newPlan)
-
-            // Move all selected workouts to the new plan
-            selectedWorkouts.forEach { workout ->
-                appViewModel.moveWorkoutToPlan(workout.id, newPlanId)
-            }
-
-            scope.launch {
-                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(context, appViewModel.workoutStore)
-            }
-
-            selectedWorkouts = emptyList()
-            isWorkoutSelectionModeActive = false
-        }
-    )
-
-    LoadingOverlay(isVisible = isSaving, text = "Saving...")
-    LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
+        LoadingOverlay(isVisible = isSaving, text = "Saving...")
+        LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }
 }
 
