@@ -492,12 +492,7 @@ class DataLayerListenerService : WearableListenerService() {
                                             }
                                             
                                             // Don't clear chunk state yet - may receive retry chunks
-                                            // Only send broadcast to indicate failure
-                                            val failedIntent = Intent(INTENT_ID).apply {
-                                                putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-                                                setPackage(packageName)
-                                            }
-                                            sendBroadcast(failedIntent)
+                                            // Don't send APP_BACKUP_FAILED - keep syncing screen visible for retry
                                             return@launch
                                         }
                                         
@@ -712,13 +707,6 @@ class DataLayerListenerService : WearableListenerService() {
                                     }
                                 }
                             }
-
-                            backupChunks = mutableMapOf()
-                            receivedChunkIndices = mutableSetOf()
-                            expectedChunks = 0
-                            hasStartedSync = false
-                            ignoreUntilStartOrEnd = false
-                            currentTransactionId = null
                         }
                     }
 
