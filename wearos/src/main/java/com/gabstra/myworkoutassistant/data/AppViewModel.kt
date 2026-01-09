@@ -25,6 +25,8 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 open class AppViewModel : WorkoutViewModel() {
@@ -46,6 +48,9 @@ open class AppViewModel : WorkoutViewModel() {
     }
     private var dataClient: DataClient? = null
     var phoneNode by mutableStateOf<Node?>(null)
+    
+    // Mutex to serialize sync operations and prevent interleaving DataItems
+    private val syncMutex = Mutex()
 
     val isPhoneConnectedAndHasApp: Boolean
         get() = phoneNode != null
@@ -161,17 +166,19 @@ open class AppViewModel : WorkoutViewModel() {
                                 emptyList()
                             }
 
-                            val result = sendWorkoutHistoryStore(
-                                dataClient!!,
-                                WorkoutHistoryStore(
-                                    WorkoutHistory = workoutHistory,
-                                    SetHistories = setHistories,
-                                    ExerciseInfos = exerciseInfos,
-                                    WorkoutRecord = workoutRecord,
-                                    ExerciseSessionProgressions = exerciseSessionProgressions,
-                                    ErrorLogs = errorLogs
+                            val result = syncMutex.withLock {
+                                sendWorkoutHistoryStore(
+                                    dataClient!!,
+                                    WorkoutHistoryStore(
+                                        WorkoutHistory = workoutHistory,
+                                        SetHistories = setHistories,
+                                        ExerciseInfos = exerciseInfos,
+                                        WorkoutRecord = workoutRecord,
+                                        ExerciseSessionProgressions = exerciseSessionProgressions,
+                                        ErrorLogs = errorLogs
+                                    )
                                 )
-                            )
+                            }
                             
                             // Clear error logs after successful send
                             if (result && errorLogs.isNotEmpty()) {
@@ -241,15 +248,17 @@ open class AppViewModel : WorkoutViewModel() {
                 // Note: Error logs will be included in pushAndStoreWorkoutData instead
                 // since we don't have context here
                 val result = dataClient?.let {
-                    sendWorkoutHistoryStore(
-                        it, WorkoutHistoryStore(
-                            WorkoutHistory = workoutHistory,
-                            SetHistories = setHistories,
-                            ExerciseInfos = exerciseInfos,
-                            WorkoutRecord = workoutRecord,
-                            ExerciseSessionProgressions = exerciseSessionProgressions
+                    syncMutex.withLock {
+                        sendWorkoutHistoryStore(
+                            it, WorkoutHistoryStore(
+                                WorkoutHistory = workoutHistory,
+                                SetHistories = setHistories,
+                                ExerciseInfos = exerciseInfos,
+                                WorkoutRecord = workoutRecord,
+                                ExerciseSessionProgressions = exerciseSessionProgressions
+                            )
                         )
-                    )
+                    }
                 } ?: false
 
                 withContext(Dispatchers.Main) {
@@ -336,17 +345,19 @@ open class AppViewModel : WorkoutViewModel() {
                             emptyList()
                         }
 
-                        val result = sendWorkoutHistoryStore(
-                            dataClient!!,
-                            WorkoutHistoryStore(
-                                WorkoutHistory = currentWorkoutHistory!!,
-                                SetHistories = executedSetsHistory,
-                                ExerciseInfos = exerciseInfos,
-                                WorkoutRecord = _workoutRecord,
-                                ExerciseSessionProgressions = exerciseSessionProgressions,
-                                ErrorLogs = errorLogs
+                        val result = syncMutex.withLock {
+                            sendWorkoutHistoryStore(
+                                dataClient!!,
+                                WorkoutHistoryStore(
+                                    WorkoutHistory = currentWorkoutHistory!!,
+                                    SetHistories = executedSetsHistory,
+                                    ExerciseInfos = exerciseInfos,
+                                    WorkoutRecord = _workoutRecord,
+                                    ExerciseSessionProgressions = exerciseSessionProgressions,
+                                    ErrorLogs = errorLogs
+                                )
                             )
-                        )
+                        }
 
                         // Clear error logs after successful send
                         if (result && errorLogs.isNotEmpty() && context != null) {

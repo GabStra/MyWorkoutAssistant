@@ -93,6 +93,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -164,6 +166,11 @@ class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
     private val db by lazy { AppDatabase.getDatabase(this) }
+    
+    // Mutex to serialize sync operations and prevent interleaving DataItems
+    companion object {
+        internal val syncMutex = Mutex()
+    }
 
     private lateinit var appViewModel: AppViewModel
 
@@ -653,7 +660,9 @@ fun MyWorkoutAssistantNavHost(
 
                     val appBackup = AppBackup(appViewModel.workoutStore.copy(workouts = adjustedWorkouts), validWorkoutHistories, setHistories, exerciseInfos,workoutSchedules,workoutRecords, exerciseSessionProgressions, errorLogs.takeIf { it.isNotEmpty() })
                     try {
-                        sendAppBackup(dataClient, appBackup)
+                        MainActivity.syncMutex.withLock {
+                            sendAppBackup(dataClient, appBackup)
+                        }
                         Log.d("DataLayerSync", "sendAppBackup completed successfully")
                         // Success toast will be shown when completion message is received
                     } catch (e: Exception) {

@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -210,10 +211,11 @@ class DataLayerListenerService : WearableListenerService() {
                     return@forEach
                 }
                 
-                when (uri.path) {
-                    SYNC_ACK_PATH -> {
+                val path = uri.path ?: return@forEach
+                when {
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_ACK_PREFIX) -> {
+                        val transactionId = DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_ACK_PREFIX)
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val transactionId = dataMap.getString("transactionId")
                         val timestampStr = dataMap.getString("timestamp")
                         
                         // Ignore ACKs without transactionId
@@ -240,14 +242,14 @@ class DataLayerListenerService : WearableListenerService() {
                         Log.d("DataLayerSync", "Received SYNC_ACK for transaction: $transactionId")
                         SyncHandshakeManager.completeAck(transactionId)
                     }
-                    SYNC_COMPLETE_PATH -> {
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_COMPLETE_PREFIX) -> {
+                        val transactionId = DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_COMPLETE_PREFIX)
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val transactionId = dataMap.getString("transactionId")
                         val timestamp = dataMap.getString("timestamp", "unknown")
-                        if (transactionId != null) {
-                            Log.d("DataLayerSync", "Received SYNC_COMPLETE for transaction: $transactionId, timestamp: $timestamp")
-                            SyncHandshakeManager.completeCompletion(transactionId)
-                            Log.d("DataLayerSync", "Completed completion waiter for transaction: $transactionId")
+                        transactionId?.let { tid ->
+                            Log.d("DataLayerSync", "Received SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp")
+                            SyncHandshakeManager.completeCompletion(tid)
+                            Log.d("DataLayerSync", "Completed completion waiter for transaction: $tid")
                             // Show success toast
                             scope.launch(Dispatchers.Main) {
                                 Toast.makeText(
@@ -256,18 +258,18 @@ class DataLayerListenerService : WearableListenerService() {
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
-                        } else {
+                        } ?: run {
                             Log.w("DataLayerSync", "Received SYNC_COMPLETE without transactionId, timestamp: $timestamp")
                         }
                     }
-                    SYNC_ERROR_PATH -> {
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_ERROR_PREFIX) -> {
+                        val transactionId = DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_ERROR_PREFIX)
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val transactionId = dataMap.getString("transactionId")
                         val errorMessage = dataMap.getString("errorMessage", "Unknown error")
-                        if (transactionId != null) {
-                            Log.e("DataLayerSync", "Received SYNC_ERROR for transaction: $transactionId, error: $errorMessage")
-                            SyncHandshakeManager.completeError(transactionId, errorMessage)
-                        } else {
+                        transactionId?.let { tid ->
+                            Log.e("DataLayerSync", "Received SYNC_ERROR for transaction: $tid, error: $errorMessage")
+                            SyncHandshakeManager.completeError(tid, errorMessage)
+                        } ?: run {
                             Log.w("DataLayerSync", "Received SYNC_ERROR without transactionId, error: $errorMessage")
                         }
                     }
@@ -278,25 +280,30 @@ class DataLayerListenerService : WearableListenerService() {
             eventsList.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
                 val eventType = dataEvent.type
-                when (uri.path) {
-                    SYNC_REQUEST_PATH -> {
+                val path = uri.path ?: return@forEach
+                when {
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {
+                        val transactionId = DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_REQUEST_PREFIX)
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val transactionId = dataMap.getString("transactionId")
+                        // Also try to get from DataMap as fallback
+                        val transactionIdFromMap = dataMap.getString("transactionId")
+                        val finalTransactionId = transactionId ?: transactionIdFromMap
                         
-                        if (transactionId != null) {
-                            Log.d("DataLayerSync", "Received SYNC_REQUEST for transaction: $transactionId")
+                        if (finalTransactionId != null) {
+                            Log.d("DataLayerSync", "Received SYNC_REQUEST for transaction: $finalTransactionId")
                             scope.launch(Dispatchers.IO) {
                                 try {
-                                    // Send acknowledgment - create new DataMapRequest
-                                    val ackRequest = PutDataMapRequest.create(SYNC_ACK_PATH).apply {
-                                        dataMap.putString("transactionId", transactionId)
+                                    // Send acknowledgment to transaction-scoped path
+                                    val ackPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_ACK_PREFIX, finalTransactionId)
+                                    val ackRequest = PutDataMapRequest.create(ackPath).apply {
+                                        dataMap.putString("transactionId", finalTransactionId)
                                         dataMap.putString("timestamp", System.currentTimeMillis().toString())
                                     }.asPutDataRequest().setUrgent()
                                     
                                     dataClient.putDataItem(ackRequest)
-                                    Log.d("DataLayerSync", "Sent sync acknowledgment for transaction: $transactionId")
+                                    Log.d("DataLayerSync", "Sent sync acknowledgment for transaction: $finalTransactionId")
                                 } catch (exception: Exception) {
-                                    Log.e("DataLayerSync", "Error sending sync acknowledgment for transaction: $transactionId", exception)
+                                    Log.e("DataLayerSync", "Error sending sync acknowledgment for transaction: $finalTransactionId", exception)
                                 }
                             }
                         } else {
@@ -304,7 +311,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
 
-                    WORKOUT_HISTORY_STORE_PATH -> {
+                    path == WORKOUT_HISTORY_STORE_PATH -> {
                         // Only process CHANGED events, ignore DELETED
                         if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
                             return@forEach
@@ -411,7 +418,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 transactionId?.let { tid ->
                                     try {
                                         Log.d("DataLayerSync", "Preparing to send SYNC_COMPLETE for transaction: $tid (workout history processed)")
-                                        val completeDataMapRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH)
+                                        val completePath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_COMPLETE_PREFIX, tid)
+                                        val completeDataMapRequest = PutDataMapRequest.create(completePath)
                                         completeDataMapRequest.dataMap.putString("transactionId", tid)
                                         val timestamp = System.currentTimeMillis().toString()
                                         completeDataMapRequest.dataMap.putString("timestamp", timestamp)
@@ -436,7 +444,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 try {
                                     Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to processing error")
                                     val errorMessage = exception.message ?: "Unknown error processing workout history store"
-                                    val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
+                                    val errorPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_ERROR_PREFIX, tid)
+                                    val errorDataMapRequest = PutDataMapRequest.create(errorPath)
                                     errorDataMapRequest.dataMap.putString("transactionId", tid)
                                     errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
                                     errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
@@ -453,16 +462,38 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
 
-                    WORKOUT_HISTORY_CHUNK_PATH -> {
-                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-
-                        val isStart = dataMap.getBoolean("isStart", false)
-                        val isLastChunk = dataMap.getBoolean("isLastChunk", false)
-                        val workoutHistoryChunk = dataMap.getByteArray("chunk")
-                        val transactionId = dataMap.getString("transactionId")
-                        val isRetry = dataMap.getBoolean("isRetry", false)
-                        val isLastRetryChunk = dataMap.getBoolean("isLastRetryChunk", false)
-                        val chunkIndex = if (dataMap.containsKey("chunkIndex")) dataMap.getInt("chunkIndex", -1) else -1
+                    // Handle transaction-scoped workout history paths
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_HISTORY_START_PREFIX) || 
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX) -> {
+                        val isStartPath = DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_HISTORY_START_PREFIX)
+                        val isChunkPath = DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX)
+                        
+                        if (isStartPath || isChunkPath) {
+                            val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                            
+                            // Parse transactionId from path
+                            val transactionIdFromPath = if (isStartPath) {
+                                DataLayerPaths.parseTransactionId(path, DataLayerPaths.WORKOUT_HISTORY_START_PREFIX)
+                            } else {
+                                DataLayerPaths.parseTransactionId(path, DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX)
+                            }
+                            
+                            // Parse chunkIndex from path (if chunk path)
+                            val chunkIndexFromPath = if (isChunkPath) {
+                                DataLayerPaths.parseChunkIndex(path, DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX)
+                            } else {
+                                null
+                            }
+                            
+                            // Fallback to DataMap values if path parsing fails
+                            val transactionId = transactionIdFromPath ?: dataMap.getString("transactionId")
+                            val chunkIndex = chunkIndexFromPath ?: (if (dataMap.containsKey("chunkIndex")) dataMap.getInt("chunkIndex", -1) else -1)
+                            
+                            val isStart = isStartPath || dataMap.getBoolean("isStart", false)
+                            val isLastChunk = dataMap.getBoolean("isLastChunk", false)
+                            val workoutHistoryChunk = dataMap.getByteArray("chunk")
+                            val isRetry = dataMap.getBoolean("isRetry", false)
+                            val isLastRetryChunk = dataMap.getBoolean("isLastRetryChunk", false)
 
                         // Retry chunks with same transaction ID should not trigger shouldStop
                         val shouldStop = !isRetry && (
@@ -555,7 +586,8 @@ class DataLayerListenerService : WearableListenerService() {
                                                 try {
                                                     val errorMessage = "MISSING_CHUNKS: Expected $expectedChunks chunks, received ${workoutHistoryChunks.size}. Missing indices: $missingIndices"
                                                     Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to missing chunks")
-                                                    val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
+                                                    val errorPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_ERROR_PREFIX, tid)
+                                                    val errorDataMapRequest = PutDataMapRequest.create(errorPath)
                                                     errorDataMapRequest.dataMap.putString("transactionId", tid)
                                                     errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
                                                     errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
@@ -693,7 +725,8 @@ class DataLayerListenerService : WearableListenerService() {
                                         transactionId?.let { tid ->
                                             try {
                                                 Log.d("DataLayerSync", "Preparing to send SYNC_COMPLETE for transaction: $tid (workout history processed)")
-                                                val completeDataMapRequest = PutDataMapRequest.create(SYNC_COMPLETE_PATH)
+                                                val completePath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_COMPLETE_PREFIX, tid)
+                                                val completeDataMapRequest = PutDataMapRequest.create(completePath)
                                                 completeDataMapRequest.dataMap.putString("transactionId", tid)
                                                 val timestamp = System.currentTimeMillis().toString()
                                                 completeDataMapRequest.dataMap.putString("timestamp", timestamp)
@@ -745,7 +778,8 @@ class DataLayerListenerService : WearableListenerService() {
                                         transactionId?.let { tid ->
                                             try {
                                                 Log.e("DataLayerSync", "Sending SYNC_ERROR for transaction: $tid due to workout history processing error")
-                                                val errorDataMapRequest = PutDataMapRequest.create(SYNC_ERROR_PATH)
+                                                val errorPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_ERROR_PREFIX, tid)
+                                                val errorDataMapRequest = PutDataMapRequest.create(errorPath)
                                                 errorDataMapRequest.dataMap.putString("transactionId", tid)
                                                 errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
                                                 errorDataMapRequest.dataMap.putString("timestamp", System.currentTimeMillis().toString())
@@ -770,9 +804,10 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
                             }
                         }
+                        } // End of workout history path handling
                     }
 
-                    OPEN_PAGE_PATH -> {
+                    path == OPEN_PAGE_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val valueToPass =
                             dataMap.getString(PAGE) // Replace "key" with your actual key
@@ -791,7 +826,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
 
-                    CLEAR_ERROR_LOGS_PATH -> {
+                    path == CLEAR_ERROR_LOGS_PATH -> {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 errorLogDao.deleteAll()
@@ -802,7 +837,7 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
 
-                    ERROR_LOGS_SYNC_PATH -> {
+                    path == ERROR_LOGS_SYNC_PATH -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         val compressedJson = dataMap.getByteArray("compressedJson")
 
@@ -864,6 +899,18 @@ class DataLayerListenerService : WearableListenerService() {
         const val SYNC_COMPLETE_PATH = "/syncComplete"
         const val SYNC_ERROR_PATH = "/syncError"
         const val HANDSHAKE_TIMEOUT_MS = 5000L
-        const val COMPLETION_TIMEOUT_MS = 30000L
+        const val COMPLETION_TIMEOUT_MS = 30000L // Legacy constant, use calculateCompletionTimeout instead
+        const val BASE_COMPLETION_TIMEOUT_MS = 10000L
+        const val PER_CHUNK_TIMEOUT_MS = 2000L
+        const val MAX_COMPLETION_TIMEOUT_MS = 300000L // 5 minutes
+        
+        /**
+         * Calculates dynamic completion timeout based on chunk count.
+         * Formula: baseMs + perChunkMs * chunksCount, clamped to max.
+         */
+        fun calculateCompletionTimeout(chunksCount: Int): Long {
+            val calculated = BASE_COMPLETION_TIMEOUT_MS + PER_CHUNK_TIMEOUT_MS * chunksCount
+            return minOf(calculated, MAX_COMPLETION_TIMEOUT_MS)
+        }
     }
 }

@@ -26,7 +26,10 @@
                 <data android:pathPrefix="/workoutHistoryStore"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/workoutHistoryChunkPath"/>
+                <data android:pathPrefix="/workoutHistory/start"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/workoutHistory/chunk"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/openPagePath"/>
@@ -38,16 +41,16 @@
                 <data android:pathPrefix="/errorLogsSync"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncRequest"/>
+                <data android:pathPrefix="/sync/request"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncAck"/>
+                <data android:pathPrefix="/sync/ack"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncComplete"/>
+                <data android:pathPrefix="/sync/complete"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncError"/>
+                <data android:pathPrefix="/sync/error"/>
             </intent-filter>
         </service>
         <activity

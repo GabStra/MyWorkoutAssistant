@@ -60,22 +60,25 @@
                 <data android:pathPrefix="/workoutStore"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/backupChunkPath"/>
+                <data android:pathPrefix="/appBackup/start"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
+                <data android:pathPrefix="/appBackup/chunk"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
                 <data android:pathPrefix="/clearErrorLogs"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncRequest"/>
+                <data android:pathPrefix="/sync/request"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncAck"/>
+                <data android:pathPrefix="/sync/ack"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncComplete"/>
+                <data android:pathPrefix="/sync/complete"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
-                <data android:pathPrefix="/syncError"/>
+                <data android:pathPrefix="/sync/error"/>
             </intent-filter>
         </service>
         

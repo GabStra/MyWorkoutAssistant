@@ -68,6 +68,7 @@ import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import com.google.gson.GsonBuilder
 import com.gabstra.myworkoutassistant.DataLayerListenerService
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -635,7 +636,8 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Bool
         // Register waiter BEFORE sending request to avoid race condition
         val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
         
-        val request = PutDataMapRequest.create(DataLayerListenerService.SYNC_REQUEST_PATH).apply {
+        val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(requestPath).apply {
             dataMap.putString("transactionId", transactionId)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
@@ -733,7 +735,8 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
 
-        val startRequest = PutDataMapRequest.create("/workoutHistoryChunkPath").apply {
+        val startPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_START_PREFIX, transactionId)
+        val startRequest = PutDataMapRequest.create(startPath).apply {
             dataMap.putBoolean("isStart", true)
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
@@ -747,8 +750,9 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.size - 1
+            val chunkPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX, transactionId, index)
 
-            val request = PutDataMapRequest.create("/workoutHistoryChunkPath").apply {
+            val request = PutDataMapRequest.create(chunkPath).apply {
                 dataMap.putByteArray("chunk", chunk)
                 dataMap.putInt("chunkIndex", index)
                 if(isLastChunk) {
@@ -768,6 +772,10 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Small delay after last chunk to allow message delivery
         delay(100)
 
+        // Calculate dynamic timeout based on chunk count
+        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
+        Log.d("DataLayerSync", "Using dynamic completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $transactionId")
+
         // Wait for either completion, error, or timeout - with retry logic
         var retryAttempt = 0
         val maxRetries = 3
@@ -777,7 +785,7 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         while (retryAttempt <= maxRetries) {
             // Use select which handles already-completed deferreds correctly
             // onAwait will immediately return if the deferred is already completed
-            val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            val result = withTimeoutOrNull(completionTimeout) {
                 select<Pair<Boolean, String?>> {
                     currentCompletionWaiter.onAwait.invoke {
                         Pair(true, null)

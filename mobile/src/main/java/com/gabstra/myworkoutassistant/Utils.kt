@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -190,7 +191,8 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Bool
         // Register waiter BEFORE sending request to avoid race condition
         val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
         
-        val request = PutDataMapRequest.create(DataLayerListenerService.SYNC_REQUEST_PATH).apply {
+        val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(requestPath).apply {
             dataMap.putString("transactionId", transactionId)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
@@ -271,7 +273,8 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         // Send workout store data
         val jsonString = fromWorkoutStoreToJSON(workoutStore)
         val compressedData = compressString(jsonString)
-        val request = PutDataMapRequest.create("/workoutStore").apply {
+        val workoutStorePath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_STORE_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(workoutStorePath).apply {
             dataMap.putByteArray("compressedJson", compressedData)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
             dataMap.putString("transactionId", transactionId)
@@ -282,8 +285,12 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         // Small delay to allow message delivery
         delay(100)
 
+        // Use default timeout for workout store (single payload, no chunks)
+        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(1)
+        Log.d("DataLayerSync", "Using completion timeout: ${completionTimeout}ms for workout store, transaction: $transactionId")
+
         // Wait for either completion, error, or timeout
-        val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+        val result = withTimeoutOrNull(completionTimeout) {
             select<Pair<Boolean, String?>> {
                 completionWaiter.onAwait.invoke {
                     Pair(true, null)
@@ -344,7 +351,8 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         val compressedData = compressString(jsonString)
         val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
 
-        val startRequest = PutDataMapRequest.create("/backupChunkPath").apply {
+        val startPath = DataLayerPaths.buildPath(DataLayerPaths.APP_BACKUP_START_PREFIX, transactionId)
+        val startRequest = PutDataMapRequest.create(startPath).apply {
             dataMap.putBoolean("isStart", true)
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
@@ -358,8 +366,9 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.size - 1
+            val chunkPath = DataLayerPaths.buildPath(DataLayerPaths.APP_BACKUP_CHUNK_PREFIX, transactionId, index)
 
-            val request = PutDataMapRequest.create("/backupChunkPath").apply {
+            val request = PutDataMapRequest.create(chunkPath).apply {
                 dataMap.putByteArray("chunk", chunk)
                 dataMap.putInt("chunkIndex", index)
                 if(isLastChunk) {
@@ -379,6 +388,10 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Small delay after last chunk to allow message delivery
         delay(100)
 
+        // Calculate dynamic timeout based on chunk count
+        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
+        Log.d("DataLayerSync", "Using dynamic completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $transactionId")
+
         // Wait for either completion, error, or timeout - with retry logic
         var retryAttempt = 0
         val maxRetries = 3
@@ -388,7 +401,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         while (retryAttempt <= maxRetries) {
             // Use select which handles already-completed deferreds correctly
             // onAwait will immediately return if the deferred is already completed
-            val result = withTimeoutOrNull(DataLayerListenerService.COMPLETION_TIMEOUT_MS) {
+            val result = withTimeoutOrNull(completionTimeout) {
                 select<Pair<Boolean, String?>> {
                     currentCompletionWaiter.onAwait.invoke {
                         Pair(true, null)
