@@ -59,6 +59,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -466,8 +467,7 @@ fun WorkoutDetailScreen(
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.size == 1 &&
-                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0 &&
-                                    selectedWorkoutComponents.first() !is Rest,
+                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0,
                             onClick = {
                                 val currentWorkoutComponents = workout.workoutComponents
                                 val selectedComponent = selectedWorkoutComponents.first()
@@ -479,16 +479,7 @@ fun WorkoutDetailScreen(
                                     return@IconButton
                                 }
 
-                                val previousWorkoutComponent =
-                                    currentWorkoutComponents.subList(0, selectedIndex)
-                                        .lastOrNull { it !is Rest }
-
-                                if (previousWorkoutComponent == null) {
-                                    return@IconButton
-                                }
-
-                                val previousIndex =
-                                    currentWorkoutComponents.indexOfFirst { it.id == previousWorkoutComponent.id }
+                                val previousIndex = selectedIndex - 1
 
                                 val newWorkoutComponents =
                                     currentWorkoutComponents.toMutableList().apply {
@@ -528,8 +519,7 @@ fun WorkoutDetailScreen(
                     ) {
                         IconButton(
                             enabled = selectedWorkoutComponents.size == 1 &&
-                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1 &&
-                                    selectedWorkoutComponents.first() !is Rest,
+                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1,
                             onClick = {
                                 val currentWorkoutComponents = workout.workoutComponents
                                 val selectedComponent = selectedWorkoutComponents.first()
@@ -541,18 +531,7 @@ fun WorkoutDetailScreen(
                                     return@IconButton
                                 }
 
-                                val nextWorkoutComponent = currentWorkoutComponents.subList(
-                                    selectedIndex + 1,
-                                    currentWorkoutComponents.size
-                                )
-                                    .firstOrNull { it !is Rest }
-
-                                if (nextWorkoutComponent == null) {
-                                    return@IconButton
-                                }
-
-                                val nextIndex =
-                                    currentWorkoutComponents.indexOfFirst { it.id == nextWorkoutComponent.id }
+                                val nextIndex = selectedIndex + 1
 
                                 val newWorkoutComponents =
                                     currentWorkoutComponents.toMutableList().apply {
@@ -1217,14 +1196,43 @@ fun WorkoutDetailScreen(
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
                             itemContent = { it ->
-                                WorkoutComponentRenderer(
-                                    workout = workout,
-                                    workoutComponent = it,
-                                    showRest = showRest,
-                                    appViewModel = appViewModel
-                                )
+                                Column {
+                                    WorkoutComponentRenderer(
+                                        workout = workout,
+                                        workoutComponent = it,
+                                        showRest = showRest,
+                                        appViewModel = appViewModel
+                                    )
+                                    // Show "Add rest" button when:
+                                    // - Current component is not a Rest
+                                    // - Not the last component in the actual workout components list
+                                    // - Next component in actual workout components list is not a Rest
+                                    if (showRest && it !is Rest) {
+                                        val currentIndex = workout.workoutComponents.indexOfFirst { component -> component.id == it.id }
+                                        val isNotLast = currentIndex >= 0 && currentIndex < workout.workoutComponents.size - 1
+                                        val nextComponent = if (isNotLast && currentIndex + 1 < workout.workoutComponents.size) {
+                                            workout.workoutComponents[currentIndex + 1]
+                                        } else {
+                                            null
+                                        }
+                                        val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
+                                        
+                                        if (shouldShowButton) {
+                                            TextButton(
+                                                onClick = {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.InsertRestAfter(workout.id, it.id)
+                                                    )
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Add rest")
+                                            }
+                                        }
+                                    }
+                                }
                             },
-                            isDragDisabled = true,
+                            isDragDisabled = !showRest,
                             keySelector = { component -> component.id }
                         )
                         GenericButtonWithMenu(

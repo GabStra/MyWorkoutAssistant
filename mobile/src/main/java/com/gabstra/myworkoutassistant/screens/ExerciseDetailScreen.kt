@@ -51,6 +51,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -474,8 +475,7 @@ fun ExerciseDetailScreen(
                                 ) {
                                     IconButton(
                                         enabled = selectedSets.size == 1 &&
-                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0 &&
-                                                selectedSets.first() !is RestSet,
+                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0,
                                         onClick = {
                                             val currentSets = exercise.sets
                                             val selectedComponent = selectedSets.first()
@@ -483,21 +483,18 @@ fun ExerciseDetailScreen(
                                             val selectedIndex =
                                                 currentSets.indexOfFirst { it.id == selectedComponent.id }
 
-                                            val previousComponent = currentSets.subList(0, selectedIndex)
-                                                .lastOrNull { it !is RestSet }
-
-                                            if (previousComponent == null) {
+                                            if (selectedIndex <= 0) {
                                                 return@IconButton
                                             }
 
-                                            val previous = currentSets.indexOfFirst { it.id == previousComponent.id }
+                                            val previousIndex = selectedIndex - 1
 
                                             val newSets = currentSets.toMutableList().apply {
                                                 val componentToMoveToOtherSlot = this[selectedIndex]
-                                                val componentToMoveToSelectedSlot = this[previous]
+                                                val componentToMoveToSelectedSlot = this[previousIndex]
 
                                                 this[selectedIndex] = componentToMoveToSelectedSlot
-                                                this[previous] = componentToMoveToOtherSlot
+                                                this[previousIndex] = componentToMoveToOtherSlot
                                             }
 
                                             val adjustedComponents = ensureRestSeparatedBySets(newSets)
@@ -527,8 +524,7 @@ fun ExerciseDetailScreen(
                                 ) {
                                     IconButton(
                                         enabled = selectedSets.size == 1 &&
-                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1 &&
-                                                selectedSets.first() !is RestSet,
+                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1,
                                         onClick = {
                                             val currentSets = exercise.sets
                                             val selectedComponent = selectedSets.first()
@@ -536,18 +532,11 @@ fun ExerciseDetailScreen(
                                             val selectedIndex =
                                                 currentSets.indexOfFirst { it.id == selectedComponent.id }
 
-                                            val nextComponent = if (selectedIndex + 1 < currentSets.size) {
-                                                currentSets.subList(selectedIndex + 1, currentSets.size)
-                                                    .firstOrNull { it !is RestSet }
-                                            } else {
-                                                null
-                                            }
-
-                                            if (nextComponent == null) {
+                                            if (selectedIndex < 0 || selectedIndex + 1 >= currentSets.size) {
                                                 return@IconButton
                                             }
 
-                                            val nextIndex = currentSets.indexOfFirst { it.id == nextComponent.id }
+                                            val nextIndex = selectedIndex + 1
 
                                             val newSets = currentSets.toMutableList().apply {
                                                 val componentToMoveToOtherSlot = this[selectedIndex]
@@ -826,9 +815,38 @@ fun ExerciseDetailScreen(
                                 updateExerciseWithHistory(updatedExercise)
                                 sets = adjustedComponents
                             },
-                            isDragDisabled = true,
+                            isDragDisabled = !showRest,
                             itemContent = { it ->
-                                ComponentRenderer(it, appViewModel, exercise)
+                                Column {
+                                    ComponentRenderer(it, appViewModel, exercise)
+                                    // Show "Add rest" button when:
+                                    // - Current item is not a RestSet
+                                    // - Not the last item in the actual sets list
+                                    // - Next item in actual sets list is not a RestSet
+                                    if (showRest && it !is RestSet) {
+                                        val currentIndex = sets.indexOfFirst { set -> set.id == it.id }
+                                        val isNotLast = currentIndex >= 0 && currentIndex < sets.size - 1
+                                        val nextItem = if (isNotLast && currentIndex + 1 < sets.size) {
+                                            sets[currentIndex + 1]
+                                        } else {
+                                            null
+                                        }
+                                        val shouldShowButton = isNotLast && nextItem != null && nextItem !is RestSet
+                                        
+                                        if (shouldShowButton) {
+                                            TextButton(
+                                                onClick = {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.InsertRestSetAfter(workout.id, exercise.id, it.id)
+                                                    )
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Add rest")
+                                            }
+                                        }
+                                    }
+                                }
                             },
                             keySelector = { set -> set.id }
                         )

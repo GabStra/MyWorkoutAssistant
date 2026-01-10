@@ -55,6 +55,8 @@ sealed class ScreenData() {
 
     class NewRestSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
     class EditRestSet(val workoutId: UUID, val selectedRestSet: RestSet, val parentExerciseId: UUID) : ScreenData()
+    class InsertRestSetAfter(val workoutId: UUID, val exerciseId: UUID, val afterSetId: UUID) : ScreenData()
+    class InsertRestAfter(val workoutId: UUID, val afterComponentId: UUID) : ScreenData()
 
     class NewSet(val workoutId: UUID, val parentExerciseId: UUID) : ScreenData()
     class EditSet(val workoutId: UUID, val selectedSet: Set, val parentExerciseId: UUID) : ScreenData()

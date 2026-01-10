@@ -1594,6 +1594,127 @@ fun MyWorkoutAssistantNavHost(
                 )
             }
 
+            is ScreenData.InsertRestSetAfter -> {
+                val screenData = currentScreen as ScreenData.InsertRestSetAfter
+                val workouts by appViewModel.workoutsFlow.collectAsState()
+                var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+
+                var currentWorkout = selectedWorkout
+                while(!currentWorkout.isActive){
+                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                    currentWorkout = nextWorkout
+                }
+
+                selectedWorkout = currentWorkout
+
+                val parentExercise = findWorkoutComponentByIdInWorkout(
+                    selectedWorkout,
+                    screenData.exerciseId
+                ) as Exercise
+
+                val afterSetIndex = parentExercise.sets.indexOfFirst { it.id == screenData.afterSetId }
+                
+                if (afterSetIndex < 0) {
+                    LaunchedEffect(Unit) {
+                        appViewModel.goBack()
+                    }
+                }
+                
+                var isSaving by remember { mutableStateOf(false) }
+                
+                if (afterSetIndex >= 0) {
+                    RestSetForm(
+                    onRestSetUpsert = { newRestSet ->
+                        if (isSaving) return@RestSetForm
+                        isSaving = true
+                        val newSets = parentExercise.sets.toMutableList().apply {
+                            add(afterSetIndex + 1, newRestSet.copy(id = java.util.UUID.randomUUID()))
+                        }
+
+                        val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                        val updatedExercise = parentExercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = parentExercise.requiredAccessoryEquipmentIds ?: emptyList())
+
+                        scope.launch {
+                            try {
+                                val hasHistory = withContext(Dispatchers.IO) {
+                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                                }
+                                appViewModel.updateWorkoutComponentVersioned(
+                                    selectedWorkout,
+                                    parentExercise,
+                                    updatedExercise,
+                                    hasHistory
+                                )
+                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.goBack()
+                            } finally {
+                                isSaving = false
+                            }
+                        }
+                    },
+                    onCancel = {
+                        appViewModel.goBack()
+                    },
+                    isSaving = isSaving
+                )
+                }
+            }
+
+            is ScreenData.InsertRestAfter -> {
+                val screenData = currentScreen as ScreenData.InsertRestAfter
+                val workouts by appViewModel.workoutsFlow.collectAsState()
+
+                var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+                var currentWorkout = selectedWorkout
+
+                while(!currentWorkout.isActive){
+                    val nextWorkout = workouts.find { it.id == currentWorkout.nextVersionId }!!
+                    currentWorkout = nextWorkout
+                }
+
+                selectedWorkout = currentWorkout
+
+                val afterComponentIndex = selectedWorkout.workoutComponents.indexOfFirst { it.id == screenData.afterComponentId }
+                
+                if (afterComponentIndex < 0) {
+                    LaunchedEffect(Unit) {
+                        appViewModel.goBack()
+                    }
+                }
+                
+                var isSaving by remember { mutableStateOf(false) }
+                
+                if (afterComponentIndex >= 0) {
+                    RestForm(
+                    onRestUpsert = { newRest ->
+                        if (isSaving) return@RestForm
+                        isSaving = true
+                        val newWorkoutComponents = selectedWorkout.workoutComponents.toMutableList().apply {
+                            add(afterComponentIndex + 1, newRest.copy(id = java.util.UUID.randomUUID()))
+                        }
+
+                        val adjustedComponents = ensureRestSeparatedByExercises(newWorkoutComponents)
+                        val updatedWorkout = selectedWorkout.copy(workoutComponents = adjustedComponents)
+
+                        scope.launch {
+                            try {
+                                val hasHistory = withContext(Dispatchers.IO) {
+                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
+                                }
+                                appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
+                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.goBack()
+                            } finally {
+                                isSaving = false
+                            }
+                        }
+                    },
+                    onCancel = { appViewModel.goBack() },
+                    isSaving = isSaving
+                )
+                }
+            }
+
             is ScreenData.EditSet -> {
                 val screenData = currentScreen as ScreenData.EditSet
                 val workouts by appViewModel.workoutsFlow.collectAsState()
