@@ -51,7 +51,6 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -826,7 +825,7 @@ fun ExerciseDetailScreen(
                                 updateExerciseWithHistory(updatedExercise)
                                 sets = adjustedComponents
                             },
-                            isDragDisabled = !showRest,
+                            isDragDisabled = true,
                             itemContent = { it ->
                                 Column {
                                     ComponentRenderer(it, appViewModel, exercise)
@@ -845,13 +844,16 @@ fun ExerciseDetailScreen(
                                         val shouldShowButton = isNotLast && nextItem != null && nextItem !is RestSet
                                         
                                         if (shouldShowButton) {
-                                            TextButton(
+                                            Button(
                                                 onClick = {
                                                     appViewModel.setScreenData(
                                                         ScreenData.InsertRestSetAfter(workout.id, exercise.id, it.id)
                                                     )
                                                 },
-                                                modifier = Modifier.fillMaxWidth()
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    contentColor = MaterialTheme.colorScheme.background
+                                                )
                                             ) {
                                                 Text("Add rest")
                                             }

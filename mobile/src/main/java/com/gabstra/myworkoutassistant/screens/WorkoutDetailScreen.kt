@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,7 +60,6 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
@@ -1344,13 +1344,16 @@ fun WorkoutDetailScreen(
                                         val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
                                         
                                         if (shouldShowButton) {
-                                            TextButton(
+                                            Button(
                                                 onClick = {
                                                     appViewModel.setScreenData(
                                                         ScreenData.InsertRestAfter(workout.id, it.id)
                                                     )
                                                 },
-                                                modifier = Modifier.fillMaxWidth()
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    contentColor = MaterialTheme.colorScheme.background
+                                                )
                                             ) {
                                                 Text("Add rest")
                                             }
@@ -1358,7 +1361,7 @@ fun WorkoutDetailScreen(
                                     }
                                 }
                             },
-                            isDragDisabled = !showRest,
+                            isDragDisabled = true,
                             keySelector = { component -> component.id }
                         )
                         GenericButtonWithMenu(
