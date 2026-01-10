@@ -408,7 +408,9 @@ open class WorkoutViewModel(
         )
     }
 
-    val latestSetHistoryMap: MutableMap<UUID, SetHistory> = mutableMapOf()
+    private data class SetKey(val exerciseId: UUID, val setId: UUID)
+
+    private val latestSetHistoryMap: MutableMap<SetKey, SetHistory> = mutableMapOf()
 
     protected val weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>> =
         mutableMapOf()
@@ -720,9 +722,14 @@ open class WorkoutViewModel(
                             firstSetWithHistoryIndex = index
                         }
                         
-                        // Match by both setId AND order (not just setId)
+                        // Match by setId, order, and exerciseId when available (not just setId)
                         val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
-                            setHistory.setId == state.set.id && setHistory.order == state.setIndex
+                            matchesSetHistory(
+                                setHistory,
+                                state.set.id,
+                                state.setIndex,
+                                state.exerciseId
+                            )
                         }
                         // If no matching SetHistory entry exists, this is the first incomplete set
                         if (matchingSetHistory == null) {
@@ -734,9 +741,14 @@ open class WorkoutViewModel(
                     val exercise = state.exerciseId?.let { exercisesById[it] }
                     // Only check exercises that store history (doNotStoreHistory = false)
                     if (exercise != null && !exercise.doNotStoreHistory) {
-                        // Match by both setId AND order (not just setId)
+                        // Match by setId, order, and exerciseId when available (not just setId)
                         val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
-                            setHistory.setId == state.set.id && setHistory.order == state.order
+                            matchesSetHistory(
+                                setHistory,
+                                state.set.id,
+                                state.order,
+                                state.exerciseId
+                            )
                         }
                         // If no matching SetHistory entry exists, this is the first incomplete set
                         if (matchingSetHistory == null) {
@@ -834,9 +846,14 @@ open class WorkoutViewModel(
                     }
 
                     if(it is WorkoutState.Set){
-                        // Match by both setId AND order (not just setId) to handle unilateral exercises correctly
+                        // Match by setId, order, and exerciseId when available to handle unilateral exercises correctly
                         val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> 
-                            setHistory.setId == it.set.id && setHistory.order == it.setIndex 
+                            matchesSetHistory(
+                                setHistory,
+                                it.set.id,
+                                it.setIndex,
+                                it.exerciseId
+                            )
                         }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
@@ -844,9 +861,14 @@ open class WorkoutViewModel(
                     }
 
                     if(it is WorkoutState.Rest){
-                        // Match by both setId AND order (not just setId) to handle unilateral exercises correctly
+                        // Match by setId, order, and exerciseId when available to handle unilateral exercises correctly
                         val setHistory = executedSetsHistorySnapshot.firstOrNull { setHistory -> 
-                            setHistory.setId == it.set.id && setHistory.order == it.order 
+                            matchesSetHistory(
+                                setHistory,
+                                it.set.id,
+                                it.order,
+                                it.exerciseId
+                            )
                         }
                         if(setHistory != null){
                             it.currentSetData = setHistory.setData
@@ -951,6 +973,21 @@ open class WorkoutViewModel(
         return latestSetHistoriesByExerciseId[exerciseId] ?: emptyList()
     }
 
+    private fun matchesSetHistory(
+        setHistory: SetHistory,
+        setId: UUID,
+        order: UInt,
+        exerciseId: UUID?
+    ): Boolean {
+        if (setHistory.setId != setId || setHistory.order != order) {
+            return false
+        }
+
+        return setHistory.exerciseId == null ||
+            exerciseId == null ||
+            setHistory.exerciseId == exerciseId
+    }
+
     /**
      * Gets the actual executed sets from the last completed workout for a given exercise.
      * Returns null if no completed workout exists.
@@ -1035,11 +1072,8 @@ open class WorkoutViewModel(
                 exercise.sets
             } else {
                 exercise.sets.map { set ->
-                    if (latestSetHistoryMap.containsKey(set.id)) {
-                        getNewSetFromSetHistory(latestSetHistoryMap[set.id]!!)
-                    } else {
-                        set
-                    }
+                    val key = SetKey(exercise.id, set.id)
+                    latestSetHistoryMap[key]?.let { getNewSetFromSetHistory(it) } ?: set
                 }
             }
 
@@ -1423,7 +1457,7 @@ open class WorkoutViewModel(
             
             // Find the set history from executedSetsHistory (immutable snapshot from StateFlow)
             val setHistory = executedSetStore.executedSets.value.firstOrNull { 
-                it.setId == set.id && it.order == state.setIndex 
+                matchesSetHistory(it, set.id, state.setIndex, state.exerciseId)
             }
             
             if (setHistory == null) return
@@ -1608,7 +1642,7 @@ open class WorkoutViewModel(
             }
 
             for (setHistoryFound in setHistoriesFound) {
-                latestSetHistoryMap[setHistoryFound.setId] = setHistoryFound
+                latestSetHistoryMap[SetKey(exercise.id, setHistoryFound.setId)] = setHistoryFound
             }
 
             latestSetHistoriesByExerciseId[exercise.id] =
@@ -1714,16 +1748,30 @@ open class WorkoutViewModel(
                 is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).set.id
                 else -> throw RuntimeException("Invalid state")
             }
+            val targetExerciseId = when (_workoutState.value) {
+                is WorkoutState.Set -> (_workoutState.value as WorkoutState.Set).exerciseId
+                is WorkoutState.Rest -> (_workoutState.value as WorkoutState.Rest).exerciseId
+                else -> throw RuntimeException("Invalid state")
+            }
 
-            // Count how many states with this setId were in history before refresh
-            val oldHistory = stateMachine?.history ?: emptyList()
-            val completedMatchingCount = oldHistory.count { state ->
+            fun matchesTargetState(state: WorkoutState): Boolean {
                 val setId = when (state) {
                     is WorkoutState.Set -> state.set.id
                     is WorkoutState.Rest -> state.set.id
                     else -> null
                 }
-                setId == targetSetId
+                val exerciseId = when (state) {
+                    is WorkoutState.Set -> state.exerciseId
+                    is WorkoutState.Rest -> state.exerciseId
+                    else -> null
+                }
+                return setId == targetSetId && exerciseId == targetExerciseId
+            }
+
+            // Count how many states with this setId were in history before refresh
+            val oldHistory = stateMachine?.history ?: emptyList()
+            val completedMatchingCount = oldHistory.count { state ->
+                matchesTargetState(state)
             }
 
             setStates.clear()
@@ -1751,12 +1799,7 @@ open class WorkoutViewModel(
             
             for (i in 0 until newMachine.allStates.size) {
                 val state = newMachine.allStates[i]
-                val setId = when (state) {
-                    is WorkoutState.Set -> state.set.id
-                    is WorkoutState.Rest -> state.set.id
-                    else -> null
-                }
-                if (setId == targetSetId) {
+                if (matchesTargetState(state)) {
                     occurrenceCount++
                     if (occurrenceCount == completedMatchingCount + 1) {
                         targetIndex = i
@@ -2312,8 +2355,22 @@ open class WorkoutViewModel(
 
         // Upsert the set history entry atomically via store
         val key: (SetHistory) -> Boolean = when (currentState) {
-            is WorkoutState.Set -> { history -> history.setId == currentState.set.id && history.order == currentState.setIndex }
-            is WorkoutState.Rest -> { history -> history.setId == currentState.set.id && history.order == currentState.order }
+            is WorkoutState.Set -> { history ->
+                matchesSetHistory(
+                    history,
+                    currentState.set.id,
+                    currentState.setIndex,
+                    currentState.exerciseId
+                )
+            }
+            is WorkoutState.Rest -> { history ->
+                matchesSetHistory(
+                    history,
+                    currentState.set.id,
+                    currentState.order,
+                    currentState.exerciseId
+                )
+            }
             else -> return
         }
         executedSetStore.upsert(newSetHistory, key)
@@ -2664,7 +2721,7 @@ open class WorkoutViewModel(
                 var previousSetData = copySetData(currentSetData)
 
                 val historySet =
-                    if (exercise.doNotStoreHistory) null else latestSetHistoryMap[set.id];
+                    if (exercise.doNotStoreHistory) null else latestSetHistoryMap[SetKey(exercise.id, set.id)]
 
                 if (historySet != null) {
                     val historySetData = historySet.setData

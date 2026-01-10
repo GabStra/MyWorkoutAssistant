@@ -74,6 +74,7 @@ import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackup
@@ -119,8 +120,13 @@ class MyReceiver(
                     val scope = CoroutineScope(Dispatchers.IO)
 
                     scope.launch {
-                        appViewModel.updateWorkoutStore(workoutStore,false)
-                        workoutViewModel.updateWorkoutStore(workoutStore)
+                        val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                            workoutStore,
+                            db,
+                            workoutStoreRepository
+                        )
+                        appViewModel.updateWorkoutStore(migratedWorkoutStore, false)
+                        workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
 
                         appViewModel.triggerUpdate()
 
@@ -309,9 +315,12 @@ fun MyWorkoutAssistantNavHost(
 
     LaunchedEffect(Unit) {
         try{
-            val workoutStore = workoutStoreRepository.getWorkoutStore()
-            appViewModel.updateWorkoutStore(workoutStore)
-            workoutViewModel.updateWorkoutStore(workoutStore)
+            val migratedWorkoutStore = withContext(Dispatchers.IO) {
+                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                migrateWorkoutStoreSetIdsIfNeeded(workoutStore, db, workoutStoreRepository)
+            }
+            appViewModel.updateWorkoutStore(migratedWorkoutStore)
+            workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
             
             // Check for incomplete workouts
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
@@ -410,7 +419,13 @@ fun MyWorkoutAssistantNavHost(
                     
                     // Save to repository
                     workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-                    
+                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                        appViewModel.workoutStore,
+                        db,
+                        workoutStoreRepository
+                    )
+                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
+
                     val newWorkoutsCount = appViewModel.workouts.size
                     val newEquipmentCount = appViewModel.equipments.size
                     val newAccessoriesCount = appViewModel.accessoryEquipments.size
@@ -1779,4 +1794,3 @@ fun MyWorkoutAssistantNavHost(
         )
     }
 }
-
