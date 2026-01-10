@@ -555,7 +555,13 @@ fun MyWorkoutAssistantNavHost(
 
                                 // Migrate the workout store before updating view models to ensure
                                 // "Unassigned" plan is created for workouts without a plan
-                                val migratedWorkoutStore = workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
+                                val planMigratedWorkoutStore =
+                                    workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
+                                val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                                    planMigratedWorkoutStore,
+                                    db,
+                                    workoutStoreRepository
+                                )
 
                                 appViewModel.updateWorkoutStore(migratedWorkoutStore)
                                 workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
