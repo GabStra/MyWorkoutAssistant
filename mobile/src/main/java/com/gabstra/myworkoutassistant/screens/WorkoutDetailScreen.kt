@@ -451,210 +451,336 @@ fun WorkoutDetailScreen(
                             modifier = Modifier.heightIn(min = 0.dp)
                         )
                     }
-                    Box(
-                        modifier = Modifier.fillMaxHeight(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        VerticalDivider(
-                            modifier = Modifier.height(48.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant
-                        )
-                    }
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .width(56.dp)
-                    ) {
-                        IconButton(
-                            enabled = selectedWorkoutComponents.size == 1 &&
-                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0,
-                            onClick = {
-                                val currentWorkoutComponents = workout.workoutComponents
-                                val selectedComponent = selectedWorkoutComponents.first()
-
-                                val selectedIndex =
-                                    currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
-
-                                if (selectedIndex <= 0) {
-                                    return@IconButton
-                                }
-
-                                val previousIndex = selectedIndex - 1
-
-                                val newWorkoutComponents =
-                                    currentWorkoutComponents.toMutableList().apply {
-                                        val componentToMoveToPreviousSlot = this[selectedIndex]
-                                        val componentToMoveToSelectedSlot = this[previousIndex]
-
-                                        this[selectedIndex] = componentToMoveToSelectedSlot
-                                        this[previousIndex] = componentToMoveToPreviousSlot
-                                    }
-
-
-                                val adjustedComponents =
-                                    ensureRestSeparatedByExercises(newWorkoutComponents)
-                                val updatedWorkout =
-                                    workout.copy(workoutComponents = adjustedComponents)
-                                updateWorkoutWithHistory(updatedWorkout)
-                            },
-                            colors = selectionIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ArrowUpward,
-                                contentDescription = "Move Up",
-                            )
-                        }
-                        Text(
-                            "Move Up",
-                            style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center,
-                            maxLines = 2,
-                            modifier = Modifier.heightIn(min = 0.dp)
-                        )
-                    }
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .width(56.dp)
-                    ) {
-                        IconButton(
-                            enabled = selectedWorkoutComponents.size == 1 &&
-                                    workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1,
-                            onClick = {
-                                val currentWorkoutComponents = workout.workoutComponents
-                                val selectedComponent = selectedWorkoutComponents.first()
-
-                                val selectedIndex =
-                                    currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
-
-                                if (selectedIndex < 0 || selectedIndex + 1 >= currentWorkoutComponents.size) {
-                                    return@IconButton
-                                }
-
-                                val nextIndex = selectedIndex + 1
-
-                                val newWorkoutComponents =
-                                    currentWorkoutComponents.toMutableList().apply {
-                                        val componentToMoveToPreviousSlot = this[selectedIndex]
-                                        val componentToMoveToSelectedSlot = this[nextIndex]
-
-                                        this[selectedIndex] = componentToMoveToSelectedSlot
-                                        this[nextIndex] = componentToMoveToPreviousSlot
-                                    }
-
-                                val adjustedComponents =
-                                    ensureRestSeparatedByExercises(newWorkoutComponents)
-                                val updatedWorkout =
-                                    workout.copy(workoutComponents = adjustedComponents)
-                                updateWorkoutWithHistory(updatedWorkout)
-                            },
-                            colors = selectionIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ArrowDownward,
-                                contentDescription = "Move Down"
-                            )
-                        }
-                        Text(
-                            "Move Down",
-                            style = MaterialTheme.typography.labelSmall,
-                            textAlign = TextAlign.Center,
-                            maxLines = 2,
-                            modifier = Modifier.heightIn(min = 0.dp)
-                        )
-                    }
-                    if (selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .width(56.dp)
-                        ) {
-                            IconButton(
-                                onClick = {
-                                    val updatedWorkoutComponents =
-                                        workout.workoutComponents.map { workoutComponent ->
-                                            if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
-                                                when (workoutComponent) {
-                                                    is Exercise -> workoutComponent.copy(enabled = true)
-                                                    is Rest -> workoutComponent.copy(enabled = true)
-                                                    is Superset -> workoutComponent.copy(enabled = true)
-                                                    else -> workoutComponent
-                                                }
-                                            } else {
-                                                workoutComponent
-                                            }
-                                        }
-
-                                    val adjustedComponents =
-                                        ensureRestSeparatedByExercises(updatedWorkoutComponents)
-
-                                    val updatedWorkout =
-                                        workout.copy(workoutComponents = adjustedComponents)
-                                    updateWorkoutWithHistory(updatedWorkout)
-
-                                    selectedWorkoutComponents = emptyList()
-                                    isSelectionModeActive = false
-                                },
-                                colors = selectionIconColors
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.CheckCircle,
-                                    contentDescription = "Enable",
-                                )
-                            }
-                            Text(
-                                "Enable",
-                                style = MaterialTheme.typography.labelSmall,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2,
-                                modifier = Modifier.heightIn(min = 0.dp)
-                            )
-                        }
+                    // Show move buttons only if not all selected items are Rests
+                    val showMoveButtons = if (selectedWorkoutComponents.isEmpty()) {
+                        false
+                    } else if (selectedWorkoutComponents.size == 1) {
+                        selectedWorkoutComponents.first() !is Rest
                     } else {
+                        selectedWorkoutComponents.any { it !is Rest }
+                    }
+                    
+                    // Determine if we need to show enable/disable buttons
+                    val showEnableDisableButtons = selectedWorkoutComponents.isNotEmpty()
+                    val needDividerBeforeEnableDisable = showEnableDisableButtons && !showMoveButtons
+                    
+                    // Show divider before move buttons (if shown) or before enable/disable (if no move buttons)
+                    if (showMoveButtons || needDividerBeforeEnableDisable) {
+                        Box(
+                            modifier = Modifier.fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            VerticalDivider(
+                                modifier = Modifier.height(48.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                    }
+                    
+                    if (showMoveButtons) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .width(56.dp)
                         ) {
                             IconButton(
+                                enabled = selectedWorkoutComponents.size == 1 &&
+                                        workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != 0,
                                 onClick = {
-                                    val updatedWorkoutComponents =
-                                        workout.workoutComponents.map { workoutComponent ->
-                                            if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
-                                                when (workoutComponent) {
-                                                    is Exercise -> workoutComponent.copy(enabled = false)
-                                                    is Rest -> workoutComponent.copy(enabled = false)
-                                                    is Superset -> workoutComponent.copy(enabled = false)
-                                                    else -> workoutComponent
-                                                }
-                                            } else {
-                                                workoutComponent
-                                            }
+                                    val currentWorkoutComponents = workout.workoutComponents
+                                    val selectedComponent = selectedWorkoutComponents.first()
+
+                                    val selectedIndex =
+                                        currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
+
+                                    if (selectedIndex <= 0) {
+                                        return@IconButton
+                                    }
+
+                                    val previousIndex = selectedIndex - 1
+
+                                    val newWorkoutComponents =
+                                        currentWorkoutComponents.toMutableList().apply {
+                                            val componentToMoveToPreviousSlot = this[selectedIndex]
+                                            val componentToMoveToSelectedSlot = this[previousIndex]
+
+                                            this[selectedIndex] = componentToMoveToSelectedSlot
+                                            this[previousIndex] = componentToMoveToPreviousSlot
                                         }
 
-                                    val adjustedComponents =
-                                        ensureRestSeparatedByExercises(updatedWorkoutComponents)
 
+                                    val adjustedComponents =
+                                        ensureRestSeparatedByExercises(newWorkoutComponents)
                                     val updatedWorkout =
                                         workout.copy(workoutComponents = adjustedComponents)
                                     updateWorkoutWithHistory(updatedWorkout)
-                                    selectedWorkoutComponents = emptyList()
-                                    isSelectionModeActive = false
                                 },
                                 colors = selectionIconColors
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.Block,
-                                    contentDescription = "Disable",
+                                    imageVector = Icons.Filled.ArrowUpward,
+                                    contentDescription = "Move Up",
                                 )
                             }
                             Text(
-                                "Disable",
+                                "Move Up",
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center,
                                 maxLines = 2,
                                 modifier = Modifier.heightIn(min = 0.dp)
                             )
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(56.dp)
+                        ) {
+                            IconButton(
+                                enabled = selectedWorkoutComponents.size == 1 &&
+                                        workout.workoutComponents.indexOfFirst { it.id == selectedWorkoutComponents.first().id } != workout.workoutComponents.size - 1,
+                                onClick = {
+                                    val currentWorkoutComponents = workout.workoutComponents
+                                    val selectedComponent = selectedWorkoutComponents.first()
+
+                                    val selectedIndex =
+                                        currentWorkoutComponents.indexOfFirst { it.id == selectedComponent.id }
+
+                                    if (selectedIndex < 0 || selectedIndex + 1 >= currentWorkoutComponents.size) {
+                                        return@IconButton
+                                    }
+
+                                    val nextIndex = selectedIndex + 1
+
+                                    val newWorkoutComponents =
+                                        currentWorkoutComponents.toMutableList().apply {
+                                            val componentToMoveToPreviousSlot = this[selectedIndex]
+                                            val componentToMoveToSelectedSlot = this[nextIndex]
+
+                                            this[selectedIndex] = componentToMoveToSelectedSlot
+                                            this[nextIndex] = componentToMoveToPreviousSlot
+                                        }
+
+                                    val adjustedComponents =
+                                        ensureRestSeparatedByExercises(newWorkoutComponents)
+                                    val updatedWorkout =
+                                        workout.copy(workoutComponents = adjustedComponents)
+                                    updateWorkoutWithHistory(updatedWorkout)
+                                },
+                                colors = selectionIconColors
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowDownward,
+                                    contentDescription = "Move Down"
+                                )
+                            }
+                            Text(
+                                "Move Down",
+                                style = MaterialTheme.typography.labelSmall,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                modifier = Modifier.heightIn(min = 0.dp)
+                            )
+                        }
+                    }
+                    // Enable/Disable logic: single selection shows one button, multi-selection shows both
+                    if (selectedWorkoutComponents.size == 1) {
+                        // Single selection: show one button based on current state
+                        val isEnabled = getEnabledStatusOfWorkoutComponent(selectedWorkoutComponents.first())
+                        if (!isEnabled) {
+                            // Show Enable button
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val updatedWorkoutComponents =
+                                            workout.workoutComponents.map { workoutComponent ->
+                                                if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                    when (workoutComponent) {
+                                                        is Exercise -> workoutComponent.copy(enabled = true)
+                                                        is Rest -> workoutComponent.copy(enabled = true)
+                                                        is Superset -> workoutComponent.copy(enabled = true)
+                                                        else -> workoutComponent
+                                                    }
+                                                } else {
+                                                    workoutComponent
+                                                }
+                                            }
+
+                                        val adjustedComponents =
+                                            ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
+                                        val updatedWorkout =
+                                            workout.copy(workoutComponents = adjustedComponents)
+                                        updateWorkoutWithHistory(updatedWorkout)
+
+                                        selectedWorkoutComponents = emptyList()
+                                        isSelectionModeActive = false
+                                    },
+                                    colors = selectionIconColors
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckCircle,
+                                        contentDescription = "Enable",
+                                    )
+                                }
+                                Text(
+                                    "Enable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                        } else {
+                            // Show Disable button
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val updatedWorkoutComponents =
+                                            workout.workoutComponents.map { workoutComponent ->
+                                                if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                    when (workoutComponent) {
+                                                        is Exercise -> workoutComponent.copy(enabled = false)
+                                                        is Rest -> workoutComponent.copy(enabled = false)
+                                                        is Superset -> workoutComponent.copy(enabled = false)
+                                                        else -> workoutComponent
+                                                    }
+                                                } else {
+                                                    workoutComponent
+                                                }
+                                            }
+
+                                        val adjustedComponents =
+                                            ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
+                                        val updatedWorkout =
+                                            workout.copy(workoutComponents = adjustedComponents)
+                                        updateWorkoutWithHistory(updatedWorkout)
+                                        selectedWorkoutComponents = emptyList()
+                                        isSelectionModeActive = false
+                                    },
+                                    colors = selectionIconColors
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Block,
+                                        contentDescription = "Disable",
+                                    )
+                                }
+                                Text(
+                                    "Disable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                        }
+                    } else if (selectedWorkoutComponents.size > 1) {
+                        // Multi-selection: show both Enable and Disable buttons
+                        val hasDisabledItems = selectedWorkoutComponents.any { !getEnabledStatusOfWorkoutComponent(it) }
+                        val hasEnabledItems = selectedWorkoutComponents.any { getEnabledStatusOfWorkoutComponent(it) }
+                        
+                        if (hasDisabledItems) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val updatedWorkoutComponents =
+                                            workout.workoutComponents.map { workoutComponent ->
+                                                if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                    when (workoutComponent) {
+                                                        is Exercise -> workoutComponent.copy(enabled = true)
+                                                        is Rest -> workoutComponent.copy(enabled = true)
+                                                        is Superset -> workoutComponent.copy(enabled = true)
+                                                        else -> workoutComponent
+                                                    }
+                                                } else {
+                                                    workoutComponent
+                                                }
+                                            }
+
+                                        val adjustedComponents =
+                                            ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
+                                        val updatedWorkout =
+                                            workout.copy(workoutComponents = adjustedComponents)
+                                        updateWorkoutWithHistory(updatedWorkout)
+
+                                        selectedWorkoutComponents = emptyList()
+                                        isSelectionModeActive = false
+                                    },
+                                    colors = selectionIconColors
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.CheckCircle,
+                                        contentDescription = "Enable",
+                                    )
+                                }
+                                Text(
+                                    "Enable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
+                        }
+                        if (hasEnabledItems) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .width(56.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val updatedWorkoutComponents =
+                                            workout.workoutComponents.map { workoutComponent ->
+                                                if (selectedWorkoutComponents.any { it.id == workoutComponent.id }) {
+                                                    when (workoutComponent) {
+                                                        is Exercise -> workoutComponent.copy(enabled = false)
+                                                        is Rest -> workoutComponent.copy(enabled = false)
+                                                        is Superset -> workoutComponent.copy(enabled = false)
+                                                        else -> workoutComponent
+                                                    }
+                                                } else {
+                                                    workoutComponent
+                                                }
+                                            }
+
+                                        val adjustedComponents =
+                                            ensureRestSeparatedByExercises(updatedWorkoutComponents)
+
+                                        val updatedWorkout =
+                                            workout.copy(workoutComponents = adjustedComponents)
+                                        updateWorkoutWithHistory(updatedWorkout)
+                                        selectedWorkoutComponents = emptyList()
+                                        isSelectionModeActive = false
+                                    },
+                                    colors = selectionIconColors
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Block,
+                                        contentDescription = "Disable",
+                                    )
+                                }
+                                Text(
+                                    "Disable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    modifier = Modifier.heightIn(min = 0.dp)
+                                )
+                            }
                         }
                     }
 

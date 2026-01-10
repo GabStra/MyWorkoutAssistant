@@ -459,112 +459,123 @@ fun ExerciseDetailScreen(
                                         textAlign = TextAlign.Center
                                     )
                                 }
-                                Box(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    VerticalDivider(
-                                        modifier = Modifier.height(48.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant
-                                    )
+                                // Show move buttons only if not all selected items are RestSets
+                                val showMoveButtons = if (selectedSets.isEmpty()) {
+                                    false
+                                } else if (selectedSets.size == 1) {
+                                    selectedSets.first() !is RestSet
+                                } else {
+                                    selectedSets.any { it !is RestSet }
                                 }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(
-                                        enabled = selectedSets.size == 1 &&
-                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0,
-                                        onClick = {
-                                            val currentSets = exercise.sets
-                                            val selectedComponent = selectedSets.first()
-
-                                            val selectedIndex =
-                                                currentSets.indexOfFirst { it.id == selectedComponent.id }
-
-                                            if (selectedIndex <= 0) {
-                                                return@IconButton
-                                            }
-
-                                            val previousIndex = selectedIndex - 1
-
-                                            val newSets = currentSets.toMutableList().apply {
-                                                val componentToMoveToOtherSlot = this[selectedIndex]
-                                                val componentToMoveToSelectedSlot = this[previousIndex]
-
-                                                this[selectedIndex] = componentToMoveToSelectedSlot
-                                                this[previousIndex] = componentToMoveToOtherSlot
-                                            }
-
-                                            val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
-
-                                            updateExerciseWithHistory(updatedExercise)
-
-                                            sets = adjustedComponents
-                                        },
-                                        colors = selectionIconColors
+                                
+                                if (showMoveButtons) {
+                                    Box(
+                                        modifier = Modifier.fillMaxHeight(),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.ArrowUpward,
-                                            contentDescription = "Move Up",
+                                        VerticalDivider(
+                                            modifier = Modifier.height(48.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant
                                         )
                                     }
-                                    Text(
-                                        "Move Up",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(
-                                        enabled = selectedSets.size == 1 &&
-                                                exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1,
-                                        onClick = {
-                                            val currentSets = exercise.sets
-                                            val selectedComponent = selectedSets.first()
-
-                                            val selectedIndex =
-                                                currentSets.indexOfFirst { it.id == selectedComponent.id }
-
-                                            if (selectedIndex < 0 || selectedIndex + 1 >= currentSets.size) {
-                                                return@IconButton
-                                            }
-
-                                            val nextIndex = selectedIndex + 1
-
-                                            val newSets = currentSets.toMutableList().apply {
-                                                val componentToMoveToOtherSlot = this[selectedIndex]
-                                                val componentToMoveToSelectedSlot = this[nextIndex]
-
-                                                this[selectedIndex] = componentToMoveToSelectedSlot
-                                                this[nextIndex] = componentToMoveToOtherSlot
-                                            }
-
-                                            val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
-
-                                            sets = adjustedComponents
-
-                                            updateExerciseWithHistory(updatedExercise)
-                                        },
-                                        colors = selectionIconColors
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.ArrowDownward,
-                                            contentDescription = "Move Down"
+                                        IconButton(
+                                            enabled = selectedSets.size == 1 &&
+                                                    exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0,
+                                            onClick = {
+                                                val currentSets = exercise.sets
+                                                val selectedComponent = selectedSets.first()
+
+                                                val selectedIndex =
+                                                    currentSets.indexOfFirst { it.id == selectedComponent.id }
+
+                                                if (selectedIndex <= 0) {
+                                                    return@IconButton
+                                                }
+
+                                                val previousIndex = selectedIndex - 1
+
+                                                val newSets = currentSets.toMutableList().apply {
+                                                    val componentToMoveToOtherSlot = this[selectedIndex]
+                                                    val componentToMoveToSelectedSlot = this[previousIndex]
+
+                                                    this[selectedIndex] = componentToMoveToSelectedSlot
+                                                    this[previousIndex] = componentToMoveToOtherSlot
+                                                }
+
+                                                val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
+
+                                                updateExerciseWithHistory(updatedExercise)
+
+                                                sets = adjustedComponents
+                                            },
+                                            colors = selectionIconColors
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.ArrowUpward,
+                                                contentDescription = "Move Up",
+                                            )
+                                        }
+                                        Text(
+                                            "Move Up",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
                                         )
                                     }
-                                    Text(
-                                        "Move Down",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                    ) {
+                                        IconButton(
+                                            enabled = selectedSets.size == 1 &&
+                                                    exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1,
+                                            onClick = {
+                                                val currentSets = exercise.sets
+                                                val selectedComponent = selectedSets.first()
+
+                                                val selectedIndex =
+                                                    currentSets.indexOfFirst { it.id == selectedComponent.id }
+
+                                                if (selectedIndex < 0 || selectedIndex + 1 >= currentSets.size) {
+                                                    return@IconButton
+                                                }
+
+                                                val nextIndex = selectedIndex + 1
+
+                                                val newSets = currentSets.toMutableList().apply {
+                                                    val componentToMoveToOtherSlot = this[selectedIndex]
+                                                    val componentToMoveToSelectedSlot = this[nextIndex]
+
+                                                    this[selectedIndex] = componentToMoveToSelectedSlot
+                                                    this[nextIndex] = componentToMoveToOtherSlot
+                                                }
+
+                                                val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
+
+                                                sets = adjustedComponents
+
+                                                updateExerciseWithHistory(updatedExercise)
+                                            },
+                                            colors = selectionIconColors
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.ArrowDownward,
+                                                contentDescription = "Move Down"
+                                            )
+                                        }
+                                        Text(
+                                            "Move Down",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
                                 }
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
