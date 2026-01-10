@@ -122,6 +122,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
@@ -734,6 +735,12 @@ fun WorkoutHistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     setHistoriesByExerciseId.keys.toList()
+                        .sortedBy { exerciseId ->
+                            val setHistories = setHistoriesByExerciseId[exerciseId]!!
+                            setHistories
+                                .mapNotNull { it.startTime }
+                                .minOrNull() ?: LocalDateTime.MAX
+                        }
                         .forEach() { key ->
                             val exercise = exerciseById[key]!!
                             val setHistories = setHistoriesByExerciseId[key]!!
