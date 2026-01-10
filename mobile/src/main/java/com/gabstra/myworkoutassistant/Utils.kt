@@ -1206,8 +1206,8 @@ fun Modifier.verticalColumnScrollbar(
     trackHeight: Dp? = null,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {
@@ -1390,8 +1390,8 @@ fun Modifier.verticalLazyColumnScrollbar(
     trackHeight: Dp? = null,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect parameters
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color? = null
 ): Modifier {

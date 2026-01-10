@@ -125,8 +125,8 @@ fun Modifier.verticalColumnScrollbar(
     thumbGap: Dp = 2.dp,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color = MaterialTheme.colorScheme.background
 ): Modifier {
@@ -320,8 +320,8 @@ fun Modifier.verticalLazyColumnScrollbar(
     thumbGap: Dp = 2.dp,
     maxThumbHeightFraction: Float = 0.75f,      // Maximum thumb height as fraction of track height (0.0..1.0)
     // Content fade effect
-    enableTopFade: Boolean = true,
-    enableBottomFade: Boolean = true,
+    enableTopFade: Boolean = false,
+    enableBottomFade: Boolean = false,
     contentFadeHeight: Dp = DEFAULT_CONTENT_FADE_HEIGHT,
     contentFadeColor: Color = MaterialTheme.colorScheme.background
 ): Modifier {
