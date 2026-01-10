@@ -27,6 +27,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import android.content.Context
+import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import java.util.Calendar
 import java.util.UUID
 import com.gabstra.myworkoutassistant.mergeWorkoutStore
@@ -72,6 +76,9 @@ class AppViewModel() : ViewModel() {
     // Convert currentScreenData to a MutableState
     var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts(0))
         private set
+
+    // Debouncer for workout saves
+    private val saveDebouncer = WorkoutSaveDebouncer(viewModelScope, debounceDelayMs = 1000L)
 
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
@@ -578,6 +585,72 @@ class AppViewModel() : ViewModel() {
         }
         workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
         triggerMobile()
+    }
+
+    /**
+     * Schedules a debounced save of the workout store.
+     * If a save is already scheduled, it cancels the previous one and schedules a new one.
+     *
+     * @param context The application context
+     * @param workoutStoreRepository The repository for saving workout store
+     * @param db The app database
+     */
+    fun scheduleWorkoutSave(
+        context: Context,
+        workoutStoreRepository: WorkoutStoreRepository,
+        db: AppDatabase
+    ) {
+        viewModelScope.launch {
+            saveDebouncer.schedule {
+                saveWorkoutStoreWithBackup(context, workoutStore, workoutStoreRepository, db)
+            }
+        }
+    }
+
+    /**
+     * Schedules a debounced save of the workout store using context-only version.
+     * Use this in composables where you only have access to context.
+     *
+     * @param context The application context
+     */
+    fun scheduleWorkoutSave(context: Context) {
+        viewModelScope.launch {
+            saveDebouncer.schedule {
+                saveWorkoutStoreWithBackupFromContext(context, workoutStore)
+            }
+        }
+    }
+
+    /**
+     * Immediately saves the workout store, bypassing the debounce delay.
+     * Cancels any pending debounced saves and executes the save immediately with current state.
+     *
+     * @param context The application context
+     * @param workoutStoreRepository The repository for saving workout store
+     * @param db The app database
+     */
+    suspend fun flushWorkoutSave(
+        context: Context,
+        workoutStoreRepository: WorkoutStoreRepository,
+        db: AppDatabase
+    ) {
+        // Cancel any pending debounced save
+        saveDebouncer.cancel()
+        // Save current state immediately
+        saveWorkoutStoreWithBackup(context, workoutStore, workoutStoreRepository, db)
+    }
+
+    /**
+     * Immediately saves the workout store using context-only version, bypassing the debounce delay.
+     * Cancels any pending debounced saves and executes the save immediately with current state.
+     *
+     * @param context The application context
+     */
+    suspend fun flushWorkoutSave(context: Context) {
+        // Cancel any pending debounced save
+        saveDebouncer.cancel()
+        // Save current state immediately
+        saveWorkoutStoreWithBackupFromContext(context, workoutStore)
     }
 }
 

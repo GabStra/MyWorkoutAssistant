@@ -331,10 +331,7 @@ fun WorkoutDetailScreen(
                 withContext(Dispatchers.Main) {
                     appViewModel.updateWorkoutVersioned(workout, updatedWorkout, hasHistory)
                 }
-                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
-                    context,
-                    appViewModel.workoutStore
-                )
+                appViewModel.scheduleWorkoutSave(context)
             } finally {
                 isSaving = false
             }

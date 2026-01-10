@@ -457,10 +457,7 @@ fun WorkoutsScreen(
                     selectedWorkouts = emptyList()
                     isWorkoutSelectionModeActive = false
                 }
-                com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
-                    context,
-                    appViewModel.workoutStore
-                )
+                appViewModel.scheduleWorkoutSave(context)
             } finally {
                 isSaving = false
             }
@@ -807,12 +804,7 @@ fun WorkoutsScreen(
             onConfirm = { newName ->
                 planToEdit?.let { plan ->
                     appViewModel.updateWorkoutPlanName(plan.id, newName)
-                    scope.launch {
-                        com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
-                            context,
-                            appViewModel.workoutStore
-                        )
-                    }
+                    appViewModel.scheduleWorkoutSave(context)
                 }
                 showEditPlanNameDialog = false
                 planToEdit = null
@@ -837,12 +829,7 @@ fun WorkoutsScreen(
                 selectedWorkouts.forEach { workout ->
                     appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
                 }
-                scope.launch {
-                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
-                        context,
-                        appViewModel.workoutStore
-                    )
-                }
+                appViewModel.scheduleWorkoutSave(context)
                 showMoveWorkoutDialog = false
                 selectedWorkouts = emptyList()
                 isWorkoutSelectionModeActive = false
@@ -880,12 +867,7 @@ fun WorkoutsScreen(
                     appViewModel.moveWorkoutToPlan(workout.id, newPlanId)
                 }
 
-                scope.launch {
-                    com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackupFromContext(
-                        context,
-                        appViewModel.workoutStore
-                    )
-                }
+                appViewModel.scheduleWorkoutSave(context)
 
                 selectedWorkouts = emptyList()
                 isWorkoutSelectionModeActive = false

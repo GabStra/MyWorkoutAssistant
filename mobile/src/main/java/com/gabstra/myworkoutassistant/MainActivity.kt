@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
@@ -77,7 +78,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.saveWorkoutStoreWithBackup
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -96,6 +96,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import androidx.lifecycle.lifecycleScope
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -192,6 +193,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Flush any pending debounced saves when app is paused
+        if (::appViewModel.isInitialized) {
+            lifecycleScope.launch {
+                appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Defensive flush on stop as well
+        if (::appViewModel.isInitialized) {
+            lifecycleScope.launch {
+                appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+            }
+        }
     }
 
     override fun onDestroy(){
@@ -343,9 +364,12 @@ fun MyWorkoutAssistantNavHost(
     }
 
     BackHandler(enabled = true) {
-        val canGoBack = appViewModel.goBack()
-        if (!canGoBack) {
-            (context as? ComponentActivity)?.finish()
+        scope.launch {
+            appViewModel.flushWorkoutSave(context)
+            val canGoBack = appViewModel.goBack()
+            if (!canGoBack) {
+                (context as? ComponentActivity)?.finish()
+            }
         }
     }
 
@@ -870,15 +894,18 @@ fun MyWorkoutAssistantNavHost(
                 SettingsScreen(
                     onSave = { newWorkoutStore ->
                         scope.launch {
-                            appViewModel.updateWorkoutStore(newWorkoutStore)
-                            saveWorkoutStoreWithBackup(context, newWorkoutStore, workoutStoreRepository, db)
+                                appViewModel.updateWorkoutStore(newWorkoutStore)
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                             syncWithWatch()
                             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
                             appViewModel.goBack()
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     workoutStore = appViewModel.workoutStore
                 )
@@ -889,7 +916,10 @@ fun MyWorkoutAssistantNavHost(
                     errorLogDao = db.errorLogDao(),
                     dataClient = dataClient,
                     onBack = {
-                        appViewModel.goBack()
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     }
                 )
             }
@@ -944,14 +974,19 @@ fun MyWorkoutAssistantNavHost(
                                 withContext(Dispatchers.IO) {
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                 }
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     isSaving = isSaving,
                     workoutPlanId = screenData.workoutPlanId,
                 )
@@ -1004,15 +1039,18 @@ fun MyWorkoutAssistantNavHost(
                                     workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                                     workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                 }
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     workout = selectedWorkout,
                     isSaving = isSaving,
@@ -1174,14 +1212,19 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
                                 }
                                 appViewModel.addWorkoutComponentVersioned(selectedWorkout, newExercise, hasHistory)
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     allowSettingDoNotStoreHistory = true,
                     isSaving = isSaving
                 )
@@ -1219,14 +1262,19 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
                                 }
                                 appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
                     isSaving = isSaving
                 )
@@ -1269,15 +1317,18 @@ fun MyWorkoutAssistantNavHost(
                                     updatedExercise,
                                     hasHistory
                                 )
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     exercise = selectedExercise,
                     allowSettingDoNotStoreHistory = true,
@@ -1321,14 +1372,19 @@ fun MyWorkoutAssistantNavHost(
                                 updatedSuperset,
                                 hasHistory
                             )
-                            saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
                     superset = selectedSuperset,
                     isSaving = isSaving
@@ -1369,15 +1425,18 @@ fun MyWorkoutAssistantNavHost(
                                 updatedSet,
                                 hasHistory
                             )
-                            saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     exerciseType = parentExercise.exerciseType,
                     viewModel = appViewModel,
@@ -1432,7 +1491,7 @@ fun MyWorkoutAssistantNavHost(
                                 updatedExercise,
                                 hasHistory
                             )
-                            saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
@@ -1482,7 +1541,7 @@ fun MyWorkoutAssistantNavHost(
                                 updatedSet,
                                 hasHistory
                             )
-                            saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
@@ -1537,14 +1596,19 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
                                 }
                                 appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     isSaving = isSaving
                 )
             }
@@ -1580,14 +1644,19 @@ fun MyWorkoutAssistantNavHost(
                                     newRest,
                                     hasHistory
                                 )
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     rest = screenData.selectedRest,
                     isSaving = isSaving,
                     workout = selectedWorkout
@@ -1645,15 +1714,18 @@ fun MyWorkoutAssistantNavHost(
                                     updatedExercise,
                                     hasHistory
                                 )
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     isSaving = isSaving
                 )
@@ -1702,14 +1774,19 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao.workoutHistoryExistsByWorkoutId(selectedWorkout.id)
                                 }
                                 appViewModel.updateWorkoutVersioned(selectedWorkout, updatedWorkout, hasHistory)
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                                 appViewModel.goBack()
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    onCancel = { appViewModel.goBack() },
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
+                    },
                     isSaving = isSaving
                 )
                 }
@@ -1747,12 +1824,15 @@ fun MyWorkoutAssistantNavHost(
                                     updatedSet,
                                     hasHistory
                                 )
-                                saveWorkoutStoreWithBackup(context, appViewModel.workoutStore, workoutStoreRepository, db)
+                                appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
                             appViewModel.goBack()
                         }
                     },
-                    onCancel = {
-                        appViewModel.goBack()
+                    onCancel = { 
+                        scope.launch {
+                            appViewModel.flushWorkoutSave(context, workoutStoreRepository, db)
+                            appViewModel.goBack()
+                        }
                     },
                     set = screenData.selectedSet,
                     exerciseType = parentExercise.exerciseType,
