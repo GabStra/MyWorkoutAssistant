@@ -161,6 +161,10 @@ fun WorkoutCompleteScreen(
         handleYesClick = {
             closeJob?.cancel()
             hapticsViewModel.doGentleVibration()
+            // Flush any pending sync before navigating away
+            scope.launch {
+                viewModel.flushWorkoutSync()
+            }
             navController.navigate(Screen.WorkoutSelection.route){
                 popUpTo(0) {
                     inclusive = true

@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +37,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import kotlinx.coroutines.launch
 
 
 @Composable
@@ -48,6 +50,7 @@ fun PageButtons(
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var showGoBackDialog by remember { mutableStateOf(false) }
 
@@ -189,6 +192,11 @@ fun PageButtons(
                         // Clear workout in progress flag
                         val prefs = context.getSharedPreferences("workout_state", android.content.Context.MODE_PRIVATE)
                         prefs.edit { putBoolean("isWorkoutInProgress", false) }
+                        
+                        // Flush any pending sync before navigating away
+                        scope.launch {
+                            viewModel.flushWorkoutSync()
+                        }
                         
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }

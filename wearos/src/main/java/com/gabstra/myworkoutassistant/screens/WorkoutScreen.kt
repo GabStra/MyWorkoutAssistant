@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +29,7 @@ import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -42,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -61,6 +64,7 @@ fun WorkoutScreen(
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val screenState by viewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
     val selectedWorkout = screenState.selectedWorkout
@@ -133,6 +137,10 @@ fun WorkoutScreen(
                 android.util.Log.e("WorkoutScreen", "Error stopping sensors on workout end", exception)
             }
             cancelWorkoutInProgressNotification(context)
+            // Flush any pending sync before navigating away
+            scope.launch {
+                viewModel.flushWorkoutSync()
+            }
             navController.navigate(Screen.WorkoutSelection.route){
                 popUpTo(0) {
                     inclusive = true
@@ -427,5 +435,8 @@ fun WorkoutScreen(
         }
         
         LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
+        
+        // Sync status badge (non-blocking)
+        SyncStatusBadge(viewModel = viewModel)
     }
 }

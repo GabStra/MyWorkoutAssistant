@@ -36,6 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -250,6 +253,25 @@ class MainActivity : ComponentActivity() {
         appViewModel.initDataClient(dataClient)
         val wearDataLayerRegistry = WearDataLayerRegistry.fromContext(this, lifecycleScope)
         appHelper = WearDataLayerAppHelper(this, wearDataLayerRegistry, lifecycleScope)
+
+        // Add lifecycle observer to flush pending syncs on pause/stop
+        lifecycle.addObserver(object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                when (event) {
+                    Lifecycle.Event.ON_PAUSE -> {
+                        lifecycleScope.launch {
+                            appViewModel.flushWorkoutSync()
+                        }
+                    }
+                    Lifecycle.Event.ON_STOP -> {
+                        lifecycleScope.launch {
+                            appViewModel.flushWorkoutSync()
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        })
 
         setContent {
             WearApp(
