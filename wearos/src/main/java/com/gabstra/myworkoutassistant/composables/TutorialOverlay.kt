@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
@@ -138,9 +140,12 @@ fun TutorialOverlay(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(contentPadding)
-                        .padding(top = 5.dp)
-                        .padding(horizontal = 15.dp)
+                        .padding(
+                            PaddingValues(
+                                start = contentPadding.calculateLeftPadding(LayoutDirection.Rtl),
+                                end = contentPadding.calculateRightPadding( LayoutDirection.Rtl)
+                            )
+                        )
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -148,7 +153,9 @@ fun TutorialOverlay(
                     val annotatedText = formatTutorialText(text)
                     Text(
                         text = annotatedText,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(top = 20.dp)
+                            .padding(horizontal = 25.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center
