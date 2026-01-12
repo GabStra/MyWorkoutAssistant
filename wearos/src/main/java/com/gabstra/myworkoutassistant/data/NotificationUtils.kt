@@ -89,11 +89,24 @@ fun showSyncCompleteNotification(context: Context) {
     val channelId = "sync_status_channel"
     val notificationId = 2
 
+    // Create an intent that will open the app when the notification is tapped
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+    }
+    val pendingIntent = PendingIntent.getActivity(
+        context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
     val channelName = "Sync Status"
     val channelDescription = "Notifications for sync events"
-    val channelImportance = NotificationManager.IMPORTANCE_DEFAULT
+    // Use IMPORTANCE_HIGH to ensure sound and vibration
+    val channelImportance = NotificationManager.IMPORTANCE_HIGH
     val channel = NotificationChannel(channelId, channelName, channelImportance).apply {
         description = channelDescription
+        // Enable vibration and sound
+        enableVibration(true)
+        // Use default notification sound (or setSound(null, null) to use system default)
+        setSound(null, null) // This uses the system default notification sound
     }
     val notificationManager: NotificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -103,9 +116,11 @@ fun showSyncCompleteNotification(context: Context) {
         .setSmallIcon(R.drawable.ic_workout_icon)
         .setContentTitle("Sync complete")
         .setContentText("Workout data updated")
+        .setContentIntent(pendingIntent) // Add intent to open app when tapped
         .setAutoCancel(true)
         .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
-        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setPriority(NotificationCompat.PRIORITY_HIGH) // Increase priority
+        .setDefaults(NotificationCompat.DEFAULT_ALL) // Use default sound, vibration, and lights
         .build()
 
     with(NotificationManagerCompat.from(context)) {
