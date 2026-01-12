@@ -79,8 +79,23 @@ interface WorkoutHistoryDao {
     @Transaction
     suspend fun insertWithVersionCheck(workoutHistory: WorkoutHistory) {
         val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)
-        if (existingWorkoutHistory == null || workoutHistory.version >= existingWorkoutHistory.version) {
+        if (existingWorkoutHistory == null) {
             insert(workoutHistory)
+        } else {
+            // If existing is complete, never overwrite with incomplete
+            if (existingWorkoutHistory.isDone && !workoutHistory.isDone) {
+                // Don't overwrite a complete workout with an incomplete one
+                return
+            }
+            // If incoming is complete and existing is incomplete, always update
+            if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
+                insert(workoutHistory)
+                return
+            }
+            // For same completion status, use version check
+            if (workoutHistory.version >= existingWorkoutHistory.version) {
+                insert(workoutHistory)
+            }
         }
     }
 
@@ -88,8 +103,23 @@ interface WorkoutHistoryDao {
     suspend fun insertAllWithVersionCheck(vararg workoutHistories: WorkoutHistory) {
         workoutHistories.forEach { workoutHistory ->
             val existingWorkoutHistory = getWorkoutHistoryById(workoutHistory.id)
-            if (existingWorkoutHistory == null || workoutHistory.version >= existingWorkoutHistory.version) {
+            if (existingWorkoutHistory == null) {
                 insert(workoutHistory)
+            } else {
+                // If existing is complete, never overwrite with incomplete
+                if (existingWorkoutHistory.isDone && !workoutHistory.isDone) {
+                    // Don't overwrite a complete workout with an incomplete one
+                    return@forEach
+                }
+                // If incoming is complete and existing is incomplete, always update
+                if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
+                    insert(workoutHistory)
+                    return@forEach
+                }
+                // For same completion status, use version check
+                if (workoutHistory.version >= existingWorkoutHistory.version) {
+                    insert(workoutHistory)
+                }
             }
         }
     }
