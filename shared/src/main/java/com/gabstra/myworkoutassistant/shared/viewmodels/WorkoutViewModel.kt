@@ -59,6 +59,8 @@ import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.PlateauDetectionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
+import com.gabstra.myworkoutassistant.shared.utils.WarmupContextBuilder
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlateOptimizer
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
@@ -2400,12 +2402,19 @@ open class WorkoutViewModel(
     protected suspend fun generateWorkoutStates() : List<WorkoutState> {
         val workoutComponents = selectedWorkout.value.workoutComponents.filter { it.enabled }
         val totalStates = mutableListOf<WorkoutState>()
+        val processedExercises = mutableListOf<Exercise>()
 
         for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when (workoutComponent) {
                 is Exercise -> {
-                    val states = addStatesFromExercise(workoutComponent)
+                    val warmupContext = WarmupContextBuilder.build(
+                        exercise = workoutComponent,
+                        priorExercises = processedExercises,
+                        isSupersetFollowUp = false
+                    )
+                    val states = addStatesFromExercise(workoutComponent, warmupContext)
                     totalStates.addAll(states)
+                    processedExercises.add(workoutComponent)
                 }
                 is Rest -> {
                     val restSet = RestSet(workoutComponent.id, workoutComponent.timeInSeconds)
@@ -2426,7 +2435,19 @@ open class WorkoutViewModel(
 
                 is Superset -> {
                     val superset = workoutComponent
-                    val queues = superset.exercises.map { ex -> mutableListOf(*addStatesFromExercise(ex).toTypedArray()) }
+                    val queues = superset.exercises.mapIndexed { supersetIndex, exercise ->
+                        val priorExercises = if (supersetIndex == 0) {
+                            processedExercises
+                        } else {
+                            processedExercises + superset.exercises.take(supersetIndex)
+                        }
+                        val warmupContext = WarmupContextBuilder.build(
+                            exercise = exercise,
+                            priorExercises = priorExercises,
+                            isSupersetFollowUp = supersetIndex > 0
+                        )
+                        mutableListOf(*addStatesFromExercise(exercise, warmupContext).toTypedArray())
+                    }
                     val out = mutableListOf<WorkoutState>()
 
                     // 1) Alternate WARM-UPS across exercises (keep their intrinsic rest)
@@ -2516,6 +2537,7 @@ open class WorkoutViewModel(
                     while (cleaned.lastOrNull() is WorkoutState.Rest)  cleaned.removeAt(cleaned.lastIndex)
 
                     totalStates.addAll(cleaned)
+                    processedExercises.addAll(superset.exercises)
                 }
             }
         }
@@ -2576,7 +2598,10 @@ open class WorkoutViewModel(
         return plateChangeResults
     }
 
-    protected suspend fun addStatesFromExercise(exercise: Exercise) : List<WorkoutState> {
+    protected suspend fun addStatesFromExercise(
+        exercise: Exercise,
+        warmupContext: WarmupContext? = null
+    ) : List<WorkoutState> {
         if (exercise.sets.isEmpty()) return emptyList()
 
         val states = mutableListOf<WorkoutState>()
@@ -2667,14 +2692,16 @@ open class WorkoutViewModel(
                     workReps = workReps,
                     barbell = equipment,
                     initialSetup = emptyList(),
-                    maxWarmups = 4
+                    maxWarmups = 4,
+                    context = warmupContext
                 )
             } else {
                 WarmupPlanner.buildWarmupSets(
                     availableTotals = availableTotals,
                     workWeight = workWeightTotal,
                     workReps = workReps,
-                    maxWarmups = 4
+                    maxWarmups = 4,
+                    context = warmupContext
                 )
             }
 

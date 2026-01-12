@@ -4,8 +4,64 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.min
+
+data class WarmupContext(
+    val isFirstExerciseInWorkout: Boolean,
+    val muscleOverlapRatio: Double,
+    val previousExerciseSameEquipment: Boolean,
+    val isSupersetFollowUp: Boolean,
+)
 
 object WarmupPlanner {
+    private data class WarmupProfile(
+        val targetFractions: List<Double>,
+        val repFractions: List<Double>,
+        val capTotalWarmupReps: Int,
+    )
+
+    private fun resolveWarmupProfile(
+        workReps: Int,
+        maxWarmups: Int,
+        capTotalWarmupReps: Int,
+        context: WarmupContext?
+    ): WarmupProfile {
+        val baseCount = when {
+            workReps <= 5 -> 4
+            workReps <= 8 -> 3
+            workReps <= 12 -> 3
+            else -> 2
+        }
+
+        var count = baseCount.coerceAtMost(maxWarmups)
+        if (context != null) {
+            if (context.isFirstExerciseInWorkout) count += 1
+            if (context.muscleOverlapRatio <= 0.2) count += 1
+            if (context.muscleOverlapRatio >= 0.6) count -= 1
+            if (context.previousExerciseSameEquipment) count -= 1
+            if (context.isSupersetFollowUp) count -= 1
+        }
+        count = count.coerceIn(2, maxWarmups)
+
+        return when (count) {
+            4 -> WarmupProfile(
+                targetFractions = listOf(0.0, 0.50, 0.75, 0.90),
+                repFractions = listOf(0.66, 0.50, 0.33, 0.25),
+                capTotalWarmupReps = min(25, capTotalWarmupReps)
+            )
+            3 -> WarmupProfile(
+                targetFractions = listOf(0.0, 0.60, 0.80),
+                repFractions = listOf(0.66, 0.50, 0.33),
+                capTotalWarmupReps = min(20, capTotalWarmupReps)
+            )
+            else -> WarmupProfile(
+                targetFractions = listOf(0.0, 0.70),
+                repFractions = listOf(0.50, 0.33),
+                capTotalWarmupReps = min(16, capTotalWarmupReps)
+            )
+        }
+    }
+
     /**
      * Gap-based warm-up planner (device-agnostic) with optional barbell-style convenience filtering.
      *
@@ -32,6 +88,7 @@ object WarmupPlanner {
         baseAnchorTotal: Double? = null,
         convenienceStepKgTotal: Double? = null,
         capTotalWarmupReps: Int = 25,
+        context: WarmupContext? = null,
     ): List<Pair<Double, Int>> {
         if (availableTotals.isEmpty()) return emptyList()
 
@@ -56,9 +113,21 @@ object WarmupPlanner {
         val minVal = choices.first()
         val gap = (workWeight - minVal).coerceAtLeast(0.0)
 
-        val baseFractions = mutableListOf(0.0, 0.50, 0.75, 0.90)
+        val profile = if (context != null) {
+            resolveWarmupProfile(
+                workReps = workReps,
+                maxWarmups = maxWarmups,
+                capTotalWarmupReps = capTotalWarmupReps,
+                context = context
+            )
+        } else {
+            null
+        }
 
-        val targets = baseFractions
+        val baseFractions = listOf(0.0, 0.50, 0.75, 0.90)
+        val targetFractions = profile?.targetFractions ?: baseFractions
+
+        val targets = targetFractions
             .map { f -> minVal + gap * f }
             .map { t -> floorToChoice(choices, t) ?: minVal }
             .filter { it < workWeight }
@@ -66,11 +135,11 @@ object WarmupPlanner {
 
         if (targets.isEmpty()) return emptyList()
 
-        val selected = targets.takeLast(maxWarmups)
+        val selected = if (profile == null) targets.takeLast(maxWarmups) else targets
 
-        val repFractions = listOf(0.66, 0.50, 0.33, 0.25)
+        val repFractions = profile?.repFractions ?: listOf(0.66, 0.50, 0.33, 0.25)
         fun repsFor(i: Int): Int {
-            val f = repFractions.getOrElse(i) { 0.25 }
+            val f = repFractions.getOrElse(i) { repFractions.last() }
             return max(2, ceil(workReps * f).toInt())
         }
 
@@ -78,8 +147,9 @@ object WarmupPlanner {
 
         // Soft cap total warm-up reps by trimming earlier sets first (not below 2 reps)
         var sum = warmups.sumOf { it.second }
+        val totalRepCap = profile?.capTotalWarmupReps ?: capTotalWarmupReps
         var k = 0
-        while (sum > capTotalWarmupReps && k < warmups.size) {
+        while (sum > totalRepCap && k < warmups.size) {
             val (w, r) = warmups[k]
             val newR = max(2, r - 1)
             if (newR < r) {
@@ -139,7 +209,8 @@ object WarmupPlanner {
         maxWarmups: Int = 3,
         capTotalWarmupReps: Int = 25,
         baseAnchorTotal: Double? = null,
-        convenienceStepKgTotal: Double? = null
+        convenienceStepKgTotal: Double? = null,
+        context: WarmupContext? = null,
     ): List<Pair<Double, Int>> {
         // First, get initial warm-up targets based on work weight percentages
         val initialWarmups = buildWarmupSets(
@@ -149,7 +220,8 @@ object WarmupPlanner {
             maxWarmups = maxWarmups,
             capTotalWarmupReps = capTotalWarmupReps,
             baseAnchorTotal = baseAnchorTotal,
-            convenienceStepKgTotal = convenienceStepKgTotal
+            convenienceStepKgTotal = convenienceStepKgTotal,
+            context = context,
         )
 
         // If no warm-ups were generated, return empty list

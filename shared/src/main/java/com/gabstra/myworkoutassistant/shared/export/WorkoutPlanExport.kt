@@ -26,6 +26,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
+import com.gabstra.myworkoutassistant.shared.utils.WarmupContextBuilder
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import kotlin.math.roundToInt
 
@@ -189,15 +191,30 @@ private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, inde
     if (workout.workoutComponents.isEmpty()) {
         markdown.append("No components configured.\n\n")
     } else {
+        val processedExercises = mutableListOf<Exercise>()
+
         workout.workoutComponents.forEachIndexed { componentIndex, component ->
             when (component) {
                 is Exercise -> {
-                    appendExerciseDetails(markdown, component, componentIndex + 1, workoutStore)
+                    val warmupContext = WarmupContextBuilder.build(
+                        exercise = component,
+                        priorExercises = processedExercises,
+                        isSupersetFollowUp = false
+                    )
+                    appendExerciseDetails(
+                        markdown,
+                        component,
+                        componentIndex + 1,
+                        workoutStore,
+                        warmupContext
+                    )
+                    processedExercises.add(component)
                 }
                 is Superset -> {
                     val hasRestAfter = componentIndex + 1 < workout.workoutComponents.size && 
                                       workout.workoutComponents[componentIndex + 1] is com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
                     appendSupersetDetails(markdown, component, componentIndex + 1, workoutStore, hasRestAfter)
+                    processedExercises.addAll(component.exercises)
                 }
                 is Rest -> {
                     markdown.append("${componentIndex + 1}. **Rest**: ${component.timeInSeconds} seconds\n\n")
@@ -207,7 +224,13 @@ private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, inde
     }
 }
 
-private fun appendExerciseDetails(markdown: StringBuilder, exercise: Exercise, index: Int, workoutStore: WorkoutStore) {
+private fun appendExerciseDetails(
+    markdown: StringBuilder,
+    exercise: Exercise,
+    index: Int,
+    workoutStore: WorkoutStore,
+    warmupContext: WarmupContext?
+) {
     markdown.append("${index}. **${exercise.name}**\n\n")
     
     markdown.append("  - **Type**: ${exercise.exerciseType.name}\n")
@@ -257,14 +280,16 @@ private fun appendExerciseDetails(markdown: StringBuilder, exercise: Exercise, i
                             workReps = workReps,
                             barbell = equipment,
                             initialSetup = emptyList(),
-                            maxWarmups = 4
+                            maxWarmups = 4,
+                            context = warmupContext
                         )
                     } else {
                         WarmupPlanner.buildWarmupSets(
                             availableTotals = availableTotals,
                             workWeight = workWeight,
                             workReps = workReps,
-                            maxWarmups = 4
+                            maxWarmups = 4,
+                            context = warmupContext
                         )
                     }
                     
@@ -445,4 +470,3 @@ private fun EquipmentType.toDisplayText(): String {
         EquipmentType.ACCESSORY -> "Accessory"
     }
 }
-
