@@ -27,6 +27,9 @@ import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
+import com.gabstra.myworkoutassistant.composables.HrStatusBadge
+import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
+import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
@@ -63,6 +66,7 @@ fun WorkoutScreen(
     onDismissRestScreenTutorial: () -> Unit,
 ){
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
+    var hrStatus by remember { mutableStateOf<HeartRateStatus?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val screenState by viewModel.screenState.collectAsState()
@@ -101,7 +105,8 @@ fun WorkoutScreen(
                 polarViewModel,
                 userAge,
                 lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent
+                upperBoundMaxHRPercent,
+                onHrStatusChange = { status -> hrStatus = status }
             )
         }else{
             HeartRateStandard(
@@ -112,7 +117,8 @@ fun WorkoutScreen(
                 hrViewModel,
                 userAge,
                 lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent
+                upperBoundMaxHRPercent,
+                onHrStatusChange = { status -> hrStatus = status }
             )
         }
     }
@@ -438,5 +444,9 @@ fun WorkoutScreen(
         
         // Sync status badge (non-blocking)
         SyncStatusBadge(viewModel = viewModel)
+        
+        // HR target indicators (non-blocking)
+        HrTargetGlowEffect(isVisible = hrStatus != null)
+        HrStatusBadge(hrStatus = hrStatus)
     }
 }

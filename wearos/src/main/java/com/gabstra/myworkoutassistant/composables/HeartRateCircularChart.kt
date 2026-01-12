@@ -2,6 +2,11 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,11 +20,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -40,11 +47,16 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -53,11 +65,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -98,95 +109,123 @@ enum class HeartRateStatus {
 }
 
 @Composable
-fun HrStatusDialog(
-    show: Boolean,
-    hr: Int,
-    heartRateStatus: HeartRateStatus,
-    targetRange: IntRange,
-    currentZone: Int,
-    colorsByZone: Array<Color>
+fun HrTargetGlowEffect(
+    isVisible: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    AnimatedVisibility(
-        visible = show,
-        enter = fadeIn(animationSpec = tween(500)),
-        exit = fadeOut(animationSpec = tween(500))
-    ) {
-        Dialog(
-            onDismissRequest = { },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+    val density = LocalDensity.current
+    val infiniteTransition = rememberInfiniteTransition(label = "glow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, delayMillis = 0),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    val visibilityAlpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "visibilityAlpha"
+    )
+
+    if (isVisible || visibilityAlpha > 0f) {
+        BoxWithConstraints(
+            modifier = modifier
+                .fillMaxSize()
         ) {
-            Box(
+            val diameter = min(maxWidth, maxHeight)
+            val radiusPx = with(density) { (diameter / 2f).toPx() }
+            val center = Offset(radiusPx, radiusPx)
+            val glowWidth = with(density) { 8.dp.toPx() }
+
+            Canvas(
                 modifier = Modifier
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
                     .fillMaxSize()
-                    .padding(20.dp),
-                contentAlignment = Alignment.Center
+                    .alpha(visibilityAlpha)
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-
-                    val message = when (heartRateStatus) {
-                        HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
-                        HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
-                        HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
-                    }
-
-                    val icon = when (heartRateStatus) {
-                        HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
-                        HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
-                        HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
-                    }
-
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = "HR Status",
-                        modifier = Modifier.size(50.dp),
-                        tint = Red
-                    )
-                    Text(
-                        text = message,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-
-                    Text(
-                        text = "(${targetRange.first}-${targetRange.last})",
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-
-                    Row(
-                        modifier = Modifier.padding(top = 5.dp),
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        PulsingHeartWithBpm(
-                            modifier = Modifier.padding(bottom = 7.5.dp),
-                            bpm = hr,
-                            tint = if (hr == 0 || currentZone < 0 || currentZone >= colorsByZone.size) MediumDarkGray else colorsByZone[currentZone],
-                            size = 25.dp
+                if (isVisible) {
+                    // Draw circular glow border
+                    drawCircle(
+                        color = Red.copy(alpha = glowAlpha * visibilityAlpha),
+                        radius = radiusPx - glowWidth / 2,
+                        center = center,
+                        style = Stroke(
+                            width = glowWidth,
+                            cap = StrokeCap.Round
                         )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            modifier = Modifier.alignByBaseline(),
-                            text = "$hr",
-                            style = MaterialTheme.typography.numeralSmall,
-                            color = if (hr == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            modifier = Modifier.alignByBaseline(),
-                            text = "bpm",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (hr == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
-                        )
-                    }
+                    )
                 }
             }
         }
     }
 }
+
+@Composable
+fun HrStatusBadge(
+    hrStatus: HeartRateStatus?,
+    modifier: Modifier = Modifier
+) {
+    // Animate visibility
+    val alpha by animateFloatAsState(
+        targetValue = if (hrStatus != null) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "hrBadgeAlpha"
+    )
+
+    if (hrStatus != null) {
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .alpha(alpha)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            val message = when (hrStatus) {
+                HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
+                HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+                HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
+            }
+
+            val icon = when (hrStatus) {
+                HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
+                HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
+                HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
+            }
+
+            Box(
+                modifier = Modifier
+                    .background(
+                        color = Red,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = "HR Status",
+                        modifier = Modifier.size(16.dp),
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun HeartRateCircularChart(
@@ -198,6 +237,7 @@ fun HeartRateCircularChart(
     age: Int,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
     val scope = rememberCoroutineScope()
@@ -211,20 +251,7 @@ fun HeartRateCircularChart(
 
     val alertCooldown = 1000L
 
-    var showHrStatusDialog by remember { mutableStateOf(false) }
-    var hrStatus by remember { mutableStateOf(HeartRateStatus.LOWER_THAN_TARGET) }
-
-    LaunchedEffect(Unit) {
-        snapshotFlow { showHrStatusDialog }
-            .drop(1)
-            .collect { isDialogShown ->
-                if (isDialogShown) {
-                    appViewModel.setDimming(false)
-                } else {
-                    appViewModel.reEvaluateDimmingForCurrentState()
-                }
-            }
-    }
+    var hrStatus by remember { mutableStateOf<HeartRateStatus?>(null) }
 
     fun startAlertJob() {
         alertJob = scope.launch {
@@ -252,8 +279,8 @@ fun HeartRateCircularChart(
             if (mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
                 if (alarmJob?.isActive == true) {
                     alarmJob?.cancel()
-                    appViewModel.reEvaluateDimmingForCurrentState()
-                    showHrStatusDialog = false
+                    hrStatus = null
+                    onHrStatusChange?.invoke(null)
                 }
 
                 if (zoneTrackingJob?.isActive == true || reachedTargetOnce) {
@@ -274,13 +301,13 @@ fun HeartRateCircularChart(
                 alarmJob = scope.launch {
                     delay(5000)
 
-                    if (mhrPercentage < lowerBoundMaxHRPercent) {
-                        hrStatus = HeartRateStatus.LOWER_THAN_TARGET
+                    val newStatus = if (mhrPercentage < lowerBoundMaxHRPercent) {
+                        HeartRateStatus.LOWER_THAN_TARGET
                     } else {
-                        hrStatus = HeartRateStatus.HIGHER_THAN_TARGET
+                        HeartRateStatus.HIGHER_THAN_TARGET
                     }
-
-                    showHrStatusDialog = true
+                    hrStatus = newStatus
+                    onHrStatusChange?.invoke(newStatus)
 
                     while (isActive) {
                         hapticsViewModel.doHardVibrationTwiceWithBeep()
@@ -294,18 +321,22 @@ fun HeartRateCircularChart(
             }
         }
 
-        HrStatusDialog(showHrStatusDialog, hr, hrStatus, targetRange, currentZone, colorsByZone)
+        // Update callback when status changes
+        LaunchedEffect(hrStatus) {
+            onHrStatusChange?.invoke(hrStatus)
+        }
     }
 
     LaunchedEffect(mhrPercentage) {
         if (mhrPercentage > 100 && alertJob?.isActive == false) {
             startAlertJob()
             hrStatus = HeartRateStatus.OUT_OF_MAX
-            showHrStatusDialog = true
+            onHrStatusChange?.invoke(HeartRateStatus.OUT_OF_MAX)
             zoneTrackingJob?.cancel()
             alarmJob?.cancel()
-        } else if (alertJob?.isActive == true) {
-            showHrStatusDialog = false
+        } else if (alertJob?.isActive == true && mhrPercentage <= 100) {
+            hrStatus = null
+            onHrStatusChange?.invoke(null)
             appViewModel.lightScreenUp()
             alertJob?.cancel()
         }
@@ -898,6 +929,7 @@ fun HeartRateStandard(
     userAge: Int,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
     val hr = currentHeartRate ?: 0
@@ -918,7 +950,8 @@ fun HeartRateStandard(
         hr = hr,
         age = userAge,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-        upperBoundMaxHRPercent = upperBoundMaxHRPercent
+        upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+        onHrStatusChange = onHrStatusChange
     )
 }
 
@@ -932,6 +965,7 @@ fun HeartRatePolar(
     userAge: Int,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val hrData by polarViewModel.hrBpm.collectAsState()
     val hr = hrData ?: 0
@@ -952,7 +986,8 @@ fun HeartRatePolar(
         hr = hr,
         age = userAge,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-        upperBoundMaxHRPercent = upperBoundMaxHRPercent
+        upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+        onHrStatusChange = onHrStatusChange
     )
 }
 
