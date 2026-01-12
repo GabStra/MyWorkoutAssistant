@@ -452,9 +452,19 @@ fun ExerciseScreen(
                                                         is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                                         else -> false
                                                     }
+                                                val isCalibrationSet =
+                                                    when (val set = updatedState.set) {
+                                                        is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                                                        is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                                                        else -> false
+                                                    }
                                                 if (isWarmupSet) {
                                                     sep()
                                                     append("Warm-up")
+                                                }
+                                                if (isCalibrationSet) {
+                                                    sep()
+                                                    append("Calibration")
                                                 }
                                             }
 

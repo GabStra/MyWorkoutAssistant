@@ -34,6 +34,7 @@ data class Exercise (
     val muscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     val secondaryMuscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     val requiredAccessoryEquipmentIds: List<UUID>? = null,
+    val requiresLoadCalibration: Boolean = false,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -65,6 +66,7 @@ data class Exercise (
         result = 31 * result + (muscleGroups?.hashCode() ?: 0)
         result = 31 * result + (secondaryMuscleGroups?.hashCode() ?: 0)
         result = 31 * result + (requiredAccessoryEquipmentIds?.hashCode() ?: 0)
+        result = 31 * result + requiresLoadCalibration.hashCode()
         return result
     }
     
@@ -98,6 +100,7 @@ data class Exercise (
         if (muscleGroups != other.muscleGroups) return false
         if (secondaryMuscleGroups != other.secondaryMuscleGroups) return false
         if ((requiredAccessoryEquipmentIds ?: emptyList<UUID>()) != (other.requiredAccessoryEquipmentIds ?: emptyList<UUID>())) return false
+        if (requiresLoadCalibration != other.requiresLoadCalibration) return false
         
         return true
     }

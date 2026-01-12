@@ -13,6 +13,13 @@ enum class ProgressionState {
     DELOAD, RETRY, PROGRESS, FAILED
 }
 
+enum class CalibrationStep {
+    LoadSelection,
+    LoadConfirmation,
+    SetExecution,
+    RIRRating
+}
+
 sealed class WorkoutState {
     data class Preparing(
         val dataLoaded: Boolean
@@ -38,6 +45,7 @@ sealed class WorkoutState {
         val isUnilateral: Boolean = false,
         val intraSetTotal : UInt? = null,
         var intraSetCounter : UInt = 0u,
+        val calibrationStep: CalibrationStep? = null,
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
     }

@@ -1027,11 +1027,11 @@ open class WorkoutViewModel(
             // Convert SetHistories to SimpleSet objects, matching ProgressionSection logic
             val executedSets = setHistories
                 .filter { setHistory ->
-                    // Filter out RestPauseSet sets
+                    // Filter out RestPauseSet and CalibrationSet sets
                     when(val setData = setHistory.setData){
-                        is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                        is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                        is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                        is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
+                        is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
+                        is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
                         else -> true
                     }
                 }
@@ -1866,9 +1866,9 @@ open class WorkoutViewModel(
                     .dropLastWhile { it.setData is RestSetData }
                     .filter {
                         when (val sd = it.setData) {
-                            is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
-                            is WeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
-                            is RestSetData -> sd.subCategory != SetSubCategory.RestPauseSet
+                            is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
+                            is WeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
+                            is RestSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
                             else -> true
                         }
                     }
@@ -1962,9 +1962,9 @@ open class WorkoutViewModel(
                         .dropLastWhile { it.setData is RestSetData }
                         .filter {
                             when (val sd = it.setData) {
-                                is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet
-                                is WeightSetData     -> sd.subCategory != SetSubCategory.RestPauseSet
-                                is RestSetData       -> sd.subCategory != SetSubCategory.RestPauseSet
+                                is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
+                                is WeightSetData     -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
+                                is RestSetData       -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
                                 else -> true
                             }
                         }
@@ -1989,11 +1989,11 @@ open class WorkoutViewModel(
                     val executedSets = currentSession.mapNotNull { setHistory ->
                         when (val setData = setHistory.setData) {
                             is WeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             is BodyWeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                if (setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             else -> null
@@ -2254,9 +2254,9 @@ open class WorkoutViewModel(
                         .dropLastWhile { it.setData is RestSetData }
                         .filter { it ->
                         when(val setData = it.setData){
-                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
+                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
+                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
+                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
                             else -> true
                         }
                     }
@@ -2316,7 +2316,12 @@ open class WorkoutViewModel(
                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                 else -> false
             }
-            if (exercise.doNotStoreHistory || isWarmupSet) return
+            val isCalibrationSet = when(val set = currentState.set) {
+                is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                else -> false
+            }
+            if (exercise.doNotStoreHistory || isWarmupSet || isCalibrationSet) return
         }
 
         if(currentState is WorkoutState.Rest && currentState.isIntraSetRest) return
@@ -2719,6 +2724,50 @@ open class WorkoutViewModel(
             exerciseAllSets.addAll(exerciseSets)
         }
 
+        // Insert calibration set before first work set if required
+        if (exercise.requiresLoadCalibration && 
+            (exercise.exerciseType == ExerciseType.WEIGHT || 
+             (exercise.exerciseType == ExerciseType.BODY_WEIGHT && equipment != null))) {
+            
+            // Find first work set (not warmup, not rest)
+            val firstWorkSetIndex = exerciseAllSets.indexOfFirst { set ->
+                when (set) {
+                    is RestSet -> false
+                    is BodyWeightSet -> set.subCategory != SetSubCategory.WarmupSet
+                    is WeightSet -> set.subCategory != SetSubCategory.WarmupSet
+                    else -> false
+                }
+            }
+            
+            if (firstWorkSetIndex >= 0) {
+                val firstWorkSet = exerciseAllSets[firstWorkSetIndex]
+                val calibrationSet = when (firstWorkSet) {
+                    is WeightSet -> {
+                        WeightSet(
+                            id = UUID.randomUUID(),
+                            reps = firstWorkSet.reps,
+                            weight = firstWorkSet.weight,
+                            subCategory = SetSubCategory.CalibrationSet
+                        )
+                    }
+                    is BodyWeightSet -> {
+                        BodyWeightSet(
+                            id = UUID.randomUUID(),
+                            reps = firstWorkSet.reps,
+                            additionalWeight = firstWorkSet.additionalWeight,
+                            subCategory = SetSubCategory.CalibrationSet
+                        )
+                    }
+                    else -> null
+                }
+                
+                if (calibrationSet != null) {
+                    // Insert calibration set before first work set
+                    exerciseAllSets.add(firstWorkSetIndex, calibrationSet)
+                }
+            }
+        }
+
         val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)
 
         val weightSets = exerciseAllSets.filterIsInstance<WeightSet>()
@@ -2766,8 +2815,20 @@ open class WorkoutViewModel(
                     is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                     else -> false
                 }
+                
+                val isCalibrationSet = when(set) {
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                    is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                    else -> false
+                }
 
                 val isUnilateral = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds > 0
+                
+                val calibrationStep = if (isCalibrationSet) {
+                    CalibrationStep.LoadSelection
+                } else {
+                    null
+                }
 
                 val setState: WorkoutState.Set = WorkoutState.Set(
                     exercise.id,
@@ -2786,7 +2847,8 @@ open class WorkoutViewModel(
                     progressionState,
                     isWarmupSet,
                     exercise.equipmentId?.let { getEquipmentById(it) },
-                    isUnilateral = isUnilateral
+                    isUnilateral = isUnilateral,
+                    calibrationStep = calibrationStep
                 )
 
 
@@ -2851,6 +2913,180 @@ open class WorkoutViewModel(
         if (machine.isCompleted) return
 
         stateMachine = machine.next()
+        updateStateFlowsFromMachine()
+    }
+
+    fun confirmCalibrationLoad() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        
+        if (currentState.calibrationStep == CalibrationStep.LoadSelection) {
+            // Move from LoadSelection to LoadConfirmation
+            val updatedState = currentState.copy(calibrationStep = CalibrationStep.LoadConfirmation)
+            updateCurrentStateInMachine(updatedState)
+        } else if (currentState.calibrationStep == CalibrationStep.LoadConfirmation) {
+            // Move from LoadConfirmation to SetExecution
+            // Update the set's weight to match the selected weight
+            val currentSetData = currentState.currentSetData
+            val selectedWeight = when (currentSetData) {
+                is WeightSetData -> currentSetData.actualWeight
+                is BodyWeightSetData -> currentSetData.additionalWeight
+                else -> return
+            }
+            
+            val updatedSet = when (val set = currentState.set) {
+                is WeightSet -> set.copy(weight = selectedWeight)
+                is BodyWeightSet -> set.copy(additionalWeight = selectedWeight)
+                else -> return
+            }
+            
+            val updatedState = currentState.copy(
+                set = updatedSet,
+                calibrationStep = CalibrationStep.SetExecution
+            )
+            updateCurrentStateInMachine(updatedState)
+        }
+    }
+    
+    fun goToCalibrationLoadSelection() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        
+        if (currentState.calibrationStep == CalibrationStep.LoadConfirmation) {
+            // Go back to LoadSelection
+            val updatedState = currentState.copy(calibrationStep = CalibrationStep.LoadSelection)
+            updateCurrentStateInMachine(updatedState)
+        }
+    }
+    
+    fun completeCalibrationSet() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        
+        if (currentState.calibrationStep == CalibrationStep.SetExecution) {
+            // Move from SetExecution to RIRRating
+            val updatedState = currentState.copy(calibrationStep = CalibrationStep.RIRRating)
+            updateCurrentStateInMachine(updatedState)
+        }
+    }
+    
+    fun applyCalibrationRIR(rir: Double, formBreaks: Boolean = false) {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        
+        if (currentState.calibrationStep != CalibrationStep.RIRRating) return
+        
+        viewModelScope.launch(dispatchers.io) {
+            // Store RIR in calibration set's SetData
+            val currentSetData = currentState.currentSetData
+            val updatedSetData = when (currentSetData) {
+                is WeightSetData -> currentSetData.copy(calibrationRIR = rir)
+                is BodyWeightSetData -> currentSetData.copy(calibrationRIR = rir)
+                else -> currentSetData
+            }
+            currentState.currentSetData = updatedSetData
+            
+            // Get calibration weight
+            val calibrationWeight = when (currentSetData) {
+                is WeightSetData -> currentSetData.actualWeight
+                is BodyWeightSetData -> currentSetData.additionalWeight
+                else -> 0.0
+            }
+            
+            // Calculate adjusted weight
+            val adjustedWeight = com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+                .applyCalibrationAdjustment(calibrationWeight, rir, formBreaks)
+            
+            // Find all remaining work sets in the exercise
+            val exercise = exercisesById[currentState.exerciseId] ?: return@launch
+            val equipment = currentState.equipment
+            val availableWeights = getWeightByEquipment(equipment)
+            
+            // Find calibration set index
+            val calibrationSetIndex = exercise.sets.indexOfFirst { set ->
+                when (set) {
+                    is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet && set.id == currentState.set.id
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet && set.id == currentState.set.id
+                    else -> false
+                }
+            }
+            
+            if (calibrationSetIndex >= 0) {
+                // Update all remaining work sets (after calibration set)
+                val updatedSets = exercise.sets.toMutableList()
+                val setUpdates = mutableMapOf<UUID, Set>() // Track which sets were updated
+                
+                for (i in (calibrationSetIndex + 1) until exercise.sets.size) {
+                    val set = exercise.sets[i]
+                    when {
+                        set is RestSet -> continue
+                        set is WeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+                            // Round to nearest available weight
+                            val roundedWeight = if (availableWeights.isNotEmpty()) {
+                                availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
+                            } else {
+                                adjustedWeight
+                            }
+                            val updatedSet = set.copy(weight = roundedWeight)
+                            updatedSets[i] = updatedSet
+                            setUpdates[set.id] = updatedSet
+                        }
+                        set is BodyWeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+                            // For body weight, adjust additionalWeight
+                            val roundedWeight = if (availableWeights.isNotEmpty()) {
+                                availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
+                            } else {
+                                adjustedWeight
+                            }
+                            val updatedSet = set.copy(additionalWeight = roundedWeight)
+                            updatedSets[i] = updatedSet
+                            setUpdates[set.id] = updatedSet
+                        }
+                    }
+                }
+                
+                // Update exercise with adjusted sets
+                val updatedExercise = exercise.copy(sets = updatedSets)
+                updateWorkout(exercise, updatedExercise)
+                
+                // Update states in state machine to reflect new set weights
+                withContext(dispatchers.main) {
+                    val machine = stateMachine ?: return@withContext
+                    val updatedStates = machine.allStates.map { state ->
+                        if (state is WorkoutState.Set && state.exerciseId == currentState.exerciseId) {
+                            val updatedSet = setUpdates[state.set.id]
+                            if (updatedSet != null) {
+                                state.copy(set = updatedSet)
+                            } else {
+                                state
+                            }
+                        } else {
+                            state
+                        }
+                    }.toMutableList()
+                    
+                    stateMachine = WorkoutStateMachine(updatedStates, machine.currentIndex) { LocalDateTime.now() }
+                    updateStateFlowsFromMachine()
+                }
+            }
+            
+            // Move to next state (first work set)
+            withContext(dispatchers.main) {
+                goToNextState()
+            }
+        }
+    }
+    
+    private fun updateCurrentStateInMachine(updatedState: WorkoutState) {
+        val machine = stateMachine ?: return
+        val currentIndex = machine.currentIndex
+        
+        if (currentIndex < 0 || currentIndex >= machine.allStates.size) return
+        
+        val updatedStates = machine.allStates.toMutableList()
+        updatedStates[currentIndex] = updatedState
+        
+        stateMachine = WorkoutStateMachine(updatedStates, currentIndex) { LocalDateTime.now() }
         updateStateFlowsFromMachine()
     }
 

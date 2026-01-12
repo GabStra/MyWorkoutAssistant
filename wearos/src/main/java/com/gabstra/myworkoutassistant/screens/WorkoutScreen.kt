@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -203,6 +204,9 @@ fun WorkoutScreen(
                 is WorkoutState.Set -> {
                     val setState = workoutState as WorkoutState.Set
                     
+                    // Check if this is a calibration set in SetExecution step
+                    val isCalibrationSetExecution = setState.calibrationStep == CalibrationStep.SetExecution
+                    
                     // Handle intra-set counter if applicable
                     if (setState.intraSetTotal != null) {
                         setState.intraSetCounter++
@@ -210,10 +214,17 @@ fun WorkoutScreen(
                     
                     hapticsViewModel.doGentleVibration()
                     viewModel.storeSetData()
-                    val isDone = viewModel.isNextStateCompleted()
-                    viewModel.pushAndStoreWorkoutData(isDone, context) {
-                        viewModel.goToNextState()
+                    
+                    if (isCalibrationSetExecution) {
+                        // Move to RIR rating step instead of going to next state
+                        viewModel.completeCalibrationSet()
                         viewModel.lightScreenUp()
+                    } else {
+                        val isDone = viewModel.isNextStateCompleted()
+                        viewModel.pushAndStoreWorkoutData(isDone, context) {
+                            viewModel.goToNextState()
+                            viewModel.lightScreenUp()
+                        }
                     }
                 }
                 is WorkoutState.Rest -> {

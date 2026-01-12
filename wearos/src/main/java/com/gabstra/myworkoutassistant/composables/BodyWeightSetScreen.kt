@@ -46,6 +46,8 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -72,6 +74,18 @@ fun BodyWeightSetScreen(
 
     val previousSetData = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+
+    val exercise = remember(state.exerciseId) {
+        viewModel.exercisesById[state.exerciseId]!!
+    }
+    
+    val isCalibrationSet = remember(state.set) {
+        (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.CalibrationSet
+    }
+    val calibrationStep = state.calibrationStep
+    
+    // Only show calibration flow if equipment is present
+    val shouldShowCalibration = isCalibrationSet && state.equipment != null
 
     val plateauReason = remember(state.exerciseId) {
         viewModel.plateauReasonByExerciseId[state.exerciseId]
@@ -435,6 +449,72 @@ fun BodyWeightSetScreen(
         }
     }
 
+    // Handle calibration flow steps (only if equipment is present)
+    if (shouldShowCalibration && calibrationStep != null) {
+        when (calibrationStep) {
+            CalibrationStep.LoadSelection -> {
+                customComponentWrapper {
+                    CalibrationLoadSelectionScreen(
+                        viewModel = viewModel,
+                        hapticsViewModel = hapticsViewModel,
+                        state = state,
+                        equipment = state.equipment,
+                        onWeightSelected = { selectedWeight ->
+                            // Update set data with selected weight (additionalWeight for body weight)
+                            val newSetData = currentSetData.copy(additionalWeight = selectedWeight)
+                            currentSetData = newSetData.copy(volume = newSetData.calculateVolume())
+                            state.currentSetData = currentSetData
+                            // Move to confirmation step
+                            viewModel.confirmCalibrationLoad()
+                        },
+                        modifier = modifier
+                    )
+                }
+                return
+            }
+            CalibrationStep.LoadConfirmation -> {
+                customComponentWrapper {
+                    CalibrationLoadConfirmationScreen(
+                        selectedWeight = currentSetData.additionalWeight,
+                        equipment = state.equipment,
+                        isBodyWeight = true,
+                        onConfirm = {
+                            // Move to set execution
+                            viewModel.confirmCalibrationLoad()
+                        },
+                        onChange = {
+                            // Go back to load selection
+                            viewModel.goToCalibrationLoadSelection()
+                        },
+                        hapticsViewModel = hapticsViewModel,
+                        modifier = modifier
+                    )
+                }
+                return
+            }
+            CalibrationStep.SetExecution -> {
+                // Show normal set screen - continue to normal flow below
+            }
+            CalibrationStep.RIRRating -> {
+                customComponentWrapper {
+                    CalibrationRIRScreen(
+                        initialRIR = currentSetData.calibrationRIR?.toInt() ?: 2,
+                        onRIRConfirmed = { rir, formBreaks ->
+                            // Store RIR and apply adjustments
+                            val newSetData = currentSetData.copy(calibrationRIR = rir)
+                            currentSetData = newSetData
+                            state.currentSetData = currentSetData
+                            viewModel.applyCalibrationRIR(rir, formBreaks)
+                        },
+                        hapticsViewModel = hapticsViewModel,
+                        modifier = modifier
+                    )
+                }
+                return
+            }
+        }
+    }
+
     customComponentWrapper {
         Box(
             modifier = modifier.semantics {
@@ -455,6 +535,21 @@ fun BodyWeightSetScreen(
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
+                    }
+                    if (shouldShowCalibration && calibrationStep != null) {
+                        val stepText = when (calibrationStep) {
+                            CalibrationStep.LoadSelection -> "Step 1/4: Select Load"
+                            CalibrationStep.LoadConfirmation -> "Step 2/4: Confirm Load"
+                            CalibrationStep.SetExecution -> "Step 3/4: Complete Set"
+                            CalibrationStep.RIRRating -> "Step 4/4: Rate RIR"
+                        }
+                        Text(
+                            text = stepText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                     if (isPlateauDetected) {
                         Row(

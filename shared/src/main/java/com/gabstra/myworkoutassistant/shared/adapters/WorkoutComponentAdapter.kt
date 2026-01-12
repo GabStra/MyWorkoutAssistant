@@ -269,6 +269,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     emptyList<UUID>()
                 }
 
+                val requiresLoadCalibration = if (jsonObject.has("requiresLoadCalibration")) {
+                    jsonObject.get("requiresLoadCalibration").asBoolean
+                } else {
+                    false
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -295,7 +301,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     loadJumpOvercapUntil,
                     muscleGroups,
                     secondaryMuscleGroups,
-                    requiredAccessoryEquipmentIds
+                    requiredAccessoryEquipmentIds,
+                    requiresLoadCalibration
                 )
             }
 
