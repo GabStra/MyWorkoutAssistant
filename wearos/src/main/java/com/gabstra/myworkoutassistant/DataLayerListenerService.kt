@@ -30,6 +30,7 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import com.google.android.gms.wearable.NodeClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
@@ -198,6 +199,168 @@ class DataLayerListenerService : WearableListenerService() {
         workoutScheduleDao = db.workoutScheduleDao()
         workoutRecordDao = db.workoutRecordDao()
         exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+        
+        // Detect service restart and handle incomplete syncs
+        detectAndHandleServiceRestart()
+    }
+    
+    /**
+     * Detects if the service was restarted during an active sync and handles incomplete syncs.
+     * Attempts auto-healing by sending missing chunks error to phone for retry.
+     */
+    private fun detectAndHandleServiceRestart() {
+        val lastServiceStartTime = sharedPreferences.getLong("last_service_start_time", 0L)
+        val currentTime = System.currentTimeMillis()
+        val serviceRestartThreshold = 5000L // 5 seconds - if last start was more than 5 seconds ago, likely a restart
+        
+        // Check if there's an incomplete sync
+        val hasIncompleteSync = hasStartedSync && currentTransactionId != null
+        
+        if (hasIncompleteSync && (currentTime - lastServiceStartTime > serviceRestartThreshold)) {
+            val transactionId = currentTransactionId
+            Log.w(
+                "DataLayerSync",
+                "Detected service restart during active sync. Transaction: $transactionId. Attempting auto-heal."
+            )
+            
+            // Attempt auto-healing by sending missing chunks error to phone
+            scope.launch(Dispatchers.IO) {
+                try {
+                    // Check connection before attempting recovery
+                    val isConnected = checkConnectionDuringSync(transactionId)
+                    if (!isConnected) {
+                        Log.w(
+                            "DataLayerSync",
+                            "Connection lost during service restart recovery for transaction: $transactionId. Cleaning up."
+                        )
+                        // Connection lost - clean up immediately
+                        cleanupIncompleteSyncState()
+                        return@launch
+                    }
+                    
+                    // Calculate missing chunks
+                    val missingIndices = (0 until expectedChunks).filter { it !in receivedChunkIndices }
+                    
+                    if (missingIndices.isEmpty() && receivedChunkIndices.size == expectedChunks) {
+                        // All chunks received but processing may have failed - different error
+                        Log.w(
+                            "DataLayerSync",
+                            "All chunks received but sync incomplete for transaction: $transactionId. May have failed during processing."
+                        )
+                        // Send generic error to trigger phone retry
+                        sendSyncErrorForRecovery(
+                            transactionId ?: return@launch,
+                            "SYNC_INCOMPLETE: All chunks received but sync did not complete. Transaction: $transactionId"
+                        )
+                    } else if (missingIndices.isNotEmpty()) {
+                        // Missing chunks - send error to trigger phone retry
+                        Log.d(
+                            "DataLayerSync",
+                            "Attempting auto-heal for transaction: $transactionId. Missing ${missingIndices.size} chunks: $missingIndices"
+                        )
+                        sendMissingChunksError(transactionId ?: return@launch, missingIndices, expectedChunks, receivedChunkIndices.size)
+                    } else {
+                        // No chunks received yet - request full retry
+                        Log.d(
+                            "DataLayerSync",
+                            "No chunks received yet for transaction: $transactionId. Requesting full retry."
+                        )
+                        sendSyncErrorForRecovery(
+                            transactionId ?: return@launch,
+                            "MISSING_CHUNKS: Expected $expectedChunks chunks, received 0. Missing indices: ${(0 until expectedChunks).toList()}"
+                        )
+                    }
+                    
+                    // Keep state to allow phone retry - don't clean up yet
+                    // State will be cleaned up when:
+                    // 1. Phone retries successfully (normal completion)
+                    // 2. New sync starts with different transaction ID (handled in onDataChanged)
+                    // 3. Connection is lost (handled above)
+                } catch (e: Exception) {
+                    Log.e(
+                        "DataLayerSync",
+                        "Error during auto-heal recovery for transaction: $transactionId",
+                        e
+                    )
+                    // If recovery attempt fails, clean up
+                    cleanupIncompleteSyncState()
+                }
+            }
+        }
+        
+        // Update last service start time
+        sharedPreferences.edit().putLong("last_service_start_time", currentTime).apply()
+    }
+    
+    /**
+     * Cleans up incomplete sync state and notifies UI.
+     */
+    private fun cleanupIncompleteSyncState() {
+        removeTimeout()
+        backupChunks = mutableMapOf()
+        receivedChunkIndices = mutableSetOf()
+        expectedChunks = 0
+        hasStartedSync = false
+        ignoreUntilStartOrEnd = false
+        currentTransactionId = null
+        
+        // Notify UI that sync was interrupted
+        val intent = Intent(INTENT_ID).apply {
+            putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+    
+    /**
+     * Sends SYNC_ERROR with missing chunks information to trigger phone retry.
+     */
+    private suspend fun sendMissingChunksError(
+        transactionId: String,
+        missingIndices: List<Int>,
+        expectedChunks: Int,
+        receivedChunks: Int
+    ) {
+        val errorMessage = "MISSING_CHUNKS: Expected $expectedChunks chunks, received $receivedChunks. Missing indices: $missingIndices"
+        sendSyncErrorForRecovery(transactionId, errorMessage)
+    }
+    
+    /**
+     * Sends SYNC_ERROR message to phone for recovery attempt.
+     */
+    private suspend fun sendSyncErrorForRecovery(transactionId: String, errorMessage: String) {
+        try {
+            Log.d(
+                "DataLayerSync",
+                "Sending SYNC_ERROR for auto-heal recovery. Transaction: $transactionId, Error: $errorMessage"
+            )
+            val errorPath = DataLayerPaths.buildPath(
+                DataLayerPaths.SYNC_ERROR_PREFIX,
+                transactionId
+            )
+            val errorDataMapRequest = PutDataMapRequest.create(errorPath)
+            errorDataMapRequest.dataMap.putString("transactionId", transactionId)
+            errorDataMapRequest.dataMap.putString("errorMessage", errorMessage)
+            errorDataMapRequest.dataMap.putString(
+                "timestamp",
+                System.currentTimeMillis().toString()
+            )
+
+            val errorRequest = errorDataMapRequest.asPutDataRequest().setUrgent()
+            val task = dataClient.putDataItem(errorRequest)
+            Tasks.await(task)
+            Log.d(
+                "DataLayerSync",
+                "Successfully sent SYNC_ERROR for auto-heal recovery. Transaction: $transactionId"
+            )
+        } catch (e: Exception) {
+            Log.e(
+                "DataLayerSync",
+                "Failed to send SYNC_ERROR for auto-heal recovery. Transaction: $transactionId",
+                e
+            )
+            throw e
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -225,15 +388,53 @@ class DataLayerListenerService : WearableListenerService() {
         ignoreUntilStartOrEnd = true
     }
 
-    private fun postTimeout() {
+    private fun postTimeout(chunksCount: Int = expectedChunks) {
         timeoutOperationCancelled = false // Reset flag before posting
-        handler.postDelayed(timeoutRunnable, 30000)
+        // Use dynamic timeout calculation based on chunk count
+        val timeoutMs = if (chunksCount > 0) {
+            calculateCompletionTimeout(chunksCount)
+        } else {
+            // Fallback to default if chunksCount not available yet
+            BASE_COMPLETION_TIMEOUT_MS + PER_CHUNK_TIMEOUT_MS
+        }
+        Log.d("DataLayerSync", "Posting timeout: ${timeoutMs}ms for $chunksCount chunks")
+        handler.postDelayed(timeoutRunnable, timeoutMs)
     }
 
     // Helper function to remove timeout
     private fun removeTimeout() {
         timeoutOperationCancelled = true // Set flag to indicate cancellation intent
         handler.removeCallbacks(timeoutRunnable)
+    }
+    
+    /**
+     * Checks connection state and throws exception if disconnected.
+     * Used during sync operations to fail fast on disconnection.
+     */
+    private suspend fun checkConnectionDuringSync(transactionId: String?): Boolean {
+        return try {
+            val nodeClient = Wearable.getNodeClient(this)
+            val nodes = Tasks.await(nodeClient.connectedNodes, 2, java.util.concurrent.TimeUnit.SECONDS)
+            val isConnected = nodes.isNotEmpty()
+            
+            if (!isConnected) {
+                Log.e(
+                    "DataLayerSync",
+                    "Connection lost during sync for transaction: $transactionId - failing fast"
+                )
+            } else {
+                Log.d(
+                    "DataLayerSync",
+                    "Connection verified during sync for transaction: $transactionId - ${nodes.size} node(s) connected"
+                )
+            }
+            
+            isConnected
+        } catch (e: Exception) {
+            Log.w("DataLayerSync", "Could not check connection state during sync: ${e.message}")
+            // If we can't check, assume connection is still there (don't fail on check errors)
+            true
+        }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -262,16 +463,19 @@ class DataLayerListenerService : WearableListenerService() {
 
                         // Ignore ACKs without transactionId
                         transactionId?.let { tid ->
-                            // Ignore stale ACKs (older than 30 seconds)
+                            // Ignore stale ACKs (older than threshold, default 60 seconds)
                             if (timestampStr != null) {
                                 try {
                                     val timestamp = timestampStr.toLong()
                                     val currentTime = System.currentTimeMillis()
                                     val age = currentTime - timestamp
-                                    if (age > 30000) {
+                                    // Get stale ACK threshold from SharedPreferences, default 60 seconds
+                                    val staleAckThreshold = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+                                        .getLong("stale_ack_threshold_ms", 60000L)
+                                    if (age > staleAckThreshold) {
                                         Log.w(
                                             "DataLayerSync",
-                                            "Received stale SYNC_ACK for transaction: $tid (age: ${age}ms) - ignoring"
+                                            "Received stale SYNC_ACK for transaction: $tid (age: ${age}ms, threshold: ${staleAckThreshold}ms) - ignoring"
                                         )
                                         return@forEach
                                     }
@@ -609,6 +813,19 @@ class DataLayerListenerService : WearableListenerService() {
                                     expectedChunks = dataMap.getInt("chunksCount", 0)
                                 }
 
+                                // If starting a new sync with different transaction ID, clean up old incomplete sync
+                                if (hasStartedSync && currentTransactionId != null && currentTransactionId != transactionId) {
+                                    Log.d(
+                                        "DataLayerSync",
+                                        "New sync starting with transaction: $transactionId. Cleaning up old incomplete sync: $currentTransactionId"
+                                    )
+                                    // Clean up old incomplete sync state
+                                    removeTimeout()
+                                    backupChunks = mutableMapOf()
+                                    receivedChunkIndices = mutableSetOf()
+                                    expectedChunks = 0
+                                }
+
                                 Log.d(
                                     "DataLayerSync",
                                     "Backup started with expected chunks: $expectedChunks, transactionId: $transactionId"
@@ -627,12 +844,17 @@ class DataLayerListenerService : WearableListenerService() {
                                 sendBroadcast(intent)
 
                                 removeTimeout()
+                                // Post initial timeout based on expected chunks
+                                if (expectedChunks > 0) {
+                                    postTimeout(expectedChunks)
+                                }
                             }
 
                             if (backupChunk != null && (!ignoreUntilStartOrEnd || isRetry)) {
-                                // Extend timeout for retry chunks or regular chunks
+                                // Extend timeout dynamically based on remaining chunks
                                 removeTimeout()
-                                postTimeout()
+                                val remainingChunks = expectedChunks - receivedChunkIndices.size
+                                postTimeout(maxOf(remainingChunks, 1)) // At least 1 to ensure timeout is set
 
                                 // Handle chunk with index
                                 if (chunkIndex >= 0) {
@@ -684,6 +906,20 @@ class DataLayerListenerService : WearableListenerService() {
                                         var processingStep = "initialization"
                                         try {
                                             processingStep = "validating chunks"
+                                            
+                                            // Log chunk reception details
+                                            val chunkReceptionStartTime = System.currentTimeMillis()
+                                            val receivedIndicesList = receivedChunkIndices.sorted()
+                                            Log.d(
+                                                "DataLayerSync",
+                                                "Chunk validation for transaction: $transactionId - Expected: $expectedChunks, Received: ${backupChunks.size}, Received indices: $receivedIndicesList"
+                                            )
+                                            
+                                            // Check connection state during validation - fail fast if disconnected
+                                            val isConnected = checkConnectionDuringSync(transactionId)
+                                            if (!isConnected) {
+                                                throw IllegalStateException("Connection lost during chunk validation for transaction: $transactionId")
+                                            }
 
                                             // Validate that all expected chunks are present
                                             val missingIndices = mutableListOf<Int>()
@@ -692,11 +928,24 @@ class DataLayerListenerService : WearableListenerService() {
                                                     missingIndices.add(i)
                                                 }
                                             }
+                                            
+                                            // Log timing information
+                                            val validationTime = System.currentTimeMillis() - chunkReceptionStartTime
+                                            Log.d(
+                                                "DataLayerSync",
+                                                "Chunk validation completed in ${validationTime}ms for transaction: $transactionId"
+                                            )
 
                                             if (missingIndices.isNotEmpty()) {
                                                 Log.e(
                                                     "DataLayerSync",
-                                                    "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${backupChunks.size}, Missing indices: $missingIndices"
+                                                    "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${backupChunks.size}, Missing indices: $missingIndices, Validation time: ${validationTime}ms"
+                                                )
+                                                // Log chunk delivery metrics
+                                                val deliveryRate = (backupChunks.size.toFloat() / expectedChunks * 100).toInt()
+                                                Log.e(
+                                                    "DataLayerSync",
+                                                    "Chunk delivery metrics - Delivery rate: $deliveryRate%, Missing: ${missingIndices.size}, Transaction: $transactionId"
                                                 )
 
                                                 // Send SYNC_ERROR with missing chunk information
@@ -751,6 +1000,12 @@ class DataLayerListenerService : WearableListenerService() {
                                                 return@launch
                                             }
 
+                                            // Check connection again before processing - fail fast if disconnected
+                                            val isConnectedBeforeProcessing = checkConnectionDuringSync(transactionId)
+                                            if (!isConnectedBeforeProcessing) {
+                                                throw IllegalStateException("Connection lost before processing for transaction: $transactionId")
+                                            }
+                                            
                                             // All chunks present - proceed with processing
                                             processingStep = "combining chunks"
                                             Log.d(
@@ -1241,20 +1496,70 @@ class DataLayerListenerService : WearableListenerService() {
         const val SYNC_ACK_PATH = "/syncAck"
         const val SYNC_COMPLETE_PATH = "/syncComplete"
         const val SYNC_ERROR_PATH = "/syncError"
-        const val HANDSHAKE_TIMEOUT_MS = 5000L
+        const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections
         const val COMPLETION_TIMEOUT_MS =
             30000L // Legacy constant, use calculateCompletionTimeout instead
         const val BASE_COMPLETION_TIMEOUT_MS = 10000L
         const val PER_CHUNK_TIMEOUT_MS = 2000L
         const val MAX_COMPLETION_TIMEOUT_MS = 300000L // 5 minutes
+        
+        // SharedPreferences keys for configurable timeouts
+        private const val PREF_HANDSHAKE_TIMEOUT = "handshake_timeout_ms"
+        private const val PREF_BASE_COMPLETION_TIMEOUT = "base_completion_timeout_ms"
+        private const val PREF_PER_CHUNK_TIMEOUT = "per_chunk_timeout_ms"
+        private const val PREF_CONNECTION_QUALITY = "connection_quality_multiplier"
+
+        /**
+         * Gets handshake timeout, configurable via SharedPreferences with default fallback.
+         * Connection quality multiplier adjusts timeout for poor connections.
+         */
+        fun getHandshakeTimeout(context: Context): Long {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val baseTimeout = prefs.getLong(PREF_HANDSHAKE_TIMEOUT, HANDSHAKE_TIMEOUT_MS).toFloat()
+            val qualityMultiplier = prefs.getFloat(PREF_CONNECTION_QUALITY, 1.0f).coerceIn(0.5f, 2.0f)
+            return (baseTimeout * qualityMultiplier).toLong()
+        }
 
         /**
          * Calculates dynamic completion timeout based on chunk count.
          * Formula: baseMs + perChunkMs * chunksCount, clamped to max.
+         * Connection quality multiplier adjusts timeout for poor connections.
+         */
+        fun calculateCompletionTimeout(context: Context, chunksCount: Int): Long {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val baseTimeout = prefs.getLong(PREF_BASE_COMPLETION_TIMEOUT, BASE_COMPLETION_TIMEOUT_MS).toFloat()
+            val perChunkTimeout = prefs.getLong(PREF_PER_CHUNK_TIMEOUT, PER_CHUNK_TIMEOUT_MS).toFloat()
+            val qualityMultiplier = prefs.getFloat(PREF_CONNECTION_QUALITY, 1.0f).coerceIn(0.5f, 2.0f)
+            
+            val calculated = (baseTimeout + perChunkTimeout * chunksCount) * qualityMultiplier
+            return minOf(calculated.toLong(), MAX_COMPLETION_TIMEOUT_MS)
+        }
+        
+        /**
+         * Legacy method for backward compatibility - uses default timeouts without context.
          */
         fun calculateCompletionTimeout(chunksCount: Int): Long {
             val calculated = BASE_COMPLETION_TIMEOUT_MS + PER_CHUNK_TIMEOUT_MS * chunksCount
             return minOf(calculated, MAX_COMPLETION_TIMEOUT_MS)
+        }
+        
+        /**
+         * Updates connection quality multiplier based on recent sync performance.
+         * Higher multiplier = longer timeouts for poor connections.
+         */
+        fun updateConnectionQuality(context: Context, recentTimeouts: Int, recentSuccesses: Int) {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val total = recentTimeouts + recentSuccesses
+            if (total > 0) {
+                val timeoutRate = recentTimeouts.toFloat() / total
+                val multiplier = when {
+                    timeoutRate > 0.5f -> 1.5f // Poor connection - increase timeouts
+                    timeoutRate > 0.3f -> 1.2f // Moderate issues
+                    else -> 1.0f // Good connection
+                }
+                prefs.edit().putFloat(PREF_CONNECTION_QUALITY, multiplier).apply()
+                Log.d("DataLayerSync", "Updated connection quality multiplier to $multiplier (timeout rate: $timeoutRate)")
+            }
         }
     }
 }

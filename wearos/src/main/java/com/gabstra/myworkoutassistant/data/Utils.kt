@@ -63,6 +63,8 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
+import com.google.android.gms.tasks.Tasks
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.data.AppHelperResultCode
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
@@ -590,9 +592,23 @@ object SyncHandshakeManager {
     }
 
     fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
-        val deferred = CompletableDeferred<String>()
-        pendingErrors[transactionId] = deferred
-        return deferred
+        // Use compute to atomically check if there's already a completed deferred
+        // This prevents race conditions where error arrives between registration and wait
+        return pendingErrors.compute(transactionId) { _, existing ->
+            if (existing != null && existing.isCompleted) {
+                // Reuse the already-completed deferred
+                existing
+            } else {
+                // Create new deferred, but cancel the old one if it exists and isn't completed
+                existing?.cancel()
+                CompletableDeferred<String>()
+            }
+        } ?: CompletableDeferred<String>()
+    }
+    
+    fun hasError(transactionId: String): Boolean {
+        val deferred = pendingErrors[transactionId]
+        return deferred?.isCompleted == true
     }
 
     fun completeAck(transactionId: String) {
@@ -619,7 +635,17 @@ object SyncHandshakeManager {
     }
 
     fun completeError(transactionId: String, errorMessage: String) {
-        pendingErrors.remove(transactionId)?.complete(errorMessage)
+        // Use compute to atomically complete and handle race conditions
+        // This ensures we complete the deferred even if it's being checked/waiting concurrently
+        pendingErrors.compute(transactionId) { _, deferred ->
+            deferred?.let {
+                if (!it.isCompleted) {
+                    it.complete(errorMessage)
+                }
+            }
+            // Return null to remove from map after completion
+            null
+        }
     }
 
     fun cleanup(transactionId: String) {
@@ -629,46 +655,122 @@ object SyncHandshakeManager {
     }
 }
 
-suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Boolean {
-    return try {
-        Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId")
-        
-        // Register waiter BEFORE sending request to avoid race condition
-        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
-        
-        val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
-        val request = PutDataMapRequest.create(requestPath).apply {
-            dataMap.putString("transactionId", transactionId)
-            dataMap.putString("timestamp", System.currentTimeMillis().toString())
-        }.asPutDataRequest().setUrgent()
-        
-        Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
-        dataClient.putDataItem(request)
-        
-        // Small delay to allow message delivery
-        delay(100)
-        
-        Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
-        // Wait for acknowledgment with timeout
-        val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
-            ackWaiter.await()
-            Log.d("DataLayerSync", "Received acknowledgment for transaction: $transactionId")
-            true
-        } ?: false
-        
-        if (!ackReceived) {
-            SyncHandshakeManager.cleanup(transactionId)
-            Log.e("DataLayerSync", "Handshake timeout for transaction: $transactionId after ${DataLayerListenerService.HANDSHAKE_TIMEOUT_MS}ms")
-        } else {
-            Log.d("DataLayerSync", "Handshake successful for transaction: $transactionId")
+/**
+ * Checks if at least one connected node exists before attempting sync.
+ * Retries up to 3 times with exponential backoff.
+ */
+suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
+    var attempt = 0
+    while (attempt < maxRetries) {
+        try {
+            Log.d("DataLayerSync", "Checking connection (attempt ${attempt + 1}/$maxRetries)")
+            val nodeClient = Wearable.getNodeClient(context)
+            val nodes = Tasks.await(nodeClient.connectedNodes, 10, java.util.concurrent.TimeUnit.SECONDS)
+            val hasConnection = nodes.isNotEmpty()
+            
+            if (hasConnection) {
+                Log.d("DataLayerSync", "Connection verified: ${nodes.size} node(s) connected")
+                return true
+            } else {
+                Log.w("DataLayerSync", "No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
+            }
+        } catch (e: Exception) {
+            Log.w("DataLayerSync", "Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}")
         }
         
-        ackReceived
-    } catch (exception: Exception) {
-        Log.e("DataLayerSync", "Error sending sync request for transaction: $transactionId", exception)
-        SyncHandshakeManager.cleanup(transactionId)
-        false
+        attempt++
+        if (attempt < maxRetries) {
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            val delayMs = 500L * (1 shl (attempt - 1))
+            delay(delayMs)
+        }
     }
+    
+    Log.e("DataLayerSync", "Connection check failed after $maxRetries attempts")
+    return false
+}
+
+suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
+    val maxRetries = 3
+    var attempt = 0
+    
+    while (attempt < maxRetries) {
+        try {
+            Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
+            
+            // Check connection before attempting sync if context is provided
+            if (context != null) {
+                val hasConnection = checkConnection(context)
+                if (!hasConnection) {
+                    Log.e("DataLayerSync", "No connection available for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
+                    if (attempt < maxRetries - 1) {
+                        // Exponential backoff with jitter
+                        val baseDelay = 500L * (1 shl attempt)
+                        val jitter = (0..100).random().toLong()
+                        delay(baseDelay + jitter)
+                        attempt++
+                        continue
+                    }
+                    return false
+                }
+            }
+            
+            // Register waiter BEFORE sending request to avoid race condition
+            val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+            
+            val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
+            val request = PutDataMapRequest.create(requestPath).apply {
+                dataMap.putString("transactionId", transactionId)
+                dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            }.asPutDataRequest().setUrgent()
+            
+            Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
+            dataClient.putDataItem(request)
+            
+            // Small delay to allow message delivery
+            delay(100)
+            
+            Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
+            // Wait for acknowledgment with timeout
+            val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
+                ackWaiter.await()
+                Log.d("DataLayerSync", "Received acknowledgment for transaction: $transactionId")
+                true
+            } ?: false
+            
+            if (!ackReceived) {
+                Log.e("DataLayerSync", "Handshake timeout for transaction: $transactionId after ${DataLayerListenerService.HANDSHAKE_TIMEOUT_MS}ms (attempt ${attempt + 1}/$maxRetries)")
+                if (attempt < maxRetries - 1) {
+                    // Exponential backoff with jitter
+                    val baseDelay = 500L * (1 shl attempt)
+                    val jitter = (0..100).random().toLong()
+                    delay(baseDelay + jitter)
+                    attempt++
+                    continue
+                }
+                SyncHandshakeManager.cleanup(transactionId)
+                return false
+            } else {
+                Log.d("DataLayerSync", "Handshake successful for transaction: $transactionId")
+                return true
+            }
+        } catch (exception: Exception) {
+            Log.e("DataLayerSync", "Error sending sync request for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries): ${exception.message}", exception)
+            if (attempt < maxRetries - 1) {
+                // Exponential backoff with jitter
+                val baseDelay = 500L * (1 shl attempt)
+                val jitter = (0..100).random().toLong()
+                delay(baseDelay + jitter)
+                attempt++
+                continue
+            }
+            SyncHandshakeManager.cleanup(transactionId)
+            return false
+        }
+    }
+    
+    SyncHandshakeManager.cleanup(transactionId)
+    return false
 }
 
 suspend fun waitForSyncCompletion(transactionId: String): Boolean {
@@ -778,7 +880,7 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
 
         // Wait for either completion, error, or timeout - with retry logic
         var retryAttempt = 0
-        val maxRetries = 3
+        val maxRetries = 5 // Increased from 3 to 5 for better recovery
         var currentCompletionWaiter = completionWaiter
         var currentErrorWaiter = errorWaiter
 
@@ -807,6 +909,17 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                 result == null -> {
                     // Timeout occurred
                     Log.e("DataLayerSync", "Completion timeout for workout history transaction: $transactionId (attempt $retryAttempt)")
+                    if (retryAttempt < maxRetries) {
+                        // Exponential backoff with jitter for timeout retries
+                        val baseDelay = 500L * (1 shl retryAttempt)
+                        val jitter = (0..200).random().toLong()
+                        delay(baseDelay + jitter)
+                        retryAttempt++
+                        // Re-register waiters for retry
+                        currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+                        currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                        continue
+                    }
                     SyncHandshakeManager.cleanup(transactionId)
                     return false
                 }
@@ -849,8 +962,11 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                                 
                                 retryMissingChunks(dataClient, transactionId, missingIndices, chunks)
                                 retryAttempt++
-                                // Wait again for completion/error after retry
-                                delay(500)
+                                // Exponential backoff with jitter: 500ms, 1000ms, 2000ms, 4000ms, 8000ms
+                                val baseDelay = 500L * (1 shl (retryAttempt - 1))
+                                val jitter = (0..200).random().toLong()
+                                delay(baseDelay + jitter)
+                                Log.d("DataLayerSync", "Retry delay: ${baseDelay + jitter}ms for attempt $retryAttempt")
                                 
                                 // Check again before continuing loop (completion might have arrived during retry)
                                 if (currentCompletionWaiter.isCompleted) {
@@ -870,11 +986,8 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                     
                     // Not a retryable error or max retries reached
                     SyncHandshakeManager.cleanup(transactionId)
-                    if (retryAttempt >= maxRetries) {
-                        return false
-                    } else {
-                        return false
-                    }
+                    Log.e("DataLayerSync", "Sync failed for workout history transaction: $transactionId after $retryAttempt retry attempts: $errorMessage")
+                    return false
                 }
             }
         }

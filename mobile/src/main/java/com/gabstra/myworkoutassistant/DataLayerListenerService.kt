@@ -223,6 +223,36 @@ class DataLayerListenerService : WearableListenerService() {
 
         return combinedArray
     }
+    
+    /**
+     * Checks connection state and throws exception if disconnected.
+     * Used during sync operations to fail fast on disconnection.
+     */
+    private suspend fun checkConnectionDuringSync(transactionId: String?): Boolean {
+        return try {
+            val nodeClient = Wearable.getNodeClient(this)
+            val nodes = Tasks.await(nodeClient.connectedNodes, 2, java.util.concurrent.TimeUnit.SECONDS)
+            val isConnected = nodes.isNotEmpty()
+            
+            if (!isConnected) {
+                Log.e(
+                    "DataLayerSync",
+                    "Connection lost during sync for transaction: $transactionId - failing fast"
+                )
+            } else {
+                Log.d(
+                    "DataLayerSync",
+                    "Connection verified during sync for transaction: $transactionId - ${nodes.size} node(s) connected"
+                )
+            }
+            
+            isConnected
+        } catch (e: Exception) {
+            Log.w("DataLayerSync", "Could not check connection state during sync: ${e.message}")
+            // If we can't check, assume connection is still there (don't fail on check errors)
+            true
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -233,6 +263,47 @@ class DataLayerListenerService : WearableListenerService() {
         workoutRecordDao = db.workoutRecordDao()
         exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
         errorLogDao = db.errorLogDao()
+        
+        // Detect service restart and handle incomplete syncs
+        detectAndHandleServiceRestart()
+    }
+    
+    /**
+     * Detects if the service was restarted during an active sync and handles incomplete syncs.
+     * This prevents stale state from persisting across service restarts.
+     */
+    private fun detectAndHandleServiceRestart() {
+        val lastServiceStartTime = sharedPreferences.getLong("last_service_start_time", 0L)
+        val currentTime = System.currentTimeMillis()
+        val serviceRestartThreshold = 5000L // 5 seconds - if last start was more than 5 seconds ago, likely a restart
+        
+        // Check if there's an incomplete sync
+        val hasIncompleteSync = hasStartedSync && currentTransactionId != null
+        
+        if (hasIncompleteSync && (currentTime - lastServiceStartTime > serviceRestartThreshold)) {
+            Log.w(
+                "DataLayerSync",
+                "Detected service restart during active sync. Transaction: $currentTransactionId. Cleaning up stale state."
+            )
+            
+            // Clean up incomplete sync state
+            workoutHistoryChunks = mutableMapOf()
+            receivedChunkIndices = mutableSetOf()
+            expectedChunks = 0
+            hasStartedSync = false
+            ignoreUntilStartOrEnd = false
+            currentTransactionId = null
+            
+            // Notify UI that sync was interrupted
+            val intent = Intent(INTENT_ID).apply {
+                putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+                setPackage(packageName)
+            }
+            sendBroadcast(intent)
+        }
+        
+        // Update last service start time
+        sharedPreferences.edit().putLong("last_service_start_time", currentTime).apply()
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -269,16 +340,19 @@ class DataLayerListenerService : WearableListenerService() {
                             return@forEach
                         }
 
-                        // Ignore stale ACKs (older than 30 seconds)
+                        // Ignore stale ACKs (older than threshold, default 60 seconds)
                         if (timestampStr != null) {
                             try {
                                 val timestamp = timestampStr.toLong()
                                 val currentTime = System.currentTimeMillis()
                                 val age = currentTime - timestamp
-                                if (age > 30000) {
+                                // Get stale ACK threshold from SharedPreferences, default 60 seconds
+                                val staleAckThreshold = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+                                    .getLong("stale_ack_threshold_ms", 60000L)
+                                if (age > staleAckThreshold) {
                                     Log.w(
                                         "DataLayerSync",
-                                        "Received stale SYNC_ACK for transaction: $transactionId (age: ${age}ms) - ignoring"
+                                        "Received stale SYNC_ACK for transaction: $transactionId (age: ${age}ms, threshold: ${staleAckThreshold}ms) - ignoring"
                                     )
                                     return@forEach
                                 }
@@ -774,6 +848,20 @@ class DataLayerListenerService : WearableListenerService() {
                                         var processingStep = "initialization"
                                         try {
                                             processingStep = "validating chunks"
+                                            
+                                            // Log chunk reception details
+                                            val chunkReceptionStartTime = System.currentTimeMillis()
+                                            val receivedIndicesList = receivedChunkIndices.sorted()
+                                            Log.d(
+                                                "DataLayerSync",
+                                                "Chunk validation for transaction: $transactionId - Expected: $expectedChunks, Received: ${workoutHistoryChunks.size}, Received indices: $receivedIndicesList"
+                                            )
+                                            
+                                            // Check connection state during validation - fail fast if disconnected
+                                            val isConnected = checkConnectionDuringSync(transactionId)
+                                            if (!isConnected) {
+                                                throw IllegalStateException("Connection lost during chunk validation for transaction: $transactionId")
+                                            }
 
                                             // Validate that all expected chunks are present
                                             val missingIndices = mutableListOf<Int>()
@@ -782,11 +870,24 @@ class DataLayerListenerService : WearableListenerService() {
                                                     missingIndices.add(i)
                                                 }
                                             }
+                                            
+                                            // Log timing information
+                                            val validationTime = System.currentTimeMillis() - chunkReceptionStartTime
+                                            Log.d(
+                                                "DataLayerSync",
+                                                "Chunk validation completed in ${validationTime}ms for transaction: $transactionId"
+                                            )
 
                                             if (missingIndices.isNotEmpty()) {
                                                 Log.e(
                                                     "DataLayerSync",
-                                                    "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${workoutHistoryChunks.size}, Missing indices: $missingIndices"
+                                                    "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${workoutHistoryChunks.size}, Missing indices: $missingIndices, Validation time: ${validationTime}ms"
+                                                )
+                                                // Log chunk delivery metrics
+                                                val deliveryRate = (workoutHistoryChunks.size.toFloat() / expectedChunks * 100).toInt()
+                                                Log.e(
+                                                    "DataLayerSync",
+                                                    "Chunk delivery metrics - Delivery rate: $deliveryRate%, Missing: ${missingIndices.size}, Transaction: $transactionId"
                                                 )
 
                                                 // Send SYNC_ERROR with missing chunk information (triggers retry on sender)
@@ -841,6 +942,12 @@ class DataLayerListenerService : WearableListenerService() {
                                                 return@launch
                                             }
 
+                                            // Check connection again before processing - fail fast if disconnected
+                                            val isConnectedBeforeProcessing = checkConnectionDuringSync(transactionId)
+                                            if (!isConnectedBeforeProcessing) {
+                                                throw IllegalStateException("Connection lost before processing for transaction: $transactionId")
+                                            }
+                                            
                                             // All chunks present - proceed with processing
                                             processingStep = "combining chunks"
                                             Log.d(
@@ -1260,20 +1367,70 @@ class DataLayerListenerService : WearableListenerService() {
         const val SYNC_ACK_PATH = "/syncAck"
         const val SYNC_COMPLETE_PATH = "/syncComplete"
         const val SYNC_ERROR_PATH = "/syncError"
-        const val HANDSHAKE_TIMEOUT_MS = 5000L
+        const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections
         const val COMPLETION_TIMEOUT_MS =
             30000L // Legacy constant, use calculateCompletionTimeout instead
         const val BASE_COMPLETION_TIMEOUT_MS = 10000L
         const val PER_CHUNK_TIMEOUT_MS = 2000L
         const val MAX_COMPLETION_TIMEOUT_MS = 300000L // 5 minutes
+        
+        // SharedPreferences keys for configurable timeouts
+        private const val PREF_HANDSHAKE_TIMEOUT = "handshake_timeout_ms"
+        private const val PREF_BASE_COMPLETION_TIMEOUT = "base_completion_timeout_ms"
+        private const val PREF_PER_CHUNK_TIMEOUT = "per_chunk_timeout_ms"
+        private const val PREF_CONNECTION_QUALITY = "connection_quality_multiplier"
+
+        /**
+         * Gets handshake timeout, configurable via SharedPreferences with default fallback.
+         * Connection quality multiplier adjusts timeout for poor connections.
+         */
+        fun getHandshakeTimeout(context: Context): Long {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val baseTimeout = prefs.getLong(PREF_HANDSHAKE_TIMEOUT, HANDSHAKE_TIMEOUT_MS).toFloat()
+            val qualityMultiplier = prefs.getFloat(PREF_CONNECTION_QUALITY, 1.0f).coerceIn(0.5f, 2.0f)
+            return (baseTimeout * qualityMultiplier).toLong()
+        }
 
         /**
          * Calculates dynamic completion timeout based on chunk count.
          * Formula: baseMs + perChunkMs * chunksCount, clamped to max.
+         * Connection quality multiplier adjusts timeout for poor connections.
+         */
+        fun calculateCompletionTimeout(context: Context, chunksCount: Int): Long {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val baseTimeout = prefs.getLong(PREF_BASE_COMPLETION_TIMEOUT, BASE_COMPLETION_TIMEOUT_MS).toFloat()
+            val perChunkTimeout = prefs.getLong(PREF_PER_CHUNK_TIMEOUT, PER_CHUNK_TIMEOUT_MS).toFloat()
+            val qualityMultiplier = prefs.getFloat(PREF_CONNECTION_QUALITY, 1.0f).coerceIn(0.5f, 2.0f)
+            
+            val calculated = (baseTimeout + perChunkTimeout * chunksCount) * qualityMultiplier
+            return minOf(calculated.toLong(), MAX_COMPLETION_TIMEOUT_MS)
+        }
+        
+        /**
+         * Legacy method for backward compatibility - uses default timeouts without context.
          */
         fun calculateCompletionTimeout(chunksCount: Int): Long {
             val calculated = BASE_COMPLETION_TIMEOUT_MS + PER_CHUNK_TIMEOUT_MS * chunksCount
             return minOf(calculated, MAX_COMPLETION_TIMEOUT_MS)
+        }
+        
+        /**
+         * Updates connection quality multiplier based on recent sync performance.
+         * Higher multiplier = longer timeouts for poor connections.
+         */
+        fun updateConnectionQuality(context: Context, recentTimeouts: Int, recentSuccesses: Int) {
+            val prefs = context.getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            val total = recentTimeouts + recentSuccesses
+            if (total > 0) {
+                val timeoutRate = recentTimeouts.toFloat() / total
+                val multiplier = when {
+                    timeoutRate > 0.5f -> 1.5f // Poor connection - increase timeouts
+                    timeoutRate > 0.3f -> 1.2f // Moderate issues
+                    else -> 1.0f // Good connection
+                }
+                prefs.edit().putFloat(PREF_CONNECTION_QUALITY, multiplier).apply()
+                Log.d("DataLayerSync", "Updated connection quality multiplier to $multiplier (timeout rate: $timeoutRate)")
+            }
         }
     }
 }

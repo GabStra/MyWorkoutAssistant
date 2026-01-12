@@ -88,7 +88,10 @@ import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
+import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,6 +119,30 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlin.math.pow
+
+/**
+ * Specific error types for sync operations to improve error handling and debugging.
+ */
+sealed class SyncError(message: String, val transactionId: String? = null, val retryAttempt: Int = 0) : Exception(message) {
+    class ConnectionError(transactionId: String?, retryAttempt: Int = 0) : 
+        SyncError("No connection available - devices are not connected", transactionId, retryAttempt)
+    
+    class TimeoutError(transactionId: String?, val timeoutMs: Long, retryAttempt: Int = 0) : 
+        SyncError("Sync timed out after ${timeoutMs}ms", transactionId, retryAttempt)
+    
+    class ChunkError(transactionId: String?, val missingIndices: List<Int>, val expected: Int, val received: Int, retryAttempt: Int = 0) : 
+        SyncError("Missing chunks: expected $expected, received $received. Missing indices: $missingIndices", transactionId, retryAttempt)
+    
+    class ProcessingError(transactionId: String?, val step: String, cause: Throwable, retryAttempt: Int = 0) : 
+        SyncError("Error at $step: ${cause.message}", transactionId, retryAttempt) {
+            init {
+                initCause(cause)
+            }
+        }
+    
+    class HandshakeError(transactionId: String?, retryAttempt: Int = 0) : 
+        SyncError("Handshake failed - unable to establish connection", transactionId, retryAttempt)
+}
 
 // Helper object to manage sync handshake state
 object SyncHandshakeManager {
@@ -145,9 +172,23 @@ object SyncHandshakeManager {
     }
 
     fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
-        val deferred = CompletableDeferred<String>()
-        pendingErrors[transactionId] = deferred
-        return deferred
+        // Use compute to atomically check if there's already a completed deferred
+        // This prevents race conditions where error arrives between registration and wait
+        return pendingErrors.compute(transactionId) { _, existing ->
+            if (existing != null && existing.isCompleted) {
+                // Reuse the already-completed deferred
+                existing
+            } else {
+                // Create new deferred, but cancel the old one if it exists and isn't completed
+                existing?.cancel()
+                CompletableDeferred<String>()
+            }
+        } ?: CompletableDeferred<String>()
+    }
+    
+    fun hasError(transactionId: String): Boolean {
+        val deferred = pendingErrors[transactionId]
+        return deferred?.isCompleted == true
     }
 
     fun completeAck(transactionId: String) {
@@ -174,7 +215,17 @@ object SyncHandshakeManager {
     }
 
     fun completeError(transactionId: String, errorMessage: String) {
-        pendingErrors.remove(transactionId)?.complete(errorMessage)
+        // Use compute to atomically complete and handle race conditions
+        // This ensures we complete the deferred even if it's being checked/waiting concurrently
+        pendingErrors.compute(transactionId) { _, deferred ->
+            deferred?.let {
+                if (!it.isCompleted) {
+                    it.complete(errorMessage)
+                }
+            }
+            // Return null to remove from map after completion
+            null
+        }
     }
 
     fun cleanup(transactionId: String) {
@@ -184,46 +235,123 @@ object SyncHandshakeManager {
     }
 }
 
-suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String): Boolean {
-    return try {
-        Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId")
-        
-        // Register waiter BEFORE sending request to avoid race condition
-        val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
-        
-        val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
-        val request = PutDataMapRequest.create(requestPath).apply {
-            dataMap.putString("transactionId", transactionId)
-            dataMap.putString("timestamp", System.currentTimeMillis().toString())
-        }.asPutDataRequest().setUrgent()
-        
-        Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
-        dataClient.putDataItem(request)
-        
-        // Small delay to allow message delivery
-        delay(100)
-        
-        Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
-        // Wait for acknowledgment with timeout
-        val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
-            ackWaiter.await()
-            Log.d("DataLayerSync", "Received acknowledgment for transaction: $transactionId")
-            true
-        } ?: false
-        
-        if (!ackReceived) {
-            SyncHandshakeManager.cleanup(transactionId)
-            Log.e("DataLayerSync", "Handshake timeout for transaction: $transactionId after ${DataLayerListenerService.HANDSHAKE_TIMEOUT_MS}ms")
-        } else {
-            Log.d("DataLayerSync", "Handshake successful for transaction: $transactionId")
+/**
+ * Checks if at least one connected node exists before attempting sync.
+ * Retries up to 3 times with exponential backoff.
+ */
+suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 3): Boolean {
+    var attempt = 0
+    while (attempt < maxRetries) {
+        try {
+            Log.d("DataLayerSync", "Checking connection (attempt ${attempt + 1}/$maxRetries)")
+            // Use NodeClient to get connected nodes
+            val nodeClient = Wearable.getNodeClient(context)
+            val nodes = Tasks.await(nodeClient.connectedNodes, 10, java.util.concurrent.TimeUnit.SECONDS)
+            val hasConnection = nodes.isNotEmpty()
+            
+            if (hasConnection) {
+                Log.d("DataLayerSync", "Connection verified: ${nodes.size} node(s) connected")
+                return true
+            } else {
+                Log.w("DataLayerSync", "No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
+            }
+        } catch (e: Exception) {
+            Log.w("DataLayerSync", "Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}")
         }
         
-        ackReceived
-    } catch (exception: Exception) {
-        Log.e("DataLayerSync", "Error sending sync request for transaction: $transactionId", exception)
-        SyncHandshakeManager.cleanup(transactionId)
-        false
+        attempt++
+        if (attempt < maxRetries) {
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            val delayMs = 500L * (1 shl (attempt - 1))
+            delay(delayMs)
+        }
     }
+    
+    Log.e("DataLayerSync", "Connection check failed after $maxRetries attempts")
+    return false
+}
+
+suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, context: android.content.Context? = null): Boolean {
+    val maxRetries = 3
+    var attempt = 0
+    
+    while (attempt < maxRetries) {
+        try {
+            Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
+            
+            // Check connection before attempting sync if context is provided
+            if (context != null) {
+                val hasConnection = checkConnection(context)
+                if (!hasConnection) {
+                    Log.e("DataLayerSync", "No connection available for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
+                    if (attempt < maxRetries - 1) {
+                        // Exponential backoff with jitter
+                        val baseDelay = 500L * (1 shl attempt)
+                        val jitter = (0..100).random().toLong()
+                        delay(baseDelay + jitter)
+                        attempt++
+                        continue
+                    }
+                    return false
+                }
+            }
+            
+            // Register waiter BEFORE sending request to avoid race condition
+            val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
+            
+            val requestPath = DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId)
+            val request = PutDataMapRequest.create(requestPath).apply {
+                dataMap.putString("transactionId", transactionId)
+                dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            }.asPutDataRequest().setUrgent()
+            
+            Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
+            dataClient.putDataItem(request)
+            
+            // Small delay to allow message delivery
+            delay(100)
+            
+            Log.d("DataLayerSync", "Waiting for acknowledgment for transaction: $transactionId")
+            // Wait for acknowledgment with timeout (using default for now, context-based timeout can be added later)
+            val ackReceived = withTimeoutOrNull(DataLayerListenerService.HANDSHAKE_TIMEOUT_MS) {
+                ackWaiter.await()
+                Log.d("DataLayerSync", "Received acknowledgment for transaction: $transactionId")
+                true
+            } ?: false
+            
+            if (!ackReceived) {
+                Log.e("DataLayerSync", "Handshake timeout for transaction: $transactionId after ${DataLayerListenerService.HANDSHAKE_TIMEOUT_MS}ms (attempt ${attempt + 1}/$maxRetries)")
+                if (attempt < maxRetries - 1) {
+                    // Exponential backoff with jitter
+                    val baseDelay = 500L * (1 shl attempt)
+                    val jitter = (0..100).random().toLong()
+                    delay(baseDelay + jitter)
+                    attempt++
+                    continue
+                }
+                SyncHandshakeManager.cleanup(transactionId)
+                return false
+            } else {
+                Log.d("DataLayerSync", "Handshake successful for transaction: $transactionId")
+                return true
+            }
+        } catch (exception: Exception) {
+            Log.e("DataLayerSync", "Error sending sync request for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries): ${exception.message}", exception)
+            if (attempt < maxRetries - 1) {
+                // Exponential backoff with jitter
+                val baseDelay = 500L * (1 shl attempt)
+                val jitter = (0..100).random().toLong()
+                delay(baseDelay + jitter)
+                attempt++
+                continue
+            }
+            SyncHandshakeManager.cleanup(transactionId)
+            return false
+        }
+    }
+    
+    SyncHandshakeManager.cleanup(transactionId)
+    return false
 }
 
 suspend fun waitForSyncCompletion(transactionId: String): Boolean {
@@ -262,8 +390,8 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
         if (!handshakeSuccess) {
-            Log.e("DataLayerSync", "Failed to establish connection for workout store sync")
-            throw Exception("Handshake failed - unable to establish connection with watch")
+            Log.e("DataLayerSync", "Failed to establish connection for workout store sync (transaction: $transactionId)")
+            throw SyncError.HandshakeError(transactionId, 0)
         }
 
         // Register completion and error waiters BEFORE sending data
@@ -304,9 +432,9 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
         when {
             result == null -> {
                 // Timeout occurred
-                Log.e("DataLayerSync", "Completion timeout for workout store transaction: $transactionId")
+                Log.e("DataLayerSync", "Completion timeout for workout store transaction: $transactionId (timeout: ${completionTimeout}ms)")
                 SyncHandshakeManager.cleanup(transactionId)
-                throw Exception("Sync timed out - data may not have been received")
+                throw SyncError.TimeoutError(transactionId, completionTimeout, 0)
             }
             result.first -> {
                 // Completion received
@@ -318,7 +446,15 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
                 val errorMessage = result.second ?: "Unknown error"
                 Log.e("DataLayerSync", "Sync error for workout store transaction: $transactionId, error: $errorMessage")
                 SyncHandshakeManager.cleanup(transactionId)
-                throw Exception("Sync failed: $errorMessage")
+                // Parse error type from message
+                val syncError = when {
+                    errorMessage.startsWith("MISSING_CHUNKS:") -> {
+                        val missingIndices = parseMissingChunks(errorMessage)
+                        SyncError.ChunkError(transactionId, missingIndices, 0, 0, 0)
+                    }
+                    else -> SyncError.ProcessingError(transactionId, "workout store sync", Exception(errorMessage), 0)
+                }
+                throw syncError
             }
         }
     } catch (cancellationException: CancellationException) {
@@ -338,8 +474,8 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
         if (!handshakeSuccess) {
-            Log.e("DataLayerSync", "Failed to establish connection for app backup sync")
-            throw Exception("Handshake failed - unable to establish connection with watch")
+            Log.e("DataLayerSync", "Failed to establish connection for app backup sync (transaction: $transactionId)")
+            throw SyncError.HandshakeError(transactionId, 0)
         }
 
         // Register completion and error waiters BEFORE sending data
@@ -394,7 +530,7 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
 
         // Wait for either completion, error, or timeout - with retry logic
         var retryAttempt = 0
-        val maxRetries = 3
+        val maxRetries = 5 // Increased from 3 to 5 for better recovery
         var currentCompletionWaiter = completionWaiter
         var currentErrorWaiter = errorWaiter
 
@@ -423,8 +559,19 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                 result == null -> {
                     // Timeout occurred
                     Log.e("DataLayerSync", "Completion timeout for backup transaction: $transactionId (attempt $retryAttempt)")
+                    if (retryAttempt < maxRetries) {
+                        // Exponential backoff with jitter for timeout retries
+                        val baseDelay = 500L * (1 shl retryAttempt)
+                        val jitter = (0..200).random().toLong()
+                        delay(baseDelay + jitter)
+                        retryAttempt++
+                        // Re-register waiters for retry
+                        currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+                        currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                        continue
+                    }
                     SyncHandshakeManager.cleanup(transactionId)
-                    throw Exception("Sync timed out - data may not have been received")
+                    throw Exception("Sync timed out after $maxRetries retry attempts (transaction: $transactionId) - data may not have been received")
                 }
                 result.first -> {
                     // Completion received
@@ -465,8 +612,11 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                                 
                                 retryMissingChunks(dataClient, transactionId, missingIndices, chunks)
                                 retryAttempt++
-                                // Wait again for completion/error after retry
-                                delay(500)
+                                // Exponential backoff with jitter: 500ms, 1000ms, 2000ms, 4000ms, 8000ms
+                                val baseDelay = 500L * (1 shl (retryAttempt - 1))
+                                val jitter = (0..200).random().toLong()
+                                delay(baseDelay + jitter)
+                                Log.d("DataLayerSync", "Retry delay: ${baseDelay + jitter}ms for attempt $retryAttempt")
                                 
                                 // Check again before continuing loop (completion might have arrived during retry)
                                 if (currentCompletionWaiter.isCompleted) {
@@ -486,11 +636,19 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
                     
                     // Not a retryable error or max retries reached
                     SyncHandshakeManager.cleanup(transactionId)
-                    if (retryAttempt >= maxRetries) {
-                        throw Exception("Sync failed after $maxRetries retry attempts: $errorMessage")
-                    } else {
-                        throw Exception("Sync failed: $errorMessage")
+                    val syncError = when {
+                        errorMessage.startsWith("MISSING_CHUNKS:") -> {
+                            val missingIndices = parseMissingChunks(errorMessage)
+                            // Parse expected and received from error message
+                            val expectedMatch = Regex("Expected (\\d+) chunks").find(errorMessage)
+                            val receivedMatch = Regex("received (\\d+)").find(errorMessage)
+                            val expected = expectedMatch?.groupValues?.get(1)?.toIntOrNull() ?: chunks.size
+                            val received = receivedMatch?.groupValues?.get(1)?.toIntOrNull() ?: (chunks.size - missingIndices.size)
+                            SyncError.ChunkError(transactionId, missingIndices, expected, received, retryAttempt)
+                        }
+                        else -> SyncError.ProcessingError(transactionId, "app backup sync", Exception(errorMessage), retryAttempt)
                     }
+                    throw syncError
                 }
             }
         }
