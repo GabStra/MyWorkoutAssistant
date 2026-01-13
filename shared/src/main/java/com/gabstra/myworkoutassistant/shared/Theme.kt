@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.Color
 
 val Orange = Color(0xFFFF6700)
 val DarkOrange = Color(0xFFBF4D00)
+val DarkerOrange = Color(0xFF953C00)
+
 val DarkGray = Color(30, 30, 30)
 
 val MediumDarkerGray = Color(45, 45, 45)

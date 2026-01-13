@@ -1,22 +1,18 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,12 +39,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -60,12 +54,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -84,12 +75,13 @@ import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
+import com.gabstra.myworkoutassistant.shared.DarkerOrange
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
-import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -97,7 +89,6 @@ import dev.shreyaspatil.capturable.capturable
 import dev.shreyaspatil.capturable.controller.rememberCaptureController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -246,7 +237,7 @@ fun HeartRateCircularChart(
     var alarmJob by remember { mutableStateOf<Job?>(null) }
 
     val currentZone by remember(mhrPercentage) {
-        derivedStateOf { mapPercentageToZone(mhrPercentage) }
+        derivedStateOf { getZoneFromPercentage(mhrPercentage) }
     }
 
     val alertCooldown = 1000L
@@ -265,13 +256,6 @@ fun HeartRateCircularChart(
 
     if (lowerBoundMaxHRPercent != null && upperBoundMaxHRPercent != null) {
         var reachedTargetOnce by remember { mutableStateOf(false) }
-
-        val targetRange = remember(lowerBoundMaxHRPercent, upperBoundMaxHRPercent, age) {
-            getHeartRateFromPercentage(lowerBoundMaxHRPercent, age)..getHeartRateFromPercentage(
-                upperBoundMaxHRPercent,
-                age
-            )
-        }
 
         LaunchedEffect(mhrPercentage) {
             if (alertJob?.isActive == true) return@LaunchedEffect
@@ -369,7 +353,6 @@ private fun HeartRateDisplay(
     modifier: Modifier = Modifier,
     bpm: Int,
     textToDisplay: String,
-    zoneLabel: String,
     currentZone: Int,
     colorsByZone: Array<Color>,
     displayMode: Int
@@ -402,32 +385,34 @@ private fun HeartRateDisplay(
                     style = MaterialTheme.typography.bodyExtraSmall,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Text(
-                    modifier = Modifier.alignByBaseline(),
-                    text = " | ",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Thin),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                val baseStyle = MaterialTheme.typography.labelMedium
-                Text(
-                    modifier = Modifier.alignByBaseline(),
-                    text = buildAnnotatedString {
-                        val prefix = "Z: "
-                        val rest = zoneLabel.removePrefix(prefix)
-                        val restColor = if (currentZone < 0 || currentZone >= colorsByZone.size)
-                            MediumDarkGray
-                        else
-                            MaterialTheme.colorScheme.onBackground
-                        
-                        withStyle(baseStyle.toSpanStyle().copy(color = MaterialTheme.colorScheme.onBackground)) {
-                            append(prefix)
-                        }
-                        withStyle(baseStyle.toSpanStyle().copy(color = restColor)) {
-                            append(rest)
-                        }
-                    },
-                    style = baseStyle
-                )
+
+                if(currentZone >= 1){
+                    Spacer(modifier = Modifier.width(2.5.dp))
+                    // Zone chip with zone color background and white text
+                    val chipBackgroundColor = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                        MediumDarkGray
+                    else
+                        colorsByZone[currentZone]
+                    val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = chipBackgroundColor,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .alignByBaseline(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            modifier = Modifier.width(12.5.dp),
+                            text = zoneText,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyExtraSmall,
+                            color = Color.White
+                        )
+                    }
+                }
             }
         }
         Spacer(modifier = Modifier.weight(1f))
@@ -797,11 +782,6 @@ private fun HeartRateView(
     }
 
     val context = LocalContext.current
-    val zoneLabel by remember(currentZone) {
-        derivedStateOf {
-            if (currentZone in 0 until colorsByZone.size) "Z: $currentZone" else "Z: -"
-        }
-    }
 
     val onSwitchClick = remember(appViewModel, context) {
         {
@@ -822,7 +802,6 @@ private fun HeartRateView(
                 .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
             textToDisplay = textToDisplay,
-            zoneLabel = zoneLabel,
             currentZone = currentZone,
             colorsByZone = colorsByZone,
             displayMode = displayMode
@@ -886,7 +865,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else MediumDarkGray,
+                color = if (inBounds) MaterialTheme.colorScheme.primary else DarkerOrange,
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp
@@ -1014,7 +993,7 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(70f, 30),
+            hr = getHeartRateFromPercentage(59f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 70f,
             upperBoundMaxHRPercent = 80f

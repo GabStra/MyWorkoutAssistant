@@ -307,11 +307,45 @@ fun mapPercentageToZone(percentage: Float): Int {
     val mappedValue = if (percentage <= 50) {
         percentage * 0.00332f
     } else {
-        0.166f + ((percentage - 50) / 10) * 0.166f
+       0.166f + ((percentage - 50) / 10) * 0.166f
     }
 
     val zone = (mappedValue / 0.166f).toInt()
     return if (zone > 5) 5 else zone
+}
+
+/**
+ * Determines the heart rate zone from a percentage using the zoneRanges array directly.
+ * This ensures consistency with target zone detection which uses percentage ranges.
+ * 
+ * Note: The display code uses zoneRanges[1-5] (skipping zoneRanges[0] for 0-50%),
+ * so this function maps percentages to match that display mapping:
+ * - zoneRanges[1] (50-60%) → zone index 1
+ * - zoneRanges[2] (60-70%) → zone index 2
+ * - zoneRanges[3] (70-80%) → zone index 3
+ * - zoneRanges[4] (80-90%) → zone index 4
+ * - zoneRanges[5] (90-100%) → zone index 5
+ * 
+ * @param percentage The heart rate percentage (0-100)
+ * @return Zone index (1-5) matching the colorsByZone array and display code
+ */
+fun getZoneFromPercentage(percentage: Float): Int {
+    // Find which zoneRanges entry the percentage falls into
+    // Use the same inclusive boundary logic as target zone detection
+    // Iterate backwards to handle boundary overlaps (e.g., 50% is in both [0] and [1], prefer [1])
+    for (i in zoneRanges.indices.reversed()) {
+        val (lower, upper) = zoneRanges[i]
+        // Use inclusive bounds to match target zone check: percentage in lower..upper
+        if (percentage in lower..upper) {
+            return i
+        }
+    }
+    // Fallback: clamp to valid range
+    return when {
+        percentage < 0f -> 0
+        percentage > 100f -> zoneRanges.size - 1
+        else -> 0 // Should not reach here, but handle edge cases
+    }
 }
 
 fun getVersionName(context: Context): String? {
