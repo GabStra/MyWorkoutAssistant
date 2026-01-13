@@ -1319,7 +1319,9 @@ fun WorkoutDetailScreen(
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
                             itemContent = { it ->
-                                Column {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                ) {
                                     WorkoutComponentRenderer(
                                         workout = workout,
                                         workoutComponent = it,
@@ -1341,18 +1343,22 @@ fun WorkoutDetailScreen(
                                         val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
                                         
                                         if (shouldShowButton) {
-                                            Button(
-                                                onClick = {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.InsertRestAfter(workout.id, it.id)
-                                                    )
-                                                },
+                                            Box(
                                                 modifier = Modifier.fillMaxWidth(),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    contentColor = MaterialTheme.colorScheme.background
-                                                )
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Text("Add rest")
+                                                Button(
+                                                    onClick = {
+                                                        appViewModel.setScreenData(
+                                                            ScreenData.InsertRestAfter(workout.id, it.id)
+                                                        )
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        contentColor = MaterialTheme.colorScheme.background
+                                                    )
+                                                ) {
+                                                    Text("Add Rest")
+                                                }
                                             }
                                         }
                                     }
