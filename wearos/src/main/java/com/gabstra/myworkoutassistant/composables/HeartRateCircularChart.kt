@@ -389,7 +389,7 @@ private fun HeartRateDisplay(
                 if(currentZone >= 1){
                     Spacer(modifier = Modifier.width(2.5.dp))
                     // Zone chip with zone color background and white text
-                    val chipBackgroundColor = if (currentZone < 0 || currentZone >= colorsByZone.size)
+                    val chipBackgroundColor = if (currentZone >= colorsByZone.size)
                         MediumDarkGray
                     else
                         colorsByZone[currentZone]
@@ -400,15 +400,15 @@ private fun HeartRateDisplay(
                                 color = chipBackgroundColor,
                                 shape = RoundedCornerShape(12.dp)
                             )
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                             .alignByBaseline(),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            modifier = Modifier.width(12.5.dp),
+                            modifier = Modifier.width(20.dp),
                             text = zoneText,
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyExtraSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = Color.White
                         )
                     }
