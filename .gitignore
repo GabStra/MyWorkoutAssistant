@@ -23,7 +23,6 @@ wearos/release/wearos-release.apk
 .kotlin/
 .idea/
 *.aab
-*.kts
 mobile/version.properties.mobile
 .aider*
 repomix-output.xml
@@ -31,6 +30,9 @@ mobile/release/baselineProfiles/0/mobile-release.dm
 mobile/release/
 test_output.txt
 wearos/wearos/build/e2e-logs/
+keystore.properties
+*.jks
+*.keystore
 
 # Workout generator script (contains API key)
 workout_generator.py

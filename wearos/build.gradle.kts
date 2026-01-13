@@ -1,8 +1,8 @@
 plugins {
-    id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 java {
@@ -30,7 +30,6 @@ if (isReleaseBuild && !hasReleaseSigning) {
     )
 }
 
-
 android {
     signingConfigs {
         if (hasReleaseSigning) {
@@ -51,6 +50,7 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -73,11 +73,9 @@ android {
             versionNameSuffix = "-debug"
         }
     }
-
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
     }
-
     buildFeatures {
         compose = true
     }
@@ -90,66 +88,76 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation("androidx.wear.compose:compose-material-core:1.6.0-alpha07")
+    implementation("androidx.navigation:navigation-compose:2.9.6")
+    implementation("androidx.compose.ui:ui-graphics:1.10.0")
 
-    // Compose BOM (Dec 2025)
+    // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
     implementation(composeBom)
     testImplementation(composeBom)
     androidTestImplementation(composeBom)
 
-    // Jetpack Compose (BOM-managed; no versions)
-    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+
+    // Compose UI
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")                    // Material 3
-    implementation("androidx.compose.material3:material3-window-size-class") // Material 3 adaptive
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.ui:ui-text-google-fonts")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
-    // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.6")
+    // Wear Compose
+    implementation("androidx.wear.compose:compose-material3:1.6.0-alpha07")
+    implementation("androidx.wear.compose:compose-navigation:1.6.0-alpha07")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-alpha07")
+    implementation("androidx.wear.compose:compose-foundation:1.6.0-alpha07")
 
-    // AndroidX core
+    // AndroidX / Google
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.12.2")
-
-    // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
-
-    // Google / Wear
-    implementation("com.google.android.gms:play-services-wearable:19.0.0")
-    implementation("com.google.android.horologist:horologist-datalayer:0.7.15")
-    implementation("com.google.android.horologist:horologist-datalayer-phone:0.7.15")
-
-    // Accompanist
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
-    implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
+    implementation("androidx.wear:wear-tooling-preview:1.0.0")
+    implementation("androidx.wear:wear-ongoing:1.1.0")
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
 
-    // Room
+    //Horologist
+    implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
+    implementation("com.google.android.horologist:horologist-datalayer-watch:0.8.2-alpha")
+    implementation("com.google.android.horologist:horologist-composables:0.8.2-alpha")
+    implementation("com.google.android.horologist:horologist-compose-layout:0.8.2-alpha")
+
+    // Data / utils
     ksp("androidx.room:room-compiler:2.8.4")
-    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    implementation("com.google.guava:guava:33.5.0-android")
+    implementation("com.google.code.gson:gson:2.13.2")
+
+    // Polar SDK + Rx
+    implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")
+    implementation("io.reactivex.rxjava3:rxjava:3.1.12")
+    implementation("io.reactivex.rxjava3:rxandroid:3.0.2")
+
+    // Desugaring
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     // Misc
-    implementation("com.google.code.gson:gson:2.13.2")
-    implementation("com.patrykandpatrick.vico:compose:2.4.1")
-    implementation("com.kizitonwose.calendar:compose:2.9.0")
-    implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
-    implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
-
-    // Tests
+    implementation("dev.shreyaspatil:capturable:3.0.1")
+    // Test
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.21.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("io.mockk:mockk:1.14.7")
+    testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("com.google.truth:truth:1.4.5")
+    // Instrumented / E2E Android tests
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
+    androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-alpha07")
 }
-
-
-
-
