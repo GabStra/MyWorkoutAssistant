@@ -4,11 +4,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -24,10 +21,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
-import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.Red
 import kotlinx.coroutines.delay
 
 @Composable
@@ -44,11 +42,11 @@ fun SyncStatusBadge(
         label = "syncBadgeAlpha"
     )
 
-    // Auto-dismiss after 5 seconds for success/failure
+    // Auto-dismiss after 3 seconds for success/failure
     LaunchedEffect(syncStatus) {
         when (syncStatus) {
             AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
-                delay(5000)
+                delay(3000)
                 // Only reset if status hasn't changed (e.g., new sync started)
                 if (viewModel.syncStatus.value == syncStatus) {
                     viewModel.resetSyncStatus()
@@ -68,8 +66,8 @@ fun SyncStatusBadge(
         ) {
             val backgroundColor = when (syncStatus) {
                 AppViewModel.SyncStatus.Syncing -> MaterialTheme.colorScheme.surfaceContainer
-                AppViewModel.SyncStatus.Success -> Color(0xFF4CAF50) // Green
-                AppViewModel.SyncStatus.Failure -> Color(0xFFF44336) // Red
+                AppViewModel.SyncStatus.Success -> Green // Green
+                AppViewModel.SyncStatus.Failure -> Red // Red
                 AppViewModel.SyncStatus.Idle -> Color.Transparent
             }
 

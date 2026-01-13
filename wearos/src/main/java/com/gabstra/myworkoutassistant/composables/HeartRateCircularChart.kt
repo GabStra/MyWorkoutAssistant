@@ -45,8 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
@@ -138,15 +141,51 @@ fun HrTargetGlowEffect(
                     .alpha(visibilityAlpha)
             ) {
                 if (isVisible) {
-                    // Draw circular glow border
-                    drawCircle(
-                        color = Red.copy(alpha = glowAlpha * visibilityAlpha),
-                        radius = radiusPx - glowWidth / 2,
+                    // Draw circular glow border with radial fade inward
+                    val outerRadius = radiusPx
+                    val fadeDistance = glowWidth * 1.5f // Fade distance proportional to glow width
+                    val innerRadius = (outerRadius - fadeDistance).coerceAtLeast(0f)
+                    
+                    // Calculate gradient stops (0.0 = center, 1.0 = edge)
+                    // We want red at the outer edge and transparent at inner radius
+                    val innerStop = if (outerRadius > 0f) innerRadius / outerRadius else 0f
+                    val redColor = Red.copy(alpha = glowAlpha * visibilityAlpha)
+                    
+                    // Create radial gradient: red at outer edge, transparent at inner radius
+                    val gradient = Brush.radialGradient(
+                        innerStop to Color.Transparent,
+                        1.0f to redColor,
                         center = center,
-                        style = Stroke(
-                            width = glowWidth,
-                            cap = StrokeCap.Round
+                        radius = outerRadius
+                    )
+                    
+                    // Draw ring shape using path
+                    val ringPath = Path().apply {
+                        // Outer circle
+                        addOval(
+                            Rect(
+                                center.x - outerRadius,
+                                center.y - outerRadius,
+                                center.x + outerRadius,
+                                center.y + outerRadius
+                            )
                         )
+                        // Inner circle (counter-clockwise to create hole)
+                        addOval(
+                            Rect(
+                                center.x - innerRadius,
+                                center.y - innerRadius,
+                                center.x + innerRadius,
+                                center.y + innerRadius
+                            )
+                        )
+                        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                    }
+                    
+                    // Draw the ring with radial gradient
+                    drawPath(
+                        path = ringPath,
+                        brush = gradient
                     )
                 }
             }
