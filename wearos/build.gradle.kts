@@ -146,6 +146,7 @@ dependencies {
     // Misc
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("dev.shreyaspatil:capturable:3.0.1")
+    implementation("com.airbnb.android:lottie-compose:6.3.0")
     // Test
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.21.0")

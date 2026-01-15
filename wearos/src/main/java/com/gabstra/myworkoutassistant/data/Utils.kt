@@ -55,6 +55,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import android.util.Log
@@ -826,6 +827,7 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
             .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
             .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+            .registerTypeAdapter(SetData::class.java, SetDataAdapter())
             .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())

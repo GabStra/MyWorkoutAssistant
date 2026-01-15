@@ -75,6 +75,12 @@ class DataLayerListenerService : WearableListenerService() {
         )
     }
     private val gson = Gson()
+    private val workoutHistoryGson = GsonBuilder()
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+        .create()
 
     @OptIn(ExperimentalEncodingApi::class)
     private var workoutHistoryChunks: MutableMap<Int, ByteArray>
@@ -503,7 +509,7 @@ class DataLayerListenerService : WearableListenerService() {
                                     .registerTypeAdapter(SetData::class.java, SetDataAdapter())
                                     .create()
 
-                                val workoutHistoryStore = gson.fromJson(
+                                val workoutHistoryStore = workoutHistoryGson.fromJson(
                                     workoutHistoryStoreJson,
                                     WorkoutHistoryStore::class.java
                                 )
@@ -999,7 +1005,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 )
                                                 .create()
 
-                                            val workoutHistoryStore = gson.fromJson(
+                                            val workoutHistoryStore = workoutHistoryGson.fromJson(
                                                 workoutHistoryStoreJson,
                                                 WorkoutHistoryStore::class.java
                                             )
