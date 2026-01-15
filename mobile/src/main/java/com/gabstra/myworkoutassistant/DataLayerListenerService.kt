@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -1061,10 +1062,35 @@ class DataLayerListenerService : WearableListenerService() {
                                                             setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order }
                                                                 ?: continue
 
+                                                        // Check if a calibration set was completed (has calibrationRIR)
+                                                        val hasCompletedCalibration = setHistories.any { setHistory ->
+                                                            when (val setData = setHistory.setData) {
+                                                                is WeightSetData -> setData.subCategory == SetSubCategory.CalibrationSet && setData.calibrationRIR != null
+                                                                is BodyWeightSetData -> setData.subCategory == SetSubCategory.CalibrationSet && setData.calibrationRIR != null
+                                                                else -> false
+                                                            }
+                                                        }
+
+                                                        // Update exercise to disable calibration requirement if calibration was completed
+                                                        val updatedExercise = if (hasCompletedCalibration && exercise.requiresLoadCalibration) {
+                                                            exercise.copy(requiresLoadCalibration = false)
+                                                        } else {
+                                                            exercise
+                                                        }
+
+                                                        // Update workout components with the updated exercise if it changed
+                                                        if (updatedExercise != exercise) {
+                                                            workoutComponents = updateWorkoutComponentsRecursively(
+                                                                workoutComponents,
+                                                                exercise,
+                                                                updatedExercise
+                                                            )
+                                                        }
+
                                                         workoutComponents =
                                                             removeSetsFromExerciseRecursively(
                                                                 workoutComponents,
-                                                                exercise
+                                                                updatedExercise
                                                             )
 
                                                         val validSetHistories = setHistories
@@ -1085,7 +1111,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                             workoutComponents =
                                                                 addSetToExerciseRecursively(
                                                                     workoutComponents,
-                                                                    exercise,
+                                                                    updatedExercise,
                                                                     newSet,
                                                                     setHistory.order
                                                                 )

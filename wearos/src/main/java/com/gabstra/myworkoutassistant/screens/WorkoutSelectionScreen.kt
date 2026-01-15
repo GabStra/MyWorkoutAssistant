@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.getVersionName
@@ -420,7 +421,7 @@ fun WorkoutSelectionScreen(
                                             transformation = SurfaceTransformation(spec),
                                         ) {
                                             Text(
-                                                text = plan?.name ?: "Unassigned",
+                                                text = plan?.name ?: UNASSIGNED_PLAN_NAME,
                                                 textAlign = TextAlign.Center,
                                                 style = MaterialTheme.typography.titleMedium,
                                                 color = MaterialTheme.colorScheme.onBackground

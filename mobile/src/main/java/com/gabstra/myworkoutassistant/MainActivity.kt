@@ -35,6 +35,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.ViewModelProvider
@@ -72,6 +73,8 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
+import com.gabstra.myworkoutassistant.shared.BackupFileType
+import com.gabstra.myworkoutassistant.shared.detectBackupFileType
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
@@ -86,6 +89,7 @@ import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -283,6 +287,7 @@ fun MyWorkoutAssistantNavHost(
     healthConnectClient: HealthConnectClient
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // Initialize DAOs only once, not on every recomposition
     LaunchedEffect(Unit) {
@@ -385,6 +390,17 @@ fun MyWorkoutAssistantNavHost(
                         val reader = inputStream.bufferedReader()
                         val content = reader.readText()
                         val importedWorkoutStore = fromJSONToWorkoutStore(content)
+                        
+                        // Check if there are any workouts in the imported store
+                        if (importedWorkoutStore.workouts.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                "Cannot import workout plan: No workouts found in file",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@let
+                        }
+                        
                         pendingImportedWorkoutStore = importedWorkoutStore
                         showPlanNameDialog = true
                     }
@@ -484,14 +500,60 @@ fun MyWorkoutAssistantNavHost(
             uri?.let {
                 try {
                     context.contentResolver.openInputStream(it)?.use { inputStream ->
+                        Log.d("MainActivity", "Starting backup restore process")
                         val reader = inputStream.bufferedReader()
                         val content = reader.readText()
-                        val appBackup = fromJSONtoAppBackup(content)
+                        Log.d("MainActivity", "Backup file read successfully, size: ${content.length} characters")
+                        
+                        // Validate file type before attempting to parse
+                        val fileType = detectBackupFileType(content)
+                        Log.d("MainActivity", "Detected backup file type: $fileType")
+                        when (fileType) {
+                            BackupFileType.WORKOUT_STORE -> {
+                                Log.w("MainActivity", "User attempted to restore workout plan file as backup")
+                                Toast.makeText(
+                                    context,
+                                    "This is a workout plan file. Please use 'Import Workout Plan' instead.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.UNKNOWN -> {
+                                Log.e("MainActivity", "Invalid backup file format detected")
+                                Toast.makeText(
+                                    context,
+                                    "Invalid backup file format. Please select a valid backup file.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.APP_BACKUP -> {
+                                // File type is valid, proceed with restore
+                                Log.d("MainActivity", "Backup file type validated, proceeding with restore")
+                            }
+                        }
+                        
+                        Log.d("MainActivity", "Parsing backup JSON content")
+                        val appBackup = try {
+                            fromJSONtoAppBackup(content)
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Failed to parse backup JSON", e)
+                            throw e
+                        }
+                        Log.d("MainActivity", "Backup JSON parsed successfully")
 
-                        scope.launch {
+                        // Use lifecycleScope instead of composition scope to prevent cancellation
+                        // when user navigates away during restore
+                        lifecycleOwner.lifecycleScope.launch {
+                            Log.d("MainActivity", "Starting backup restore in lifecycle scope")
+                            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutStore.workouts.size} workouts")
+                            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutHistories?.size ?: 0} workout histories")
+                            Log.d("MainActivity", "Backup contains ${appBackup.SetHistories?.size ?: 0} set histories")
+                            
                             val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
                                 workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories ?: emptyList()).any { it.workoutId == workout.id })
                             }
+                            Log.d("MainActivity", "Filtered to ${allowedWorkouts.size} allowed workouts (${appBackup.WorkoutStore.workouts.size - allowedWorkouts.size} filtered out)")
 
                             val newWorkoutStore = appBackup.WorkoutStore.copy(
                                 workouts = allowedWorkouts
@@ -499,72 +561,140 @@ fun MyWorkoutAssistantNavHost(
 
                             val deleteAndInsertJob = async {
                                 try {
+                                    Log.d("MainActivity", "Starting database operations for backup restore")
+                                    
+                                    Log.d("MainActivity", "Fetching existing workout histories for HealthConnect deletion")
                                     var allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+                                    Log.d("MainActivity", "Found ${allWorkoutHistories.size} existing workout histories to delete from HealthConnect")
 
                                     try {
+                                        Log.d("MainActivity", "Deleting workout histories from HealthConnect")
                                         deleteWorkoutHistoriesFromHealthConnect(allWorkoutHistories,healthConnectClient)
+                                        Log.d("MainActivity", "Successfully deleted workout histories from HealthConnect")
                                     }catch (e: Exception) {
                                         Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
                                         Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
                                     }
 
+                                    Log.d("MainActivity", "Deleting all existing data from local database")
                                     workoutHistoryDao.deleteAll()
+                                    Log.d("MainActivity", "Deleted all workout histories")
                                     setHistoryDao.deleteAll()
+                                    Log.d("MainActivity", "Deleted all set histories")
                                     exerciseInfoDao.deleteAll()
+                                    Log.d("MainActivity", "Deleted all exercise infos")
                                     workoutScheduleDao.deleteAll()
+                                    Log.d("MainActivity", "Deleted all workout schedules")
                                     workoutRecordDao.deleteAll()
+                                    Log.d("MainActivity", "Deleted all workout records")
                                     db.exerciseSessionProgressionDao().deleteAll()
+                                    Log.d("MainActivity", "Deleted all exercise session progressions")
                                     db.errorLogDao().deleteAll()
+                                    Log.d("MainActivity", "Deleted all error logs")
 
+                                    Log.d("MainActivity", "Filtering valid workout histories from backup")
                                     val validWorkoutHistories = (appBackup.WorkoutHistories ?: emptyList()).filter { workoutHistory ->
                                         allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
                                     }
+                                    Log.d("MainActivity", "Found ${validWorkoutHistories.size} valid workout histories to restore (${(appBackup.WorkoutHistories?.size ?: 0) - validWorkoutHistories.size} filtered out)")
 
+                                    Log.d("MainActivity", "Inserting ${validWorkoutHistories.size} workout histories")
                                     workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
+                                    Log.d("MainActivity", "Successfully inserted workout histories")
 
+                                    Log.d("MainActivity", "Filtering valid set histories from backup")
                                     val validSetHistories = (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
                                         validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                                     }
+                                    Log.d("MainActivity", "Found ${validSetHistories.size} valid set histories to restore (${(appBackup.SetHistories?.size ?: 0) - validSetHistories.size} filtered out)")
 
+                                    Log.d("MainActivity", "Inserting ${validSetHistories.size} set histories")
                                     setHistoryDao.insertAll(*validSetHistories.toTypedArray())
+                                    Log.d("MainActivity", "Successfully inserted set histories")
 
+                                    Log.d("MainActivity", "Extracting exercises from allowed workouts")
                                     val allExercises = allowedWorkouts.flatMap { workout -> workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises } }
+                                    Log.d("MainActivity", "Found ${allExercises.size} exercises in allowed workouts")
 
+                                    Log.d("MainActivity", "Filtering valid exercise infos from backup")
                                     val validExerciseInfos = (appBackup.ExerciseInfos ?: emptyList()).filter { allExercises.any { exercise -> exercise.id == it.id } }
+                                    Log.d("MainActivity", "Found ${validExerciseInfos.size} valid exercise infos to restore (${(appBackup.ExerciseInfos?.size ?: 0) - validExerciseInfos.size} filtered out)")
+                                    
+                                    Log.d("MainActivity", "Inserting ${validExerciseInfos.size} exercise infos")
                                     exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
+                                    Log.d("MainActivity", "Successfully inserted exercise infos")
 
+                                    Log.d("MainActivity", "Filtering valid workout schedules from backup")
                                     val validWorkoutSchedules = (appBackup.WorkoutSchedules ?: emptyList()).filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
+                                    Log.d("MainActivity", "Found ${validWorkoutSchedules.size} valid workout schedules to restore (${(appBackup.WorkoutSchedules?.size ?: 0) - validWorkoutSchedules.size} filtered out)")
+                                    
+                                    Log.d("MainActivity", "Inserting ${validWorkoutSchedules.size} workout schedules")
                                     workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
+                                    Log.d("MainActivity", "Successfully inserted workout schedules")
 
                                     if(appBackup.WorkoutRecords != null){
+                                        Log.d("MainActivity", "Filtering valid workout records from backup")
                                         val validWorkoutRecords = appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
+                                        Log.d("MainActivity", "Found ${validWorkoutRecords.size} valid workout records to restore (${appBackup.WorkoutRecords.size - validWorkoutRecords.size} filtered out)")
+                                        
+                                        Log.d("MainActivity", "Inserting ${validWorkoutRecords.size} workout records")
                                         workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
+                                        Log.d("MainActivity", "Successfully inserted workout records")
+                                    } else {
+                                        Log.d("MainActivity", "No workout records in backup")
                                     }
 
+                                    Log.d("MainActivity", "Filtering valid exercise session progressions from backup")
                                     val validExerciseSessionProgressions = (appBackup.ExerciseSessionProgressions ?: emptyList()).filter { progression ->
                                         validWorkoutHistories.any { it.id == progression.workoutHistoryId }
                                     }
+                                    Log.d("MainActivity", "Found ${validExerciseSessionProgressions.size} valid exercise session progressions to restore (${(appBackup.ExerciseSessionProgressions?.size ?: 0) - validExerciseSessionProgressions.size} filtered out)")
+                                    
                                     if (validExerciseSessionProgressions.isNotEmpty()) {
+                                        Log.d("MainActivity", "Inserting ${validExerciseSessionProgressions.size} exercise session progressions")
                                         db.exerciseSessionProgressionDao().insertAll(*validExerciseSessionProgressions.toTypedArray())
+                                        Log.d("MainActivity", "Successfully inserted exercise session progressions")
+                                    } else {
+                                        Log.d("MainActivity", "No exercise session progressions to restore")
                                     }
 
                                     // Restore error logs if present in backup
                                     val errorLogs = appBackup.ErrorLogs
                                     if (errorLogs != null && errorLogs.isNotEmpty()) {
+                                        Log.d("MainActivity", "Inserting ${errorLogs.size} error logs from backup")
                                         db.errorLogDao().insertAll(*errorLogs.toTypedArray())
+                                        Log.d("MainActivity", "Successfully inserted error logs")
+                                    } else {
+                                        Log.d("MainActivity", "No error logs in backup")
                                     }
 
+                                    Log.d("MainActivity", "Database operations completed successfully")
                                     true
                                 } catch (e: Exception) {
                                     Log.e("MainActivity", "Error restoring data from backup", e)
+                                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
+                                    e.printStackTrace()
                                     false
                                 }
                             }
 
                             // Wait for the delete and insert operations to complete
-                            val restoreSuccess = deleteAndInsertJob.await()
+                            Log.d("MainActivity", "Waiting for database operations to complete")
+                            val restoreSuccess = try {
+                                deleteAndInsertJob.await()
+                            } catch (e: CancellationException) {
+                                // Job was cancelled (e.g., activity destroyed) - this is expected
+                                Log.d("MainActivity", "Backup restore cancelled", e)
+                                return@launch
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Unexpected error while awaiting restore job", e)
+                                false
+                            }
 
+                            Log.d("MainActivity", "Database operations completed, success: $restoreSuccess")
+                            
                             if (restoreSuccess) {
+                                Log.d("MainActivity", "Starting workout store migration and update")
                                 // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
 /*                            backfillExerciseSessionProgressions(
                                 workoutStore = newWorkoutStore,
@@ -577,27 +707,47 @@ fun MyWorkoutAssistantNavHost(
 
                                 // Migrate the workout store before updating view models to ensure
                                 // "Unassigned" plan is created for workouts without a plan
-                                val planMigratedWorkoutStore =
-                                    workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
-                                val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                                    planMigratedWorkoutStore,
-                                    db,
-                                    workoutStoreRepository
-                                )
+                                try {
+                                    Log.d("MainActivity", "Migrating workout store")
+                                    val planMigratedWorkoutStore =
+                                        workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
+                                    Log.d("MainActivity", "Workout store migrated, migrating set IDs if needed")
+                                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                                        planMigratedWorkoutStore,
+                                        db,
+                                        workoutStoreRepository
+                                    )
+                                    Log.d("MainActivity", "Set ID migration completed")
 
-                                appViewModel.updateWorkoutStore(migratedWorkoutStore)
-                                workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+                                    Log.d("MainActivity", "Updating view models with migrated workout store")
+                                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
+                                    workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
 
-                                workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
-                                appViewModel.triggerUpdate()
+                                    Log.d("MainActivity", "Saving workout store to repository")
+                                    workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
+                                    appViewModel.triggerUpdate()
+                                    
+                                    Log.d("MainActivity", "Workout store update completed successfully")
 
-                                // Show the success toast after all operations are complete
-                                Toast.makeText(
-                                    context,
-                                    "Data restored from backup",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                    // Show the success toast after all operations are complete
+                                    Toast.makeText(
+                                        context,
+                                        "Data restored from backup",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    Log.d("MainActivity", "Backup restore completed successfully")
+                                } catch (e: Exception) {
+                                    Log.e("MainActivity", "Error during workout store migration/update", e)
+                                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
+                                    e.printStackTrace()
+                                    Toast.makeText(
+                                        context,
+                                        "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
                             } else {
+                                Log.e("MainActivity", "Backup restore failed during database operations")
                                 Toast.makeText(
                                     context,
                                     "Failed to restore workout history from backup",
@@ -606,10 +756,18 @@ fun MyWorkoutAssistantNavHost(
                             }
                         }
                     }
+                } catch (e: CancellationException) {
+                    // Job was cancelled (e.g., activity destroyed) - this is expected
+                    Log.d("MainActivity", "Backup restore cancelled", e)
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error importing data from backup", e)
-                    Toast.makeText(context, "Failed to import data from backup", Toast.LENGTH_SHORT)
-                        .show()
+                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    e.printStackTrace()
+                    Toast.makeText(
+                        context,
+                        "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         }

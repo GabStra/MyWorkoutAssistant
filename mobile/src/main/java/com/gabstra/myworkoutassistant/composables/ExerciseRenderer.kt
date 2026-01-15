@@ -183,8 +183,13 @@ fun ExerciseRenderer(
                                         )
                                         when (set) {
                                             is WeightSet -> {
-                                                val weightText = equipment!!.formatWeight(set.weight)
-
+                                                val isCalibrationEnabled = exercise.requiresLoadCalibration
+                                                
+                                                val weightText = if (isCalibrationEnabled) {
+                                                    "Cal"
+                                                } else {
+                                                    equipment!!.formatWeight(set.weight)
+                                                }
                                                 Text(
                                                     modifier = Modifier.weight(1f),
                                                     text = weightText,
@@ -202,14 +207,14 @@ fun ExerciseRenderer(
                                             }
 
                                             is BodyWeightSet -> {
-                                                val weightText = when{
-                                                    set.additionalWeight > 0 -> {
-
-                                                        equipment!!.formatWeight(set.additionalWeight)
-                                                    }
+                                                val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
+                                                
+                                                val weightText = when {
+                                                    isCalibrationEnabled && set.additionalWeight > 0 -> "Cal"
+                                                    isCalibrationEnabled -> "-"
+                                                    set.additionalWeight > 0 -> equipment!!.formatWeight(set.additionalWeight)
                                                     else -> "-"
                                                 }
-
                                                 Text(
                                                     modifier = Modifier.weight(1f),
                                                     text = weightText,

@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +37,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,7 +48,8 @@ import java.util.UUID
 fun BodyWeightSetForm(
     onSetUpsert: (Set) -> Unit,
     bodyWeightSet: BodyWeightSet? = null,
-    equipment: WeightLoadedEquipment?
+    equipment: WeightLoadedEquipment?,
+    exercise: Exercise
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }
@@ -87,6 +90,7 @@ fun BodyWeightSetForm(
             }
 
             val expandedWeights = remember { mutableStateOf(false) }
+            val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -106,19 +110,34 @@ fun BodyWeightSetForm(
                             onValueChange = {
                             },
                             label = { Text("Additional Weight (KG)") },
+                            enabled = !isCalibrationEnabled,
                             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
+                                .then(if (isCalibrationEnabled) Modifier.alpha(0.6f) else Modifier)
                         )
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()  // This makes the Box fill its parent size
-                                .clickable { expandedWeights.value = true }
-                        )
+                        if (!isCalibrationEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()  // This makes the Box fill its parent size
+                                    .clickable { expandedWeights.value = true }
+                            )
+                        }
                     }
 
                     val scrollState = rememberScrollState()
+
+                    if (isCalibrationEnabled) {
+                        Text(
+                            text = "Additional weight will be determined by calibration set",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
 
                     AppDropdownMenu(
                         expanded = expandedWeights.value,

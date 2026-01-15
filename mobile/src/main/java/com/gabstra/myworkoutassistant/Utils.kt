@@ -845,7 +845,6 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
 suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {
     withContext(Dispatchers.IO) {
         try {
-            val baseFileName = "workout_store.json"
             val resolver = context.contentResolver
 
             // Get all DAOs
@@ -900,6 +899,24 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 errorLogs.takeIf { it.isNotEmpty() }
             )
 
+            // Check if AppBackup has any data before saving
+            val hasData = appBackup.WorkoutStore.workouts.isNotEmpty() ||
+                    appBackup.WorkoutHistories.isNotEmpty() ||
+                    appBackup.SetHistories.isNotEmpty() ||
+                    appBackup.ExerciseInfos.isNotEmpty() ||
+                    appBackup.WorkoutSchedules.isNotEmpty() ||
+                    appBackup.WorkoutRecords.isNotEmpty() ||
+                    appBackup.ExerciseSessionProgressions.isNotEmpty() ||
+                    run {
+                        val errorLogs = appBackup.ErrorLogs
+                        errorLogs != null && errorLogs.isNotEmpty()
+                    }
+
+            if (!hasData) {
+                Log.d("Utils", "Skipping backup - no data to save")
+                return@withContext
+            }
+
             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
 
             // Helper function to try inserting a file with a given filename
@@ -922,90 +939,13 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 }
             }
 
-            // Helper function to delete existing files with a given name
-            fun deleteExistingFiles(fileNameToDelete: String): Int {
-                val projection = arrayOf(MediaStore.Downloads._ID)
-                var deletedCount = 0
-                
-                // Try with RELATIVE_PATH filter first
-                val selectionWithPath = "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
-                val selectionArgsWithPath = arrayOf(fileNameToDelete, Environment.DIRECTORY_DOWNLOADS)
-                
-                resolver.query(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    projection,
-                    selectionWithPath,
-                    selectionArgsWithPath,
-                    null
-                )?.use { cursor ->
-                    while (cursor.moveToNext()) {
-                        val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-                        val id = cursor.getLong(idIndex)
-                        val deleteUri = android.content.ContentUris.withAppendedId(
-                            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                            id
-                        )
-                        val deleteResult = resolver.delete(deleteUri, null, null)
-                        if (deleteResult > 0) {
-                            deletedCount++
-                        }
-                    }
-                }
+            // Generate timestamp-based filename
+            val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+            val timestamp = sdf.format(java.util.Date())
+            val fileName = "workout_store_$timestamp.json"
 
-                // Fallback: try without path filter if nothing was found
-                if (deletedCount == 0) {
-                    val selectionByName = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
-                    val selectionArgsByName = arrayOf(fileNameToDelete)
-                    
-                    resolver.query(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                        projection,
-                        selectionByName,
-                        selectionArgsByName,
-                        null
-                    )?.use { cursor ->
-                        while (cursor.moveToNext()) {
-                            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-                            val id = cursor.getLong(idIndex)
-                            val deleteUri = android.content.ContentUris.withAppendedId(
-                                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                                id
-                            )
-                            val deleteResult = resolver.delete(deleteUri, null, null)
-                            if (deleteResult > 0) {
-                                deletedCount++
-                            }
-                        }
-                    }
-                }
-
-                return deletedCount
-            }
-
-            // First, try to delete existing file with base name
-            val deletedCount = deleteExistingFiles(baseFileName)
-            if (deletedCount > 0) {
-                Log.d("Utils", "Deleted $deletedCount existing backup file(s) before creating new one")
-                // Delay to ensure MediaStore processes the deletion
-                delay(200)
-            }
-
-            // Try to insert with base filename first
-            var uri = tryInsertFile(baseFileName)
-            var finalFileName = baseFileName
-
-            // If that fails, use a timestamp-based unique filename
-            if (uri == null) {
-                val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-                val timestamp = sdf.format(java.util.Date())
-                finalFileName = "workout_store_$timestamp.json"
-                uri = tryInsertFile(finalFileName)
-                if (uri != null) {
-                    Log.d("Utils", "Created backup with unique filename: $finalFileName")
-                }
-            } else {
-                Log.d("Utils", "Created backup with filename: $finalFileName")
-            }
+            // Try to insert file with timestamped name
+            val uri = tryInsertFile(fileName)
 
             // Write the content if we successfully created the file
             if (uri != null) {
@@ -1014,7 +954,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                         outputStream.write(jsonString.toByteArray())
                         outputStream.flush()
                     } ?: run {
-                        Log.e("Utils", "Failed to open output stream for backup file: $finalFileName")
+                        Log.e("Utils", "Failed to open output stream for backup file: $fileName")
                         // Clean up the failed file
                         try {
                             resolver.delete(uri, null, null)
@@ -1023,7 +963,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("Utils", "Error writing to backup file: $finalFileName", e)
+                    Log.e("Utils", "Error writing to backup file: $fileName", e)
                     // Try to clean up the failed insert
                     try {
                         resolver.delete(uri, null, null)
@@ -1032,7 +972,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                     }
                 }
             } else {
-                Log.e("Utils", "Failed to create backup file - could not insert with any filename")
+                Log.e("Utils", "Failed to create backup file - could not insert with filename: $fileName")
             }
         } catch (e: Exception) {
             Log.e("Utils", "Error saving workout store to Downloads folder", e)

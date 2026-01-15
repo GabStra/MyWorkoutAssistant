@@ -70,6 +70,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
                 jsonObject.addProperty("intraSetRestInSeconds", src.intraSetRestInSeconds)
                 jsonObject.addProperty("showCountDownTimer", src.showCountDownTimer)
+                jsonObject.addProperty("requiresLoadCalibration", src.requiresLoadCalibration)
 
                 if (src.loadJumpDefaultPct != null) {
                     jsonObject.addProperty("loadJumpDefaultPct", src.loadJumpDefaultPct)

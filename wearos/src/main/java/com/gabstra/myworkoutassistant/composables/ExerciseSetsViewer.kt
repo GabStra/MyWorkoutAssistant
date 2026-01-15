@@ -63,6 +63,8 @@ fun SetTableRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipment
+    val exercise = viewModel.exercisesById[setState.exerciseId]
+    val isCalibrationEnabled = exercise?.requiresLoadCalibration ?: false
 
     val isWarmupSet = when(val set = setState.set) {
         is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
@@ -94,9 +96,16 @@ fun SetTableRow(
                         else -> Green
                     }
 
+                    val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
+                    val displayWeightText = if (isCalibrationEnabled) {
+                        "$weightText (Cal)"
+                    } else {
+                        weightText
+                    }
+
                     ScalableText(
                         modifier = Modifier.weight(2f),
-                        text = equipment!!.formatWeight(weightSetData.actualWeight),
+                        text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightTextColor,
@@ -114,10 +123,15 @@ fun SetTableRow(
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                     val previousBodyWeightSetData = (setState.previousSetData as BodyWeightSetData)
 
-                    val weightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
+                    val baseWeightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
                         "BW"
+                    }
+                    val weightText = if (isCalibrationEnabled && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
+                        "$baseWeightText (Cal)"
+                    } else {
+                        baseWeightText
                     }
 
                     val weightTextColor = when {

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -107,31 +110,44 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
     when (set) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+            val isCalibrationEnabled = exercise.requiresLoadCalibration
 
             StyledCard(enabled = exercise.enabled) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(15.dp)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            if (!isCalibrationEnabled) {
+                                Text(
+                                    text = if (equipment != null) {
+                                        "Weight (KG): ${equipment.formatWeight(set.weight)}"
+                                    } else {
+                                        "Weight (KG): ${set.weight}"
+                                    },
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.bodyMedium,)
+                            }
+                            Text(
+                                text = "Reps: ${set.reps}",
+                                 color = MaterialTheme.colorScheme.onBackground,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.End
+                            )
+                        }
+                    }
+                    if (isCalibrationEnabled) {
                         Text(
-                            text = if (equipment != null) {
-                                "Weight (KG): ${equipment.formatWeight(set.weight)}"
-                            } else {
-                                "Weight (KG): ${set.weight}"
-                            },
-                            color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.bodyMedium,)
-                        Text(
-                            text = "Reps: ${set.reps}",
-                             color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.End
+                            text = "(Calibration)",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
                         )
                     }
                 }
@@ -141,29 +157,41 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
 
         is BodyWeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+            val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
 
             StyledCard(enabled = exercise.enabled) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(15.dp)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if(set.additionalWeight != 0.0 && equipment != null){
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            if(!isCalibrationEnabled && set.additionalWeight != 0.0 && equipment != null){
+                                Text(
+                                    text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
                             Text(
-                                text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
+                                text = "Reps: ${set.reps}",
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.End
                             )
                         }
+                    }
+                    if (isCalibrationEnabled) {
                         Text(
-                            text = "Reps: ${set.reps}",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.End
+                            text = "(Calibration)",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
                         )
                     }
                 }
@@ -312,13 +340,32 @@ fun ExerciseDetailScreen(
                     actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
-                        text = exercise.name
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            modifier = Modifier
+                                .weight(1f)
+                                .basicMarquee(iterations = Int.MAX_VALUE),
+                            textAlign = TextAlign.Center,
+                            text = exercise.name
+                        )
+                        if (exercise.requiresLoadCalibration && 
+                            (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.WEIGHT || 
+                             (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))) {
+                            Spacer(Modifier.width(8.dp))
+                            AssistChip(
+                                onClick = { },
+                                label = { Text("Calibration", style = MaterialTheme.typography.labelSmall) },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onGoBack) {

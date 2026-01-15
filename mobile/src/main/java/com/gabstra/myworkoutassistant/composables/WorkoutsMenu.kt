@@ -76,7 +76,7 @@ fun WorkoutsMenu(
             }
         )
 
-        MenuSectionHeader("Data")
+        MenuSectionHeader("Export")
         AppDropdownMenuItem(
             text = { Text("Export Workouts") },
             onClick = {
@@ -91,6 +91,8 @@ fun WorkoutsMenu(
                 onMenuItemClick()
             }
         )
+
+        MenuSectionHeader("Data")
         AppDropdownMenuItem(
             text = { Text("Save Backup") },
             onClick = {

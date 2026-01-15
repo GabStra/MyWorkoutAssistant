@@ -128,6 +128,7 @@ fun ExerciseForm(
     val enableProgression = rememberSaveable { mutableStateOf(exercise?.enableProgression ?: false) }
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
+    val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
 
     // Unilateral toggle: derived from intraSetRestInSeconds domain contract (> 0 means unilateral)
     val isUnilateral = rememberSaveable {
@@ -802,6 +803,33 @@ fun ExerciseForm(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
+            // Requires load calibration (only for WEIGHT or BODY_WEIGHT with equipment)
+            if (selectedExerciseType.value == ExerciseType.WEIGHT || 
+                (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = {
+                        Text(
+                            "Require load calibration",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    },
+                    supportingContent = {
+                        Text(
+                            "Weight will be determined by a calibration set before the first work set.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = requiresLoadCalibration.value,
+                            onCheckedChange = { requiresLoadCalibration.value = it }
+                        )
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+
             // Do not store history
             ListItem(
                 colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
@@ -879,7 +907,8 @@ fun ExerciseForm(
                             loadJumpOvercapUntil = loadJumpOvercapUntilState.intValue,
                             muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
                             secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value,
-                            requiredAccessoryEquipmentIds = selectedAccessoryIds.value
+                            requiredAccessoryEquipmentIds = selectedAccessoryIds.value,
+                            requiresLoadCalibration = requiresLoadCalibration.value
                         )
                         onExerciseUpsert(newExercise)
                     },

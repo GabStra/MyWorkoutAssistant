@@ -13,7 +13,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
@@ -25,7 +24,6 @@ fun MoveWorkoutDialog(
     show: Boolean,
     workoutName: String,
     workoutCount: Int = 1,
-    currentPlanId: UUID?,
     availablePlans: List<WorkoutPlan>,
     onDismiss: () -> Unit,
     onMoveToPlan: (UUID?) -> Unit,
@@ -46,23 +44,14 @@ fun MoveWorkoutDialog(
                     modifier = Modifier.padding(bottom = Spacing.md)
                 )
                 
-                // Filter out current plan, "Unassigned" plans, and deduplicate
-                val filteredPlans = remember(currentPlanId, availablePlans) {
-                    availablePlans
-                        .filter { plan -> 
-                            plan.id != currentPlanId && plan.name != "Unassigned"
-                        }
-                        .distinctBy { it.id }
-                }
-                
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(300.dp),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    // List of plans (filtered and deduplicated)
-                    items(filteredPlans) { plan ->
+                    // List of plans
+                    items(availablePlans) { plan ->
                         OutlinedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -106,4 +95,3 @@ fun MoveWorkoutDialog(
         )
     }
 }
-

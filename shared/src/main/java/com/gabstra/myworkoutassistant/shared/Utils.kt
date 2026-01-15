@@ -37,6 +37,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
@@ -155,6 +156,45 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .create()
 
     return gson.toJson(appBackup)
+}
+
+enum class BackupFileType {
+    APP_BACKUP,
+    WORKOUT_STORE,
+    UNKNOWN
+}
+
+/**
+ * Detects the type of backup file by examining its JSON structure.
+ * - AppBackup has a "WorkoutStore" field (capital W)
+ * - WorkoutStore has "workouts" field at root level (lowercase)
+ * 
+ * @param json The JSON string to analyze
+ * @return The detected file type, or UNKNOWN if detection fails
+ */
+fun detectBackupFileType(json: String): BackupFileType {
+    return try {
+        val jsonElement = JsonParser.parseString(json)
+        if (!jsonElement.isJsonObject) {
+            return BackupFileType.UNKNOWN
+        }
+        
+        val jsonObject = jsonElement.asJsonObject
+        
+        // Check for AppBackup structure (has "WorkoutStore" field)
+        if (jsonObject.has("WorkoutStore")) {
+            return BackupFileType.APP_BACKUP
+        }
+        
+        // Check for WorkoutStore structure (has "workouts" field at root)
+        if (jsonObject.has("workouts")) {
+            return BackupFileType.WORKOUT_STORE
+        }
+        
+        BackupFileType.UNKNOWN
+    } catch (e: Exception) {
+        BackupFileType.UNKNOWN
+    }
 }
 
 fun fromJSONtoAppBackup(json: String) : AppBackup {

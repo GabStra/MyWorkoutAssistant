@@ -29,7 +29,7 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
             val unassignedPlanId = UUID.randomUUID()
             val unassignedPlan = WorkoutPlan(
                 id = unassignedPlanId,
-                name = "Unassigned",
+                name = UNASSIGNED_PLAN_NAME,
                 workoutIds = workouts.map { it.id },
                 order = 0
             )
@@ -52,13 +52,13 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
         // If workouts exist but some don't have workoutPlanId, assign them to Unassigned plan
         val workoutsWithoutPlan = workouts.filter { it.workoutPlanId == null }
         if (workoutsWithoutPlan.isNotEmpty()) {
-            val unassignedPlan = workoutPlans.find { it.name == "Unassigned" }
+            val unassignedPlan = workoutPlans.find { it.name == UNASSIGNED_PLAN_NAME }
             val unassignedPlanId = unassignedPlan?.id ?: UUID.randomUUID()
             
             val updatedPlans = if (unassignedPlan == null) {
                 val newUnassignedPlan = WorkoutPlan(
                     id = unassignedPlanId,
-                    name = "Unassigned",
+                    name = UNASSIGNED_PLAN_NAME,
                     workoutIds = workoutsWithoutPlan.map { it.id },
                     order = (workoutPlans.maxOfOrNull { it.order } ?: -1) + 1
                 )

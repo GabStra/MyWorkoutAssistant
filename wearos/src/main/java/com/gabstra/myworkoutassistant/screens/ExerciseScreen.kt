@@ -52,6 +52,8 @@ import com.gabstra.myworkoutassistant.composables.ExerciseDetail
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
+// MOVEMENT_ANIMATION disabled for now
+// import com.gabstra.myworkoutassistant.composables.PageMovementAnimation
 import com.gabstra.myworkoutassistant.composables.PageMuscles
 import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
@@ -72,7 +74,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class PageType {
-    PLATES, EXERCISE_DETAIL, MUSCLES, EXERCISES, NOTES, BUTTONS, PROGRESSION_COMPARISON
+    PLATES, EXERCISE_DETAIL, MOVEMENT_ANIMATION, MUSCLES, EXERCISES, NOTES, BUTTONS, PROGRESSION_COMPARISON
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -129,6 +131,8 @@ fun ExerciseScreen(
     val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
             add(PageType.EXERCISE_DETAIL)
+            // MOVEMENT_ANIMATION disabled for now
+            // add(PageType.MOVEMENT_ANIMATION)
             if (showPlatesPage) add(PageType.PLATES)
             if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
             if (hasMuscleInfo) add(PageType.MUSCLES)
@@ -153,6 +157,11 @@ fun ExerciseScreen(
     val progressionComparisonPageIndex = remember(pageTypes) {
         pageTypes.indexOf(PageType.PROGRESSION_COMPARISON)
     }
+
+    // MOVEMENT_ANIMATION disabled for now
+    // val movementAnimationPageIndex = remember(pageTypes) {
+    //     pageTypes.indexOf(PageType.MOVEMENT_ANIMATION)
+    // }
 
     val pagerState = rememberPagerState(
         initialPage = exerciseDetailPageIndex,
@@ -497,6 +506,11 @@ fun ExerciseScreen(
                                     }
                                 )
                             }
+                        }
+
+                        // MOVEMENT_ANIMATION disabled for now
+                        PageType.MOVEMENT_ANIMATION -> {
+                            // PageMovementAnimation disabled
                         }
 
                         PageType.MUSCLES -> {

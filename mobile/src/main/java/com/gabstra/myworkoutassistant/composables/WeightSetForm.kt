@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -43,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -52,7 +54,8 @@ import java.util.UUID
 fun WeightSetForm(
     onSetUpsert: (Set) -> Unit,
     weightSet: WeightSet? = null,
-    equipment: WeightLoadedEquipment
+    equipment: WeightLoadedEquipment,
+    exercise: Exercise
 ) {
     // Mutable state for form fields
     val repsState = remember { mutableStateOf(weightSet?.reps?.toString() ?: "") }
@@ -79,6 +82,7 @@ fun WeightSetForm(
     }
 
     val expandedWeights = remember { mutableStateOf(false) }
+    val isCalibrationEnabled = exercise.requiresLoadCalibration
 
     Column(
         modifier = Modifier
@@ -103,18 +107,33 @@ fun WeightSetForm(
                         readOnly = true,
                         onValueChange = {},
                         label = { Text("Weight (KG)") },
+                        enabled = !isCalibrationEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(8.dp)
+                            .then(if (isCalibrationEnabled) Modifier.alpha(0.6f) else Modifier)
                     )
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clickable { expandedWeights.value = true }
-                    )
+                    if (!isCalibrationEnabled) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { expandedWeights.value = true }
+                        )
+                    }
                 }
 
                 val scrollState = rememberScrollState()
+            }
+
+            if (isCalibrationEnabled) {
+                Text(
+                    text = "Weight will be determined by calibration set",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
             }
 
             if (expandedWeights.value) {

@@ -174,7 +174,8 @@ fun SetForm(
                     WeightSetForm(
                         onSetUpsert = onSetUpsert,
                         weightSet = set as WeightSet?,
-                        equipment = equipment!!
+                        equipment = equipment!!,
+                        exercise = exercise
                     )
                 }
 
@@ -182,7 +183,8 @@ fun SetForm(
                     BodyWeightSetForm(
                         onSetUpsert = onSetUpsert,
                         bodyWeightSet = set as BodyWeightSet?,
-                        equipment = equipment
+                        equipment = equipment,
+                        exercise = exercise
                     )
                 }
 

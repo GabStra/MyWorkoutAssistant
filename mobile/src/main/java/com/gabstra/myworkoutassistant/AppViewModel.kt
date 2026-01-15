@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant
 
+import android.content.Context
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -7,10 +8,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
@@ -25,16 +29,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import android.content.Context
-import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import java.util.Calendar
 import java.util.UUID
-import com.gabstra.myworkoutassistant.mergeWorkoutStore
-import com.gabstra.myworkoutassistant.ConflictResolution
 
 sealed class ScreenData() {
     class Workouts(val selectedTabIndex : Int) : ScreenData()
@@ -88,6 +88,13 @@ class AppViewModel() : ViewModel() {
 
     var selectedHomeTab by mutableIntStateOf(0)
         private set
+
+    private val _selectedWorkoutPlanId = MutableStateFlow<UUID?>(null)
+    val selectedWorkoutPlanIdFlow = _selectedWorkoutPlanId.asStateFlow()
+
+    fun setSelectedWorkoutPlanId(planId: UUID?) {
+        _selectedWorkoutPlanId.value = planId
+    }
 
     fun triggerUpdate() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
@@ -179,6 +186,20 @@ class AppViewModel() : ViewModel() {
 
     private val _workoutsFlow = MutableStateFlow(workoutStore.workouts)
     val workoutsFlow = _workoutsFlow.asStateFlow()
+    private val _workoutPlansFlow = MutableStateFlow(workoutStore.workoutPlans)
+    val workoutPlansFlow = _workoutPlansFlow.asStateFlow()
+    val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = combine(
+        selectedWorkoutPlanIdFlow,
+        workoutPlansFlow
+    ) { selectedPlanId, plans ->
+        selectedPlanId ?: plans.singleOrNull()
+            ?.takeIf { isUnassignedPlan(it) }
+            ?.id
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = _selectedWorkoutPlanId.value
+    )
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
         return (equipments + generic).find { it.id == equipmentId }
@@ -214,37 +235,13 @@ class AppViewModel() : ViewModel() {
     var workouts: List<Workout>
         get() = workoutStore.workouts
         private set(value) {
-            val adjustedWorkouts = value.map { workout ->
-                val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
-                    when (workoutComponent) {
-                        is Exercise -> workoutComponent.copy(
-                            sets = ensureRestSeparatedBySets(workoutComponent.sets),
-                            requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds ?: emptyList()
-                        )
-                        is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                            exercise.copy(
-                                sets = ensureRestSeparatedBySets(exercise.sets),
-                                requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
-                            )
-                        })
-                        is Rest -> workoutComponent
-                    }
-                }
-
-                workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
-            }
-
-            _workoutsFlow.value = adjustedWorkouts
-            workoutStore = workoutStore.copy(workouts = adjustedWorkouts)
-            triggerMobile()
+            setWorkoutStoreState(workoutStore.copy(workouts = value))
         }
 
     var equipments: List<WeightLoadedEquipment>
         get() = workoutStore.equipments
         private set(value) {
-            _equipmentsFlow.value = value
-            workoutStore = workoutStore.copy(equipments = value)
-            triggerMobile()
+            setWorkoutStoreState(workoutStore.copy(equipments = value))
         }
 
     private val _equipmentsFlow = MutableStateFlow(workoutStore.equipments)
@@ -267,8 +264,8 @@ class AppViewModel() : ViewModel() {
             }
         )
 
-    fun updateWorkoutStore(newWorkoutStore: WorkoutStore,triggerSend:Boolean = true) {
-        val adjustedWorkouts = newWorkoutStore.workouts.map { workout ->
+    private fun adjustWorkouts(workouts: List<Workout>): List<Workout> {
+        return workouts.map { workout ->
             val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
                 when (workoutComponent) {
                     is Exercise -> workoutComponent.copy(
@@ -287,14 +284,112 @@ class AppViewModel() : ViewModel() {
 
             workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
         }
+    }
 
-        workoutStore = newWorkoutStore.copy(workouts = adjustedWorkouts)
+    private fun normalizeWorkoutStore(newWorkoutStore: WorkoutStore): WorkoutStore {
+        val adjustedWorkouts = adjustWorkouts(newWorkoutStore.workouts)
+        val dedupedPlans = newWorkoutStore.workoutPlans.distinctBy { it.id }
+        val planIds = dedupedPlans.map { it.id }.toSet()
+        val workoutsWithoutPlan = adjustedWorkouts.filter { workout ->
+            workout.workoutPlanId == null || workout.workoutPlanId !in planIds
+        }
+        val existingUnassignedPlan = dedupedPlans.find { isUnassignedPlan(it) }
+        val shouldCreateUnassigned = workoutsWithoutPlan.isNotEmpty()
+        val unassignedPlanId = when {
+            existingUnassignedPlan != null -> existingUnassignedPlan.id
+            shouldCreateUnassigned -> UUID.randomUUID()
+            else -> null
+        }
+
+        val normalizedWorkouts = if (unassignedPlanId != null) {
+            adjustedWorkouts.map { workout ->
+                if (workout.workoutPlanId == null || workout.workoutPlanId !in planIds) {
+                    workout.copy(workoutPlanId = unassignedPlanId)
+                } else {
+                    workout
+                }
+            }
+        } else {
+            adjustedWorkouts
+        }
+
+        val basePlans = if (unassignedPlanId != null && existingUnassignedPlan == null) {
+            val nextOrder = (dedupedPlans.maxOfOrNull { it.order } ?: -1) + 1
+            dedupedPlans + WorkoutPlan(
+                id = unassignedPlanId,
+                name = UNASSIGNED_PLAN_NAME,
+                workoutIds = emptyList(),
+                order = nextOrder
+            )
+        } else {
+            dedupedPlans
+        }
+
+        val workoutsByPlanId = normalizedWorkouts.groupBy { it.workoutPlanId }
+        val updatedPlans = basePlans.map { plan ->
+            val workoutIds = workoutsByPlanId[plan.id]?.map { it.id } ?: emptyList()
+            plan.copy(workoutIds = workoutIds)
+        }
+
+        val cleanedPlans = updatedPlans.filter { plan ->
+            isUnassignedPlan(plan) || plan.workoutIds.isNotEmpty()
+        }
+
+        return newWorkoutStore.copy(
+            workouts = normalizedWorkouts,
+            workoutPlans = cleanedPlans
+        )
+    }
+
+    private fun setWorkoutStoreState(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
+        val normalizedStore = normalizeWorkoutStore(newWorkoutStore)
+        workoutStore = normalizedStore
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-        _userAge.intValue =  currentYear - workoutStore.birthDateYear
-        _workoutsFlow.value = newWorkoutStore.workouts
-        _equipmentsFlow.value = newWorkoutStore.equipments
-        _accessoryEquipmentsFlow.value = newWorkoutStore.accessoryEquipments
-        if(triggerSend) triggerMobile()
+        _userAge.intValue = currentYear - normalizedStore.birthDateYear
+        _workoutsFlow.value = normalizedStore.workouts
+        _equipmentsFlow.value = normalizedStore.equipments
+        _accessoryEquipmentsFlow.value = normalizedStore.accessoryEquipments
+        _workoutPlansFlow.value = normalizedStore.workoutPlans
+        reconcileSelectedWorkoutPlanId(normalizedStore)
+        if (triggerSend) {
+            triggerMobile()
+        }
+    }
+
+    private fun resolveSelectedWorkoutPlanId(
+        plans: List<WorkoutPlan>,
+        workouts: List<Workout>,
+        currentSelection: UUID?
+    ): UUID? {
+        val planIds = plans.map { it.id }.toSet()
+        if (currentSelection != null && currentSelection in planIds) {
+            return currentSelection
+        }
+
+        val unassignedPlan = plans.find { isUnassignedPlan(it) }
+        if (unassignedPlan != null) {
+            val hasWorkouts = workouts.any { it.workoutPlanId == unassignedPlan.id }
+            if (hasWorkouts || plans.size == 1) {
+                return unassignedPlan.id
+            }
+        }
+
+        return plans.minByOrNull { it.order }?.id
+    }
+
+    private fun reconcileSelectedWorkoutPlanId(store: WorkoutStore = workoutStore) {
+        val resolved = resolveSelectedWorkoutPlanId(
+            plans = store.workoutPlans,
+            workouts = store.workouts,
+            currentSelection = _selectedWorkoutPlanId.value
+        )
+        if (resolved != _selectedWorkoutPlanId.value) {
+            _selectedWorkoutPlanId.value = resolved
+        }
+    }
+
+    fun updateWorkoutStore(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
+        setWorkoutStoreState(newWorkoutStore, triggerSend)
     }
 
     fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {
@@ -304,9 +399,7 @@ class AppViewModel() : ViewModel() {
     var accessoryEquipments: List<AccessoryEquipment>
         get() = workoutStore.accessoryEquipments
         private set(value) {
-            _accessoryEquipmentsFlow.value = value
-            workoutStore = workoutStore.copy(accessoryEquipments = value)
-            triggerMobile()
+            setWorkoutStoreState(workoutStore.copy(accessoryEquipments = value))
         }
 
     private val _accessoryEquipmentsFlow = MutableStateFlow(workoutStore.accessoryEquipments)
@@ -317,7 +410,31 @@ class AppViewModel() : ViewModel() {
     }
 
     fun updateWorkouts(newWorkouts: List<Workout>) {
-        workouts = newWorkouts
+        setWorkoutStoreState(workoutStore.copy(workouts = newWorkouts))
+    }
+
+    fun deleteWorkoutsById(workoutIdsToDelete: kotlin.collections.Set<UUID>) {
+        deleteWorkouts(workoutIdsToDelete)
+    }
+
+    fun deleteWorkouts(workoutIdsToDelete: kotlin.collections.Set<UUID>) {
+        if (workoutIdsToDelete.isEmpty()) {
+            return
+        }
+
+        val globalIdsToDelete = workouts
+            .filter { it.id in workoutIdsToDelete }
+            .map { it.globalId }
+            .toSet()
+
+        val remainingWorkouts = workouts
+            .filterNot { workout ->
+                workout.id in workoutIdsToDelete ||
+                    (globalIdsToDelete.isNotEmpty() && workout.globalId in globalIdsToDelete)
+            }
+            .mapIndexed { index, workout -> workout.copy(order = index) }
+
+        setWorkoutStoreState(workoutStore.copy(workouts = remainingWorkouts))
     }
 
     private fun applyWorkoutUpdate(
@@ -441,7 +558,7 @@ class AppViewModel() : ViewModel() {
      * "Unassigned" is a system-managed plan that users cannot move workouts to.
      */
     fun isUnassignedPlan(plan: WorkoutPlan?): Boolean {
-        return plan?.name == "Unassigned"
+        return plan?.name == UNASSIGNED_PLAN_NAME
     }
     
     fun getWorkoutPlanById(planId: UUID): WorkoutPlan? {
@@ -451,6 +568,13 @@ class AppViewModel() : ViewModel() {
     fun getAllWorkoutPlans(): List<WorkoutPlan> {
         // Safety net: deduplicate by ID before sorting to prevent displaying duplicates
         return workoutStore.workoutPlans.distinctBy { it.id }.sortedBy { it.order }
+    }
+
+    fun getSelectableWorkoutPlans(currentPlanId: UUID?): List<WorkoutPlan> {
+        return getAllWorkoutPlans()
+            .filter { plan ->
+                plan.id != currentPlanId && !isUnassignedPlan(plan)
+            }
     }
     
     fun getWorkoutsByPlan(planId: UUID?): List<Workout> {
@@ -469,53 +593,34 @@ class AppViewModel() : ViewModel() {
                 plan
             }
         }
-        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
-        triggerMobile()
+        setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
     }
-    
+
     fun moveWorkoutToPlan(workoutId: UUID, targetPlanId: UUID?) {
-        val workout = workouts.find { it.id == workoutId } ?: return
-        val oldPlanId = workout.workoutPlanId
-        
-        // Prevent moving workouts to "Unassigned" plan
+        moveWorkoutsToPlan(setOf(workoutId), targetPlanId)
+    }
+
+    fun moveWorkoutsToPlan(workoutIds: kotlin.collections.Set<UUID>, targetPlanId: UUID?) {
+        if (workoutIds.isEmpty()) {
+            return
+        }
+
         if (targetPlanId != null) {
-            val targetPlan = getWorkoutPlanById(targetPlanId)
+            val targetPlan = getWorkoutPlanById(targetPlanId) ?: return
             if (isUnassignedPlan(targetPlan)) {
-                return // Reject move to "Unassigned" plan
+                return
             }
         }
-        
-        // Update workout's workoutPlanId
-        val updatedWorkouts = workouts.map { w ->
-            if (w.id == workoutId) {
-                w.copy(workoutPlanId = targetPlanId)
+
+        val updatedWorkouts = workouts.map { workout ->
+            if (workout.id in workoutIds) {
+                workout.copy(workoutPlanId = targetPlanId)
             } else {
-                w
+                workout
             }
         }
-        
-        // Update plans: remove from old plan, add to new plan
-        val updatedPlans = workoutStore.workoutPlans.map { plan ->
-            when {
-                oldPlanId != null && plan.id == oldPlanId -> {
-                    // Remove workout from old plan
-                    plan.copy(workoutIds = plan.workoutIds.filter { it != workoutId })
-                }
-                targetPlanId != null && plan.id == targetPlanId -> {
-                    // Add workout to new plan
-                    if (!plan.workoutIds.contains(workoutId)) {
-                        plan.copy(workoutIds = plan.workoutIds + workoutId)
-                    } else {
-                        plan
-                    }
-                }
-                else -> plan
-            }
-        }
-        
-        workouts = updatedWorkouts
-        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
-        triggerMobile()
+
+        setWorkoutStoreState(workoutStore.copy(workouts = updatedWorkouts))
     }
     
     fun getEquipmentForPlan(planId: UUID): List<WeightLoadedEquipment> {
@@ -571,8 +676,7 @@ class AppViewModel() : ViewModel() {
             return
         }
         val updatedPlans = workoutStore.workoutPlans + plan
-        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
-        triggerMobile()
+        setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
     }
     
     fun updateWorkoutPlan(updatedPlan: WorkoutPlan) {
@@ -583,8 +687,41 @@ class AppViewModel() : ViewModel() {
                 plan
             }
         }
-        workoutStore = workoutStore.copy(workoutPlans = updatedPlans)
-        triggerMobile()
+        setWorkoutStoreState(workoutStore.copy(workoutPlans = updatedPlans))
+    }
+
+    fun deleteWorkoutPlan(planId: UUID) {
+        val plan = getWorkoutPlanById(planId) ?: return
+        if (isUnassignedPlan(plan)) {
+            return
+        }
+
+        val updatedWorkouts = workouts.map { workout ->
+            if (workout.workoutPlanId == planId) {
+                workout.copy(workoutPlanId = null)
+            } else {
+                workout
+            }
+        }
+
+        val updatedPlans = workoutStore.workoutPlans.filter { it.id != planId }
+        setWorkoutStoreState(
+            workoutStore.copy(
+                workouts = updatedWorkouts,
+                workoutPlans = updatedPlans
+            )
+        )
+    }
+    
+    /**
+     * Deletes workout plans that become empty after workouts are deleted.
+     * Only deletes non-"Unassigned" plans that have no remaining workouts.
+     * 
+     * @param affectedPlanIds List of plan IDs that may have become empty (should be collected before workouts are deleted)
+     *                        This parameter is kept for backward compatibility but all plans are now checked.
+     */
+    fun deleteEmptyWorkoutPlans(@Suppress("UNUSED_PARAMETER") affectedPlanIds: List<UUID>) {
+        setWorkoutStoreState(workoutStore)
     }
 
     /**
@@ -653,4 +790,3 @@ class AppViewModel() : ViewModel() {
         saveWorkoutStoreWithBackupFromContext(context, workoutStore)
     }
 }
-

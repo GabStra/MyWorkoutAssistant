@@ -167,11 +167,15 @@ open class WorkoutViewModel(
     var lastSessionWorkout by mutableStateOf<Workout?>(null)
 
     fun getEquipmentById(id: UUID): WeightLoadedEquipment? {
-        return workoutStore.equipments.find { it.id == id }
+        // Capture workoutStore value to avoid race conditions with state access
+        val currentWorkoutStore = workoutStore
+        return currentWorkoutStore.equipments.find { it.id == id }
     }
 
     fun getAccessoryEquipmentById(id: UUID): AccessoryEquipment? {
-        return workoutStore.accessoryEquipments.find { it.id == id }
+        // Capture workoutStore value to avoid race conditions with state access
+        val currentWorkoutStore = workoutStore
+        return currentWorkoutStore.accessoryEquipments.find { it.id == id }
     }
 
     private val _isPaused = mutableStateOf(false) // Private mutable state
@@ -228,10 +232,11 @@ open class WorkoutViewModel(
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore) {
         workoutStore = newWorkoutStore
-        _workouts.value = workoutStore.workouts.filter { it.enabled && it.isActive }
+        // Use newWorkoutStore directly to avoid potential race condition with state access
+        _workouts.value = newWorkoutStore.workouts.filter { it.enabled && it.isActive }
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-        _userAge.intValue = currentYear - workoutStore.birthDateYear
-        _bodyWeight.value = workoutStore.weightKg.toDouble()
+        _userAge.intValue = currentYear - newWorkoutStore.birthDateYear
+        _bodyWeight.value = newWorkoutStore.weightKg.toDouble()
         rebuildScreenState()
     }
 
@@ -526,7 +531,9 @@ open class WorkoutViewModel(
 
 
     fun setSelectedWorkoutId(workoutId: UUID) {
-        val workout = workoutStore.workouts.find { it.id == workoutId }
+        // Capture workoutStore value to avoid race conditions with state access
+        val currentWorkoutStore = workoutStore
+        val workout = currentWorkoutStore.workouts.find { it.id == workoutId }
             ?: workouts.value.find { it.id == workoutId }
 
         pendingResumeWorkoutHistoryId = null
@@ -631,8 +638,10 @@ open class WorkoutViewModel(
 
     suspend fun getIncompleteWorkouts(): List<IncompleteWorkout> {
         return withContext(dispatchers.io) {
+            // Capture workoutStore value at the start to avoid race conditions
+            val currentWorkoutStore = workoutStore
             val incompleteHistories = workoutHistoryDao.getAllUnfinishedWorkoutHistories(isDone = false)
-            
+
             // Group by workoutId and get the most recent one for each workout
             val groupedByWorkoutId = incompleteHistories
                 .groupBy { it.workoutId }
@@ -642,8 +651,8 @@ open class WorkoutViewModel(
             
             // Map to IncompleteWorkout with workout name
             groupedByWorkoutId.values.mapNotNull { workoutHistory ->
-                val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
-                    ?: workoutStore.workouts.find { it.globalId == workoutHistory.globalId }
+                val workout = currentWorkoutStore.workouts.find { it.id == workoutHistory.workoutId }
+                    ?: currentWorkoutStore.workouts.find { it.globalId == workoutHistory.globalId }
 
                 if (workout == null) {
                     return@mapNotNull null
@@ -2321,7 +2330,14 @@ open class WorkoutViewModel(
                 is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
                 else -> false
             }
-            if (exercise.doNotStoreHistory || isWarmupSet || isCalibrationSet) return
+            // Allow calibration sets to be stored if they have a calibrationRIR (completed calibration)
+            val hasCalibrationRIR = when(val setData = currentState.currentSetData) {
+                is WeightSetData -> setData.calibrationRIR != null
+                is BodyWeightSetData -> setData.calibrationRIR != null
+                else -> false
+            }
+            // Skip if: doNotStoreHistory, warmup set, or calibration set without RIR (not yet completed)
+            if (exercise.doNotStoreHistory || isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) return
         }
 
         if(currentState is WorkoutState.Rest && currentState.isIntraSetRest) return
@@ -3045,8 +3061,12 @@ open class WorkoutViewModel(
                     }
                 }
                 
-                // Update exercise with adjusted sets
-                val updatedExercise = exercise.copy(sets = updatedSets)
+                // Update exercise with adjusted sets and disable calibration requirement
+                // since calibration has been completed
+                val updatedExercise = exercise.copy(
+                    sets = updatedSets,
+                    requiresLoadCalibration = false
+                )
                 updateWorkout(exercise, updatedExercise)
                 
                 // Update states in state machine to reflect new set weights
@@ -3069,6 +3089,9 @@ open class WorkoutViewModel(
                     updateStateFlowsFromMachine()
                 }
             }
+            
+            // Store the calibration set with RIR in executedSetsHistory
+            storeSetData()
             
             // Move to next state (first work set)
             withContext(dispatchers.main) {

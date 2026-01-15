@@ -420,6 +420,7 @@ fun RestScreen(
                             }
 
                             PageType.MUSCLES -> {}
+                            PageType.MOVEMENT_ANIMATION -> {}
                         }
                     }
                 }

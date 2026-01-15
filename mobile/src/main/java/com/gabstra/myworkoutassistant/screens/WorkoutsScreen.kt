@@ -124,22 +124,11 @@ fun WorkoutsScreen(
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val accessories by appViewModel.accessoryEquipmentsFlow.collectAsState()
 
-    // Group workouts by plan
-    val allPlans = appViewModel.getAllWorkoutPlans()
+    // Group workouts by plan - keep reactive to workoutStore updates
+    val allPlans by appViewModel.workoutPlansFlow.collectAsState()
 
-    // Filter state - default to first plan by order
-    var selectedPlanFilter by remember {
-        mutableStateOf<UUID?>(allPlans.firstOrNull()?.id)
-    }
-
-    // Update selectedPlanFilter when plans change (if current selection is invalid)
-    LaunchedEffect(allPlans) {
-        if (selectedPlanFilter != null && allPlans.none { it.id == selectedPlanFilter }) {
-            selectedPlanFilter = allPlans.firstOrNull()?.id
-        } else if (selectedPlanFilter == null && allPlans.isNotEmpty()) {
-            selectedPlanFilter = allPlans.firstOrNull()?.id
-        }
-    }
+    // Filter state - use ViewModel state to persist across navigation
+    val selectedPlanFilter by appViewModel.effectiveSelectedWorkoutPlanIdFlow.collectAsState()
 
     // Filter workouts by selected plan
     val filteredWorkouts = remember(workouts, selectedPlanFilter) {
@@ -551,7 +540,6 @@ fun WorkoutsScreen(
                         1 -> WorkoutsBottomBar(
                             selectedWorkouts = selectedWorkouts,
                             activeWorkouts = activeWorkouts,
-                            activeAndEnabledWorkouts = activeAndEnabledWorkouts,
                             appViewModel = appViewModel,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
@@ -677,7 +665,7 @@ fun WorkoutsScreen(
                                         AppDropdownMenuItem(
                                             text = { Text(plan.name) },
                                             onClick = {
-                                                selectedPlanFilter = plan.id
+                                                appViewModel.setSelectedWorkoutPlanId(plan.id)
                                                 planSelectorExpanded = false
                                             }
                                         )
@@ -812,23 +800,27 @@ fun WorkoutsScreen(
         )
 
         // Move Workout Dialog
+        val currentPlanId = if (
+            selectedWorkouts.isNotEmpty() &&
+            selectedWorkouts.all { it.workoutPlanId == selectedWorkouts.first().workoutPlanId }
+        ) {
+            selectedWorkouts.first().workoutPlanId
+        } else {
+            null
+        }
         MoveWorkoutDialog(
             show = showMoveWorkoutDialog,
             workoutName = selectedWorkouts.firstOrNull()?.name ?: "",
             workoutCount = selectedWorkouts.size,
-            currentPlanId = if (selectedWorkouts.isNotEmpty() && selectedWorkouts.all { it.workoutPlanId == selectedWorkouts.first().workoutPlanId }) {
-                selectedWorkouts.first().workoutPlanId
-            } else {
-                null
-            },
-            availablePlans = appViewModel.getAllWorkoutPlans(),
+            availablePlans = appViewModel.getSelectableWorkoutPlans(currentPlanId),
             onDismiss = {
                 showMoveWorkoutDialog = false
             },
             onMoveToPlan = { targetPlanId ->
-                selectedWorkouts.forEach { workout ->
-                    appViewModel.moveWorkoutToPlan(workout.id, targetPlanId)
-                }
+                appViewModel.moveWorkoutsToPlan(
+                    selectedWorkouts.map { it.id }.toSet(),
+                    targetPlanId
+                )
                 appViewModel.scheduleWorkoutSave(context)
                 showMoveWorkoutDialog = false
                 selectedWorkouts = emptyList()
@@ -863,9 +855,10 @@ fun WorkoutsScreen(
                 appViewModel.addWorkoutPlan(newPlan)
 
                 // Move all selected workouts to the new plan
-                selectedWorkouts.forEach { workout ->
-                    appViewModel.moveWorkoutToPlan(workout.id, newPlanId)
-                }
+                appViewModel.moveWorkoutsToPlan(
+                    selectedWorkouts.map { it.id }.toSet(),
+                    newPlanId
+                )
 
                 appViewModel.scheduleWorkoutSave(context)
 
@@ -878,4 +871,3 @@ fun WorkoutsScreen(
         LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }
 }
-

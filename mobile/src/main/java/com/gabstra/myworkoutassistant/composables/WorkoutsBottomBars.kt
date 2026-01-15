@@ -67,7 +67,6 @@ import java.util.UUID
 fun WorkoutsBottomBar(
     selectedWorkouts: List<Workout>,
     activeWorkouts: List<Workout>,
-    activeAndEnabledWorkouts: List<Workout>,
     appViewModel: AppViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
@@ -186,17 +185,8 @@ fun WorkoutsBottomBar(
                                 ) {
                                     IconButton(
                                         onClick = {
-                                            val newWorkouts =
-                                                activeAndEnabledWorkouts.filter { workout ->
-                                                    selectedWorkouts.none { it.id == workout.id }
-                                                }
-
-                                            val newWorkoutsWithUpdatedOrder =
-                                                newWorkouts.mapIndexed { index, workout ->
-                                                    workout.copy(order = index)
-                                                }
-
-                                            appViewModel.updateWorkouts(newWorkoutsWithUpdatedOrder)
+                                            appViewModel.deleteWorkouts(selectedWorkouts.map { it.id }.toSet())
+                                            appViewModel.scheduleWorkoutSave(context)
                                             scope.launch(Dispatchers.IO) {
                                                 for (workout in selectedWorkouts) {
                                                     val workoutHistories =

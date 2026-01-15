@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.formatNumber
@@ -171,7 +172,7 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
             .sortedBy { it.order }
         
         if (unassignedWorkouts.isNotEmpty()) {
-            markdown.append("### Unassigned\n\n")
+            markdown.append("### ").append(UNASSIGNED_PLAN_NAME).append("\n\n")
             unassignedWorkouts.forEachIndexed { index, workout ->
                 appendWorkoutDetails(markdown, workout, index + 1, workoutStore)
             }
