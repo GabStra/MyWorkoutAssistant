@@ -119,6 +119,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @Composable
 fun Menu(
@@ -308,7 +309,10 @@ fun WorkoutDetailScreen(
     }
 
 
-    var selectedWorkoutComponents by remember { mutableStateOf(listOf<WorkoutComponent>()) }
+    var selectedComponentIds by remember { mutableStateOf(setOf<UUID>()) }
+    val selectedWorkoutComponents = remember(workout.workoutComponents, selectedComponentIds) {
+        workout.workoutComponents.filter { it.id in selectedComponentIds }
+    }
     var isSelectionModeActive by remember { mutableStateOf(false) }
 
     var showRest by remember { mutableStateOf(true) }
@@ -339,15 +343,7 @@ fun WorkoutDetailScreen(
     }
 
     LaunchedEffect(showRest) {
-        selectedWorkoutComponents = emptyList()
-    }
-
-    LaunchedEffect(workout.workoutComponents) {
-        // Sync selectedWorkoutComponents with new component references when workout updates
-        if (selectedWorkoutComponents.isNotEmpty()) {
-            val selectedIds = selectedWorkoutComponents.map { it.id }.toSet()
-            selectedWorkoutComponents = workout.workoutComponents.filter { it.id in selectedIds }
-        }
+        selectedComponentIds = emptySet()
     }
 
     val editModeBottomBar = @Composable {
@@ -386,7 +382,7 @@ fun WorkoutDetailScreen(
                             .width(56.dp)
                     ) {
                         IconButton(onClick = {
-                            selectedWorkoutComponents = emptyList()
+                            selectedComponentIds = emptySet()
                             isSelectionModeActive = false
                         }) {
                             Icon(
@@ -410,7 +406,7 @@ fun WorkoutDetailScreen(
                     ) {
                         IconButton(onClick = {
                             val filteredItems = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents
-                            selectedWorkoutComponents = filteredItems
+                            selectedComponentIds = filteredItems.map { it.id }.toSet()
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.CheckBox,
@@ -432,7 +428,7 @@ fun WorkoutDetailScreen(
                             .width(56.dp)
                     ) {
                         IconButton(onClick = {
-                            selectedWorkoutComponents = emptyList()
+                            selectedComponentIds = emptySet()
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.CheckBoxOutlineBlank,
@@ -613,7 +609,7 @@ fun WorkoutDetailScreen(
                                             workout.copy(workoutComponents = adjustedComponents)
                                         updateWorkoutWithHistory(updatedWorkout)
 
-                                        selectedWorkoutComponents = emptyList()
+                                        selectedComponentIds = emptySet()
                                         isSelectionModeActive = false
                                     },
                                     colors = selectionIconColors
@@ -660,7 +656,7 @@ fun WorkoutDetailScreen(
                                         val updatedWorkout =
                                             workout.copy(workoutComponents = adjustedComponents)
                                         updateWorkoutWithHistory(updatedWorkout)
-                                        selectedWorkoutComponents = emptyList()
+                                        selectedComponentIds = emptySet()
                                         isSelectionModeActive = false
                                     },
                                     colors = selectionIconColors
@@ -713,7 +709,7 @@ fun WorkoutDetailScreen(
                                             workout.copy(workoutComponents = adjustedComponents)
                                         updateWorkoutWithHistory(updatedWorkout)
 
-                                        selectedWorkoutComponents = emptyList()
+                                        selectedComponentIds = emptySet()
                                         isSelectionModeActive = false
                                     },
                                     colors = selectionIconColors
@@ -760,7 +756,7 @@ fun WorkoutDetailScreen(
                                         val updatedWorkout =
                                             workout.copy(workoutComponents = adjustedComponents)
                                         updateWorkoutWithHistory(updatedWorkout)
-                                        selectedWorkoutComponents = emptyList()
+                                        selectedComponentIds = emptySet()
                                         isSelectionModeActive = false
                                     },
                                     colors = selectionIconColors
@@ -796,7 +792,7 @@ fun WorkoutDetailScreen(
                                 val updatedWorkout =
                                     workout.copy(workoutComponents = workout.workoutComponents + newWorkoutComponents)
                                 updateWorkoutWithHistory(updatedWorkout)
-                                selectedWorkoutComponents = emptyList()
+                                selectedComponentIds = emptySet()
 
                             },
                             colors = selectionIconColors
@@ -856,13 +852,13 @@ fun WorkoutDetailScreen(
 
                             val updatedWorkout =
                                 workout.copy(workoutComponents = adjustedComponents)
+                            val selectedExerciseIds =
+                                selectedWorkoutComponents.filterIsInstance<Exercise>()
+                                    .map { it.id }
                             updateWorkoutWithHistory(updatedWorkout)
-                            selectedWorkoutComponents = emptyList()
+                            selectedComponentIds = emptySet()
                             isSelectionModeActive = false
 
-                            val selectedExerciseIds =
-                                selectedWorkoutComponents.toList().filterIsInstance<Exercise>()
-                                    .map { it.id }
                             if (selectedExerciseIds.isNotEmpty()) {
                                 scope.launch {
                                     withContext(Dispatchers.IO) {
@@ -1307,7 +1303,7 @@ fun WorkoutDetailScreen(
                             onEnableSelection = { isSelectionModeActive = true },
                             onDisableSelection = { isSelectionModeActive = false },
                             onSelectionChange = { newSelection ->
-                                selectedWorkoutComponents = newSelection
+                                selectedComponentIds = newSelection.map { it.id }.toSet()
                             },
                             onOrderChange = { newWorkoutComponents ->
                                 if (!showRest) return@GenericSelectableList
@@ -1426,7 +1422,7 @@ fun WorkoutDetailScreen(
                                     targetHasHistory
                                 )
 
-                                selectedWorkoutComponents = emptyList()
+                                selectedComponentIds = emptySet()
                                 isSelectionModeActive = false
                                 Toast.makeText(
                                     context,

@@ -9,12 +9,12 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.UUID
@@ -69,6 +70,23 @@ sealed class ScreenData() {
     class EditEquipment(val equipmentId: UUID, val equipmentType: EquipmentType) : ScreenData()
 }
 
+private fun emptyWorkoutStore(): WorkoutStore {
+    return WorkoutStore(
+        workouts = emptyList(),
+        polarDeviceId = null,
+        birthDateYear = 0,
+        weightKg = 0.0,
+        equipments = emptyList(),
+        accessoryEquipments = emptyList(),
+        workoutPlans = emptyList(),
+        progressionPercentageAmount = 0.0
+    )
+}
+
+private data class AppState(
+    val workoutStore: WorkoutStore = emptyWorkoutStore(),
+    val selectedWorkoutPlanId: UUID? = null
+)
 
 class AppViewModel() : ViewModel() {
     private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
@@ -83,17 +101,70 @@ class AppViewModel() : ViewModel() {
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
+    private val _state = MutableStateFlow(AppState())
+    val state = _state.asStateFlow()
+
+    val workoutStoreFlow: StateFlow<WorkoutStore> = state
+        .map { it.workoutStore }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.workoutStore
+        )
+
+    val workoutsFlow: StateFlow<List<Workout>> = workoutStoreFlow
+        .map { it.workouts }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.workoutStore.workouts
+        )
+
+    val workoutPlansFlow: StateFlow<List<WorkoutPlan>> = workoutStoreFlow
+        .map { it.workoutPlans }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.workoutStore.workoutPlans
+        )
+
+    val equipmentsFlow: StateFlow<List<WeightLoadedEquipment>> = workoutStoreFlow
+        .map { it.equipments }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.workoutStore.equipments
+        )
+
+    val accessoryEquipmentsFlow: StateFlow<List<AccessoryEquipment>> = workoutStoreFlow
+        .map { it.accessoryEquipments }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.workoutStore.accessoryEquipments
+        )
+
+    val selectedWorkoutPlanIdFlow: StateFlow<UUID?> = state
+        .map { it.selectedWorkoutPlanId }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = state.value.selectedWorkoutPlanId
+        )
+
+    val workoutStore: WorkoutStore
+        get() = state.value.workoutStore
+
     private val _updateNotificationFlow = MutableStateFlow<String?>(null)
     val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
 
     var selectedHomeTab by mutableIntStateOf(0)
         private set
 
-    private val _selectedWorkoutPlanId = MutableStateFlow<UUID?>(null)
-    val selectedWorkoutPlanIdFlow = _selectedWorkoutPlanId.asStateFlow()
-
     fun setSelectedWorkoutPlanId(planId: UUID?) {
-        _selectedWorkoutPlanId.value = planId
+        _state.update { current ->
+            current.copy(selectedWorkoutPlanId = planId)
+        }
     }
 
     fun triggerUpdate() {
@@ -172,22 +243,6 @@ class AppViewModel() : ViewModel() {
         }
         return false
     }
-    var workoutStore by mutableStateOf(WorkoutStore(
-        workouts = emptyList(),
-        polarDeviceId = null,
-        birthDateYear = 0,
-        weightKg = 0.0,
-        equipments = emptyList(),
-        accessoryEquipments = emptyList(),
-        workoutPlans = emptyList(),
-        progressionPercentageAmount = 0.0
-    ))
-        private set
-
-    private val _workoutsFlow = MutableStateFlow(workoutStore.workouts)
-    val workoutsFlow = _workoutsFlow.asStateFlow()
-    private val _workoutPlansFlow = MutableStateFlow(workoutStore.workoutPlans)
-    val workoutPlansFlow = _workoutPlansFlow.asStateFlow()
     val effectiveSelectedWorkoutPlanIdFlow: StateFlow<UUID?> = combine(
         selectedWorkoutPlanIdFlow,
         workoutPlansFlow
@@ -198,7 +253,7 @@ class AppViewModel() : ViewModel() {
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = _selectedWorkoutPlanId.value
+        initialValue = state.value.selectedWorkoutPlanId
     )
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
@@ -244,13 +299,10 @@ class AppViewModel() : ViewModel() {
             setWorkoutStoreState(workoutStore.copy(equipments = value))
         }
 
-    private val _equipmentsFlow = MutableStateFlow(workoutStore.equipments)
-    val equipmentsFlow = _equipmentsFlow.asStateFlow()
-
     public val GENERIC_ID = UUID.fromString("babe5d97-a86d-4ec2-84b6-634034aa847c")
     private val generic = Generic(GENERIC_ID, name = "Generic")
 
-    val equipmentsFlowWithGeneric: StateFlow<List<WeightLoadedEquipment>> = _equipmentsFlow
+    val equipmentsFlowWithGeneric: StateFlow<List<WeightLoadedEquipment>> = equipmentsFlow
         .map { equipments ->
             if (equipments.any { it.id == GENERIC_ID }) equipments
             else equipments + generic
@@ -343,14 +395,19 @@ class AppViewModel() : ViewModel() {
 
     private fun setWorkoutStoreState(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
         val normalizedStore = normalizeWorkoutStore(newWorkoutStore)
-        workoutStore = normalizedStore
         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         _userAge.intValue = currentYear - normalizedStore.birthDateYear
-        _workoutsFlow.value = normalizedStore.workouts
-        _equipmentsFlow.value = normalizedStore.equipments
-        _accessoryEquipmentsFlow.value = normalizedStore.accessoryEquipments
-        _workoutPlansFlow.value = normalizedStore.workoutPlans
-        reconcileSelectedWorkoutPlanId(normalizedStore)
+        val resolvedPlanId = resolveSelectedWorkoutPlanId(
+            plans = normalizedStore.workoutPlans,
+            workouts = normalizedStore.workouts,
+            currentSelection = state.value.selectedWorkoutPlanId
+        )
+        _state.update { current ->
+            current.copy(
+                workoutStore = normalizedStore,
+                selectedWorkoutPlanId = resolvedPlanId
+            )
+        }
         if (triggerSend) {
             triggerMobile()
         }
@@ -377,17 +434,6 @@ class AppViewModel() : ViewModel() {
         return plans.minByOrNull { it.order }?.id
     }
 
-    private fun reconcileSelectedWorkoutPlanId(store: WorkoutStore = workoutStore) {
-        val resolved = resolveSelectedWorkoutPlanId(
-            plans = store.workoutPlans,
-            workouts = store.workouts,
-            currentSelection = _selectedWorkoutPlanId.value
-        )
-        if (resolved != _selectedWorkoutPlanId.value) {
-            _selectedWorkoutPlanId.value = resolved
-        }
-    }
-
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
         setWorkoutStoreState(newWorkoutStore, triggerSend)
     }
@@ -401,9 +447,6 @@ class AppViewModel() : ViewModel() {
         private set(value) {
             setWorkoutStoreState(workoutStore.copy(accessoryEquipments = value))
         }
-
-    private val _accessoryEquipmentsFlow = MutableStateFlow(workoutStore.accessoryEquipments)
-    val accessoryEquipmentsFlow = _accessoryEquipmentsFlow.asStateFlow()
 
     fun updateAccessoryEquipments(newAccessories: List<AccessoryEquipment>) {
         accessoryEquipments = newAccessories

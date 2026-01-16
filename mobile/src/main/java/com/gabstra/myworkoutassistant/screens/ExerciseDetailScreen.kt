@@ -101,6 +101,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @Composable
 fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
@@ -283,8 +284,11 @@ fun ExerciseDetailScreen(
     exercise: Exercise,
     onGoBack: () -> Unit
 ) {
-    var sets by remember { mutableStateOf(ensureRestSeparatedBySets(exercise.sets)) }
-    var selectedSets by remember { mutableStateOf(listOf<Set>()) }
+    val sets = remember(exercise.sets) { ensureRestSeparatedBySets(exercise.sets) }
+    var selectedSetIds by remember { mutableStateOf(setOf<UUID>()) }
+    val selectedSets = remember(sets, selectedSetIds) {
+        sets.filter { it.id in selectedSetIds }
+    }
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
@@ -315,18 +319,7 @@ fun ExerciseDetailScreen(
     }
 
     LaunchedEffect(showRest) {
-        selectedSets = emptyList()
-    }
-
-    LaunchedEffect(exercise.sets) {
-        // Sync sets state when exercise parameter changes
-        sets = ensureRestSeparatedBySets(exercise.sets)
-        
-        // Sync selectedSets with new set references when exercise updates
-        if (selectedSets.isNotEmpty()) {
-            val selectedIds = selectedSets.map { it.id }.toSet()
-            selectedSets = exercise.sets.filter { it.id in selectedIds }
-        }
+        selectedSetIds = emptySet()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -449,7 +442,7 @@ fun ExerciseDetailScreen(
                                         .width(56.dp)
                                 ) {
                                     IconButton(onClick = {
-                                        selectedSets = emptyList()
+                                        selectedSetIds = emptySet()
                                         isSelectionModeActive = false
                                     }) {
                                         Icon(
@@ -471,7 +464,7 @@ fun ExerciseDetailScreen(
                                 ) {
                                     IconButton(onClick = {
                                         val filteredSets = if (!showRest) sets.filter { it !is RestSet } else sets
-                                        selectedSets = filteredSets
+                                        selectedSetIds = filteredSets.map { it.id }.toSet()
                                     }) {
                                         Icon(
                                             imageVector = Icons.Filled.CheckBox,
@@ -491,7 +484,7 @@ fun ExerciseDetailScreen(
                                         .width(56.dp)
                                 ) {
                                     IconButton(onClick = {
-                                        selectedSets = emptyList()
+                                        selectedSetIds = emptySet()
                                     }) {
                                         Icon(
                                             imageVector = Icons.Filled.CheckBoxOutlineBlank,
@@ -557,8 +550,6 @@ fun ExerciseDetailScreen(
                                                 val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
                                                 updateExerciseWithHistory(updatedExercise)
-
-                                                sets = adjustedComponents
                                             },
                                             colors = selectionIconColors
                                         ) {
@@ -605,8 +596,6 @@ fun ExerciseDetailScreen(
                                                 val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                                 val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
-                                                sets = adjustedComponents
-
                                                 updateExerciseWithHistory(updatedExercise)
                                             },
                                             colors = selectionIconColors
@@ -636,11 +625,9 @@ fun ExerciseDetailScreen(
                                         val adjustedComponents = ensureRestSeparatedBySets(newSets)
                                         val updatedExercise = exercise.copy(sets = adjustedComponents)
 
-                                        sets = adjustedComponents
-
                                         updateExerciseWithHistory(updatedExercise)
 
-                                        selectedSets = emptyList()
+                                        selectedSetIds = emptySet()
                                         isSelectionModeActive = false
                                     }) {
                                         Icon(
@@ -677,11 +664,9 @@ fun ExerciseDetailScreen(
                                             val adjustedComponents = ensureRestSeparatedBySets(sets + copiedSets)
                                             val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
 
-                                            sets = adjustedComponents
-
                                             updateExerciseWithHistory(updatedExercise)
 
-                                            selectedSets = emptyList()
+                                            selectedSetIds = emptySet()
                                         },
                                         colors = selectionIconColors
                                     ) {
@@ -864,13 +849,14 @@ fun ExerciseDetailScreen(
                             },
                             onEnableSelection = { isSelectionModeActive = true },
                             onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection -> selectedSets = newSelection },
+                            onSelectionChange = { newSelection ->
+                                selectedSetIds = newSelection.map { it.id }.toSet()
+                            },
                             onOrderChange = { newComponents ->
                                 if (!showRest) return@GenericSelectableList
                                 val adjustedComponents = ensureRestSeparatedBySets(newComponents)
                                 val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                                 updateExerciseWithHistory(updatedExercise)
-                                sets = adjustedComponents
                             },
                             isDragDisabled = true,
                             itemContent = { it ->

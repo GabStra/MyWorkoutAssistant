@@ -33,6 +33,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -887,6 +888,7 @@ fun MyWorkoutAssistantNavHost(
 
     // Collect workouts once at the parent level to avoid recomposition cascades inside AnimatedContent
     val workoutsForNavigation by appViewModel.workoutsFlow.collectAsState()
+    val saveableStateHolder = rememberSaveableStateHolder()
 
     AnimatedContent(
         modifier = Modifier
@@ -898,7 +900,8 @@ fun MyWorkoutAssistantNavHost(
             EnterTransition.None togetherWith ExitTransition.None
         }, label = ""
     ) { currentScreen ->
-        when (currentScreen) {
+        saveableStateHolder.SaveableStateProvider(currentScreen) {
+            when (currentScreen) {
             is ScreenData.Workouts -> {
                 WorkoutsScreen(
                     appViewModel,
@@ -2135,7 +2138,8 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
         }
-        
+        }
+
         // Resume workout dialog
         val showResumeDialog by appViewModel.showResumeWorkoutDialog
         val incompleteWorkouts by appViewModel.incompleteWorkouts
