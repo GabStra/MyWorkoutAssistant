@@ -115,8 +115,8 @@ fun WorkoutsAlarmsTab(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
-        } else {
-            // Bulk toggle button
+        } else if (schedulesByWorkout.values.any { it.isNotEmpty() }) {
+            // Bulk toggle button - only show if there are schedules for available workouts
             StyledCard {
                 Column(
                     modifier = Modifier

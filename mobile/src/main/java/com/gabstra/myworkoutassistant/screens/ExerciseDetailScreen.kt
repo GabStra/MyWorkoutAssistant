@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -77,8 +76,8 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
-import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
@@ -104,10 +103,10 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Composable
-fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
+fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) {
     // Observe equipmentsFlow to fix race condition - recompose when equipments are loaded
     val equipments by appViewModel.equipmentsFlow.collectAsState()
-    
+
     when (set) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
@@ -133,23 +132,22 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                                         "Weight (KG): ${set.weight}"
                                     },
                                     color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium,)
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }else{
+                                Text(
+                                    text = "Calibration",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
                             }
                             Text(
                                 text = "Reps: ${set.reps}",
-                                 color = MaterialTheme.colorScheme.onBackground,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.End
                             )
                         }
-                    }
-                    if (isCalibrationEnabled) {
-                        Text(
-                            text = "(Calibration)",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
                     }
                 }
             }
@@ -172,11 +170,19 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            if(!isCalibrationEnabled && set.additionalWeight != 0.0 && equipment != null){
+                            if (!isCalibrationEnabled) {
+                                if(set.additionalWeight != 0.0 && equipment != null) {
+                                    Text(
+                                        text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            }else{
                                 Text(
-                                    text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
+                                    text = "Calibration",
                                     color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
                             }
                             Text(
@@ -186,14 +192,6 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                                 textAlign = TextAlign.End
                             )
                         }
-                    }
-                    if (isCalibrationEnabled) {
-                        Text(
-                            text = "(Calibration)",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
                     }
                 }
             }
@@ -230,7 +228,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel,exercise: Exercise) {
                         modifier = Modifier.weight(1f),
                         text = formatTime(set.timeInMillis / 1000),
                         textAlign = TextAlign.Center,
-                         color = MaterialTheme.colorScheme.onBackground,
+                        color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -309,7 +307,12 @@ fun ExerciseDetailScreen(
                     workoutHistoryDao.workoutHistoryExistsByWorkoutId(workout.id)
                 }
                 withContext(Dispatchers.Main) {
-                    appViewModel.updateWorkoutComponentVersioned(workout, exercise, updatedExercise, hasHistory)
+                    appViewModel.updateWorkoutComponentVersioned(
+                        workout,
+                        exercise,
+                        updatedExercise,
+                        hasHistory
+                    )
                 }
                 appViewModel.scheduleWorkoutSave(context)
             } finally {
@@ -325,241 +328,116 @@ fun ExerciseDetailScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
-                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
-                ),
-                title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onBackground
+                    ),
+                    title = {
                         Text(
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .basicMarquee(iterations = Int.MAX_VALUE),
                             textAlign = TextAlign.Center,
                             text = exercise.name
                         )
-                        if (exercise.requiresLoadCalibration && 
-                            (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.WEIGHT || 
-                             (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))) {
-                            Spacer(Modifier.width(8.dp))
-                            AssistChip(
-                                onClick = { },
-                                label = { Text("Calibration", style = MaterialTheme.typography.labelSmall) },
-                                colors = AssistChipDefaults.assistChipColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onGoBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                    },
+
+                    actions = {
+                        val exportIconColors = IconButtonDefaults.iconButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onBackground,
+                            disabledContentColor = MaterialTheme.colorScheme.onBackground
+                        )
+                        IconButton(
+                            enabled = !exercise.doNotStoreHistory,
+                            onClick = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        val db = AppDatabase.getDatabase(context)
+                                        val exerciseSessionProgressionDao =
+                                            db.exerciseSessionProgressionDao()
+                                        exportExerciseHistoryToMarkdown(
+                                            context = context,
+                                            exercise = exercise,
+                                            workoutHistoryDao = workoutHistoryDao,
+                                            setHistoryDao = setHistoryDao,
+                                            exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                            workouts = workouts,
+                                            workoutStore = appViewModel.workoutStore
+                                        )
+                                    }
+                                }
+                            },
+                            colors = exportIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = "Export History",
+                            )
+                        }
+                        IconButton(onClick = {
+                            appViewModel.setScreenData(
+                                ScreenData.EditExercise(
+                                    workout.id,
+                                    exercise.id
                                 )
+                            );
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings"
                             )
                         }
                     }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-
-                actions = {
-                    val exportIconColors = IconButtonDefaults.iconButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onBackground,
-                        disabledContentColor = MaterialTheme.colorScheme.onBackground
-                    )
-                    IconButton(
-                        enabled = !exercise.doNotStoreHistory,
-                        onClick = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) {
-                                    val db = AppDatabase.getDatabase(context)
-                                    val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
-                                    exportExerciseHistoryToMarkdown(
-                                        context = context,
-                                        exercise = exercise,
-                                        workoutHistoryDao = workoutHistoryDao,
-                                        setHistoryDao = setHistoryDao,
-                                        exerciseSessionProgressionDao = exerciseSessionProgressionDao,
-                                        workouts = workouts,
-                                        workoutStore = appViewModel.workoutStore
-                                    )
-                                }
-                            }
-                        },
-                        colors = exportIconColors
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FileDownload,
-                            contentDescription = "Export History",
-                        )
-                    }
-                    IconButton(onClick = {
-                        appViewModel.setScreenData(
-                            ScreenData.EditExercise(
-                                workout.id,
-                                exercise.id
-                            )
-                        );
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
-                        )
-                    }
-                }
-            )
-        },
-        bottomBar = {
-            if (selectedSets.isNotEmpty()) {
-                Column {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    BottomAppBar(
-                        contentPadding = PaddingValues(0.dp),
-                        containerColor = Color.Transparent,
-                        actions = {
-                            val selectionIconColors = IconButtonDefaults.iconButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onBackground,
-                                disabledContentColor = DisabledContentGray
-                            )
-                            val scrollState = rememberScrollState()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .horizontalScroll(scrollState),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
+                )
+            },
+            bottomBar = {
+                if (selectedSets.isNotEmpty()) {
+                    Column {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        BottomAppBar(
+                            contentPadding = PaddingValues(0.dp),
+                            containerColor = Color.Transparent,
+                            actions = {
+                                val selectionIconColors = IconButtonDefaults.iconButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onBackground,
+                                    disabledContentColor = DisabledContentGray
+                                )
+                                val scrollState = rememberScrollState()
+                                Row(
                                     modifier = Modifier
-                                        .width(56.dp)
+                                        .fillMaxSize()
+                                        .horizontalScroll(scrollState),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.Top
                                 ) {
-                                    IconButton(onClick = {
-                                        selectedSetIds = emptySet()
-                                        isSelectionModeActive = false
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "Cancel selection",
-                                            tint = MaterialTheme.colorScheme.onBackground
-                                        )
-                                    }
-                                    Text(
-                                        "Cancel selection",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(onClick = {
-                                        val filteredSets = if (!showRest) sets.filter { it !is RestSet } else sets
-                                        selectedSetIds = filteredSets.map { it.id }.toSet()
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Filled.CheckBox,
-                                            contentDescription = "Select all",
-                                            tint = MaterialTheme.colorScheme.onBackground
-                                        )
-                                    }
-                                    Text(
-                                        "Select all",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(onClick = {
-                                        selectedSetIds = emptySet()
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Filled.CheckBoxOutlineBlank,
-                                            contentDescription = "Deselect all",
-                                            tint = MaterialTheme.colorScheme.onBackground
-                                        )
-                                    }
-                                    Text(
-                                        "Deselect all",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                // Show move buttons only if not all selected items are RestSets
-                                val showMoveButtons = if (selectedSets.isEmpty()) {
-                                    false
-                                } else if (selectedSets.size == 1) {
-                                    selectedSets.first() !is RestSet
-                                } else {
-                                    selectedSets.any { it !is RestSet }
-                                }
-                                
-                                if (showMoveButtons) {
-                                    Box(
-                                        modifier = Modifier.fillMaxHeight(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        VerticalDivider(
-                                            modifier = Modifier.height(48.dp),
-                                            color = MaterialTheme.colorScheme.outlineVariant
-                                        )
-                                    }
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
                                             .width(56.dp)
                                     ) {
-                                        IconButton(
-                                            enabled = selectedSets.size == 1 &&
-                                                    exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0,
-                                            onClick = {
-                                                val currentSets = exercise.sets
-                                                val selectedComponent = selectedSets.first()
-
-                                                val selectedIndex =
-                                                    currentSets.indexOfFirst { it.id == selectedComponent.id }
-
-                                                if (selectedIndex <= 0) {
-                                                    return@IconButton
-                                                }
-
-                                                val previousIndex = selectedIndex - 1
-
-                                                val newSets = currentSets.toMutableList().apply {
-                                                    val componentToMoveToOtherSlot = this[selectedIndex]
-                                                    val componentToMoveToSelectedSlot = this[previousIndex]
-
-                                                    this[selectedIndex] = componentToMoveToSelectedSlot
-                                                    this[previousIndex] = componentToMoveToOtherSlot
-                                                }
-
-                                                val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
-
-                                                updateExerciseWithHistory(updatedExercise)
-                                            },
-                                            colors = selectionIconColors
-                                        ) {
+                                        IconButton(onClick = {
+                                            selectedSetIds = emptySet()
+                                            isSelectionModeActive = false
+                                        }) {
                                             Icon(
-                                                imageVector = Icons.Filled.ArrowUpward,
-                                                contentDescription = "Move Up",
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Cancel selection",
+                                                tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         Text(
-                                            "Move Up",
+                                            "Cancel selection",
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
@@ -569,122 +447,260 @@ fun ExerciseDetailScreen(
                                         modifier = Modifier
                                             .width(56.dp)
                                     ) {
-                                        IconButton(
-                                            enabled = selectedSets.size == 1 &&
-                                                    exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1,
-                                            onClick = {
-                                                val currentSets = exercise.sets
-                                                val selectedComponent = selectedSets.first()
-
-                                                val selectedIndex =
-                                                    currentSets.indexOfFirst { it.id == selectedComponent.id }
-
-                                                if (selectedIndex < 0 || selectedIndex + 1 >= currentSets.size) {
-                                                    return@IconButton
-                                                }
-
-                                                val nextIndex = selectedIndex + 1
-
-                                                val newSets = currentSets.toMutableList().apply {
-                                                    val componentToMoveToOtherSlot = this[selectedIndex]
-                                                    val componentToMoveToSelectedSlot = this[nextIndex]
-
-                                                    this[selectedIndex] = componentToMoveToSelectedSlot
-                                                    this[nextIndex] = componentToMoveToOtherSlot
-                                                }
-
-                                                val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
-
-                                                updateExerciseWithHistory(updatedExercise)
-                                            },
-                                            colors = selectionIconColors
-                                        ) {
+                                        IconButton(onClick = {
+                                            val filteredSets =
+                                                if (!showRest) sets.filter { it !is RestSet } else sets
+                                            selectedSetIds = filteredSets.map { it.id }.toSet()
+                                        }) {
                                             Icon(
-                                                imageVector = Icons.Filled.ArrowDownward,
-                                                contentDescription = "Move Down"
+                                                imageVector = Icons.Filled.CheckBox,
+                                                contentDescription = "Select all",
+                                                tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         Text(
-                                            "Move Down",
+                                            "Select all",
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )
                                     }
-                                }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(onClick = {
-                                        val newSets = sets.filter { set ->
-                                            selectedSets.none { it.id == set.id }
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                    ) {
+                                        IconButton(onClick = {
+                                            selectedSetIds = emptySet()
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Filled.CheckBoxOutlineBlank,
+                                                contentDescription = "Deselect all",
+                                                tint = MaterialTheme.colorScheme.onBackground
+                                            )
                                         }
-
-                                        val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                        val updatedExercise = exercise.copy(sets = adjustedComponents)
-
-                                        updateExerciseWithHistory(updatedExercise)
-
-                                        selectedSetIds = emptySet()
-                                        isSelectionModeActive = false
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.onBackground
+                                        Text(
+                                            "Deselect all",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
                                         )
                                     }
-                                    Text(
-                                        "Delete",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                ) {
-                                    IconButton(
-                                        enabled = selectedSets.isNotEmpty(),
-                                        onClick = {
-                                            val copiedSets = selectedSets.map {
-                                                when (it) {
-                                                    is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                    is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                    is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                    is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                    is RestSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                    else -> throw IllegalArgumentException("Unknown type")
-                                                }
+                                    // Show move buttons only if not all selected items are RestSets
+                                    val showMoveButtons = if (selectedSets.isEmpty()) {
+                                        false
+                                    } else if (selectedSets.size == 1) {
+                                        selectedSets.first() !is RestSet
+                                    } else {
+                                        selectedSets.any { it !is RestSet }
+                                    }
+
+                                    if (showMoveButtons) {
+                                        Box(
+                                            modifier = Modifier.fillMaxHeight(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            VerticalDivider(
+                                                modifier = Modifier.height(48.dp),
+                                                color = MaterialTheme.colorScheme.outlineVariant
+                                            )
+                                        }
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .width(56.dp)
+                                        ) {
+                                            IconButton(
+                                                enabled = selectedSets.size == 1 &&
+                                                        exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != 0,
+                                                onClick = {
+                                                    val currentSets = exercise.sets
+                                                    val selectedComponent = selectedSets.first()
+
+                                                    val selectedIndex =
+                                                        currentSets.indexOfFirst { it.id == selectedComponent.id }
+
+                                                    if (selectedIndex <= 0) {
+                                                        return@IconButton
+                                                    }
+
+                                                    val previousIndex = selectedIndex - 1
+
+                                                    val newSets =
+                                                        currentSets.toMutableList().apply {
+                                                            val componentToMoveToOtherSlot =
+                                                                this[selectedIndex]
+                                                            val componentToMoveToSelectedSlot =
+                                                                this[previousIndex]
+
+                                                            this[selectedIndex] =
+                                                                componentToMoveToSelectedSlot
+                                                            this[previousIndex] =
+                                                                componentToMoveToOtherSlot
+                                                        }
+
+                                                    val adjustedComponents =
+                                                        ensureRestSeparatedBySets(newSets)
+                                                    val updatedExercise = exercise.copy(
+                                                        sets = adjustedComponents,
+                                                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                                            ?: emptyList()
+                                                    )
+
+                                                    updateExerciseWithHistory(updatedExercise)
+                                                },
+                                                colors = selectionIconColors
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.ArrowUpward,
+                                                    contentDescription = "Move Up",
+                                                )
+                                            }
+                                            Text(
+                                                "Move Up",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .width(56.dp)
+                                        ) {
+                                            IconButton(
+                                                enabled = selectedSets.size == 1 &&
+                                                        exercise.sets.indexOfFirst { it.id == selectedSets.first().id } != exercise.sets.size - 1,
+                                                onClick = {
+                                                    val currentSets = exercise.sets
+                                                    val selectedComponent = selectedSets.first()
+
+                                                    val selectedIndex =
+                                                        currentSets.indexOfFirst { it.id == selectedComponent.id }
+
+                                                    if (selectedIndex < 0 || selectedIndex + 1 >= currentSets.size) {
+                                                        return@IconButton
+                                                    }
+
+                                                    val nextIndex = selectedIndex + 1
+
+                                                    val newSets =
+                                                        currentSets.toMutableList().apply {
+                                                            val componentToMoveToOtherSlot =
+                                                                this[selectedIndex]
+                                                            val componentToMoveToSelectedSlot =
+                                                                this[nextIndex]
+
+                                                            this[selectedIndex] =
+                                                                componentToMoveToSelectedSlot
+                                                            this[nextIndex] =
+                                                                componentToMoveToOtherSlot
+                                                        }
+
+                                                    val adjustedComponents =
+                                                        ensureRestSeparatedBySets(newSets)
+                                                    val updatedExercise = exercise.copy(
+                                                        sets = adjustedComponents,
+                                                        requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                                            ?: emptyList()
+                                                    )
+
+                                                    updateExerciseWithHistory(updatedExercise)
+                                                },
+                                                colors = selectionIconColors
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.ArrowDownward,
+                                                    contentDescription = "Move Down"
+                                                )
+                                            }
+                                            Text(
+                                                "Move Down",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                    ) {
+                                        IconButton(onClick = {
+                                            val newSets = sets.filter { set ->
+                                                selectedSets.none { it.id == set.id }
                                             }
 
-                                            val adjustedComponents = ensureRestSeparatedBySets(sets + copiedSets)
-                                            val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                                            val adjustedComponents =
+                                                ensureRestSeparatedBySets(newSets)
+                                            val updatedExercise =
+                                                exercise.copy(sets = adjustedComponents)
 
                                             updateExerciseWithHistory(updatedExercise)
 
                                             selectedSetIds = emptySet()
-                                        },
-                                        colors = selectionIconColors
-                                    ) {
-                                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                                            isSelectionModeActive = false
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete",
+                                                tint = MaterialTheme.colorScheme.onBackground
+                                            )
+                                        }
+                                        Text(
+                                            "Delete",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
+                                        )
                                     }
-                                    Text(
-                                        "Copy",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                    ) {
+                                        IconButton(
+                                            enabled = selectedSets.isNotEmpty(),
+                                            onClick = {
+                                                val copiedSets = selectedSets.map {
+                                                    when (it) {
+                                                        is WeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is BodyWeightSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        is RestSet -> it.copy(id = java.util.UUID.randomUUID())
+                                                        else -> throw IllegalArgumentException("Unknown type")
+                                                    }
+                                                }
+
+                                                val adjustedComponents =
+                                                    ensureRestSeparatedBySets(sets + copiedSets)
+                                                val updatedExercise = exercise.copy(
+                                                    sets = adjustedComponents,
+                                                    requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                                        ?: emptyList()
+                                                )
+
+                                                updateExerciseWithHistory(updatedExercise)
+
+                                                selectedSetIds = emptySet()
+                                            },
+                                            colors = selectionIconColors
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy"
+                                            )
+                                        }
+                                        Text(
+                                            "Copy",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
-            }
-        },
-    ) { paddingValues ->
+            },
+        ) { paddingValues ->
 
             Column(
                 modifier = Modifier
@@ -762,7 +778,9 @@ fun ExerciseDetailScreen(
                 ) {
                     if (sets.isEmpty()) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(5.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(5.dp),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -780,7 +798,7 @@ fun ExerciseDetailScreen(
                                 Text("Add Set", color = MaterialTheme.colorScheme.onPrimary)
                             }
                         }
-                    }else{
+                    } else {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -797,8 +815,12 @@ fun ExerciseDetailScreen(
                                     ) else Modifier
                                 )
                             ) {
-                                Text(text = "Equipment:", style = MaterialTheme.typography.bodyMedium)
-                                val selectedEquipment = if(selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
+                                Text(
+                                    text = "Equipment:",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                val selectedEquipment =
+                                    if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
                                 Text(
                                     text = selectedEquipment?.name ?: "None",
                                     style = MaterialTheme.typography.bodyMedium
@@ -819,7 +841,38 @@ fun ExerciseDetailScreen(
                                         uncheckedBorderColor = MaterialTheme.colorScheme.primary
                                     )
                                 )
-                                Text(text = "Show Rests", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = "Show Rests",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+
+                        // Calibration badge - centered below tabs and labels
+                        if (exercise.requiresLoadCalibration &&
+                            (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.WEIGHT ||
+                                    (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AssistChip(
+                                    onClick = { },
+                                    label = {
+                                        Text(
+                                            "Calibration",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    colors = AssistChipDefaults.assistChipColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                )
                             }
                         }
 
@@ -855,7 +908,11 @@ fun ExerciseDetailScreen(
                             onOrderChange = { newComponents ->
                                 if (!showRest) return@GenericSelectableList
                                 val adjustedComponents = ensureRestSeparatedBySets(newComponents)
-                                val updatedExercise = exercise.copy(sets = adjustedComponents, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                                val updatedExercise = exercise.copy(
+                                    sets = adjustedComponents,
+                                    requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                        ?: emptyList()
+                                )
                                 updateExerciseWithHistory(updatedExercise)
                             },
                             isDragDisabled = true,
@@ -867,20 +924,28 @@ fun ExerciseDetailScreen(
                                     // - Not the last item in the actual sets list
                                     // - Next item in actual sets list is not a RestSet
                                     if (showRest && it !is RestSet) {
-                                        val currentIndex = sets.indexOfFirst { set -> set.id == it.id }
-                                        val isNotLast = currentIndex >= 0 && currentIndex < sets.size - 1
-                                        val nextItem = if (isNotLast && currentIndex + 1 < sets.size) {
-                                            sets[currentIndex + 1]
-                                        } else {
-                                            null
-                                        }
-                                        val shouldShowButton = isNotLast && nextItem != null && nextItem !is RestSet
-                                        
+                                        val currentIndex =
+                                            sets.indexOfFirst { set -> set.id == it.id }
+                                        val isNotLast =
+                                            currentIndex >= 0 && currentIndex < sets.size - 1
+                                        val nextItem =
+                                            if (isNotLast && currentIndex + 1 < sets.size) {
+                                                sets[currentIndex + 1]
+                                            } else {
+                                                null
+                                            }
+                                        val shouldShowButton =
+                                            isNotLast && nextItem != null && nextItem !is RestSet
+
                                         if (shouldShowButton) {
                                             Button(
                                                 onClick = {
                                                     appViewModel.setScreenData(
-                                                        ScreenData.InsertRestSetAfter(workout.id, exercise.id, it.id)
+                                                        ScreenData.InsertRestSetAfter(
+                                                            workout.id,
+                                                            exercise.id,
+                                                            it.id
+                                                        )
                                                     )
                                                 },
                                                 modifier = Modifier.fillMaxWidth(),
@@ -927,8 +992,8 @@ fun ExerciseDetailScreen(
                     }
                 }
             }
-    }
-    LoadingOverlay(isVisible = isSaving, text = "Saving...")
+        }
+        LoadingOverlay(isVisible = isSaving, text = "Saving...")
     }
 }
 

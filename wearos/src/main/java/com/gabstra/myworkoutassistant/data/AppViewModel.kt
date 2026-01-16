@@ -56,7 +56,7 @@ open class AppViewModel : WorkoutViewModel() {
     private val syncMutex = Mutex()
 
     // Debouncer for batching rapid sync operations
-    private val syncDebouncer = WearOSSyncDebouncer(viewModelScope)
+    private val syncDebouncer = WearOSSyncDebouncer(viewModelScope, debounceDelayMs = 5000L)
 
     val isPhoneConnectedAndHasApp: Boolean
         get() = phoneNode != null

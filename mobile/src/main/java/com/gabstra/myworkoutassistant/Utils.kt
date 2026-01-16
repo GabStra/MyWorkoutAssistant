@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant
 
 import android.annotation.SuppressLint
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
@@ -812,6 +813,89 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
 }
 
 /**
+ * Reads a JSON file from Downloads folder using MediaStore.
+ * Returns the file content as a string, or null if not found.
+ */
+suspend fun readJsonFromDownloadsFolder(context: Context, fileName: String): String? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(
+                MediaStore.Downloads._ID,
+                MediaStore.Downloads.DISPLAY_NAME
+            )
+            val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+            val selectionArgs = arrayOf(fileName)
+            
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                    val id = cursor.getLong(idIndex)
+                    val uri = ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+                    
+                    resolver.openInputStream(uri)?.use { inputStream ->
+                        inputStream.bufferedReader().use { reader ->
+                            reader.readText()
+                        }
+                    }
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error reading file from Downloads folder: $fileName", e)
+            null
+        }
+    }
+}
+
+/**
+ * Helper function to find a file URI in Downloads folder.
+ * Returns the URI if found, null otherwise.
+ */
+private suspend fun findFileInDownloadsFolder(context: Context, fileName: String): android.net.Uri? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(MediaStore.Downloads._ID)
+            val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+            val selectionArgs = arrayOf(fileName)
+            
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                    val id = cursor.getLong(idIndex)
+                    ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error finding file in Downloads folder: $fileName", e)
+            null
+        }
+    }
+}
+
+/**
  * Creates an AppBackup from the current workout store and database state.
  * This is a helper function that extracts the backup creation logic.
  */
@@ -929,10 +1013,10 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
 }
 
 /**
- * Saves workout store backup to external storage.
+ * Saves workout store backup to Downloads folder (persists after app uninstall).
  * Creates an AppBackup (including database data) and saves it to workout_store_backup.json.
  * This file can be used for recovery if the main workout_store.json gets corrupted.
- * Uses external storage so the backup persists and is accessible via file managers.
+ * Uses Downloads folder via MediaStore so the backup persists after uninstall and is accessible via file managers.
  */
 suspend fun saveWorkoutStoreToExternalStorage(
     context: Context,
@@ -948,14 +1032,62 @@ suspend fun saveWorkoutStoreToExternalStorage(
             }
 
             val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-            val externalDir = context.getExternalFilesDir(null)
-            if (externalDir == null) {
-                Log.e("Utils", "External storage not available")
-                return@withContext
+            val backupFileName = "workout_store_backup.json"
+            
+            // Save to Downloads folder (persists after uninstall)
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
             }
-            val backupFile = java.io.File(externalDir, "workout_store_backup.json")
-            backupFile.writeText(jsonString)
-            Log.d("Utils", "Backup saved to external storage: ${backupFile.absolutePath}")
+
+            // Try to find existing file first
+            val existingUri = findFileInDownloadsFolder(context, backupFileName)
+            val uri = if (existingUri != null) {
+                // Update existing file
+                try {
+                    resolver.update(existingUri, contentValues, null, null)
+                    existingUri
+                } catch (e: Exception) {
+                    Log.w("Utils", "Failed to update existing backup file, will try to create new one", e)
+                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                }
+            } else {
+                // Create new file
+                resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            }
+
+            uri?.let {
+                try {
+                    resolver.openOutputStream(it)?.use { outputStream ->
+                        outputStream.write(jsonString.toByteArray())
+                        outputStream.flush()
+                    }
+                    Log.d("Utils", "Backup saved to Downloads folder: $backupFileName")
+                } catch (e: Exception) {
+                    Log.e("Utils", "Error writing to backup file", e)
+                    // Try to clean up the failed file
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (deleteException: Exception) {
+                        Log.e("Utils", "Error cleaning up failed file", deleteException)
+                    }
+                }
+            } ?: run {
+                Log.e("Utils", "Failed to create backup file in Downloads folder")
+            }
+            
+            // Also try to migrate old backup from external files dir (one-time migration)
+            try {
+                val externalDir = context.getExternalFilesDir(null)
+                val oldBackupFile = externalDir?.let { java.io.File(it, backupFileName) }
+                oldBackupFile?.takeIf { it.exists() }?.delete()
+                Log.d("Utils", "Cleaned up old backup file from external files dir")
+            } catch (e: Exception) {
+                // Ignore migration errors
+                Log.d("Utils", "Could not clean up old backup file", e)
+            }
         } catch (e: Exception) {
             Log.e("Utils", "Error saving workout store to external storage", e)
         }
@@ -964,34 +1096,61 @@ suspend fun saveWorkoutStoreToExternalStorage(
 
 /**
  * Checks if an external backup file exists.
+ * Checks both Downloads folder (new location) and external files dir (old location).
+ * Note: This is a synchronous check, so it only checks the old location for performance.
+ * For accurate results including Downloads folder, use loadExternalBackup() and check for null.
  */
 fun hasExternalBackup(context: Context): Boolean {
-    val externalDir = context.getExternalFilesDir(null) ?: return false
-    val backupFile = java.io.File(externalDir, "workout_store_backup.json")
-    return backupFile.exists()
+    // Check old location (external files dir) synchronously
+    val externalDir = context.getExternalFilesDir(null)
+    val oldBackupFile = externalDir?.let { java.io.File(it, "workout_store_backup.json") }
+    if (oldBackupFile?.exists() == true) {
+        return true
+    }
+    
+    // Downloads folder check requires async MediaStore query, so we can't do it synchronously
+    // The loadExternalBackup function will check both locations properly
+    return false
 }
 
 /**
  * Loads the external backup file and parses it as AppBackup.
+ * First tries Downloads folder (new location), then falls back to external files dir (old location).
  * Returns null if the file doesn't exist or parsing fails.
  */
 suspend fun loadExternalBackup(context: Context): AppBackup? {
     return withContext(Dispatchers.IO) {
         try {
+            val backupFileName = "workout_store_backup.json"
+            
+            // First try Downloads folder (new location - persists after uninstall)
+            val jsonString = readJsonFromDownloadsFolder(context, backupFileName)
+            if (jsonString != null) {
+                try {
+                    val appBackup = fromJSONtoAppBackup(jsonString)
+                    Log.d("Utils", "Backup loaded successfully from Downloads folder")
+                    return@withContext appBackup
+                } catch (e: Exception) {
+                    Log.e("Utils", "Error parsing backup from Downloads folder", e)
+                    // Continue to fallback location
+                }
+            }
+            
+            // Fallback to old location (external files dir) for backward compatibility
             val externalDir = context.getExternalFilesDir(null)
             if (externalDir == null) {
-                Log.d("Utils", "External storage not available")
+                Log.d("Utils", "External storage not available and no backup in Downloads")
                 return@withContext null
             }
-            val backupFile = java.io.File(externalDir, "workout_store_backup.json")
+            val backupFile = java.io.File(externalDir, backupFileName)
             if (!backupFile.exists()) {
-                Log.d("Utils", "Backup file does not exist")
+                Log.d("Utils", "Backup file does not exist in either location")
                 return@withContext null
             }
 
-            val jsonString = backupFile.readText()
-            val appBackup = fromJSONtoAppBackup(jsonString)
-            Log.d("Utils", "Backup loaded successfully from external storage")
+            val oldJsonString = backupFile.readText()
+            val appBackup = fromJSONtoAppBackup(oldJsonString)
+            Log.d("Utils", "Backup loaded successfully from old location (external files dir)")
             appBackup
         } catch (e: Exception) {
             Log.e("Utils", "Error loading backup from external storage", e)

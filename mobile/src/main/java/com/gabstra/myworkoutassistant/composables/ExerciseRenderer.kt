@@ -1,12 +1,13 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -18,7 +19,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -186,7 +186,7 @@ fun ExerciseRenderer(
                                                 val isCalibrationEnabled = exercise.requiresLoadCalibration
                                                 
                                                 val weightText = if (isCalibrationEnabled) {
-                                                    "Cal"
+                                                    "Calibration"
                                                 } else {
                                                     equipment!!.formatWeight(set.weight)
                                                 }

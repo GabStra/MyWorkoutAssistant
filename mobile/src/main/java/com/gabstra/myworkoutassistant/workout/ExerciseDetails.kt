@@ -50,7 +50,7 @@ fun ExerciseDetail(
                 }
             }
 
-            Column(modifier = modifier,verticalArrangement = Arrangement.Center) {
+            Column(modifier = modifier, verticalArrangement = Arrangement.Center) {
                 WeightSetScreen(
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
@@ -60,9 +60,11 @@ fun ExerciseDetail(
                     onEditModeDisabled = onEditModeDisabled,
                     onEditModeEnabled = onEditModeEnabled,
                     extraInfo = extraInfo,
-                    exerciseTitleComposable = { exerciseTitleComposable {
-                        hapticsViewModel.doGentleVibration()
-                    } },
+                    exerciseTitleComposable = {
+                        exerciseTitleComposable {
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    },
                     customComponentWrapper = customComponentWrapper
                 )
 
@@ -72,7 +74,7 @@ fun ExerciseDetail(
                         .padding(horizontal = 100.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
-                ){
+                ) {
                     Button(
                         onClick = {
                             hapticsViewModel.doGentleVibration()
@@ -98,7 +100,7 @@ fun ExerciseDetail(
                 }
             }
 
-            Column(modifier = modifier,verticalArrangement = Arrangement.Center) {
+            Column(modifier = modifier, verticalArrangement = Arrangement.Center) {
                 BodyWeightSetScreen(
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
@@ -118,7 +120,7 @@ fun ExerciseDetail(
                         .padding(horizontal = 100.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
-                ){
+                ) {
                     Button(
                         onClick = {
                             hapticsViewModel.doGentleVibration()

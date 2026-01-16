@@ -716,7 +716,8 @@ fun WorkoutsScreen(
                                                     day
                                                 )
                                             },
-                                            highlightDay = { day -> highlightDay(day) }
+                                            highlightDay = { day -> highlightDay(day) },
+                                            groupedWorkoutsHistories = groupedWorkoutsHistories
                                         )
                                     }
 

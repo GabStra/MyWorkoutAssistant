@@ -26,12 +26,14 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
@@ -579,6 +581,23 @@ class DataLayerListenerService : WearableListenerService() {
                                         }
                                     }
 
+                                    // Ensure rest sets are properly positioned after rebuilding from history
+                                    workoutComponents = workoutComponents.map { workoutComponent ->
+                                        when (workoutComponent) {
+                                            is Exercise -> workoutComponent.copy(
+                                                sets = ensureRestSeparatedBySets(workoutComponent.sets)
+                                            )
+                                            is Superset -> workoutComponent.copy(
+                                                exercises = workoutComponent.exercises.map { exercise ->
+                                                    exercise.copy(
+                                                        sets = ensureRestSeparatedBySets(exercise.sets)
+                                                    )
+                                                }
+                                            )
+                                            is Rest -> workoutComponent
+                                        }
+                                    }
+
                                     val newWorkout =
                                         workout.copy(workoutComponents = workoutComponents)
                                     val updatedWorkoutStore = workoutStore.copy(
@@ -1115,6 +1134,23 @@ class DataLayerListenerService : WearableListenerService() {
                                                                     newSet,
                                                                     setHistory.order
                                                                 )
+                                                        }
+                                                    }
+
+                                                    // Ensure rest sets are properly positioned after rebuilding from history
+                                                    workoutComponents = workoutComponents.map { workoutComponent ->
+                                                        when (workoutComponent) {
+                                                            is Exercise -> workoutComponent.copy(
+                                                                sets = ensureRestSeparatedBySets(workoutComponent.sets)
+                                                            )
+                                                            is Superset -> workoutComponent.copy(
+                                                                exercises = workoutComponent.exercises.map { exercise ->
+                                                                    exercise.copy(
+                                                                        sets = ensureRestSeparatedBySets(exercise.sets)
+                                                                    )
+                                                                }
+                                                            )
+                                                            is Rest -> workoutComponent
                                                         }
                                                     }
 

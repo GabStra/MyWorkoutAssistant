@@ -21,6 +21,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -68,6 +69,39 @@ sealed class ScreenData() {
 
     class NewEquipment(val equipmentType: EquipmentType) : ScreenData()
     class EditEquipment(val equipmentId: UUID, val equipmentType: EquipmentType) : ScreenData()
+    
+    /**
+     * Converts ScreenData to a Bundle-compatible String key for use with SaveableStateProvider.
+     * This is necessary because ScreenData instances cannot be directly used as Bundle keys on Android.
+     */
+    fun toSaveableKey(): String {
+        return when (this) {
+            is Workouts -> "Workouts_${selectedTabIndex}"
+            is Settings -> "Settings"
+            is ErrorLogs -> "ErrorLogs"
+            is NewWorkout -> "NewWorkout_${workoutPlanId?.toString() ?: "null"}"
+            is Workout -> "Workout_${workoutId}"
+            is EditWorkout -> "EditWorkout_${workoutId}"
+            is WorkoutDetail -> "WorkoutDetail_${workoutId}"
+            is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}"
+            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
+            is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}"
+            is NewExercise -> "NewExercise_${workoutId}"
+            is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewSuperset -> "NewSuperset_${workoutId}"
+            is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
+            is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
+            is EditRest -> "EditRest_${workoutId}_${selectedRest.id}"
+            is NewRestSet -> "NewRestSet_${workoutId}_${parentExerciseId}"
+            is EditRestSet -> "EditRestSet_${workoutId}_${selectedRestSet.id}_${parentExerciseId}"
+            is InsertRestSetAfter -> "InsertRestSetAfter_${workoutId}_${exerciseId}_${afterSetId}"
+            is InsertRestAfter -> "InsertRestAfter_${workoutId}_${afterComponentId}"
+            is NewSet -> "NewSet_${workoutId}_${parentExerciseId}"
+            is EditSet -> "EditSet_${workoutId}_${selectedSet.id}"
+            is NewEquipment -> "NewEquipment_${equipmentType.name}"
+            is EditEquipment -> "EditEquipment_${equipmentId}_${equipmentType.name}"
+        }
+    }
 }
 
 private fun emptyWorkoutStore(): WorkoutStore {
@@ -96,20 +130,19 @@ class AppViewModel() : ViewModel() {
         private set
 
     // Debouncer for workout saves
-    private val saveDebouncer = WorkoutSaveDebouncer(viewModelScope, debounceDelayMs = 1000L)
+    private val saveDebouncer = WorkoutSaveDebouncer(viewModelScope, debounceDelayMs = 5000L)
 
     private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
 
     private val _state = MutableStateFlow(AppState())
-    val state = _state.asStateFlow()
 
-    val workoutStoreFlow: StateFlow<WorkoutStore> = state
+    val workoutStoreFlow: StateFlow<WorkoutStore> = _state
         .map { it.workoutStore }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.workoutStore
+            initialValue = _state.value.workoutStore
         )
 
     val workoutsFlow: StateFlow<List<Workout>> = workoutStoreFlow
@@ -117,7 +150,7 @@ class AppViewModel() : ViewModel() {
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.workoutStore.workouts
+            initialValue = _state.value.workoutStore.workouts
         )
 
     val workoutPlansFlow: StateFlow<List<WorkoutPlan>> = workoutStoreFlow
@@ -125,7 +158,7 @@ class AppViewModel() : ViewModel() {
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.workoutStore.workoutPlans
+            initialValue = _state.value.workoutStore.workoutPlans
         )
 
     val equipmentsFlow: StateFlow<List<WeightLoadedEquipment>> = workoutStoreFlow
@@ -133,7 +166,7 @@ class AppViewModel() : ViewModel() {
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.workoutStore.equipments
+            initialValue = _state.value.workoutStore.equipments
         )
 
     val accessoryEquipmentsFlow: StateFlow<List<AccessoryEquipment>> = workoutStoreFlow
@@ -141,19 +174,19 @@ class AppViewModel() : ViewModel() {
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.workoutStore.accessoryEquipments
+            initialValue = _state.value.workoutStore.accessoryEquipments
         )
 
-    val selectedWorkoutPlanIdFlow: StateFlow<UUID?> = state
+    val selectedWorkoutPlanIdFlow: StateFlow<UUID?> = _state
         .map { it.selectedWorkoutPlanId }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = state.value.selectedWorkoutPlanId
+            initialValue = _state.value.selectedWorkoutPlanId
         )
 
     val workoutStore: WorkoutStore
-        get() = state.value.workoutStore
+        get() = _state.value.workoutStore
 
     private val _updateNotificationFlow = MutableStateFlow<String?>(null)
     val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
@@ -190,6 +223,13 @@ class AppViewModel() : ViewModel() {
 
     fun triggerMobile() {
         _updateMobileFlow.value = System.currentTimeMillis().toString()
+    }
+
+    private val _isInitialDataLoaded = MutableStateFlow(false)
+    val isInitialDataLoaded: StateFlow<Boolean> = _isInitialDataLoaded.asStateFlow()
+
+    fun setInitialDataLoaded(loaded: Boolean) {
+        _isInitialDataLoaded.value = loaded
     }
 
     private val _showResumeWorkoutDialog = mutableStateOf(false)
@@ -253,7 +293,7 @@ class AppViewModel() : ViewModel() {
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = state.value.selectedWorkoutPlanId
+        initialValue = _state.value.selectedWorkoutPlanId
     )
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
@@ -400,7 +440,7 @@ class AppViewModel() : ViewModel() {
         val resolvedPlanId = resolveSelectedWorkoutPlanId(
             plans = normalizedStore.workoutPlans,
             workouts = normalizedStore.workouts,
-            currentSelection = state.value.selectedWorkoutPlanId
+            currentSelection = _state.value.selectedWorkoutPlanId
         )
         _state.update { current ->
             current.copy(
@@ -435,7 +475,69 @@ class AppViewModel() : ViewModel() {
     }
 
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
-        setWorkoutStoreState(newWorkoutStore, triggerSend)
+        val cleanedWorkoutStore = fixExercisesWithInvalidEquipmentIds(newWorkoutStore)
+        setWorkoutStoreState(cleanedWorkoutStore, triggerSend)
+    }
+    
+    /**
+     * Retroactively fixes exercises that have non-existent equipment IDs assigned.
+     * For WEIGHT exercises, sets equipmentId to GENERIC_ID if the equipment doesn't exist.
+     * For other exercise types, sets equipmentId to null if the equipment doesn't exist.
+     */
+    private fun fixExercisesWithInvalidEquipmentIds(workoutStore: WorkoutStore): WorkoutStore {
+        val validEquipmentIds = workoutStore.equipments.map { it.id }.toSet()
+        val genericId = GENERIC_ID
+        
+        // Ensure GENERIC_ID is in the valid equipment list
+        val allValidEquipmentIds = if (validEquipmentIds.contains(genericId)) {
+            validEquipmentIds
+        } else {
+            validEquipmentIds + genericId
+        }
+        
+        fun fixExerciseInComponents(components: List<WorkoutComponent>): List<WorkoutComponent> {
+            return components.map { component ->
+                when (component) {
+                    is Exercise -> {
+                        val needsFix = component.equipmentId != null && 
+                                     !allValidEquipmentIds.contains(component.equipmentId)
+                        if (needsFix) {
+                            val fixedEquipmentId = when (component.exerciseType) {
+                                ExerciseType.WEIGHT -> genericId
+                                else -> null
+                            }
+                            component.copy(equipmentId = fixedEquipmentId)
+                        } else {
+                            component
+                        }
+                    }
+                    is Superset -> {
+                        val fixedExercises = component.exercises.map { exercise ->
+                            val needsFix = exercise.equipmentId != null && 
+                                         !allValidEquipmentIds.contains(exercise.equipmentId)
+                            if (needsFix) {
+                                val fixedEquipmentId = when (exercise.exerciseType) {
+                                    ExerciseType.WEIGHT -> genericId
+                                    else -> null
+                                }
+                                exercise.copy(equipmentId = fixedEquipmentId)
+                            } else {
+                                exercise
+                            }
+                        }
+                        component.copy(exercises = fixedExercises)
+                    }
+                    else -> component
+                }
+            }
+        }
+        
+        val fixedWorkouts = workoutStore.workouts.map { workout ->
+            val fixedComponents = fixExerciseInComponents(workout.workoutComponents)
+            workout.copy(workoutComponents = fixedComponents)
+        }
+        
+        return workoutStore.copy(workouts = fixedWorkouts)
     }
 
     fun updateEquipments(newEquipments: List<WeightLoadedEquipment>) {

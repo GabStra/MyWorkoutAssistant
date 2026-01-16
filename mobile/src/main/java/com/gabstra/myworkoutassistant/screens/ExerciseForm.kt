@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -175,8 +176,28 @@ fun ExerciseForm(
     var hrZoneExpanded by rememberSaveable { mutableStateOf(false) }
     val showCustomTargetZone = selectedTargetZone.value == -1
 
-    val selectedEquipmentId = rememberSaveable { mutableStateOf<UUID?>(exercise?.equipmentId ?: viewModel.GENERIC_ID) }
+    val selectedEquipmentId = rememberSaveable { 
+        mutableStateOf<UUID?>(
+            exercise?.equipmentId ?: (if (exercise?.exerciseType == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null)
+        )
+    }
     var equipmentExpanded by rememberSaveable { mutableStateOf(false) }
+    
+    // Validate equipment ID exists whenever equipments list changes
+    LaunchedEffect(equipments, exercise?.id) {
+        val currentEquipmentId = selectedEquipmentId.value
+        if (currentEquipmentId != null) {
+            val equipmentExists = equipments.any { it.id == currentEquipmentId }
+            if (!equipmentExists) {
+                // Equipment was deleted, reset to appropriate default
+                selectedEquipmentId.value = if (selectedExerciseType.value == ExerciseType.WEIGHT) {
+                    viewModel.GENERIC_ID
+                } else {
+                    null
+                }
+            }
+        }
+    }
 
     val selectedMuscleGroups = rememberSaveable { 
         mutableStateOf(exercise?.muscleGroups ?: emptySet<MuscleGroup>())
@@ -851,7 +872,7 @@ fun ExerciseForm(
                 onValueChange = { notesState.value = it },
                 label = { Text("Notes", style = MaterialTheme.typography.labelLarge) },
                 modifier = Modifier.fillMaxWidth(),
-                maxLines = 5,
+                minLines = 3,
                 singleLine = false
             )
 

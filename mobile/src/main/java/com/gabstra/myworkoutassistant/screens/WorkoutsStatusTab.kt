@@ -55,7 +55,8 @@ fun WorkoutsStatusTab(
     objectiveProgress: Double,
     appViewModel: AppViewModel,
     onDayClicked: (CalendarState, CalendarDay) -> Unit,
-    highlightDay: (CalendarDay) -> Boolean
+    highlightDay: (CalendarDay) -> Boolean,
+    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null
 ) {
     val scrollState = rememberScrollState()
     val currentLocale = Locale.getDefault()
@@ -80,6 +81,7 @@ fun WorkoutsStatusTab(
                     onDayClicked(calendarState, day)
                 },
                 shouldHighlight = { day -> highlightDay(day) },
+                groupedWorkoutsHistories = groupedWorkoutsHistories
             )
         }
         if (isLoading) {

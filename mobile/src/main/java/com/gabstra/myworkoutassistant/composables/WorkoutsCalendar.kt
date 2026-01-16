@@ -27,12 +27,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
@@ -160,7 +162,9 @@ private fun Day(
 @Composable
 fun SimpleCalendarTitle(
     calendarState: CalendarState,
-    currentMonth: YearMonth // Assuming this is the actual current real-world month
+    currentMonth: YearMonth, // Assuming this is the actual current real-world month
+    startMonth: YearMonth,
+    endMonth: YearMonth
 ) {
     val context = LocalContext.current
 
@@ -169,7 +173,15 @@ fun SimpleCalendarTitle(
     // Use the Month from the state, not the initial currentMonth param for comparison logic
     var currentVisibleMonthYearMonth by remember(calendarState.firstVisibleMonth.yearMonth) { mutableStateOf(calendarState.firstVisibleMonth.yearMonth) }
 
-    val isRealCurrentMonth = remember(currentVisibleMonthYearMonth) { currentVisibleMonthYearMonth.month == currentMonth.month && currentVisibleMonthYearMonth.year == currentMonth.year }
+    // Check if we can navigate backward (previous month >= startMonth)
+    val canGoBack = remember(currentVisibleMonthYearMonth, startMonth) {
+        currentVisibleMonthYearMonth.previousMonth >= startMonth
+    }
+
+    // Check if we can navigate forward (next month <= endMonth)
+    val canGoForward = remember(currentVisibleMonthYearMonth, endMonth) {
+        currentVisibleMonthYearMonth.nextMonth <= endMonth
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -180,6 +192,7 @@ fun SimpleCalendarTitle(
             disabledContentColor = DisabledContentGray
         )
         IconButton(
+            enabled = canGoBack,
             onClick = {
                 scope.launch {
                     currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.previousMonth
@@ -190,7 +203,8 @@ fun SimpleCalendarTitle(
         ) {
             Icon(
                 imageVector = Icons.Filled.ArrowBack,
-                contentDescription = "Previous Month" // More descriptive
+                contentDescription = "Previous Month", // More descriptive
+                modifier = Modifier.alpha(if (canGoBack) 1f else 0f)
             )
         }
 
@@ -203,8 +217,7 @@ fun SimpleCalendarTitle(
         )
 
         IconButton(
-            // Disable forward button if the month being displayed is the real-world current month
-            enabled = !isRealCurrentMonth,
+            enabled = canGoForward,
             onClick = {
                 scope.launch {
                     currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.nextMonth
@@ -215,7 +228,8 @@ fun SimpleCalendarTitle(
         ) {
             Icon(
                 imageVector = Icons.Filled.ArrowForward,
-                contentDescription = "Next Month" // More descriptive
+                contentDescription = "Next Month", // More descriptive
+                modifier = Modifier.alpha(if (canGoForward) 1f else 0f)
             )
         }
     }
@@ -229,12 +243,25 @@ fun WorkoutsCalendar(
     selectedDate: CalendarDay,
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
     shouldHighlight: (CalendarDay) -> Boolean,
+    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
 ){
     val currentDate = remember { LocalDate.now() }
     val currentMonth = remember { YearMonth.now() }
 
-    val startMonth = remember { currentMonth.minusMonths(1200) }
-    val endMonth = remember { currentMonth.plusMonths(1) }
+    // Calculate available months from groupedWorkoutsHistories
+    val availableMonths = remember(groupedWorkoutsHistories) {
+        groupedWorkoutsHistories?.keys
+            ?.map { YearMonth.from(it) }  // Convert LocalDate to YearMonth using YearMonth.from()
+            ?.distinct()
+            ?.sorted()
+    }
+
+    val startMonth = remember(availableMonths, currentMonth) {
+        availableMonths?.firstOrNull() ?: currentMonth
+    }
+    val endMonth = remember(availableMonths, currentMonth) {
+        availableMonths?.lastOrNull() ?: currentMonth
+    }
 
     val daysOfWeek = remember { daysOfWeek() }
 
@@ -250,7 +277,9 @@ fun WorkoutsCalendar(
     ){
         SimpleCalendarTitle(
             calendarState = calendarState,
-            currentMonth = currentMonth
+            currentMonth = currentMonth,
+            startMonth = startMonth,
+            endMonth = endMonth
         )
         HorizontalCalendar(
             modifier = Modifier.padding(5.dp),
