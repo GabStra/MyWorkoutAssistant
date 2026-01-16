@@ -8,13 +8,13 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,6 +61,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
@@ -70,7 +71,6 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -86,27 +86,23 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataClient
-import com.google.android.gms.wearable.DataEventBuffer
-import com.google.android.gms.wearable.DataMapItem
-import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
-import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Duration
@@ -120,6 +116,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
 /**
@@ -145,6 +142,8 @@ sealed class SyncError(message: String, val transactionId: String? = null, val r
     class HandshakeError(transactionId: String?, retryAttempt: Int = 0) : 
         SyncError("Handshake failed - unable to establish connection", transactionId, retryAttempt)
 }
+
+private val backupFileWriteMutex = Mutex()
 
 // Helper object to manage sync handshake state
 object SyncHandshakeManager {
@@ -896,6 +895,255 @@ private suspend fun findFileInDownloadsFolder(context: Context, fileName: String
 }
 
 /**
+ * Finds all files with the given name in Downloads folder and returns their URIs.
+ * Used to clean up duplicate backup files.
+ */
+private suspend fun findAllFilesInDownloadsFolder(context: Context, fileName: String): List<android.net.Uri> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME)
+            val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+            val selectionArgs = arrayOf(fileName)
+            
+            val uris = mutableListOf<android.net.Uri>()
+            resolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idIndex)
+                    val name = cursor.getString(nameIndex)
+                    // Double-check the name matches (MediaStore might have variations)
+                    if (name == fileName) {
+                        uris.add(
+                            ContentUris.withAppendedId(
+                                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                id
+                            )
+                        )
+                    }
+                }
+            }
+            uris
+        } catch (e: Exception) {
+            Log.e("Utils", "Error finding all files in Downloads folder: $fileName", e)
+            emptyList()
+        }
+    }
+}
+
+private data class BackupFileEntry(
+    val uri: android.net.Uri,
+    val name: String,
+    val dateModified: Long
+)
+
+private fun matchesBackupFileName(name: String, exactFileName: String): Boolean {
+    val baseName = exactFileName.removeSuffix(".json")
+    val escapedBaseName = Regex.escape(baseName)
+    val pattern = Regex(
+        "^$escapedBaseName(?:\\.json(?:\\s*\\(\\d+\\))?|\\s*\\(\\d+\\)\\.json)$",
+        RegexOption.IGNORE_CASE
+    )
+    return pattern.matches(name)
+}
+
+private fun deleteBackupFile(context: Context, uri: android.net.Uri): Boolean {
+    return context.contentResolver.delete(uri, null, null) > 0
+}
+
+/**
+ * Finds all backup files that match the automatic backup pattern.
+ * This includes exact matches and files that might have been created with variations.
+ * Returns a list of URIs with their display names for content comparison.
+ */
+private suspend fun findAllBackupFilesInDownloadsFolder(context: Context, exactFileName: String): List<BackupFileEntry> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.RELATIVE_PATH
+            )
+
+            fun queryCollection(
+                collectionUri: android.net.Uri,
+                limitToDownloads: Boolean,
+                restrictToOwner: Boolean
+            ): List<BackupFileEntry> {
+                val files = mutableListOf<BackupFileEntry>()
+                val baseSelectionParts = mutableListOf<String>()
+                val baseSelectionArgs = mutableListOf<String>()
+
+                if (restrictToOwner && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    baseSelectionParts.add("${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
+                    baseSelectionArgs.add(context.packageName)
+                }
+
+                if (limitToDownloads) {
+                    baseSelectionParts.add("${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+                    baseSelectionArgs.add("${Environment.DIRECTORY_DOWNLOADS}/%")
+                }
+
+                val exactSelectionParts = baseSelectionParts.toMutableList().apply {
+                    add("${MediaStore.MediaColumns.DISPLAY_NAME} = ?")
+                }
+                val exactSelection = exactSelectionParts.joinToString(" AND ")
+                val exactSelectionArgs = (baseSelectionArgs + exactFileName).toTypedArray()
+
+                resolver.query(
+                    collectionUri,
+                    projection,
+                    exactSelection,
+                    exactSelectionArgs,
+                    null
+                )?.use { cursor ->
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idIndex)
+                        val name = cursor.getString(nameIndex)
+                        val dateModified = cursor.getLong(dateIndex)
+                        if (name == exactFileName) {
+                            files.add(
+                                BackupFileEntry(
+                                    ContentUris.withAppendedId(collectionUri, id),
+                                    name,
+                                    dateModified
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val allSelection = if (baseSelectionParts.isEmpty()) {
+                    null
+                } else {
+                    baseSelectionParts.joinToString(" AND ")
+                }
+                val allSelectionArgs = if (baseSelectionArgs.isEmpty()) {
+                    null
+                } else {
+                    baseSelectionArgs.toTypedArray()
+                }
+
+                val allFiles = mutableListOf<BackupFileEntry>()
+                resolver.query(
+                    collectionUri,
+                    projection,
+                    allSelection,
+                    allSelectionArgs,
+                    "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idIndex)
+                        val name = cursor.getString(nameIndex)
+                        val dateModified = cursor.getLong(dateIndex)
+                        if (matchesBackupFileName(name, exactFileName)) {
+                            allFiles.add(
+                                BackupFileEntry(
+                                    ContentUris.withAppendedId(collectionUri, id),
+                                    name,
+                                    dateModified
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val existingUris = files.map { it.uri }.toSet()
+                for (file in allFiles) {
+                    if (file.uri !in existingUris) {
+                        files.add(file)
+                    }
+                }
+
+                return files
+            }
+
+            val downloadsFiles = queryCollection(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                limitToDownloads = false,
+                restrictToOwner = true
+            )
+
+            val downloadsFallbackFiles = if (downloadsFiles.isEmpty()) {
+                Log.d(
+                    "Utils",
+                    "No backup files found in MediaStore.Downloads for owner; retrying without owner filter"
+                )
+                queryCollection(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    limitToDownloads = false,
+                    restrictToOwner = false
+                )
+            } else {
+                emptyList()
+            }
+
+            val resolvedDownloadsFiles = if (downloadsFiles.isEmpty()) {
+                downloadsFallbackFiles
+            } else {
+                downloadsFiles
+            }
+
+            val filesCollectionFiles = if (resolvedDownloadsFiles.isEmpty()) {
+                Log.d(
+                    "Utils",
+                    "No backup files found in MediaStore.Downloads; checking MediaStore.Files for ${Environment.DIRECTORY_DOWNLOADS}"
+                )
+                queryCollection(
+                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                    limitToDownloads = true,
+                    restrictToOwner = false
+                )
+            } else {
+                emptyList()
+            }
+
+            val files = (resolvedDownloadsFiles + filesCollectionFiles).distinctBy { it.uri }
+
+            files.sortedWith(
+                compareBy<BackupFileEntry> { it.name != exactFileName }
+                    .thenByDescending { it.dateModified }
+            )
+        } catch (e: Exception) {
+            Log.e("Utils", "Error finding all backup files in Downloads folder: $exactFileName", e)
+            emptyList()
+        }
+    }
+}
+
+/**
+ * Reads the content of a file from Downloads folder.
+ * Returns null if the file doesn't exist or can't be read.
+ */
+private suspend fun readFileContentFromDownloadsFolder(context: Context, uri: android.net.Uri): String? {
+    return withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                inputStream.bufferedReader().readText()
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error reading file content from Downloads folder", e)
+            null
+        }
+    }
+}
+
+/**
  * Creates an AppBackup from the current workout store and database state.
  * This is a helper function that extracts the backup creation logic.
  */
@@ -1013,6 +1261,77 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
 }
 
 /**
+ * Cleans up duplicate backup files in Downloads folder.
+ * This should be called once at app startup to remove any duplicate files that may have been created.
+ * Keeps only the file with the exact name "workout_store_backup.json" if it exists, or the most recent one.
+ */
+suspend fun cleanupDuplicateBackupFiles(context: Context) {
+    withContext(Dispatchers.IO) {
+        try {
+            fun showCleanupToast(message: String) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            val downloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
+            val folderLabel = "${Environment.DIRECTORY_DOWNLOADS} (MediaStore): $downloadsPath"
+            val backupFileName = "workout_store_backup.json"
+            val resolver = context.contentResolver
+
+            Log.d("Utils", "Backup cleanup started in $folderLabel")
+            
+            // Find all existing files matching the backup pattern
+            val allBackupFiles = findAllBackupFilesInDownloadsFolder(context, backupFileName)
+            
+            if (allBackupFiles.isEmpty()) {
+                Log.d("Utils", "No backup files found to clean up")
+                return@withContext
+            }
+            
+            if (allBackupFiles.size == 1) {
+                Log.d("Utils", "Only one backup file found, no cleanup needed")
+                return@withContext
+            }
+            
+            Log.d("Utils", "Found ${allBackupFiles.size} backup files, cleaning up duplicates")
+            
+            // Find the file with exact name match, or use the most recent one
+            val exactMatch = allBackupFiles.firstOrNull { it.name == backupFileName }
+            val targetFile = exactMatch ?: allBackupFiles.maxByOrNull { it.dateModified } ?: allBackupFiles.first()
+            val targetUri = targetFile.uri
+            
+            // Delete all other files
+            var deletedCount = 0
+            for (file in allBackupFiles) {
+                if (file.uri == targetUri) continue
+                
+                // Optionally check if content matches before deleting
+                // (if content differs, we might want to keep it, but for cleanup we'll delete duplicates)
+                try {
+                    val deleted = deleteBackupFile(context, file.uri)
+                    if (deleted) {
+                        deletedCount++
+                        Log.d("Utils", "Deleted duplicate backup file: ${file.name}")
+                    } else {
+                        Log.w("Utils", "No rows deleted for duplicate backup file: ${file.name}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("Utils", "Failed to delete duplicate backup file: ${file.name}", e)
+                }
+            }
+            
+            Log.d("Utils", "Cleanup complete: deleted $deletedCount duplicate backup file(s), kept: ${targetFile.name}")
+            if (deletedCount > 0) {
+                showCleanupToast("Deleted $deletedCount duplicate backup file(s)")
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error cleaning up duplicate backup files", e)
+        }
+    }
+}
+
+/**
  * Saves workout store backup to Downloads folder (persists after app uninstall).
  * Creates an AppBackup (including database data) and saves it to workout_store_backup.json.
  * This file can be used for recovery if the main workout_store.json gets corrupted.
@@ -1024,72 +1343,117 @@ suspend fun saveWorkoutStoreToExternalStorage(
     db: AppDatabase
 ) {
     withContext(Dispatchers.IO) {
-        try {
-            val appBackup = createAppBackup(workoutStore, db)
-            if (appBackup == null) {
-                Log.d("Utils", "No data to backup, skipping backup")
-                return@withContext
-            }
-
-            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-            val backupFileName = "workout_store_backup.json"
-            
-            // Save to Downloads folder (persists after uninstall)
-            val resolver = context.contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            }
-
-            // Try to find existing file first
-            val existingUri = findFileInDownloadsFolder(context, backupFileName)
-            val uri = if (existingUri != null) {
-                // Update existing file
-                try {
-                    resolver.update(existingUri, contentValues, null, null)
-                    existingUri
-                } catch (e: Exception) {
-                    Log.w("Utils", "Failed to update existing backup file, will try to create new one", e)
-                    resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                }
-            } else {
-                // Create new file
-                resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            }
-
-            uri?.let {
-                try {
-                    resolver.openOutputStream(it)?.use { outputStream ->
-                        outputStream.write(jsonString.toByteArray())
-                        outputStream.flush()
-                    }
-                    Log.d("Utils", "Backup saved to Downloads folder: $backupFileName")
-                } catch (e: Exception) {
-                    Log.e("Utils", "Error writing to backup file", e)
-                    // Try to clean up the failed file
-                    try {
-                        resolver.delete(uri, null, null)
-                    } catch (deleteException: Exception) {
-                        Log.e("Utils", "Error cleaning up failed file", deleteException)
-                    }
-                }
-            } ?: run {
-                Log.e("Utils", "Failed to create backup file in Downloads folder")
-            }
-            
-            // Also try to migrate old backup from external files dir (one-time migration)
+        backupFileWriteMutex.withLock {
             try {
-                val externalDir = context.getExternalFilesDir(null)
-                val oldBackupFile = externalDir?.let { java.io.File(it, backupFileName) }
-                oldBackupFile?.takeIf { it.exists() }?.delete()
-                Log.d("Utils", "Cleaned up old backup file from external files dir")
+                val appBackup = createAppBackup(workoutStore, db)
+                if (appBackup == null) {
+                    Log.d("Utils", "No data to backup, skipping backup")
+                    return@withContext
+                }
+
+                val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
+                val backupFileName = "workout_store_backup.json"
+                
+                // Save to Downloads folder (persists after uninstall)
+                val resolver = context.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+
+                // Find ALL backup files (including any duplicates that might exist)
+                val allBackupFiles = findAllBackupFilesInDownloadsFolder(context, backupFileName)
+                
+                // Find the target file to use (exact match preferred, or most recent)
+                val exactMatch = allBackupFiles.firstOrNull { it.name == backupFileName }
+                val targetFile = exactMatch ?: allBackupFiles.maxByOrNull { it.dateModified }
+                val targetUri = targetFile?.uri
+                
+                // Check if content has changed by comparing with target file
+                var shouldSave = true
+                if (targetUri != null) {
+                    // Read existing content and compare
+                    val existingContent = readFileContentFromDownloadsFolder(context, targetUri)
+                    if (existingContent != null && existingContent == jsonString) {
+                        Log.d("Utils", "Backup content unchanged, skipping save")
+                        shouldSave = false
+                        
+                        // Still clean up any other duplicates
+                        if (allBackupFiles.size > 1) {
+                            cleanupDuplicateBackupFiles(context)
+                        }
+                    }
+                }
+
+                if (!shouldSave) {
+                    return@withContext
+                }
+
+                val targetSaveUri = if (targetUri != null) {
+                    if (targetFile?.name != backupFileName) {
+                        try {
+                            val renameValues = ContentValues().apply {
+                                put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
+                            }
+                            resolver.update(targetUri, renameValues, null, null)
+                        } catch (e: Exception) {
+                            Log.w("Utils", "Failed to normalize backup file name", e)
+                        }
+                    }
+                    targetUri
+                } else {
+                    try {
+                        resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                    } catch (e: Exception) {
+                        Log.e("Utils", "Failed to create backup file", e)
+                        null
+                    }
+                }
+
+                targetSaveUri?.let { uri ->
+                    try {
+                        // Write the content
+                        val wroteContent = resolver.openOutputStream(uri, "wt")?.use { outputStream ->
+                            outputStream.write(jsonString.toByteArray())
+                            outputStream.flush()
+                            true
+                        } ?: false
+                        if (wroteContent) {
+                            Log.d("Utils", "Backup saved to Downloads folder: $backupFileName")
+                            
+                            // Final cleanup after save to catch any duplicates that might have been created
+                            kotlinx.coroutines.delay(200) // Give MediaStore time to index
+                            cleanupDuplicateBackupFiles(context)
+                        } else {
+                            Log.e("Utils", "Failed to open output stream for backup file")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Utils", "Error writing to backup file", e)
+                        // Try to clean up the failed file
+                        try {
+                            resolver.delete(uri, null, null)
+                        } catch (deleteException: Exception) {
+                            Log.e("Utils", "Error cleaning up failed file", deleteException)
+                        }
+                    }
+                } ?: run {
+                    Log.e("Utils", "Failed to create backup file in Downloads folder")
+                }
+                
+                // Also try to migrate old backup from external files dir (one-time migration)
+                try {
+                    val externalDir = context.getExternalFilesDir(null)
+                    val oldBackupFile = externalDir?.let { java.io.File(it, backupFileName) }
+                    oldBackupFile?.takeIf { it.exists() }?.delete()
+                    Log.d("Utils", "Cleaned up old backup file from external files dir")
+                } catch (e: Exception) {
+                    // Ignore migration errors
+                    Log.d("Utils", "Could not clean up old backup file", e)
+                }
             } catch (e: Exception) {
-                // Ignore migration errors
-                Log.d("Utils", "Could not clean up old backup file", e)
+                Log.e("Utils", "Error saving workout store to external storage", e)
             }
-        } catch (e: Exception) {
-            Log.e("Utils", "Error saving workout store to external storage", e)
         }
     }
 }

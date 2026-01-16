@@ -1,12 +1,18 @@
 package com.gabstra.myworkoutassistant
 
+import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -36,6 +42,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.ViewModelProvider
@@ -87,6 +94,7 @@ import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.createAppBackup
+import com.gabstra.myworkoutassistant.cleanupDuplicateBackupFiles
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -208,6 +216,32 @@ class MainActivity : ComponentActivity() {
 
     private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
 
+    private val readStoragePermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                runBackupCleanup()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Storage access denied; backup cleanup skipped",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+    private val manageAllFilesAccessLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (hasDownloadsAccess()) {
+                runBackupCleanup()
+            } else {
+                Toast.makeText(
+                    this,
+                    "All files access denied; backup cleanup skipped",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
     override fun onStart() {
         super.onStart()
     }
@@ -254,6 +288,9 @@ class MainActivity : ComponentActivity() {
         val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
         registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
 
+        // Clean up duplicate backup files once at app startup (after storage access check)
+        requestBackupCleanup()
+
         setContent {
             MyWorkoutAssistantTheme {
                 Surface(
@@ -288,6 +325,69 @@ class MainActivity : ComponentActivity() {
                     appViewModel.setScreenData(ScreenData.Settings())
                 }
             }
+        }
+    }
+
+    private fun requestBackupCleanup() {
+        if (hasDownloadsAccess()) {
+            runBackupCleanup()
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            showAllFilesAccessRationale()
+        } else {
+            readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun runBackupCleanup() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            cleanupDuplicateBackupFiles(this@MainActivity)
+        }
+    }
+
+    private fun hasDownloadsAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun showAllFilesAccessRationale() {
+        AlertDialog.Builder(this)
+            .setTitle("Allow access to Downloads")
+            .setMessage(
+                "To clean duplicate backup files in Downloads, the app needs all files access " +
+                    "so it can list and delete old backup copies."
+            )
+            .setPositiveButton("Continue") { _, _ ->
+                launchAllFilesAccessSettings()
+            }
+            .setNegativeButton("Not now") { _, _ ->
+                Toast.makeText(
+                    this,
+                    "All files access not granted; backup cleanup skipped",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .show()
+    }
+
+    private fun launchAllFilesAccessSettings() {
+        val uri = Uri.parse("package:$packageName")
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = uri
+        }
+        try {
+            manageAllFilesAccessLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            val fallbackIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            manageAllFilesAccessLauncher.launch(fallbackIntent)
         }
     }
 

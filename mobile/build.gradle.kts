@@ -90,6 +90,7 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation("androidx.documentfile:documentfile:1.1.0")
 
     // Compose BOM (Dec 2025)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")

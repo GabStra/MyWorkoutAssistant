@@ -4,10 +4,12 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,11 +21,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.verticalScroll
 
 @Composable
 fun WorkoutsListTab(
@@ -87,15 +87,29 @@ fun WorkoutsListTab(
                 onOrderChange = { },
                 itemContent = { workout ->
                     StyledCard {
-                        Text(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(15.dp)
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            text = workout.name,
-                            color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                                .padding(15.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Text(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                text = workout.name,
+                                color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (workout.description.isNotEmpty()) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = workout.description,
+                                    color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 },
                 isDragDisabled = true,

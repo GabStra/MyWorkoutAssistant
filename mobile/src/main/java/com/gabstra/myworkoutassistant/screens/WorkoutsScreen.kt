@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -269,6 +270,12 @@ fun WorkoutsScreen(
     val scope = rememberCoroutineScope()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch {
+            drawerState.close()
+        }
+    }
 
     val tabTitles = listOf("Status", "Workouts", "Gear", "Alarms")
 

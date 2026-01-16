@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -58,10 +57,6 @@ fun SettingsScreen(
     workoutStore: WorkoutStore
 ) {
     val context = LocalContext.current
-
-    BackHandler(enabled = true) {
-        onCancel()
-    }
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
