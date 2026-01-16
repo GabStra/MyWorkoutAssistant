@@ -67,6 +67,7 @@ import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
+import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -811,6 +812,91 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
 }
 
 /**
+ * Creates an AppBackup from the current workout store and database state.
+ * This is a helper function that extracts the backup creation logic.
+ */
+suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBackup? {
+    return withContext(Dispatchers.IO) {
+        try {
+            // Get all DAOs
+            val workoutHistoryDao = db.workoutHistoryDao()
+            val setHistoryDao = db.setHistoryDao()
+            val exerciseInfoDao = db.exerciseInfoDao()
+            val workoutScheduleDao = db.workoutScheduleDao()
+            val workoutRecordDao = db.workoutRecordDao()
+            val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+            val errorLogDao = db.errorLogDao()
+
+            // Get all workout histories
+            val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
+
+            // Filter workouts: only active ones or ones with histories
+            val allowedWorkouts = workoutStore.workouts.filter { workout ->
+                workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
+            }
+
+            // Filter workout histories by allowed workouts only
+            val validWorkoutHistories = workoutHistories.filter { workoutHistory ->
+                allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
+            }
+
+            // Filter set histories to match valid workout histories
+            val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
+                validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+            }
+
+            // Get all exercise infos, workout schedules, workout records
+            val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
+            val workoutSchedules = workoutScheduleDao.getAllSchedules()
+            val workoutRecords = workoutRecordDao.getAll()
+
+            // Filter exercise session progressions to match valid workout histories
+            val exerciseSessionProgressions = exerciseSessionProgressionDao.getAllExerciseSessionProgressions().filter { progression ->
+                validWorkoutHistories.any { it.id == progression.workoutHistoryId }
+            }
+
+            // Get all error logs
+            val errorLogs = errorLogDao.getAllErrorLogs().first()
+
+            // Create AppBackup
+            val appBackup = AppBackup(
+                workoutStore.copy(workouts = allowedWorkouts),
+                validWorkoutHistories,
+                setHistories,
+                exerciseInfos,
+                workoutSchedules,
+                workoutRecords,
+                exerciseSessionProgressions,
+                errorLogs.takeIf { it.isNotEmpty() }
+            )
+
+            // Check if AppBackup has any data before returning
+            val hasData = appBackup.WorkoutStore.workouts.isNotEmpty() ||
+                    appBackup.WorkoutHistories.isNotEmpty() ||
+                    appBackup.SetHistories.isNotEmpty() ||
+                    appBackup.ExerciseInfos.isNotEmpty() ||
+                    appBackup.WorkoutSchedules.isNotEmpty() ||
+                    appBackup.WorkoutRecords.isNotEmpty() ||
+                    appBackup.ExerciseSessionProgressions.isNotEmpty() ||
+                    run {
+                        val errorLogs = appBackup.ErrorLogs
+                        errorLogs != null && errorLogs.isNotEmpty()
+                    }
+
+            if (!hasData) {
+                Log.d("Utils", "Skipping backup - no data to save")
+                return@withContext null
+            }
+
+            appBackup
+        } catch (e: Exception) {
+            Log.e("Utils", "Error creating AppBackup", e)
+            null
+        }
+    }
+}
+
+/**
  * Saves workout store to both internal storage and backup file.
  * This is a convenience function that combines both save operations.
  */
@@ -822,7 +908,7 @@ suspend fun saveWorkoutStoreWithBackup(
 ) {
     withContext(Dispatchers.IO) {
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        saveWorkoutStoreToDownloads(context, workoutStore, db)
+        saveWorkoutStoreToExternalStorage(context, workoutStore, db)
     }
 }
 
@@ -838,7 +924,79 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
         val db = AppDatabase.getDatabase(context)
         val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        saveWorkoutStoreToDownloads(context, workoutStore, db)
+        saveWorkoutStoreToExternalStorage(context, workoutStore, db)
+    }
+}
+
+/**
+ * Saves workout store backup to external storage.
+ * Creates an AppBackup (including database data) and saves it to workout_store_backup.json.
+ * This file can be used for recovery if the main workout_store.json gets corrupted.
+ * Uses external storage so the backup persists and is accessible via file managers.
+ */
+suspend fun saveWorkoutStoreToExternalStorage(
+    context: Context,
+    workoutStore: WorkoutStore,
+    db: AppDatabase
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            val appBackup = createAppBackup(workoutStore, db)
+            if (appBackup == null) {
+                Log.d("Utils", "No data to backup, skipping backup")
+                return@withContext
+            }
+
+            val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
+            val externalDir = context.getExternalFilesDir(null)
+            if (externalDir == null) {
+                Log.e("Utils", "External storage not available")
+                return@withContext
+            }
+            val backupFile = java.io.File(externalDir, "workout_store_backup.json")
+            backupFile.writeText(jsonString)
+            Log.d("Utils", "Backup saved to external storage: ${backupFile.absolutePath}")
+        } catch (e: Exception) {
+            Log.e("Utils", "Error saving workout store to external storage", e)
+        }
+    }
+}
+
+/**
+ * Checks if an external backup file exists.
+ */
+fun hasExternalBackup(context: Context): Boolean {
+    val externalDir = context.getExternalFilesDir(null) ?: return false
+    val backupFile = java.io.File(externalDir, "workout_store_backup.json")
+    return backupFile.exists()
+}
+
+/**
+ * Loads the external backup file and parses it as AppBackup.
+ * Returns null if the file doesn't exist or parsing fails.
+ */
+suspend fun loadExternalBackup(context: Context): AppBackup? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val externalDir = context.getExternalFilesDir(null)
+            if (externalDir == null) {
+                Log.d("Utils", "External storage not available")
+                return@withContext null
+            }
+            val backupFile = java.io.File(externalDir, "workout_store_backup.json")
+            if (!backupFile.exists()) {
+                Log.d("Utils", "Backup file does not exist")
+                return@withContext null
+            }
+
+            val jsonString = backupFile.readText()
+            val appBackup = fromJSONtoAppBackup(jsonString)
+            Log.d("Utils", "Backup loaded successfully from external storage")
+            appBackup
+        } catch (e: Exception) {
+            Log.e("Utils", "Error loading backup from external storage", e)
+            null
+        }
     }
 }
 

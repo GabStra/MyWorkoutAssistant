@@ -76,6 +76,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
+import com.gabstra.myworkoutassistant.loadExternalBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
@@ -83,6 +84,11 @@ import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -546,21 +552,73 @@ fun MyWorkoutAssistantNavHost(
                         // Use lifecycleScope instead of composition scope to prevent cancellation
                         // when user navigates away during restore
                         lifecycleOwner.lifecycleScope.launch {
-                            Log.d("MainActivity", "Starting backup restore in lifecycle scope")
-                            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutStore.workouts.size} workouts")
-                            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutHistories?.size ?: 0} workout histories")
-                            Log.d("MainActivity", "Backup contains ${appBackup.SetHistories?.size ?: 0} set histories")
-                            
-                            val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
-                                workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories ?: emptyList()).any { it.workoutId == workout.id })
-                            }
-                            Log.d("MainActivity", "Filtered to ${allowedWorkouts.size} allowed workouts (${appBackup.WorkoutStore.workouts.size - allowedWorkouts.size} filtered out)")
-
-                            val newWorkoutStore = appBackup.WorkoutStore.copy(
-                                workouts = allowedWorkouts
+                            restoreFromAppBackup(
+                                appBackup = appBackup,
+                                context = context,
+                                appViewModel = appViewModel,
+                                workoutViewModel = workoutViewModel,
+                                workoutStoreRepository = workoutStoreRepository,
+                                db = db,
+                                workoutHistoryDao = workoutHistoryDao,
+                                setHistoryDao = setHistoryDao,
+                                exerciseInfoDao = exerciseInfoDao,
+                                workoutScheduleDao = workoutScheduleDao,
+                                workoutRecordDao = workoutRecordDao,
+                                healthConnectClient = healthConnectClient
                             )
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    // Job was cancelled (e.g., activity destroyed) - this is expected
+                    Log.d("MainActivity", "Backup restore cancelled", e)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error importing data from backup", e)
+                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    e.printStackTrace()
+                    Toast.makeText(
+                        context,
+                        "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
 
-                            val deleteAndInsertJob = async {
+    /**
+     * Helper function to restore from an AppBackup.
+     * This function handles all the database operations and view model updates.
+     */
+    private suspend fun restoreFromAppBackup(
+        appBackup: AppBackup,
+        context: Context,
+        appViewModel: AppViewModel,
+        workoutViewModel: WorkoutViewModel,
+        workoutStoreRepository: WorkoutStoreRepository,
+        db: AppDatabase,
+        workoutHistoryDao: WorkoutHistoryDao,
+        setHistoryDao: SetHistoryDao,
+        exerciseInfoDao: ExerciseInfoDao,
+        workoutScheduleDao: WorkoutScheduleDao,
+        workoutRecordDao: WorkoutRecordDao,
+        healthConnectClient: HealthConnectClient
+    ) {
+        try {
+            Log.d("MainActivity", "Starting backup restore")
+            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutStore.workouts.size} workouts")
+            Log.d("MainActivity", "Backup contains ${appBackup.WorkoutHistories?.size ?: 0} workout histories")
+            Log.d("MainActivity", "Backup contains ${appBackup.SetHistories?.size ?: 0} set histories")
+            
+            val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
+                workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories ?: emptyList()).any { it.workoutId == workout.id })
+            }
+            Log.d("MainActivity", "Filtered to ${allowedWorkouts.size} allowed workouts (${appBackup.WorkoutStore.workouts.size - allowedWorkouts.size} filtered out)")
+
+            val newWorkoutStore = appBackup.WorkoutStore.copy(
+                workouts = allowedWorkouts
+            )
+
+            val deleteAndInsertJob = async {
                                 try {
                                     Log.d("MainActivity", "Starting database operations for backup restore")
                                     
@@ -679,82 +737,82 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             }
 
-                            // Wait for the delete and insert operations to complete
-                            Log.d("MainActivity", "Waiting for database operations to complete")
-                            val restoreSuccess = try {
-                                deleteAndInsertJob.await()
-                            } catch (e: CancellationException) {
-                                // Job was cancelled (e.g., activity destroyed) - this is expected
-                                Log.d("MainActivity", "Backup restore cancelled", e)
-                                return@launch
-                            } catch (e: Exception) {
-                                Log.e("MainActivity", "Unexpected error while awaiting restore job", e)
-                                false
-                            }
+            // Wait for the delete and insert operations to complete
+            Log.d("MainActivity", "Waiting for database operations to complete")
+            val restoreSuccess = try {
+                deleteAndInsertJob.await()
+            } catch (e: CancellationException) {
+                // Job was cancelled (e.g., activity destroyed) - this is expected
+                Log.d("MainActivity", "Backup restore cancelled", e)
+                return
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Unexpected error while awaiting restore job", e)
+                false
+            }
 
-                            Log.d("MainActivity", "Database operations completed, success: $restoreSuccess")
-                            
-                            if (restoreSuccess) {
-                                Log.d("MainActivity", "Starting workout store migration and update")
-                                // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
-/*                            backfillExerciseSessionProgressions(
-                                workoutStore = newWorkoutStore,
-                                workoutHistoryDao = workoutHistoryDao,
-                                setHistoryDao = setHistoryDao,
-                                exerciseInfoDao = exerciseInfoDao,
-                                exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
-                                db = db
-                            )*/
+            Log.d("MainActivity", "Database operations completed, success: $restoreSuccess")
+            
+            if (restoreSuccess) {
+                Log.d("MainActivity", "Starting workout store migration and update")
+                // Backfill ExerciseSessionProgression entries for workouts that don't have them but should
+                /*backfillExerciseSessionProgressions(
+                    workoutStore = newWorkoutStore,
+                    workoutHistoryDao = workoutHistoryDao,
+                    setHistoryDao = setHistoryDao,
+                    exerciseInfoDao = exerciseInfoDao,
+                    exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
+                    db = db
+                )*/
 
-                                // Migrate the workout store before updating view models to ensure
-                                // "Unassigned" plan is created for workouts without a plan
-                                try {
-                                    Log.d("MainActivity", "Migrating workout store")
-                                    val planMigratedWorkoutStore =
-                                        workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
-                                    Log.d("MainActivity", "Workout store migrated, migrating set IDs if needed")
-                                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                                        planMigratedWorkoutStore,
-                                        db,
-                                        workoutStoreRepository
-                                    )
-                                    Log.d("MainActivity", "Set ID migration completed")
+                // Migrate the workout store before updating view models to ensure
+                // "Unassigned" plan is created for workouts without a plan
+                try {
+                    Log.d("MainActivity", "Migrating workout store")
+                    val planMigratedWorkoutStore =
+                        workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
+                    Log.d("MainActivity", "Workout store migrated, migrating set IDs if needed")
+                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                        planMigratedWorkoutStore,
+                        db,
+                        workoutStoreRepository
+                    )
+                    Log.d("MainActivity", "Set ID migration completed")
 
-                                    Log.d("MainActivity", "Updating view models with migrated workout store")
-                                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
-                                    workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+                    Log.d("MainActivity", "Updating view models with migrated workout store")
+                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
+                    workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
 
-                                    Log.d("MainActivity", "Saving workout store to repository")
-                                    workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
-                                    appViewModel.triggerUpdate()
-                                    
-                                    Log.d("MainActivity", "Workout store update completed successfully")
+                    Log.d("MainActivity", "Saving workout store to repository")
+                    workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
+                    appViewModel.triggerUpdate()
+                    
+                    Log.d("MainActivity", "Workout store update completed successfully")
 
-                                    // Show the success toast after all operations are complete
-                                    Toast.makeText(
-                                        context,
-                                        "Data restored from backup",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                    Log.d("MainActivity", "Backup restore completed successfully")
-                                } catch (e: Exception) {
-                                    Log.e("MainActivity", "Error during workout store migration/update", e)
-                                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
-                                    e.printStackTrace()
-                                    Toast.makeText(
-                                        context,
-                                        "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                            } else {
-                                Log.e("MainActivity", "Backup restore failed during database operations")
-                                Toast.makeText(
-                                    context,
-                                    "Failed to restore workout history from backup",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
+                    // Show the success toast after all operations are complete
+                    Toast.makeText(
+                        context,
+                        "Data restored from backup",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    Log.d("MainActivity", "Backup restore completed successfully")
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error during workout store migration/update", e)
+                    Log.e("MainActivity", "Exception type: ${e.javaClass.simpleName}, message: ${e.message}")
+                    e.printStackTrace()
+                    Toast.makeText(
+                        context,
+                        "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            } else {
+                Log.e("MainActivity", "Backup restore failed during database operations")
+                Toast.makeText(
+                    context,
+                    "Failed to restore workout history from backup",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
                         }
                     }
                 } catch (e: CancellationException) {
@@ -917,25 +975,11 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.setScreenData(ScreenData.Settings())
                     },
                     onBackupClick = {
-                        scope.launch {
-                            try{
-                                withContext(Dispatchers.IO) {
-                                    saveWorkoutStoreToDownloads(context, appViewModel.workoutStore, db)
-                                }
-                                Toast.makeText(
-                                    context,
-                                    "Backup saved to downloads folder",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }catch (e: Exception){
-                                Log.e("MainActivity", "Error saving backup", e)
-                                Toast.makeText(
-                                    context,
-                                    "Backup failed",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
+                        Toast.makeText(
+                            context,
+                            "Backups are automatic. Use Settings to restore from backup.",
+                            Toast.LENGTH_LONG
+                        ).show()
                     },
                     onRestoreClick = {
                         jsonPickerLauncher.launch(arrayOf("application/json"))
@@ -1058,6 +1102,40 @@ fun MyWorkoutAssistantNavHost(
                             syncWithWatch()
                             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
                             appViewModel.goBack()
+                        }
+                    },
+                    onRestoreFromBackup = {
+                        scope.launch {
+                            try {
+                                val appBackup = loadExternalBackup(context)
+                                if (appBackup == null) {
+                                    Toast.makeText(context, "No backup found or backup file is invalid", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                
+                                // Use the same restore logic as file import
+                                restoreFromAppBackup(
+                                    appBackup = appBackup,
+                                    context = context,
+                                    appViewModel = appViewModel,
+                                    workoutViewModel = workoutViewModel,
+                                    workoutStoreRepository = workoutStoreRepository,
+                                    db = db,
+                                    workoutHistoryDao = workoutHistoryDao,
+                                    setHistoryDao = setHistoryDao,
+                                    exerciseInfoDao = exerciseInfoDao,
+                                    workoutScheduleDao = workoutScheduleDao,
+                                    workoutRecordDao = workoutRecordDao,
+                                    healthConnectClient = healthConnectClient
+                                )
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error restoring from external backup", e)
+                                Toast.makeText(
+                                    context,
+                                    "Failed to restore backup: ${e.message ?: "Unknown error"}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
                         }
                     },
                     onCancel = { 
