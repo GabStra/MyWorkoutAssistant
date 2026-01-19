@@ -1077,7 +1077,7 @@ fun MyWorkoutAssistantNavHost(
                         errorLogs.takeIf { it.isNotEmpty() })
                     try {
                         MainActivity.syncMutex.withLock {
-                            sendAppBackup(dataClient, appBackup)
+                            sendAppBackup(dataClient, appBackup, context)
                         }
                         // Success toast will be shown when completion message is received
                     } catch (e: Exception) {
@@ -1278,19 +1278,26 @@ fun MyWorkoutAssistantNavHost(
                     }
 
                     is ScreenData.Settings -> {
+                        var isSaving by remember { mutableStateOf(false) }
                         SettingsScreen(
                             onSave = { newWorkoutStore ->
+                                if (isSaving) return@SettingsScreen
+                                isSaving = true
                                 scope.launch {
-                                    appViewModel.updateWorkoutStore(newWorkoutStore)
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    syncWithWatch()
-                                    Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT)
-                                        .show()
-                                    appViewModel.goBack()
+                                    try {
+                                        appViewModel.updateWorkoutStore(newWorkoutStore)
+                                        appViewModel.flushWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
+                                        syncWithWatch()
+                                        Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT)
+                                            .show()
+                                        appViewModel.goBack()
+                                    } finally {
+                                        isSaving = false
+                                    }
                                 }
                             },
                             onRestoreFromBackup = {
@@ -1335,16 +1342,10 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
-                            workoutStore = appViewModel.workoutStore
+                            workoutStore = appViewModel.workoutStore,
+                            isSaving = isSaving
                         )
                     }
 
@@ -1525,14 +1526,7 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
                             workout = selectedWorkout,
                             isSaving = isSaving,
@@ -1849,14 +1843,7 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
                             exercise = selectedExercise,
                             allowSettingDoNotStoreHistory = true,
@@ -1915,14 +1902,7 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
                             availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
                             superset = selectedSuperset,
@@ -2246,14 +2226,7 @@ fun MyWorkoutAssistantNavHost(
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
                             rest = screenData.selectedRest,
                             isSaving = isSaving,
@@ -2451,43 +2424,44 @@ fun MyWorkoutAssistantNavHost(
                             selectedWorkout,
                             screenData.parentExerciseId
                         ) as Exercise
+                        var isSaving by remember { mutableStateOf(false) }
                         SetForm(
                             onSetUpsert = { updatedSet ->
+                                if (isSaving) return@SetForm
+                                isSaving = true
                                 scope.launch {
-                                    val hasHistory = withContext(Dispatchers.IO) {
-                                        workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                            selectedWorkout.id
+                                    try {
+                                        val hasHistory = withContext(Dispatchers.IO) {
+                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                selectedWorkout.id
+                                            )
+                                        }
+                                        appViewModel.updateSetInExerciseVersioned(
+                                            selectedWorkout,
+                                            parentExercise,
+                                            screenData.selectedSet,
+                                            updatedSet,
+                                            hasHistory
                                         )
+                                        appViewModel.flushWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
+                                        appViewModel.goBack()
+                                    } finally {
+                                        isSaving = false
                                     }
-                                    appViewModel.updateSetInExerciseVersioned(
-                                        selectedWorkout,
-                                        parentExercise,
-                                        screenData.selectedSet,
-                                        updatedSet,
-                                        hasHistory
-                                    )
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
                                 }
                             },
                             onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
+                                appViewModel.goBack()
                             },
                             set = screenData.selectedSet,
                             exerciseType = parentExercise.exerciseType,
                             viewModel = appViewModel,
-                            exercise = parentExercise
+                            exercise = parentExercise,
+                            isSaving = isSaving
                         )
                     }
 

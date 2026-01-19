@@ -149,10 +149,10 @@ fun RestScreen(
 
     val pageTypes = remember(showPlatesPage,showProgressionComparisonPage) {
         mutableListOf<PageType>().apply {
+            add(PageType.BUTTONS)  // First item - index 0
             add(PageType.EXERCISES)
             if (showPlatesPage) add(PageType.PLATES)
             if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
-            add(PageType.BUTTONS)
         }
     }
 

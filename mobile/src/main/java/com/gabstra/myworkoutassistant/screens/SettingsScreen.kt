@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.hasExternalBackup
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -54,7 +55,8 @@ fun SettingsScreen(
     onSave: (WorkoutStore) -> Unit,
     onCancel: () -> Unit,
     onRestoreFromBackup: () -> Unit,
-    workoutStore: WorkoutStore
+    workoutStore: WorkoutStore,
+    isSaving: Boolean = false
 ) {
     val context = LocalContext.current
 
@@ -98,7 +100,7 @@ fun SettingsScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = onCancel, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -264,5 +266,6 @@ fun SettingsScreen(
             }
         )
     }
+    LoadingOverlay(isVisible = isSaving, text = "Saving...")
 }
 

@@ -470,11 +470,21 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
     }
 }
 
-suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup) {
+suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup, context: android.content.Context? = null) {
     val transactionId = UUID.randomUUID().toString()
     try {
+        // Check if watch is connected before attempting sync
+        // This prevents sync attempts when watch is not available (e.g., during app uninstall)
+        if (context != null) {
+            val hasConnection = checkConnection(context)
+            if (!hasConnection) {
+                Log.d("DataLayerSync", "Skipping app backup sync - watch not connected (transaction: $transactionId)")
+                return
+            }
+        }
+        
         // Send sync request and wait for acknowledgment
-        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
         if (!handshakeSuccess) {
             Log.e("DataLayerSync", "Failed to establish connection for app backup sync (transaction: $transactionId)")
             throw SyncError.HandshakeError(transactionId, 0)

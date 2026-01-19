@@ -31,7 +31,9 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 /**
  * Converts tutorial text string to AnnotatedString with proper styling.
@@ -69,7 +71,8 @@ private fun formatTutorialText(
                 withStyle(
                     style = baseStyle.toSpanStyle().copy(
                         fontWeight = FontWeight.Bold,
-                        fontSize = titleFontSize
+                        fontSize = titleFontSize,
+                        color = LighterGray
                     )
                 ) {
                     append(title)
@@ -80,7 +83,8 @@ private fun formatTutorialText(
                     append("\n")
                     withStyle(
                         style = baseStyle.toSpanStyle().copy(
-                            fontSize = bodyFontSize
+                            fontSize = bodyFontSize,
+                            color = MediumLighterGray
                         )
                     ) {
                         append(description)

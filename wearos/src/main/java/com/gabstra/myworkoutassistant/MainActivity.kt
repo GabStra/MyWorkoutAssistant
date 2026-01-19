@@ -75,6 +75,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -151,9 +152,11 @@ class MyReceiver(
 
                 if (syncComplete != null) {
                     Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
-                    // Only show toast if SyncStatusBadge is not showing "Syncing..."
-                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing) {
-                        Toast.makeText(context, "Sync completed successfully", Toast.LENGTH_SHORT).show()
+                    // Only show toast if SyncStatusBadge is not showing "Syncing..." and workout is not active
+                    val workoutState = appViewModel.workoutState.value
+                    val isWorkoutActive = workoutState !is WorkoutState.Completed
+                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
+                        Toast.makeText(context, "Sync completed", Toast.LENGTH_SHORT).show()
                     }
                 }
 
@@ -167,8 +170,10 @@ class MyReceiver(
                             popUpTo(0) { inclusive = true }
                         }
                     }
-                    // Only show toast if SyncStatusBadge is not showing "Syncing..."
-                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing) {
+                    // Only show toast if SyncStatusBadge is not showing "Syncing..." and workout is not active
+                    val workoutState = appViewModel.workoutState.value
+                    val isWorkoutActive = workoutState !is WorkoutState.Completed
+                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
                         Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -591,7 +596,7 @@ fun WearApp(
                             if (showWorkoutSelectionTutorial) {
                                 TutorialOverlay(
                                     visible = true,
-                                    text = "Choose a workout\nTap one to see details and start.\n\nTop header\nLong-press for app version.\nDouble-tap for data tools.",
+                                    text = "Welcome!\nTap any workout to see details and start.\n\nQuick tips\nLong-press the header for app info.\nDouble-tap the header for sync tools.",
                                     onDismiss = {
                                         showWorkoutSelectionTutorial = false
                                         tutorialState = TutorialPreferences.update(

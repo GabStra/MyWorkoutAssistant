@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.LighterGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -130,6 +131,7 @@ fun ExerciseScreen(
 
     val pageTypes = remember(showPlatesPage, showNotesPage, showProgressionComparisonPage, hasMuscleInfo) {
         mutableListOf<PageType>().apply {
+            add(PageType.BUTTONS)  // First item - index 0
             add(PageType.EXERCISE_DETAIL)
             // MOVEMENT_ANIMATION disabled for now
             // add(PageType.MOVEMENT_ANIMATION)
@@ -138,7 +140,6 @@ fun ExerciseScreen(
             if (hasMuscleInfo) add(PageType.MUSCLES)
             if (showNotesPage) add(PageType.NOTES)
             add(PageType.EXERCISES)
-            add(PageType.BUTTONS)
         }
     }
 
@@ -322,7 +323,7 @@ fun ExerciseScreen(
                                                 fun pipe() {
                                                     withStyle(
                                                         baseStyle.toSpanStyle().copy(
-                                                            color = LighterGray,
+                                                            color = MediumLighterGray,
                                                             fontWeight = FontWeight.Thin
                                                         )
                                                     ) {
@@ -333,7 +334,7 @@ fun ExerciseScreen(
                                                 fun separator() {
                                                     withStyle(
                                                         baseStyle.toSpanStyle().copy(
-                                                            color = LighterGray,
+                                                            color = MediumLighterGray,
                                                             baselineShift = BaselineShift(0.18f)
                                                         )
                                                     ) { // tweak 0.12–0.25f as needed
@@ -341,14 +342,14 @@ fun ExerciseScreen(
                                                     }
                                                 }
 
-                                                withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
+                                                withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                                                     append("Ex: ")
                                                 }
                                                 append("${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}")
 
                                                 if (exerciseSetIds.size > 1) {
                                                     pipe()
-                                                    withStyle(baseStyle.toSpanStyle().copy(color = LighterGray)) {
+                                                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                                                         append("Set: ")
                                                     }
                                                     append("${setIndex.value + 1}/${exerciseSetIds.size}")
@@ -431,7 +432,7 @@ fun ExerciseScreen(
                                                     if (!first) {
                                                         withStyle(
                                                             bottomLineBaseStyle.toSpanStyle().copy(
-                                                                color = LighterGray,
+                                                                color = MediumLighterGray,
                                                                 fontWeight = FontWeight.Thin
                                                             )
                                                         ) {
@@ -443,14 +444,14 @@ fun ExerciseScreen(
 
                                                 if (equipment != null) {
                                                     sep()
-                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LighterGray)) {
+                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                                                         append("Eq: ")
                                                     }
                                                     append(equipment.name)
                                                 }
                                                 if (accessoryEquipments.isNotEmpty()) {
                                                     sep()
-                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = LighterGray)) {
+                                                    withStyle(bottomLineBaseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                                                         append("Acc: ")
                                                     }
                                                     append(accessoryEquipments.joinToString(", ") { it.name })

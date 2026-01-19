@@ -212,7 +212,9 @@ open class AppViewModel : WorkoutViewModel() {
                             // Log detailed error for debugging but show generic message to user
                             Log.d("AppViewModel", "Detailed sync error: ${e.message}")
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                                if (!isWorkoutActive()) {
+                                    Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
@@ -225,7 +227,9 @@ open class AppViewModel : WorkoutViewModel() {
                 // Log detailed error for debugging but show generic message to user
                 Log.d("AppViewModel", "Detailed sync error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                    if (!isWorkoutActive()) {
+                        Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
@@ -287,7 +291,9 @@ open class AppViewModel : WorkoutViewModel() {
                     _isSyncingToPhone.value = false
                     // Log detailed error for debugging but show generic message to user
                     Log.d("AppViewModel", "Detailed sync error: ${e.message}")
-                    Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                    if (!isWorkoutActive()) {
+                        Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                    }
                     onEnd(false)
                 }
             }
@@ -398,7 +404,9 @@ open class AppViewModel : WorkoutViewModel() {
                                 // Success toast will be shown when SYNC_COMPLETE is received
                                 if (context != null && !result) {
                                     withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                                        if (!isWorkoutActive()) {
+                                            Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
                             } catch (e: Exception) {
@@ -408,7 +416,9 @@ open class AppViewModel : WorkoutViewModel() {
                                 _syncStatus.value = SyncStatus.Failure
                                 if (context != null) {
                                     withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                                        if (!isWorkoutActive()) {
+                                            Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
+                                        }
                                     }
                                 }
                             }
@@ -423,8 +433,14 @@ open class AppViewModel : WorkoutViewModel() {
     /**
      * Immediately flushes any pending debounced sync operation.
      * Should be called on navigation or lifecycle events to ensure data is synced.
+     * Only flushes if phone is connected to prevent sync attempts when mobile app is uninstalled.
      */
     fun flushWorkoutSync() {
+        // Only flush if phone is connected - prevents sync attempts when mobile app is uninstalled
+        if (!isPhoneConnectedAndHasApp || dataClient == null) {
+            Log.d("AppViewModel", "Skipping flushWorkoutSync - phone not connected or dataClient unavailable")
+            return
+        }
         viewModelScope.launch(coroutineExceptionHandler) {
             syncDebouncer.flush()
         }
@@ -435,6 +451,15 @@ open class AppViewModel : WorkoutViewModel() {
      */
     fun resetSyncStatus() {
         _syncStatus.value = SyncStatus.Idle
+    }
+    
+    /**
+     * Checks if a workout is currently active.
+     * Returns false if workoutState is Completed, true otherwise.
+     */
+    private fun isWorkoutActive(): Boolean {
+        val state = workoutState.value
+        return state !is WorkoutState.Completed
     }
     
     // Workout Plan Helper Methods
