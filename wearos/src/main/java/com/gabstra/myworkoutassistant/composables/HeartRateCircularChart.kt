@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -209,7 +210,7 @@ fun HrStatusBadge(
             modifier = modifier
                 .fillMaxWidth()
                 .alpha(alpha)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(top = 10.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             val message = when (hrStatus) {
@@ -447,7 +448,7 @@ private fun HeartRateDisplay(
                             text = zoneText,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 }
@@ -677,6 +678,14 @@ private fun ZoneSegment(
         progressState.floatValue = computeProgress()
     }
 
+    val trackColor = remember(currentZone, index, hr) {
+        if (currentZone == index && hr > 0) {
+            reduceColorLuminance(colorsByZone[index])
+        } else {
+            MediumDarkGray
+        }
+    }
+
     CircularProgressIndicator(
         progress = {
             progressState.floatValue
@@ -684,7 +693,7 @@ private fun ZoneSegment(
         modifier = modifier,
         colors = ProgressIndicatorDefaults.colors(
             indicatorColor = colorsByZone[index],
-            trackColor = MediumDarkGray
+            trackColor = trackColor
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,

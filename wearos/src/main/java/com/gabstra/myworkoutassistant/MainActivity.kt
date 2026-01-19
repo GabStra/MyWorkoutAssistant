@@ -109,6 +109,9 @@ class MyReceiver(
                 val appBackupProgress =
                     intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PROGRESS_UPDATE)
 
+                val syncComplete =
+                    intent.getStringExtra(DataLayerListenerService.SYNC_COMPLETE)
+
                 if (appBackupStartJson != null) {
                     Log.d("DataLayerSync", "Received APP_BACKUP_START_JSON - triggering loading screen")
                     appViewModel.setBackupProgress(0f)
@@ -146,18 +149,26 @@ class MyReceiver(
                     appViewModel.setBackupProgress(progress)
                 }
 
+                if (syncComplete != null) {
+                    Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
+                    // Only show toast if SyncStatusBadge is not showing "Syncing..."
+                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing) {
+                        Toast.makeText(context, "Sync completed successfully", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
                 if (appBackupFailed != null) {
                     Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
                     // Reset backup progress state
                     appViewModel.setBackupProgress(0f)
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute == Screen.Loading.route) {
-                        Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }
-                    } else {
-                        // If we're not on the loading screen, still show a toast and reset state
+                    }
+                    // Only show toast if SyncStatusBadge is not showing "Syncing..."
+                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing) {
                         Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
                     }
                 }

@@ -295,12 +295,12 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 }
 
 val colorsByZone = arrayOf(
-    Color(0x80F0F0F0), // Not used, but kept for consistency
-    Color(0xFFB3B3B3), // Zone 1
-    Color(0xFF2C9EDE), // Zone 2
-    Color(0xFF119943), // Zone 3
-    Color(0xFFF29E3D), // Zone 4
-    Color(0xFFED2020)  // Zone 5
+    Color(0x80F0F0F0), // Not used
+    Color(0xFF84B8E6), // Zone 2 (blue)    L≈0.449
+    Color(0xFF92BD9A), // Zone 3 (green)   L≈0.448
+    Color(0xFFE2AA2C), // Zone 1 (yellow)  L≈0.451
+    Color(0xFFF2A14A), // Zone 4 (orange)  L≈0.449
+    Color(0xFFF39B9B)  // Zone 5 (red)     L≈0.449
 )
 
 //define an array that for each zone, contains the upper and lower limit in percentage
@@ -312,6 +312,81 @@ val zoneRanges = arrayOf(
     80f to 90f,
     90f to 100f
 )
+
+/**
+ * Reduces the luminance (lightness) of a color while preserving its hue and saturation.
+ * Uses HSL color space conversion to maintain color identity while reducing brightness.
+ * 
+ * @param color The original color to reduce luminance for
+ * @param factor The factor by which to reduce luminance (0.0 to 1.0). 
+ *               Default 0.4 means the color will be 40% of original luminance (60% reduction).
+ *               Lower values result in darker colors.
+ * @return A new Color with reduced luminance
+ */
+fun reduceColorLuminance(color: Color, factor: Float = 0.4f): Color {
+    val clampedFactor = factor.coerceIn(0f, 1f)
+    
+    // Extract RGB components (0.0 to 1.0)
+    val r = color.red
+    val g = color.green
+    val b = color.blue
+    
+    // Convert RGB to HSL
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val delta = max - min
+    
+    // Calculate lightness (L)
+    val l = (max + min) / 2f
+    
+    // Handle edge cases (grayscale colors)
+    if (delta == 0f) {
+        // Grayscale - just reduce the lightness
+        val newL = (l * clampedFactor).coerceIn(0f, 1f)
+        return Color(newL, newL, newL, color.alpha)
+    }
+    
+    // Calculate saturation (S)
+    val s = if (l > 0.5f) {
+        delta / (2f - max - min)
+    } else {
+        delta / (max + min)
+    }
+    
+    // Calculate hue (H)
+    val h = when {
+        max == r -> {
+            val hValue = ((g - b) / delta) % 6f
+            if (hValue < 0) hValue + 6f else hValue
+        }
+        max == g -> (b - r) / delta + 2f
+        else -> (r - g) / delta + 4f
+    } / 6f
+    
+    // Reduce lightness
+    val newL = l * clampedFactor
+    
+    // Convert HSL back to RGB
+    val c = (1f - abs(2f * newL - 1f)) * s
+    val x = c * (1f - abs((h * 6f) % 2f - 1f))
+    val m = newL - c / 2f
+    
+    val (newR, newG, newB) = when {
+        h < 1f / 6f -> Triple(c, x, 0f)
+        h < 2f / 6f -> Triple(x, c, 0f)
+        h < 3f / 6f -> Triple(0f, c, x)
+        h < 4f / 6f -> Triple(0f, x, c)
+        h < 5f / 6f -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
+    }
+    
+    return Color(
+        red = (newR + m).coerceIn(0f, 1f),
+        green = (newG + m).coerceIn(0f, 1f),
+        blue = (newB + m).coerceIn(0f, 1f),
+        alpha = color.alpha
+    )
+}
 
 
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{

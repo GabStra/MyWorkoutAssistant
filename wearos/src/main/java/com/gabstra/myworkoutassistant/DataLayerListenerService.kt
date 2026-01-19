@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
@@ -514,14 +513,12 @@ class DataLayerListenerService : WearableListenerService() {
                                 "DataLayerSync",
                                 "Completed completion waiter for transaction: $tid"
                             )
-                            // Show success toast
-                            scope.launch(Dispatchers.Main) {
-                                Toast.makeText(
-                                    context,
-                                    "Sync completed successfully",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                            // Send broadcast to MainActivity to handle toast (with syncStatus check)
+                            val intent = Intent(INTENT_ID).apply {
+                                putExtra(SYNC_COMPLETE, SYNC_COMPLETE)
+                                setPackage(packageName)
                             }
+                            sendBroadcast(intent)
                         } ?: run {
                             Log.w(
                                 "DataLayerSync",
@@ -1492,6 +1489,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val APP_BACKUP_END_JSON = "appBackupEndJson"
         const val APP_BACKUP_FAILED = "appBackupFailed"
         const val APP_BACKUP_PROGRESS_UPDATE = "progress_update"
+        const val SYNC_COMPLETE = "syncComplete"
         const val SYNC_REQUEST_PATH = "/syncRequest"
         const val SYNC_ACK_PATH = "/syncAck"
         const val SYNC_COMPLETE_PATH = "/syncComplete"

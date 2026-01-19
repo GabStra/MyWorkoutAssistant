@@ -61,7 +61,7 @@ fun SyncStatusBadge(
             modifier = modifier
                 .fillMaxWidth()
                 .alpha(alpha)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(top = 10.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             val backgroundColor = when (syncStatus) {

@@ -37,6 +37,7 @@ import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -196,10 +197,18 @@ fun ExerciseIndicator(
                     else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
                 }
                 
+                val trackColor = remember(isCurrent, indicatorColor) {
+                    if (isCurrent) {
+                        reduceColorLuminance(indicatorColor)
+                    } else {
+                        MediumDarkGray
+                    }
+                }
+                
                 CircularProgressIndicator(
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = indicatorColor,
-                        trackColor = MediumDarkGray
+                        trackColor = trackColor
                     ),
                     progress = { indicatorProgress },
                     modifier = Modifier.fillMaxSize(),
