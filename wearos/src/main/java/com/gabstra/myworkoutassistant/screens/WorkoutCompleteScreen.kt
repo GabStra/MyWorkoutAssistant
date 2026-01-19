@@ -40,8 +40,10 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
@@ -62,8 +64,11 @@ fun WorkoutCompleteScreen(
     val context = LocalContext.current
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
+    val syncStatus by viewModel.syncStatus.collectAsState()
     val countDownTimer = remember { mutableIntStateOf(30) }
     var progressionDataCalculated by remember { mutableStateOf(false) }
+    var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
+    var syncComplete by remember { mutableStateOf(false) }
 
     val headerStyle = MaterialTheme.typography.bodySmall
 
@@ -106,9 +111,51 @@ fun WorkoutCompleteScreen(
         }
         cancelWorkoutInProgressNotification(context)
 
+        // Capture initial sync status before flush
+        val initialStatus = viewModel.syncStatus.value
+
+        // Flush any pending debounced sync to ensure the final workout state (with isDone=true)
+        // is synced immediately, preventing cancellation if the app closes or navigates away.
+        viewModel.flushWorkoutSync()
+
+        // Small delay to allow sync action to start and set status to Syncing
+        delay(200)
+
+        // Check syncStatus after delay
+        val currentStatus = viewModel.syncStatus.value
+        when (currentStatus) {
+            AppViewModel.SyncStatus.Syncing -> {
+                // A sync was pending and started, wait for it to complete
+                val completedStatus = withTimeoutOrNull(30_000) {
+                    viewModel.syncStatus
+                        .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
+                }
+                // Set syncComplete regardless of timeout - proceed even if sync takes too long
+                syncComplete = true
+            }
+            AppViewModel.SyncStatus.Idle -> {
+                // No sync was pending (flush did nothing)
+                syncComplete = true
+            }
+            AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
+                // Sync already completed (from a previous sync)
+                syncComplete = true
+            }
+        }
+
         // The last set completion already synced the workout history with isDone=true to mobile.
         // We just need to clean up the workout record on the watch.
         viewModel.deleteWorkoutRecord()
+    }
+
+    // Start countdown when both progression is calculated and sync is complete
+    LaunchedEffect(progressionDataCalculated, syncComplete) {
+        if (progressionDataCalculated && syncComplete && progressionIsEmpty != null) {
+            // Set timer duration: 5 seconds if empty/null, 30 seconds if has data
+            val timerDuration = if (progressionIsEmpty == true) 5 else 30
+            countDownTimer.intValue = timerDuration
+            startCloseJob()
+        }
     }
 
     Column(
@@ -139,10 +186,7 @@ fun WorkoutCompleteScreen(
             onProgressionDataCalculated = { isEmpty ->
                 if (!progressionDataCalculated) {
                     progressionDataCalculated = true
-                    // Set timer duration: 5 seconds if empty/null, 30 seconds if has data
-                    val timerDuration = if (isEmpty) 5 else 30
-                    countDownTimer.intValue = timerDuration
-                    startCloseJob()
+                    progressionIsEmpty = isEmpty
                 }
             }
         )

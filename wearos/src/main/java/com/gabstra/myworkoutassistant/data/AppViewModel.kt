@@ -330,7 +330,9 @@ open class AppViewModel : WorkoutViewModel() {
                 // (including the last set), so that incomplete workouts can be resumed
                 // on mobile. The completion screen will call this again with
                 // isDone=true but forceNotSend=true so we won't resend.
-                val shouldSendData = currentState is WorkoutState.Set
+                // When isDone=true, we must sync the final workout state even if the
+                // state has already transitioned to Completed.
+                val shouldSendData = currentState is WorkoutState.Set || isDone
 
                 if(currentState is WorkoutState.Set){
                     upsertWorkoutRecord(currentState.exerciseId,currentState.setIndex)
