@@ -44,7 +44,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
@@ -198,39 +199,36 @@ fun WeightVestForm(
                 }
             }
 
-            // Submit button
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val newMachine = WeightVest(
-                        id = weightVest?.id ?: UUID.randomUUID(),
-                        name = nameState.value.trim(),
-                        availableWeights = availableWeightsState.value,
-                    )
-                    onUpsert(newMachine)
-                },
+            Spacer(Modifier.height(Spacing.xl))
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = nameState.value.isNotBlank() &&
-                        availableWeightsState.value.isNotEmpty()
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (weightVest == null) Text("Add Weight Vest", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Weight Vest", color = MaterialTheme.colorScheme.onPrimary)
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = {
+                        onCancel()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+
+                FormPrimaryButton(
+                    text = if (weightVest == null) "Add Weight Vest" else "Save",
+                    onClick = {
+                        val newMachine = WeightVest(
+                            id = weightVest?.id ?: UUID.randomUUID(),
+                            name = nameState.value.trim(),
+                            availableWeights = availableWeightsState.value,
+                        )
+                        onUpsert(newMachine)
+                    },
+                    enabled = nameState.value.isNotBlank() &&
+                            availableWeightsState.value.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            // Cancel button
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
         }
     }
     // Dialog for adding new available plate

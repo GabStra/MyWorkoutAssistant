@@ -37,8 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimedDurationSetForm
 import com.gabstra.myworkoutassistant.composables.WeightSetForm
@@ -203,7 +203,7 @@ fun SetForm(
                 }
             }
 
-            CustomButton(
+            FormSecondaryButton(
                 text = "Cancel",
                 onClick = {
                     onCancel()

@@ -79,43 +79,53 @@ fun WorkoutsAlarmsTab(
         }.filterKeys { it != null }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 10.dp)
-            .padding(bottom = 10.dp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
-            .padding(horizontal = 15.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        if (isLoadingSchedules) {
-            Box(
+    // Check if there are any matching schedules for the current plan
+    val hasMatchingSchedules = remember(schedulesByWorkout) {
+        schedulesByWorkout.values.any { it.isNotEmpty() }
+    }
+
+    if (isLoadingSchedules) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.width(32.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MediumDarkGray,
+            )
+        }
+    } else if (!hasMatchingSchedules) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            StyledCard(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.width(32.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray,
-                )
-            }
-        } else if (allSchedules.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
                     .padding(15.dp),
-                contentAlignment = Alignment.Center
             ) {
                 Text(
+                    modifier = Modifier
+                        .padding(15.dp),
                     text = "No alarms found",
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                 )
             }
-        } else if (schedulesByWorkout.values.any { it.isNotEmpty() }) {
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 10.dp)
+                .padding(bottom = 10.dp)
+                .verticalColumnScrollbar(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             // Bulk toggle button - only show if there are schedules for available workouts
             StyledCard {
                 Column(

@@ -46,8 +46,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -227,41 +228,38 @@ fun BarbellForm(
                 }
             }
 
-            // Submit
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val newBarbell = Barbell(
-                        id = barbell?.id ?: UUID.randomUUID(),
-                        name = nameState.value.trim(),
-                        availablePlates = availablePlatesState.value,
-                        sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
-                        barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0
-                    )
-                    onUpsert(newBarbell)
-                },
+            Spacer(Modifier.height(Spacing.xl))
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                enabled =
-                    nameState.value.isNotBlank() &&
-                            sleeveLengthState.value.toIntOrNull() != null &&
-                            availablePlatesState.value.isNotEmpty()
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (barbell == null) "Add Barbell" else "Save", color = MaterialTheme.colorScheme.onPrimary)
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f)
+                )
+
+                FormPrimaryButton(
+                    text = if (barbell == null) "Add Barbell" else "Save",
+                    onClick = {
+                        val newBarbell = Barbell(
+                            id = barbell?.id ?: UUID.randomUUID(),
+                            name = nameState.value.trim(),
+                            availablePlates = availablePlatesState.value,
+                            sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
+                            barWeight = barWeightState.value.toDoubleOrNull() ?: 0.0
+                        )
+                        onUpsert(newBarbell)
+                    },
+                    enabled =
+                        nameState.value.isNotBlank() &&
+                                sleeveLengthState.value.toIntOrNull() != null &&
+                                availablePlatesState.value.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            // Cancel
-            CustomButton(
-                text = "Cancel",
-                onClick = onCancel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
 
             Spacer(Modifier.height(Spacing.xl))
         }

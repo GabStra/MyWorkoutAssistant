@@ -1,13 +1,18 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
 fun StandardDialog(
@@ -46,18 +51,29 @@ fun StandardDialog(
         },
         confirmButton = {
             if (showConfirm && confirmText != null && onConfirm != null) {
-                DialogTextButton(
-                    text = confirmText,
+                Button(
                     onClick = onConfirm,
-                    enabled = confirmEnabled
-                )
+                    enabled = confirmEnabled,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        contentColor = MaterialTheme.colorScheme.background,
+                        disabledContentColor = DisabledContentGray
+                    )
+                ) {
+                    Text(
+                        text = confirmText,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
             }
         },
         dismissButton = {
             if (showDismiss && dismissText != null) {
-                DialogTextButton(
+                CustomButton(
                     text = dismissText,
-                    onClick = onDismissButton ?: onDismissRequest
+                    onClick = onDismissButton ?: onDismissRequest,
+                    modifier = Modifier.heightIn(min = 48.dp)
                 )
             }
         },

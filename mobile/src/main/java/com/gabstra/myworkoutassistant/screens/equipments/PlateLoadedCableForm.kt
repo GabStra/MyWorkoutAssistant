@@ -44,8 +44,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -212,42 +213,39 @@ fun PlateLoadedCableForm(
                 }
             }
 
-            // Submit button
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val newPlateLoadedCable = PlateLoadedCable(
-                        id = plateLoadedCable?.id ?: UUID.randomUUID(),
-                        name = nameState.value.trim(),
-                        availablePlates = availablePlatesState.value,
-                        sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
-                    )
-                    onUpsert(newPlateLoadedCable)
-                },
+            Spacer(Modifier.height(Spacing.xl))
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = nameState.value.isNotBlank() &&
-                        sleeveLengthState.value.isNotBlank() &&
-                        sleeveLengthState.value.toIntOrNull() != null &&
-                        availablePlatesState.value.isNotEmpty()
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (plateLoadedCable == null) Text("Add Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Plate-Loaded Cable", color = MaterialTheme.colorScheme.onPrimary)
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = {
+                        onCancel()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+
+                FormPrimaryButton(
+                    text = if (plateLoadedCable == null) "Add Plate-Loaded Cable" else "Save",
+                    onClick = {
+                        val newPlateLoadedCable = PlateLoadedCable(
+                            id = plateLoadedCable?.id ?: UUID.randomUUID(),
+                            name = nameState.value.trim(),
+                            availablePlates = availablePlatesState.value,
+                            sleeveLength = sleeveLengthState.value.toIntOrNull() ?: 0,
+                        )
+                        onUpsert(newPlateLoadedCable)
+                    },
+                    enabled = nameState.value.isNotBlank() &&
+                            sleeveLengthState.value.isNotBlank() &&
+                            sleeveLengthState.value.toIntOrNull() != null &&
+                            availablePlatesState.value.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            // Cancel button
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
         }
     }
     // Dialog for adding new available plate

@@ -98,11 +98,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
 import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Duration
@@ -115,7 +117,6 @@ import java.time.temporal.TemporalAdjusters
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 
@@ -1148,7 +1149,7 @@ private suspend fun readFileContentFromDownloadsFolder(context: Context, uri: an
  * This is a helper function that extracts the backup creation logic.
  */
 suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBackup? {
-    return withContext(Dispatchers.IO) {
+    return withContext(Dispatchers.IO + NonCancellable) {
         try {
             // Get all DAOs
             val workoutHistoryDao = db.workoutHistoryDao()
@@ -1222,7 +1223,20 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
 
             appBackup
         } catch (e: Exception) {
-            Log.e("Utils", "Error creating AppBackup", e)
+            when (e) {
+                is CancellationException -> {
+                    Log.e("Utils", "Error creating AppBackup: Job was cancelled. " +
+                            "Message: ${e.message}, " +
+                            "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                            "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                }
+                else -> {
+                    Log.e("Utils", "Error creating AppBackup: ${e.javaClass.simpleName}. " +
+                            "Message: ${e.message}, " +
+                            "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                            "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                }
+            }
             null
         }
     }
@@ -1342,7 +1356,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
     workoutStore: WorkoutStore,
     db: AppDatabase
 ) {
-    withContext(Dispatchers.IO) {
+    withContext(Dispatchers.IO + NonCancellable) {
         backupFileWriteMutex.withLock {
             try {
                 val appBackup = createAppBackup(workoutStore, db)
@@ -1452,7 +1466,20 @@ suspend fun saveWorkoutStoreToExternalStorage(
                     Log.d("Utils", "Could not clean up old backup file", e)
                 }
             } catch (e: Exception) {
-                Log.e("Utils", "Error saving workout store to external storage", e)
+                when (e) {
+                    is CancellationException -> {
+                        Log.e("Utils", "Error saving workout store to external storage: Job was cancelled. " +
+                                "Message: ${e.message}, " +
+                                "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                    }
+                    else -> {
+                        Log.e("Utils", "Error saving workout store to external storage: ${e.javaClass.simpleName}. " +
+                                "Message: ${e.message}, " +
+                                "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                    }
+                }
             }
         }
     }
@@ -1495,7 +1522,20 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                     Log.d("Utils", "Backup loaded successfully from Downloads folder")
                     return@withContext appBackup
                 } catch (e: Exception) {
-                    Log.e("Utils", "Error parsing backup from Downloads folder", e)
+                    when (e) {
+                        is CancellationException -> {
+                            Log.e("Utils", "Error parsing backup from Downloads folder: Job was cancelled. " +
+                                    "Message: ${e.message}, " +
+                                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                        }
+                        else -> {
+                            Log.e("Utils", "Error parsing backup from Downloads folder: ${e.javaClass.simpleName}. " +
+                                    "Message: ${e.message}, " +
+                                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                        }
+                    }
                     // Continue to fallback location
                 }
             }
@@ -1517,7 +1557,20 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
             Log.d("Utils", "Backup loaded successfully from old location (external files dir)")
             appBackup
         } catch (e: Exception) {
-            Log.e("Utils", "Error loading backup from external storage", e)
+            when (e) {
+                is CancellationException -> {
+                    Log.e("Utils", "Error loading backup from external storage: Job was cancelled. " +
+                            "Message: ${e.message}, " +
+                            "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                            "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                }
+                else -> {
+                    Log.e("Utils", "Error loading backup from external storage: ${e.javaClass.simpleName}. " +
+                            "Message: ${e.message}, " +
+                            "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                            "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                }
+            }
             null
         }
     }

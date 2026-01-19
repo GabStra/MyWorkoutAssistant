@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +27,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
@@ -32,8 +35,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -79,7 +83,7 @@ fun RestSetForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
-                        text = if (restSet == null) "Insert Rest" else "Edit Rest",
+                        text = if (restSet == null) "Insert Rest" else "Save",
                     )
                 },
                 navigationIcon = {
@@ -130,38 +134,34 @@ fun RestSetForm(
                 )
             }
 
-            // Submit button
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val newRest = RestSet(
-                        id = restSet?.id ?: UUID.randomUUID(),
-                        timeInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
-                    )
+            Spacer(Modifier.height(Spacing.xl))
 
-                    onRestSetUpsert(newRest)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (restSet == null) Text("Insert Rest") else Text("Edit Rest")
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = {
+                        onCancel()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+
+                FormPrimaryButton(
+                    text = if (restSet == null) "Insert Rest" else "Save",
+                    onClick = {
+                        val newRest = RestSet(
+                            id = restSet?.id ?: UUID.randomUUID(),
+                            timeInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
+                        )
+
+                        onRestSetUpsert(newRest)
+                    },
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
         }
     }
     LoadingOverlay(isVisible = isSaving, text = "Saving...")

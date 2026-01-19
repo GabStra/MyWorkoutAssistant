@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.Red
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -94,7 +95,7 @@ fun <T> DetailScreen(
             )
         },
         bottomBar = {
-            if (selectedItems.isNotEmpty()) {
+            if (selectionMode) {
                 Column {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     BottomAppBar(
@@ -115,10 +116,14 @@ fun <T> DetailScreen(
                                         selectedItems = emptyList()
                                         selectionMode = false
                                     }) {
-                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel selection")
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Close",
+                                            tint = Red
+                                        )
                                     }
                                     Text(
-                                        "Cancel selection",
+                                        "Close",
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center
                                     )

@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -76,9 +77,10 @@ fun WorkoutsBottomBar(
     onSelectionModeChange: (Boolean) -> Unit,
     onShowMoveWorkoutDialogChange: (Boolean) -> Unit,
     onUpdateWorkoutsEnabledState: (Boolean) -> Unit,
-    onGroupedWorkoutsHistoriesChange: (Map<java.time.LocalDate, List<WorkoutHistory>>?) -> Unit
+    onGroupedWorkoutsHistoriesChange: (Map<java.time.LocalDate, List<WorkoutHistory>>?) -> Unit,
+    isSelectionModeActive: Boolean
 ) {
-    if (selectedWorkouts.isNotEmpty()) {
+    if (isSelectionModeActive) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -116,12 +118,12 @@ fun WorkoutsBottomBar(
                                     }) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Cancel selection",
-                                            tint = MaterialTheme.colorScheme.onBackground
+                                            contentDescription = "Close",
+                                            tint = Red
                                         )
                                     }
                                     Text(
-                                        "Cancel selection",
+                                        "Close",
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
@@ -356,9 +358,10 @@ fun AccessoriesBottomBar(
     accessories: List<AccessoryEquipment>,
     appViewModel: AppViewModel,
     onSelectionChange: (List<AccessoryEquipment>) -> Unit,
-    onSelectionModeChange: (Boolean) -> Unit
+    onSelectionModeChange: (Boolean) -> Unit,
+    isSelectionModeActive: Boolean
 ) {
-    if (selectedAccessories.isNotEmpty()) {
+    if (isSelectionModeActive) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -473,9 +476,10 @@ fun EquipmentsBottomBar(
     equipments: List<WeightLoadedEquipment>,
     appViewModel: AppViewModel,
     onSelectionChange: (List<WeightLoadedEquipment>) -> Unit,
-    onSelectionModeChange: (Boolean) -> Unit
+    onSelectionModeChange: (Boolean) -> Unit,
+    isSelectionModeActive: Boolean
 ) {
-    if (selectedEquipments.isNotEmpty()) {
+    if (isSelectionModeActive) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -497,12 +501,12 @@ fun EquipmentsBottomBar(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Cancel selection",
-                                    tint = MaterialTheme.colorScheme.onBackground
+                                    contentDescription = "Close",
+                                    tint = Red
                                 )
                             }
                             Text(
-                                "Cancel selection",
+                                "Close",
                                 style = MaterialTheme.typography.labelSmall,
                                 textAlign = TextAlign.Center
                             )

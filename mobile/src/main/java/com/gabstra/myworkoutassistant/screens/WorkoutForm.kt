@@ -69,8 +69,9 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.WorkoutTypes
 import com.gabstra.myworkoutassistant.shared.DarkGray
@@ -314,18 +315,20 @@ fun WorkoutForm(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                Button(
+                FormPrimaryButton(
+                    text = "Add Single",
                     onClick = {
                         currentEditingSchedule.value = null
                         showScheduleDialog.value = true
                     },
                     modifier = Modifier.weight(1f)
-                ) { Text("Add Single", color = MaterialTheme.colorScheme.onPrimary) }
+                )
 
-                Button(
+                FormPrimaryButton(
+                    text = "Add Multiple",
                     onClick = { showBatchScheduleDialog.value = true },
                     modifier = Modifier.weight(1f)
-                ) { Text("Add Multiple", color = MaterialTheme.colorScheme.onPrimary) }
+                )
             }
 
             Spacer(Modifier.height(Spacing.md))
@@ -341,14 +344,15 @@ fun WorkoutForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                    CustomButton(
+                    FormSecondaryButton(
                         text = "Cancel",
                         onClick = onCancel,
                         enabled = !isSaving,
                         modifier = Modifier.weight(1f)
                     )
 
-                    Button(
+                    FormPrimaryButton(
+                        text = if (workout == null) "Insert" else "Save",
                         onClick = {
                             val newWorkout = Workout(
                                 id = workout?.id ?: UUID.randomUUID(),
@@ -367,7 +371,7 @@ fun WorkoutForm(
                         },
                         enabled = canBeSaved && !isSaving,
                         modifier = Modifier.weight(1f)
-                    ) { Text(if (workout == null) "Insert" else "Save", style = MaterialTheme.typography.bodyLarge) }
+                    )
                 }
 
             Spacer(Modifier.height(Spacing.xl))

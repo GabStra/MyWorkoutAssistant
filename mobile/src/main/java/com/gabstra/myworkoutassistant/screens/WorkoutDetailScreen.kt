@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
@@ -387,12 +388,12 @@ fun WorkoutDetailScreen(
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Cancel selection",
-                                tint = MaterialTheme.colorScheme.onBackground
+                                contentDescription = "Close",
+                                tint = Red
                             )
                         }
                         Text(
-                            "Cancel selection",
+                            "Close",
                             style = MaterialTheme.typography.labelSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
@@ -989,7 +990,7 @@ fun WorkoutDetailScreen(
                 )
             },
             bottomBar = {
-                if (selectedWorkoutComponents.isNotEmpty()) {
+                if (isSelectionModeActive) {
                     Column {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         editModeBottomBar()

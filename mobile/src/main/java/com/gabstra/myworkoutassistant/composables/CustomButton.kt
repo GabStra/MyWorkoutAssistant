@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -64,6 +65,7 @@ fun CustomButton(
         contentAlignment = Alignment.Center
     ) {
         Text(
+            modifier = Modifier.padding(horizontal = 17.5.dp),
             text = text,
             color = displayColor,
             textAlign = TextAlign.Center,

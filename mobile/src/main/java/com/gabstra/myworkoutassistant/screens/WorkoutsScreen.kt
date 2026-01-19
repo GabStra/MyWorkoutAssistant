@@ -560,7 +560,8 @@ fun WorkoutsScreen(
                                     enabled
                                 )
                             },
-                            onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it }
+                            onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it },
+                            isSelectionModeActive = isWorkoutSelectionModeActive
                         )
 
                         2 -> {
@@ -569,14 +570,16 @@ fun WorkoutsScreen(
                                 equipments = filteredEquipments,
                                 appViewModel = appViewModel,
                                 onSelectionChange = { selectedEquipments = it },
-                                onSelectionModeChange = { isEquipmentSelectionModeActive = it }
+                                onSelectionModeChange = { isEquipmentSelectionModeActive = it },
+                                isSelectionModeActive = isEquipmentSelectionModeActive
                             )
                             AccessoriesBottomBar(
                                 selectedAccessories = selectedAccessories,
                                 accessories = filteredAccessories,
                                 appViewModel = appViewModel,
                                 onSelectionChange = { selectedAccessories = it },
-                                onSelectionModeChange = { isAccessorySelectionModeActive = it }
+                                onSelectionModeChange = { isAccessorySelectionModeActive = it },
+                                isSelectionModeActive = isAccessorySelectionModeActive
                             )
                         }
                     }

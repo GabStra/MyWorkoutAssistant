@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -28,6 +27,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +49,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
@@ -89,12 +90,10 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
+import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
-import com.gabstra.myworkoutassistant.createAppBackup
-import com.gabstra.myworkoutassistant.cleanupDuplicateBackupFiles
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -242,6 +241,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val showFilePermissionDialog = mutableStateOf(false)
+
     override fun onStart() {
         super.onStart()
     }
@@ -292,6 +293,9 @@ class MainActivity : ComponentActivity() {
         requestBackupCleanup()
 
         setContent {
+            val context = LocalContext.current
+            val showDialog by showFilePermissionDialog
+            
             MyWorkoutAssistantTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -305,6 +309,16 @@ class MainActivity : ComponentActivity() {
                         workoutStoreRepository,
                         db,
                         healthConnectClient
+                    )
+                    
+                    FilePermissionDialog(
+                        show = showDialog,
+                        onDismiss = { showFilePermissionDialog.value = false },
+                        onConfirm = {
+                            showFilePermissionDialog.value = false
+                            launchAllFilesAccessSettings()
+                        },
+                        context = context
                     )
                 }
             }
@@ -359,23 +373,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showAllFilesAccessRationale() {
-        AlertDialog.Builder(this)
-            .setTitle("Allow access to Downloads")
-            .setMessage(
-                "To clean duplicate backup files in Downloads, the app needs all files access " +
-                    "so it can list and delete old backup copies."
-            )
-            .setPositiveButton("Continue") { _, _ ->
-                launchAllFilesAccessSettings()
-            }
-            .setNegativeButton("Not now") { _, _ ->
-                Toast.makeText(
-                    this,
-                    "All files access not granted; backup cleanup skipped",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            .show()
+        showFilePermissionDialog.value = true
     }
 
     private fun launchAllFilesAccessSettings() {
@@ -391,6 +389,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+}
+
+@Composable
+fun FilePermissionDialog(
+    show: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    context: Context
+) {
+    if (show) {
+        StandardDialog(
+            onDismissRequest = onDismiss,
+            title = "Allow access to Downloads",
+            body = {
+                Text(
+                    "To clean duplicate backup files in Downloads, the app needs all files access " +
+                        "so it can list and delete old backup copies."
+                )
+            },
+            confirmText = "Continue",
+            onConfirm = onConfirm,
+            dismissText = "Not now",
+            onDismissButton = {
+                Toast.makeText(
+                    context,
+                    "All files access not granted; backup cleanup skipped",
+                    Toast.LENGTH_SHORT
+                ).show()
+                onDismiss()
+            }
+        )
+    }
 }
 
 @OptIn(FlowPreview::class)
@@ -729,7 +759,10 @@ fun MyWorkoutAssistantNavHost(
                         }
                         true
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.e("MainActivity", "Error during restore database operations: ${e.javaClass.simpleName}. " +
+                                "Message: ${e.message}, " +
+                                "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                "Stack trace:\n${Log.getStackTraceString(e)}", e)
                         false
                     }
                 }
@@ -740,8 +773,13 @@ fun MyWorkoutAssistantNavHost(
                 deleteAndInsertJob.await()
             } catch (e: CancellationException) {
                 // Job was cancelled (e.g., activity destroyed) - this is expected
+                Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
                 return
             } catch (e: Exception) {
+                Log.e("MainActivity", "Error awaiting restore job: ${e.javaClass.simpleName}. " +
+                        "Message: ${e.message}, " +
+                        "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                        "Stack trace:\n${Log.getStackTraceString(e)}", e)
                 false
             }
 
@@ -780,7 +818,10 @@ fun MyWorkoutAssistantNavHost(
                         Toast.LENGTH_SHORT
                     ).show()
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
+                            "Message: ${e.message}, " +
+                            "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                            "Stack trace:\n${Log.getStackTraceString(e)}", e)
                     Toast.makeText(
                         context,
                         "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
@@ -796,8 +837,12 @@ fun MyWorkoutAssistantNavHost(
             }
         } catch (e: CancellationException) {
             // Job was cancelled (e.g., activity destroyed) - this is expected
+            Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("MainActivity", "Error during restore: ${e.javaClass.simpleName}. " +
+                    "Message: ${e.message}, " +
+                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
             Toast.makeText(
                 context,
                 "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
@@ -1277,6 +1322,10 @@ fun MyWorkoutAssistantNavHost(
                                             healthConnectClient = healthConnectClient
                                         )
                                     } catch (e: Exception) {
+                                        Log.e("MainActivity", "Error during restore from backup: ${e.javaClass.simpleName}. " +
+                                                "Message: ${e.message}, " +
+                                                "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                                                "Stack trace:\n${Log.getStackTraceString(e)}", e)
                                         Toast.makeText(
                                             context,
                                             "Failed to restore backup: ${e.message ?: "Unknown error"}",

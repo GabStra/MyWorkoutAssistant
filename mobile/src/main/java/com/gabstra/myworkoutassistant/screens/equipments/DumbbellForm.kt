@@ -44,7 +44,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.CustomButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
@@ -269,38 +270,37 @@ fun DumbbellForm(
                 }
             }
 
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val newDumbbell = Dumbbell(
-                        id = dumbbell?.id ?: UUID.randomUUID(),
-                        name = nameState.value.trim(),
-                        availableDumbbells = availableDumbbellsState.value,
-                        extraWeights = extraWeightsState.value,
-                        maxExtraWeightsPerLoadingPoint = maxExtraWeightsPerLoadingPointState.value.toIntOrNull() ?: 0,
-                    )
-                    onUpsert(newDumbbell)
-                },
+            Spacer(Modifier.height(Spacing.xl))
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty()
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (dumbbell == null) Text("Add Dumbbell") else Text("Edit Dumbbell")
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = {
+                        onCancel()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+
+                FormPrimaryButton(
+                    text = if (dumbbell == null) "Add Dumbbell" else "Save",
+                    onClick = {
+                        val newDumbbell = Dumbbell(
+                            id = dumbbell?.id ?: UUID.randomUUID(),
+                            name = nameState.value.trim(),
+                            availableDumbbells = availableDumbbellsState.value,
+                            extraWeights = extraWeightsState.value,
+                            maxExtraWeightsPerLoadingPoint = maxExtraWeightsPerLoadingPointState.value.toIntOrNull() ?: 0,
+                        )
+                        onUpsert(newDumbbell)
+                    },
+                    enabled = nameState.value.isNotBlank() && availableDumbbellsState.value.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                )
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            CustomButton(
-                text = "Cancel",
-                onClick = {
-                    onCancel()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
         }
     }
     // Dialog for adding new dumbbell

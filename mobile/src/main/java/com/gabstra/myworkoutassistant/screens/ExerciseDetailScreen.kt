@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -402,7 +403,7 @@ fun ExerciseDetailScreen(
                 )
             },
             bottomBar = {
-                if (selectedSets.isNotEmpty()) {
+                if (isSelectionModeActive) {
                     Column {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         BottomAppBar(
@@ -432,12 +433,12 @@ fun ExerciseDetailScreen(
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
-                                                contentDescription = "Cancel selection",
-                                                tint = MaterialTheme.colorScheme.onBackground
+                                                contentDescription = "Close",
+                                                tint = Red
                                             )
                                         }
                                         Text(
-                                            "Cancel selection",
+                                            "Close",
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = TextAlign.Center
                                         )

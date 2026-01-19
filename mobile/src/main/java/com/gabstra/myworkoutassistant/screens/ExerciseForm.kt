@@ -60,8 +60,9 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.BodyView
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
@@ -889,13 +890,14 @@ fun ExerciseForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CustomButton(
+                FormSecondaryButton(
                     text = "Cancel",
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
                 )
 
-                Button(
+                FormPrimaryButton(
+                    text = if (exercise == null) "Create" else "Save",
                     onClick = {
                         val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
                         val newExercise = Exercise(
@@ -935,9 +937,7 @@ fun ExerciseForm(
                     },
                     enabled = canBeSaved,
                     modifier = Modifier.weight(1f)
-                ) {
-                    Text(if (exercise == null) "Create" else "Save", style = MaterialTheme.typography.bodyLarge)
-                }
+                )
             }
 
             Spacer(Modifier.height(Spacing.xl))
