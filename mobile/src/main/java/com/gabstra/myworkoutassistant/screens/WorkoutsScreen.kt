@@ -745,7 +745,8 @@ fun WorkoutsScreen(
                                             onSelectionChange = { selectedWorkouts = it },
                                             onSelectionModeChange = {
                                                 isWorkoutSelectionModeActive = it
-                                            }
+                                            },
+                                            selectedPlanId = selectedPlanFilter
                                         )
                                     }
 

@@ -15,7 +15,6 @@ enum class ProgressionState {
 
 enum class CalibrationStep {
     LoadSelection,
-    LoadConfirmation,
     SetExecution,
     RIRRating
 }

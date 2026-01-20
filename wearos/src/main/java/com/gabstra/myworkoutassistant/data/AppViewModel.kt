@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import com.gabstra.myworkoutassistant.data.checkConnection
 
 open class AppViewModel : WorkoutViewModel() {
     
@@ -192,7 +193,8 @@ open class AppViewModel : WorkoutViewModel() {
                                         WorkoutRecord = workoutRecord,
                                         ExerciseSessionProgressions = exerciseSessionProgressions,
                                         ErrorLogs = errorLogs
-                                    )
+                                    ),
+                                    context
                                 )
                             }
                             
@@ -238,6 +240,19 @@ open class AppViewModel : WorkoutViewModel() {
     fun sendWorkoutHistoryToPhone(context: Context, onEnd: (Boolean) -> Unit = {}) {
         viewModelScope.launch(coroutineExceptionHandler + Dispatchers.IO) {
             try {
+                // Check connection before setting syncing state
+                val hasConnection = checkConnection(context)
+                if (!hasConnection) {
+                    withContext(Dispatchers.Main) {
+                        if (!isWorkoutActive()) {
+                            Toast.makeText(context, "Phone not connected", Toast.LENGTH_SHORT).show()
+                        }
+                        onEnd(false)
+                    }
+                    return@launch
+                }
+                
+                // Only set syncing state after connection check succeeds
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = true
                 }
@@ -276,7 +291,8 @@ open class AppViewModel : WorkoutViewModel() {
                                 ExerciseInfos = exerciseInfos,
                                 WorkoutRecord = workoutRecord,
                                 ExerciseSessionProgressions = exerciseSessionProgressions
-                            )
+                            ),
+                            context
                         )
                     }
                 } ?: false
@@ -351,7 +367,17 @@ open class AppViewModel : WorkoutViewModel() {
                     viewModelScope.launch(coroutineExceptionHandler) {
                         syncDebouncer.schedule {
                             try {
-                                // Set status to Syncing when sync actually starts executing
+                                // Check connection before setting syncing state
+                                if (context != null) {
+                                    val hasConnection = checkConnection(context)
+                                    if (!hasConnection) {
+                                        // Don't set syncing state if connection fails
+                                        // Error will be handled silently during workout
+                                        return@schedule
+                                    }
+                                }
+                                
+                                // Only set status to Syncing after connection check succeeds
                                 _syncStatus.value = SyncStatus.Syncing
 
                                 // Read current state at execution time (includes all accumulated sets)
@@ -384,7 +410,8 @@ open class AppViewModel : WorkoutViewModel() {
                                             WorkoutRecord = _workoutRecord,
                                             ExerciseSessionProgressions = exerciseSessionProgressions,
                                             ErrorLogs = errorLogs
-                                        )
+                                        ),
+                                        context
                                     )
                                 }
 

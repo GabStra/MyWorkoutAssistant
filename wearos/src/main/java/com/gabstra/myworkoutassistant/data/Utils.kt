@@ -804,11 +804,21 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
     }
 }
 
-suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore) : Boolean {
+suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore, context: android.content.Context? = null) : Boolean {
     val transactionId = UUID.randomUUID().toString()
     try {
+        // Check if phone is connected before attempting sync
+        // This prevents sync attempts when phone is not available
+        if (context != null) {
+            val hasConnection = checkConnection(context)
+            if (!hasConnection) {
+                Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $transactionId)")
+                return false
+            }
+        }
+        
         // Send sync request and wait for acknowledgment
-        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
         if (!handshakeSuccess) {
             // Handshake (ACK) failed or timed out, but the phone clearly received the request
             // in our logs, so fall back to best-effort send instead of aborting.

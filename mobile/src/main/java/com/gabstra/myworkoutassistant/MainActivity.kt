@@ -116,6 +116,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import com.gabstra.myworkoutassistant.checkConnection
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -967,6 +968,18 @@ fun MyWorkoutAssistantNavHost(
     val syncWithWatch = {
         scope.launch {
             try {
+                // Check connection before setting syncing state
+                val hasConnection = withContext(Dispatchers.IO) {
+                    checkConnection(context)
+                }
+                if (!hasConnection) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Watch not connected", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                
+                // Only set syncing state after connection check succeeds
                 withContext(Dispatchers.Main) {
                     isSyncing = true
                 }

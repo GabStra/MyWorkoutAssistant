@@ -122,7 +122,8 @@ fun ExerciseScreen(
     val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
 
     val showProgressionComparisonPage = remember(exercise) {
-        viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
+        !exercise.requiresLoadCalibration &&
+                viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
                 viewModel.lastSessionWorkout != null &&
                 ((viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
                         viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset>()

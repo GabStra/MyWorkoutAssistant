@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -47,9 +48,9 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,9 @@ import java.time.temporal.ChronoUnit
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WeightSetScreen(
+    // #region agent log
+    // Log composable entry
+    // #endregion
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     modifier: Modifier,
@@ -78,7 +82,9 @@ fun WeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as WeightSetData
-    var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
+    var currentSetData by remember(state.set.id, (state.set as? WeightSet)?.weight) {
+        mutableStateOf(state.currentSetData as WeightSetData)
+    }
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
@@ -154,6 +160,20 @@ fun WeightSetScreen(
     val typography = MaterialTheme.typography
     val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
 
+    // Sync state.set.weight to local currentSetData when set weight changes
+    // This ensures weights updated after RIR calibration are reflected in the UI
+    LaunchedEffect(state.set.id, (state.set as? WeightSet)?.weight) {
+        val weightSet = state.set as? WeightSet
+        if (weightSet != null && weightSet.weight != currentSetData.actualWeight) {
+            // Update actualWeight to match the set's weight and recalculate volume
+            val updatedSetData = currentSetData.copy(actualWeight = weightSet.weight)
+            val finalSetData = updatedSetData.copy(volume = updatedSetData.calculateVolume())
+            currentSetData = finalSetData
+            // Also update state.currentSetData to keep it in sync
+            state.currentSetData = finalSetData
+        }
+    }
+
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
     }
@@ -190,6 +210,14 @@ fun WeightSetScreen(
 
     LaunchedEffect(forceStopEditMode) {
         if (forceStopEditMode) {
+            isRepsInEditMode = false
+            isWeightInEditMode = false
+        }
+    }
+
+    // Close edit modes when entering load selection step
+    LaunchedEffect(calibrationStep) {
+        if (calibrationStep == CalibrationStep.LoadSelection) {
             isRepsInEditMode = false
             isWeightInEditMode = false
         }
@@ -273,6 +301,8 @@ fun WeightSetScreen(
         val repsText = "${currentSetData.actualReps}"
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
+            // Disable edit mode on Step 2 (SetExecution)
+            if (calibrationStep == CalibrationStep.SetExecution) return
             isRepsInEditMode = !isRepsInEditMode
             updateInteractionTime()
             isWeightInEditMode = false
@@ -344,6 +374,8 @@ fun WeightSetScreen(
         val weightText = equipment!!.formatWeight(currentSetData.getWeight())
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
+            // Disable edit mode on Step 2 (SetExecution)
+            if (calibrationStep == CalibrationStep.SetExecution) return
             isWeightInEditMode = !isWeightInEditMode
             updateInteractionTime()
             isRepsInEditMode = false
@@ -471,30 +503,13 @@ fun WeightSetScreen(
                             val newSetData = currentSetData.copy(actualWeight = selectedWeight)
                             currentSetData = newSetData.copy(volume = newSetData.calculateVolume())
                             state.currentSetData = currentSetData
-                            // Move to confirmation step
+                            // Move directly to set execution
                             viewModel.confirmCalibrationLoad()
                         },
-                        modifier = modifier
-                    )
-                }
-                return
-            }
-            CalibrationStep.LoadConfirmation -> {
-                customComponentWrapper {
-                    CalibrationLoadConfirmationScreen(
-                        selectedWeight = currentSetData.actualWeight,
-                        equipment = equipment,
-                        isBodyWeight = false,
-                        onConfirm = {
-                            // Move to set execution
-                            viewModel.confirmCalibrationLoad()
-                        },
-                        onChange = {
-                            // Go back to load selection
-                            viewModel.goToCalibrationLoadSelection()
-                        },
-                        hapticsViewModel = hapticsViewModel,
-                        modifier = modifier
+                        exerciseTitleComposable = exerciseTitleComposable,
+                        extraInfo = extraInfo,
+                        modifier = modifier,
+                        previousSetData = previousSetData
                     )
                 }
                 return
@@ -545,10 +560,9 @@ fun WeightSetScreen(
                     }
                     if (isCalibrationSet && calibrationStep != null) {
                         val stepText = when (calibrationStep) {
-                            CalibrationStep.LoadSelection -> "Step 1/4: Select Load"
-                            CalibrationStep.LoadConfirmation -> "Step 2/4: Confirm Load"
-                            CalibrationStep.SetExecution -> "Step 3/4: Complete Set"
-                            CalibrationStep.RIRRating -> "Step 4/4: Rate RIR"
+                            CalibrationStep.LoadSelection -> "Step 1/3: Select Load"
+                            CalibrationStep.SetExecution -> "Step 2/3: Complete Set"
+                            CalibrationStep.RIRRating -> "Step 3/3: Rate RIR"
                         }
                         Text(
                             text = stepText,

@@ -2937,11 +2937,7 @@ open class WorkoutViewModel(
         val currentState = machine.currentState as? WorkoutState.Set ?: return
         
         if (currentState.calibrationStep == CalibrationStep.LoadSelection) {
-            // Move from LoadSelection to LoadConfirmation
-            val updatedState = currentState.copy(calibrationStep = CalibrationStep.LoadConfirmation)
-            updateCurrentStateInMachine(updatedState)
-        } else if (currentState.calibrationStep == CalibrationStep.LoadConfirmation) {
-            // Move from LoadConfirmation to SetExecution
+            // Move directly from LoadSelection to SetExecution
             // Update the set's weight to match the selected weight
             val currentSetData = currentState.currentSetData
             val selectedWeight = when (currentSetData) {
@@ -2964,17 +2960,6 @@ open class WorkoutViewModel(
         }
     }
     
-    fun goToCalibrationLoadSelection() {
-        val machine = stateMachine ?: return
-        val currentState = machine.currentState as? WorkoutState.Set ?: return
-        
-        if (currentState.calibrationStep == CalibrationStep.LoadConfirmation) {
-            // Go back to LoadSelection
-            val updatedState = currentState.copy(calibrationStep = CalibrationStep.LoadSelection)
-            updateCurrentStateInMachine(updatedState)
-        }
-    }
-    
     fun completeCalibrationSet() {
         val machine = stateMachine ?: return
         val currentState = machine.currentState as? WorkoutState.Set ?: return
@@ -2982,6 +2967,27 @@ open class WorkoutViewModel(
         if (currentState.calibrationStep == CalibrationStep.SetExecution) {
             // Move from SetExecution to RIRRating
             val updatedState = currentState.copy(calibrationStep = CalibrationStep.RIRRating)
+            updateCurrentStateInMachine(updatedState)
+        }
+    }
+    
+    fun goBackCalibrationStep() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        
+        val currentStep = currentState.calibrationStep ?: return
+        
+        // If already at LoadSelection, do nothing (let PageButtons handle going to previous set)
+        if (currentStep == CalibrationStep.LoadSelection) return
+        
+        val previousStep = when (currentStep) {
+            CalibrationStep.RIRRating -> CalibrationStep.SetExecution
+            CalibrationStep.SetExecution -> CalibrationStep.LoadSelection
+            CalibrationStep.LoadSelection -> null // Should not reach here due to early return above
+        }
+        
+        if (previousStep != null) {
+            val updatedState = currentState.copy(calibrationStep = previousStep)
             updateCurrentStateInMachine(updatedState)
         }
     }
@@ -3018,65 +3024,84 @@ open class WorkoutViewModel(
             val equipment = currentState.equipment
             val availableWeights = getWeightByEquipment(equipment)
             
-            // Find calibration set index
-            val calibrationSetIndex = exercise.sets.indexOfFirst { set ->
-                when (set) {
-                    is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet && set.id == currentState.set.id
-                    is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet && set.id == currentState.set.id
-                    else -> false
+            // Update all work sets in the exercise
+            // Note: The calibration set may have already been removed from the exercise's sets list,
+            // so we update all work sets regardless of calibration set position
+            val updatedSets = exercise.sets.toMutableList()
+            val setUpdates = mutableMapOf<UUID, Set>() // Track which sets were updated
+            
+            for (i in exercise.sets.indices) {
+                val set = exercise.sets[i]
+                when {
+                    set is RestSet -> continue
+                    set is WeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+                        // Round to nearest available weight
+                        val roundedWeight = if (availableWeights.isNotEmpty()) {
+                            availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
+                        } else {
+                            adjustedWeight
+                        }
+                        val updatedSet = set.copy(weight = roundedWeight)
+                        updatedSets[i] = updatedSet
+                        setUpdates[set.id] = updatedSet
+                    }
+                    set is BodyWeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+                        // For body weight, adjust additionalWeight
+                        val roundedWeight = if (availableWeights.isNotEmpty()) {
+                            availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
+                        } else {
+                            adjustedWeight
+                        }
+                        val updatedSet = set.copy(additionalWeight = roundedWeight)
+                        updatedSets[i] = updatedSet
+                        setUpdates[set.id] = updatedSet
+                    }
                 }
             }
             
-            if (calibrationSetIndex >= 0) {
-                // Update all remaining work sets (after calibration set)
-                val updatedSets = exercise.sets.toMutableList()
-                val setUpdates = mutableMapOf<UUID, Set>() // Track which sets were updated
+            // Update exercise with adjusted sets and disable calibration requirement
+            // since calibration has been completed
+            val updatedExercise = exercise.copy(
+                sets = updatedSets,
+                requiresLoadCalibration = false
+            )
+            updateWorkout(exercise, updatedExercise)
+            
+            // Update states in state machine to reflect new set weights
+            withContext(dispatchers.main) {
+                // Update exercisesById map to keep it in sync with the updated workout
+                initializeExercisesMaps(_selectedWorkout.value)
                 
-                for (i in (calibrationSetIndex + 1) until exercise.sets.size) {
-                    val set = exercise.sets[i]
-                    when {
-                        set is RestSet -> continue
-                        set is WeightSet && set.subCategory == SetSubCategory.WorkSet -> {
-                            // Round to nearest available weight
-                            val roundedWeight = if (availableWeights.isNotEmpty()) {
-                                availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
-                            } else {
-                                adjustedWeight
-                            }
-                            val updatedSet = set.copy(weight = roundedWeight)
-                            updatedSets[i] = updatedSet
-                            setUpdates[set.id] = updatedSet
-                        }
-                        set is BodyWeightSet && set.subCategory == SetSubCategory.WorkSet -> {
-                            // For body weight, adjust additionalWeight
-                            val roundedWeight = if (availableWeights.isNotEmpty()) {
-                                availableWeights.minByOrNull { kotlin.math.abs(it - adjustedWeight) } ?: adjustedWeight
-                            } else {
-                                adjustedWeight
-                            }
-                            val updatedSet = set.copy(additionalWeight = roundedWeight)
-                            updatedSets[i] = updatedSet
-                            setUpdates[set.id] = updatedSet
-                        }
-                    }
-                }
-                
-                // Update exercise with adjusted sets and disable calibration requirement
-                // since calibration has been completed
-                val updatedExercise = exercise.copy(
-                    sets = updatedSets,
-                    requiresLoadCalibration = false
-                )
-                updateWorkout(exercise, updatedExercise)
-                
-                // Update states in state machine to reflect new set weights
-                withContext(dispatchers.main) {
-                    val machine = stateMachine ?: return@withContext
+                val machine = stateMachine ?: return@withContext
                     val updatedStates = machine.allStates.map { state ->
                         if (state is WorkoutState.Set && state.exerciseId == currentState.exerciseId) {
                             val updatedSet = setUpdates[state.set.id]
                             if (updatedSet != null) {
-                                state.copy(set = updatedSet)
+                                // Update the set and also update currentSetData to reflect the new weight
+                                val updatedState = state.copy(set = updatedSet)
+                                val updatedSetData = when (val setData = updatedState.currentSetData) {
+                                    is com.gabstra.myworkoutassistant.shared.setdata.WeightSetData -> {
+                                        val weightSet = updatedSet as? com.gabstra.myworkoutassistant.shared.sets.WeightSet
+                                        if (weightSet != null) {
+                                            val newData = setData.copy(actualWeight = weightSet.weight)
+                                            newData.copy(volume = newData.calculateVolume())
+                                        } else {
+                                            setData
+                                        }
+                                    }
+                                    is com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData -> {
+                                        val bodyWeightSet = updatedSet as? com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+                                        if (bodyWeightSet != null) {
+                                            val newData = setData.copy(additionalWeight = bodyWeightSet.additionalWeight)
+                                            newData.copy(volume = newData.calculateVolume())
+                                        } else {
+                                            setData
+                                        }
+                                    }
+                                    else -> setData
+                                }
+                                updatedState.currentSetData = updatedSetData
+                                updatedState
                             } else {
                                 state
                             }
@@ -3084,10 +3109,9 @@ open class WorkoutViewModel(
                             state
                         }
                     }.toMutableList()
-                    
-                    stateMachine = WorkoutStateMachine(updatedStates, machine.currentIndex) { LocalDateTime.now() }
-                    updateStateFlowsFromMachine()
-                }
+                
+                stateMachine = WorkoutStateMachine(updatedStates, machine.currentIndex) { LocalDateTime.now() }
+                updateStateFlowsFromMachine()
             }
             
             // Store the calibration set with RIR in executedSetsHistory

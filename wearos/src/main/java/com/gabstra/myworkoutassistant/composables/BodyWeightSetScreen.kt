@@ -74,7 +74,9 @@ fun BodyWeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as BodyWeightSetData
-    var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
+    var currentSetData by remember(state.set.id, (state.set as? BodyWeightSet)?.additionalWeight) {
+        mutableStateOf(state.currentSetData as BodyWeightSetData)
+    }
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
@@ -158,12 +160,34 @@ fun BodyWeightSetScreen(
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
 
+    // Sync state.set.additionalWeight to local currentSetData when set weight changes
+    // This ensures weights updated after RIR calibration are reflected in the UI
+    LaunchedEffect(state.set.id, (state.set as? BodyWeightSet)?.additionalWeight) {
+        val bodyWeightSet = state.set as? BodyWeightSet
+        if (bodyWeightSet != null && bodyWeightSet.additionalWeight != currentSetData.additionalWeight) {
+            // Update additionalWeight to match the set's weight and recalculate volume
+            val updatedSetData = currentSetData.copy(additionalWeight = bodyWeightSet.additionalWeight)
+            val finalSetData = updatedSetData.copy(volume = updatedSetData.calculateVolume())
+            currentSetData = finalSetData
+            // Also update state.currentSetData to keep it in sync
+            state.currentSetData = finalSetData
+        }
+    }
+
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData
     }
 
     LaunchedEffect(forceStopEditMode) {
         if(forceStopEditMode){
+            isRepsInEditMode = false
+            isWeightInEditMode = false
+        }
+    }
+
+    // Close edit modes when entering load selection step
+    LaunchedEffect(calibrationStep) {
+        if (calibrationStep == CalibrationStep.LoadSelection) {
             isRepsInEditMode = false
             isWeightInEditMode = false
         }
@@ -261,6 +285,8 @@ fun BodyWeightSetScreen(
         val repsText = "${currentSetData.actualReps}"
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
+            // Disable edit mode on Step 2 (SetExecution)
+            if (calibrationStep == CalibrationStep.SetExecution) return
             isRepsInEditMode = !isRepsInEditMode
             updateInteractionTime()
             isWeightInEditMode = false
@@ -335,6 +361,8 @@ fun BodyWeightSetScreen(
         }
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
+            // Disable edit mode on Step 2 (SetExecution)
+            if (calibrationStep == CalibrationStep.SetExecution) return
             isWeightInEditMode = !isWeightInEditMode
             updateInteractionTime()
             isRepsInEditMode = false
@@ -465,30 +493,13 @@ fun BodyWeightSetScreen(
                             val newSetData = currentSetData.copy(additionalWeight = selectedWeight)
                             currentSetData = newSetData.copy(volume = newSetData.calculateVolume())
                             state.currentSetData = currentSetData
-                            // Move to confirmation step
+                            // Move directly to set execution
                             viewModel.confirmCalibrationLoad()
                         },
-                        modifier = modifier
-                    )
-                }
-                return
-            }
-            CalibrationStep.LoadConfirmation -> {
-                customComponentWrapper {
-                    CalibrationLoadConfirmationScreen(
-                        selectedWeight = currentSetData.additionalWeight,
-                        equipment = state.equipment,
-                        isBodyWeight = true,
-                        onConfirm = {
-                            // Move to set execution
-                            viewModel.confirmCalibrationLoad()
-                        },
-                        onChange = {
-                            // Go back to load selection
-                            viewModel.goToCalibrationLoadSelection()
-                        },
-                        hapticsViewModel = hapticsViewModel,
-                        modifier = modifier
+                        exerciseTitleComposable = exerciseTitleComposable,
+                        extraInfo = extraInfo,
+                        modifier = modifier,
+                        previousSetData = previousSetData
                     )
                 }
                 return
@@ -539,10 +550,9 @@ fun BodyWeightSetScreen(
                     }
                     if (shouldShowCalibration && calibrationStep != null) {
                         val stepText = when (calibrationStep) {
-                            CalibrationStep.LoadSelection -> "Step 1/4: Select Load"
-                            CalibrationStep.LoadConfirmation -> "Step 2/4: Confirm Load"
-                            CalibrationStep.SetExecution -> "Step 3/4: Complete Set"
-                            CalibrationStep.RIRRating -> "Step 4/4: Rate RIR"
+                            CalibrationStep.LoadSelection -> "Step 1/3: Select Load"
+                            CalibrationStep.SetExecution -> "Step 2/3: Complete Set"
+                            CalibrationStep.RIRRating -> "Step 3/3: Rate RIR"
                         }
                         Text(
                             text = stepText,

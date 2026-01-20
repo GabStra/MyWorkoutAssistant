@@ -69,11 +69,28 @@ import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.getVersionName
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.datalayer.watch.WearDataLayerAppHelper
 import kotlinx.coroutines.launch
 import java.util.Calendar
+
+private fun Workout.hasEnabledExerciseWithSet(): Boolean {
+    // Workout must be active
+    if (!isActive) return false
+    
+    // Get all exercises: direct exercises + exercises from supersets
+    val allExercises = workoutComponents.filterIsInstance<Exercise>() +
+        workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+    
+    // Check if any enabled exercise has at least one non-rest set
+    return allExercises.any { exercise ->
+        exercise.enabled && exercise.sets.any { it !is RestSet }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -202,13 +219,15 @@ fun WorkoutSelectionScreen(
         // Add unassigned group
         grouped[null] = mutableListOf()
         
-        // Group workouts
-        workouts.forEach { workout ->
-            val plan = workout.workoutPlanId?.let { planId ->
-                allPlans.find { it.id == planId }
+        // Group workouts - filter out workouts without enabled exercises with sets
+        workouts
+            .filter { it.hasEnabledExerciseWithSet() }
+            .forEach { workout ->
+                val plan = workout.workoutPlanId?.let { planId ->
+                    allPlans.find { it.id == planId }
+                }
+                grouped[plan]?.add(workout)
             }
-            grouped[plan]?.add(workout)
-        }
         
         // Sort workouts within each plan by order
         grouped.values.forEach { workoutList ->

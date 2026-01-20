@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.checkboxButtonColors
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.launch
 
@@ -99,7 +100,15 @@ fun PageButtons(
                     text = "Back",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        showGoBackDialog = true
+                        // Check if in calibration flow (SetExecution or RIRRating)
+                        if (updatedState.calibrationStep != null && updatedState.calibrationStep != CalibrationStep.LoadSelection) {
+                            // In calibration flow: go back one calibration step
+                            viewModel.goBackCalibrationStep()
+                            viewModel.lightScreenUp()
+                        } else {
+                            // Show existing dialog for LoadSelection or non-calibration sets
+                            showGoBackDialog = true
+                        }
                     },
                     enabled = !isHistoryEmpty,
                 )
