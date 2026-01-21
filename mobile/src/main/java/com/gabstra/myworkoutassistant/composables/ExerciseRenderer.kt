@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
+import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -49,12 +50,11 @@ fun ExerciseRenderer(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ){
-            Text(
+            FadingText(
+                text = exercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
-                    .basicMarquee(iterations = Int.MAX_VALUE),
-                text = exercise.name,
+                    .padding(horizontal = 10.dp),
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
             )
@@ -68,12 +68,11 @@ fun ExerciseRenderer(
                 if (customTitle != null) {
                     customTitle(m)
                 } else {
-                    Text(
+                    FadingText(
+                        text = exercise.name,
                         modifier = m
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp)
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        text = exercise.name,
+                            .padding(horizontal = 10.dp),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                     )
@@ -97,25 +96,12 @@ fun ExerciseRenderer(
                     val headerColor = MaterialTheme.colorScheme.onSurface
                     val rowPadding = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
 
-                    if(equipment != null){
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            text = "Equipment: ${equipment.name}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = textColor
-                        )
-                    }
-                    if(accessoryEquipments.isNotEmpty()){
-                        val accessoryNames = accessoryEquipments.joinToString(", ") { it.name }
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            text = "Accessory: $accessoryNames",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = textColor
-                        )
-                    }
+                    ExerciseMetadataStrip(
+                        equipmentName = equipment?.name,
+                        accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
+                        textColor = textColor,
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     var index = 0
                     Surface(

@@ -9,8 +9,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,9 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
+import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -71,6 +73,12 @@ fun ExerciseScreen(
 
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
+    }
+
+    val accessoryEquipments = remember(exercise) {
+        (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
+            viewModel.getAccessoryEquipmentById(id)
+        }
     }
 
     val showPlatesPage = remember(exercise, equipment) {
@@ -185,7 +193,8 @@ fun ExerciseScreen(
 
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                Text(
+                FadingText(
+                    text = exercise.name,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 25.dp)
@@ -197,13 +206,9 @@ fun ExerciseScreen(
                             onLongClick = {
                                 providedOnLongClick.invoke()
                             }
-                        )
-                        .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
-                    text = exercise.name,
-                    textAlign = TextAlign.Center,
+                        ),
                     style = MaterialTheme.typography.titleLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    marqueeEnabled = marqueeEnabled
                 )
             }
 
@@ -235,77 +240,91 @@ fun ExerciseScreen(
                     onTimerDisabled = { },
                     onTimerEnabled = { },
                     extraInfo = { _ ->
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(
-                                5.dp,
-                                Alignment.CenterHorizontally
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Chip {
-                                val label = if (isSuperset) "Superset" else "Exercise"
-                                Text(
-                                    textAlign = TextAlign.Center,
-                                    text = "${label}: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}",
-                                    style = captionStyle,
-                                )
-                            }
-
-                            if (isSuperset) {
-                                val supersetExercises = remember(exerciseOrSupersetId) {
-                                    viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                }
-                                val supersetIndex =
-                                    remember(
-                                        supersetExercises,
-                                        exercise
-                                    ) { supersetExercises.indexOf(exercise) }
-
-                                Chip {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Exercise: ${supersetIndex + 1}/${supersetExercises.size}",
-                                        style = captionStyle
-                                    )
-                                }
-                            }
-
-                            if (exerciseSetIds.size > 1) {
-                                Chip {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Set: ${setIndex + 1}/${exerciseSetIds.size}",
-                                        style = captionStyle,
-                                    )
-                                }
-                            }
-
-                            if (updatedState.isUnilateral) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Unilateral",
-                                        style = captionStyle,
-                                        color = MaterialTheme.colorScheme.background
-                                    )
-                                }
-                            }
-
-                            val isWarmupSet = when(val set = updatedState.set) {
+                        val isWarmupSet = remember(updatedState.set) {
+                            when(val set = updatedState.set) {
                                 is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                 else -> false
                             }
-                            if (isWarmupSet) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        text = "Warm-up",
-                                        style = captionStyle,
-                                        color = MaterialTheme.colorScheme.background
-                                    )
+                        }
+                        
+                        val isCalibrationSet = remember(updatedState.calibrationStep) {
+                            updatedState.calibrationStep != null
+                        }
+                        
+                        val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
+                            if (isSuperset) {
+                                viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
+                            } else null
+                        }
+                        val supersetIndex = remember(supersetExercises, exercise) {
+                            supersetExercises?.indexOf(exercise)
+                        }
+                        
+                        val sideIndicator = remember(updatedState.intraSetTotal) {
+                            if (updatedState.intraSetTotal != null) {
+                                "A ↔ B"
+                            } else null
+                        }
+                        
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            // Status badges row
+                            if (isWarmupSet || isCalibrationSet) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isWarmupSet) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                            Text(
+                                                text = "Warm-up",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                    if (isCalibrationSet) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                            Text(
+                                                text = "Calibration",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
                                 }
                             }
+                            
+                            // Metadata strip
+                            ExerciseMetadataStrip(
+                                exerciseLabel = if (isSuperset) {
+                                    "Superset: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
+                                } else {
+                                    "Exercise: ${currentExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
+                                },
+                                supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
+                                    "Exercise: ${supersetIndex + 1}/${supersetExercises!!.size}"
+                                } else null,
+                                setLabel = if (exerciseSetIds.size > 1) {
+                                    "Set: ${setIndex + 1}/${exerciseSetIds.size}"
+                                } else null,
+                                sideIndicator = sideIndicator,
+                                currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
+                                isUnilateral = updatedState.isUnilateral,
+                                equipmentName = equipment?.name,
+                                accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
+                                textColor = MaterialTheme.colorScheme.onBackground,
+                                onTap = {
+                                    hapticsViewModel.doGentleVibration()
+                                }
+                            )
                         }
                     },
                     exerciseTitleComposable = exerciseTitleComposable,
