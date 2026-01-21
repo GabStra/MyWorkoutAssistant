@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -565,20 +564,6 @@ fun WeightSetScreen(
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
-                    }
-                    if (isCalibrationSet && calibrationStep != null) {
-                        val stepText = when (calibrationStep) {
-                            CalibrationStep.LoadSelection -> "Step 1/3: Select Load"
-                            CalibrationStep.SetExecution -> "Step 2/3: Complete Set"
-                            CalibrationStep.RIRRating -> "Step 3/3: Rate RIR"
-                        }
-                        Text(
-                            text = stepText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                     if (isPlateauDetected) {
                         Row(

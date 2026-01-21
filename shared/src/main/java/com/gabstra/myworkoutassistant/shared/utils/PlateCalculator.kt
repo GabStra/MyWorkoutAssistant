@@ -13,17 +13,20 @@ class PlateCalculator {
             val weight: Double,
         )
 
-        data class PlateChange(
-            val from: Double,
-            val to: Double,
-            val steps: List<PlateStep>
+        class PlateChange(
+            var from: Double,
+            var to: Double,
+            var steps: List<PlateStep>
         )
 
-        data class PlateChangeResult(
-            val change: PlateChange,
-            val previousPlates: List<Double>,
-            val currentPlates: List<Double> // Plates on one side of the bar
-        )
+        class PlateChangeResult(
+            var change: PlateChange,
+            previousPlates: List<Double>,
+            currentPlates: List<Double> // Plates on one side of the bar
+        ) {
+            var previousPlates: MutableList<Double> = previousPlates.toMutableList()
+            var currentPlates: MutableList<Double> = currentPlates.toMutableList()
+        }
 
         /**
          * Calculates the most efficient sequence of plate changes for a series of weights.

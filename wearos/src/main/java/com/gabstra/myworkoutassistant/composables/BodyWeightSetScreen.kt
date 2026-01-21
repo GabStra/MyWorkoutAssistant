@@ -45,9 +45,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
@@ -557,20 +557,6 @@ fun BodyWeightSetScreen(
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
-                    }
-                    if (shouldShowCalibration && calibrationStep != null) {
-                        val stepText = when (calibrationStep) {
-                            CalibrationStep.LoadSelection -> "Step 1/3: Select Load"
-                            CalibrationStep.SetExecution -> "Step 2/3: Complete Set"
-                            CalibrationStep.RIRRating -> "Step 3/3: Rate RIR"
-                        }
-                        Text(
-                            text = stepText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
                     }
                     if (isPlateauDetected) {
                         Row(

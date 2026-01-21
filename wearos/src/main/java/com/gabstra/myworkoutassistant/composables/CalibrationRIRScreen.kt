@@ -42,11 +42,13 @@ fun CalibrationRIRScreen(
     var showPicker by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     
-    val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val typography = MaterialTheme.typography
     val itemStyle = remember(typography) { 
         typography.numeralSmall.copy(fontWeight = FontWeight.Medium) 
     }
+    val rirLabelStyle = MaterialTheme.typography.titleLarge.copy(
+        fontWeight = FontWeight.SemiBold
+    )
     
     fun updateInteractionTime() {
         lastInteractionTime = System.currentTimeMillis()
@@ -195,7 +197,7 @@ fun CalibrationRIRScreen(
             ) {
                 Text(
                     text = "RIR",
-                    style = headerStyle,
+                    style = rirLabelStyle,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground
                 )

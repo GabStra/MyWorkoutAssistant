@@ -40,9 +40,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -147,11 +145,10 @@ fun PagePlates(
                         append(formatWeight(currentWeightTotal))
                     }
 
-                    Text(
+                    FadingText(
                         text = topLine,
                         style = baseStyle,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
                         modifier = Modifier
                             .clickable {
                                 headerMarqueeEnabled = !headerMarqueeEnabled
@@ -181,11 +178,10 @@ fun PagePlates(
                         append(formatWeight(currentWeightTotal))
                     }
 
-                    Text(
+                    FadingText(
                         text = topLine,
                         style = baseStyle,
                         textAlign = TextAlign.Center,
-                        maxLines = 1,
                         modifier = Modifier
                             .clickable {
                                 headerMarqueeEnabled = !headerMarqueeEnabled
@@ -577,9 +573,8 @@ private fun BarbellVisualization(
         // --- CHANGE HERE: Increased padding from 2.dp to 12.dp ---
         // This forces labels to jump to the next stack level if they are
         // horizontally closer than 12dp.
-        val labelCollisionPadding = 2.dp.toPx()
+        val labelCollisionPadding = 6.dp.toPx()
 
-        val rowSpacing = 2.dp.toPx() // Optional: add a tiny bit of vertical spacing between text rows
 
         // Barbell Geometry
         val shaftLength = 20.dp.toPx()
@@ -642,90 +637,19 @@ private fun BarbellVisualization(
             }
         }
 
-        // --- 2. PASS 1: SIMULATION ---
-        var simCurrentX = sleeveX
-        val maxLabelStacks = 4 // Increased max stacks slightly to accommodate more spreading
-        val topStackRightX = FloatArray(maxLabelStacks) { -1f }
-        val bottomStackRightX = FloatArray(maxLabelStacks) { -1f }
-
-        var maxStackUsedTop = 0
-        var maxStackUsedBottom = 0
-
-        plateData.forEach { plateInfo ->
-            val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
-            val plateWidth = scaledThickness.coerceAtLeast(4.dp.toPx()).coerceAtMost(sleeveX + sleeveWidth - simCurrentX)
-            val plateCenterX = simCurrentX + plateWidth / 2f
-
-            val weightText = plateInfo.weight.compact()
-            val labelWidth = textPaint.measureText(weightText)
-            val labelLeft = plateCenterX - labelWidth / 2f
-            val labelRight = plateCenterX + labelWidth / 2f
-
-            // Collision Logic
-            var bestTopStackIdx = -1
-            for (i in 0 until maxLabelStacks) {
-                // Determine if this stack level has enough space (including the new larger padding)
-                if (labelLeft > topStackRightX[i] + labelCollisionPadding) {
-                    bestTopStackIdx = i
-                    break
-                }
-            }
-
-            var bestBottomStackIdx = -1
-            for (i in 0 until maxLabelStacks) {
-                if (labelLeft > bottomStackRightX[i] + labelCollisionPadding) {
-                    bestBottomStackIdx = i
-                    break
-                }
-            }
-
-            // Logic to balance top vs bottom
-            val isTop = when {
-                bestTopStackIdx == -1 && bestBottomStackIdx == -1 -> true // Default to top if both full (overflow)
-                bestTopStackIdx != -1 && bestBottomStackIdx == -1 -> true
-                bestTopStackIdx == -1 && bestBottomStackIdx != -1 -> false
-                else -> bestTopStackIdx <= bestBottomStackIdx // Pick the smaller stack index
-            }
-
-            val chosenStackIdx = if (isTop)
-                bestTopStackIdx.coerceAtLeast(0)
-            else
-                bestBottomStackIdx.coerceAtLeast(0)
-
-            if (isTop) {
-                if (chosenStackIdx < maxLabelStacks) topStackRightX[chosenStackIdx] = labelRight
-                maxStackUsedTop = maxOf(maxStackUsedTop, chosenStackIdx + 1)
-            } else {
-                if (chosenStackIdx < maxLabelStacks) bottomStackRightX[chosenStackIdx] = labelRight
-                maxStackUsedBottom = maxOf(maxStackUsedBottom, chosenStackIdx + 1)
-            }
-
-            simCurrentX += plateWidth
-        }
-
-        // --- 3. CALCULATE BOUNDARIES ---
-        val stacksNeeded = if (plateData.isEmpty()) {
-            0
-        } else {
-            maxOf(maxStackUsedTop, maxStackUsedBottom).coerceAtLeast(1)
-        }
-
-        // MODIFICATION START: Strictly reserve 0 space if no stacks are needed
-        val totalTextReserve = if (stacksNeeded > 0) {
-            textToPlatePadding +
-                    (stacksNeeded * textHeight) +
-                    ((stacksNeeded - 1).coerceAtLeast(0) * rowSpacing)
+        // --- 2. CALCULATE BOUNDARIES ---
+        val totalTextReserve = if (plateData.isNotEmpty()) {
+            textToPlatePadding + textHeight
         } else {
             0f
         }
-        // MODIFICATION END
 
         val maxAvailablePlateHeight = (canvasHeight - (totalTextReserve * 2)).coerceAtLeast(10f)
 
         val globalPlateTopY = centerY - (maxAvailablePlateHeight / 2f)
         val globalPlateBottomY = centerY + (maxAvailablePlateHeight / 2f)
 
-        // --- 4. PASS 2: DRAWING ---
+        // --- 3. DRAWING ---
 
         // 1. Proportions (Key to fixing the "Sword" look)
         // Shaft = Thinner (60%), Sleeve = Standard (100%), Collar = Stopper (150%)
@@ -780,8 +704,8 @@ private fun BarbellVisualization(
         )
 
         // Reset for drawing plates
-        topStackRightX.fill(-1f)
-        bottomStackRightX.fill(-1f)
+        var topRowRightX = sleeveX - labelCollisionPadding
+        var bottomRowRightX = sleeveX - labelCollisionPadding
         var currentX = sleeveX
 
         val plateBorderWidth = 1.5.dp.toPx()
@@ -821,6 +745,61 @@ private fun BarbellVisualization(
             // All plates use full opacity (no fade animation)
             val plateAlpha = 1f
 
+            // Draw Text
+            val plateCenterX = currentX + plateWidth / 2f
+            val weightText = plateInfo.weight.compact()
+            val labelWidth = textPaint.measureText(weightText)
+            val minLabelCenterX = sleeveX + (labelWidth / 2f)
+            val maxLabelCenterX = (sleeveX + sleeveWidth) - (labelWidth / 2f)
+
+            val preferredIsTop = plateIndex % 2 == 0
+            val isTop = preferredIsTop
+
+            val rowRightX = if (isTop) topRowRightX else bottomRowRightX
+            val desiredCenterX = plateCenterX.coerceIn(minLabelCenterX, maxLabelCenterX)
+            val desiredLeft = desiredCenterX - (labelWidth / 2f)
+
+            val adjustedCenterX = if (desiredLeft > rowRightX + labelCollisionPadding) {
+                desiredCenterX
+            } else {
+                (rowRightX + labelCollisionPadding + (labelWidth / 2f)).coerceAtMost(maxLabelCenterX)
+            }
+
+            val adjustedRight = adjustedCenterX + (labelWidth / 2f)
+            if (isTop) {
+                topRowRightX = adjustedRight
+            } else {
+                bottomRowRightX = adjustedRight
+            }
+
+            // Draw text and guidelines
+            val textBaseline: Float
+            val labelAnchorY: Float
+            val plateCenterY = localPlateY + (plateHeight / 2f)
+
+            if (isTop) {
+                val textBoxTop = globalPlateTopY - textToPlatePadding - textHeight
+                textBaseline = textBoxTop - fontMetrics.ascent
+                labelAnchorY = textBaseline + fontMetrics.descent
+            } else {
+                val textBoxTop = globalPlateBottomY + textToPlatePadding
+                textBaseline = textBoxTop - fontMetrics.ascent
+                labelAnchorY = textBoxTop
+            }
+
+            val dashPath = Path().apply {
+                moveTo(plateCenterX, plateCenterY)
+                lineTo(adjustedCenterX, labelAnchorY)
+            }
+            drawPath(
+                path = dashPath,
+                color = labelColor.copy(alpha = 0.5f),
+                style = Stroke(
+                    width = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
+                )
+            )
+
             // Draw Plate with color and alpha
             drawRoundedBlock(
                 topLeft = Offset(currentX, localPlateY),
@@ -831,74 +810,7 @@ private fun BarbellVisualization(
                 strokeWidthPx = plateBorderWidth
             )
 
-            // Draw Text
-            val plateCenterX = currentX + plateWidth / 2f
-            val weightText = plateInfo.weight.compact()
-            val labelWidth = textPaint.measureText(weightText)
-            val labelLeft = plateCenterX - labelWidth / 2f
-            val labelRight = plateCenterX + labelWidth / 2f
-
-            // Recalculate stack logic (Must match simulation pass logic EXACTLY)
-            var bestTopStackIdx = -1
-            for (i in 0 until maxLabelStacks) {
-                if (labelLeft > topStackRightX[i] + labelCollisionPadding) {
-                    bestTopStackIdx = i
-                    break
-                }
-            }
-            var bestBottomStackIdx = -1
-            for (i in 0 until maxLabelStacks) {
-                if (labelLeft > bottomStackRightX[i] + labelCollisionPadding) {
-                    bestBottomStackIdx = i
-                    break
-                }
-            }
-            val isTop = when {
-                bestTopStackIdx == -1 && bestBottomStackIdx == -1 -> true
-                bestTopStackIdx != -1 && bestBottomStackIdx == -1 -> true
-                bestTopStackIdx == -1 && bestBottomStackIdx != -1 -> false
-                else -> bestTopStackIdx <= bestBottomStackIdx
-            }
-            val chosenStackIdx = if (isTop) bestTopStackIdx.coerceAtLeast(0) else bestBottomStackIdx.coerceAtLeast(0)
-
-            if (isTop && chosenStackIdx < maxLabelStacks) topStackRightX[chosenStackIdx] = labelRight
-            else if (!isTop && chosenStackIdx < maxLabelStacks) bottomStackRightX[chosenStackIdx] = labelRight
-
-            val stackOffset = chosenStackIdx * (textHeight + rowSpacing)
-
-            // Draw text and guidelines
-            val textBaseline: Float
-            val lineStartY: Float
-            val lineEndY: Float
-
-            if (isTop) {
-                val textBoxTop = globalPlateTopY - textToPlatePadding - stackOffset - textHeight
-                textBaseline = textBoxTop - fontMetrics.ascent
-                lineStartY = textBaseline + fontMetrics.descent
-                lineEndY = localPlateTopY
-            } else {
-                val textBoxTop = globalPlateBottomY + textToPlatePadding + stackOffset
-                textBaseline = textBoxTop - fontMetrics.ascent
-                lineStartY = localPlateBottomY
-                lineEndY = textBoxTop
-            }
-
-            drawContext.canvas.nativeCanvas.drawText(weightText, plateCenterX, textBaseline, textPaint)
-
-            if (kotlin.math.abs(lineEndY - lineStartY) > 2.dp.toPx()) {
-                val dashPath = Path().apply {
-                    moveTo(plateCenterX, lineStartY)
-                    lineTo(plateCenterX, lineEndY)
-                }
-                drawPath(
-                    path = dashPath,
-                    color = labelColor.copy(alpha = 0.5f),
-                    style = Stroke(
-                        width = 1.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
-                    )
-                )
-            }
+            drawContext.canvas.nativeCanvas.drawText(weightText, adjustedCenterX, textBaseline, textPaint)
 
             currentX += plateWidth
         }

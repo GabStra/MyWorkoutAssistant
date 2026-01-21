@@ -30,8 +30,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -98,15 +96,6 @@ fun CalibrationLoadSelectionScreen(
     
     val sortedWeights = availableWeights.sorted()
     val selectedWeight = sortedWeights.getOrNull(selectedWeightIndex) ?: 0.0
-
-    // Calculate previous weight for comparison
-    val previousWeight = remember(previousSetData) {
-        when (previousSetData) {
-            is WeightSetData -> previousSetData.actualWeight
-            is BodyWeightSetData -> previousSetData.additionalWeight
-            else -> null
-        }
-    }
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -181,22 +170,11 @@ fun CalibrationLoadSelectionScreen(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Calculate color based on weight comparison
-            val textColor = if (previousWeight == null) {
-                MaterialTheme.colorScheme.onBackground
-            } else {
-                when {
-                    selectedWeight == previousWeight -> MaterialTheme.colorScheme.onBackground
-                    selectedWeight < previousWeight -> Red
-                    else -> Green
-                }
-            }
-            
             ScalableText(
                 modifier = Modifier.fillMaxWidth(),
                 text = weightText,
                 style = style,
-                color = textColor,
+                color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
             )
         }
@@ -300,7 +278,7 @@ fun CalibrationLoadSelectionScreen(
                     }
                 }
                 
-                FadingText(
+                Text(
                     text = "Select load for $reps reps at 1-2 RIR",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,

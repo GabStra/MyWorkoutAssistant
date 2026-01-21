@@ -903,7 +903,6 @@ open class WorkoutViewModel(
                 
                 // Initialize state machine with all states at the correct resumption index
                 stateMachine = initializeStateMachine(allWorkoutStates, resumptionIndex)
-                updateStateFlowsFromMachine()
                 _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                 triggerWorkoutNotification()
                 onEnd()
@@ -1593,7 +1592,6 @@ open class WorkoutViewModel(
 
                     // Initialize state machine (without Completed state - will be added in setWorkoutStart())
                     stateMachine = initializeStateMachine(allWorkoutStates)
-                    updateStateFlowsFromMachine()
                     _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
                     triggerWorkoutNotification()
                 } catch (e: Exception) {
@@ -3336,7 +3334,25 @@ open class WorkoutViewModel(
                                     else -> setData
                                 }
                                 updatedState.currentSetData = updatedSetData
-                                updatedState
+                                
+                                // Update previousSetData to match the new weight so previous weight equals current weight
+                                val updatedPreviousSetData = when {
+                                    updatedSetData is com.gabstra.myworkoutassistant.shared.setdata.WeightSetData && 
+                                    updatedState.previousSetData is com.gabstra.myworkoutassistant.shared.setdata.WeightSetData -> {
+                                        val prevData = updatedState.previousSetData as com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+                                        val newPrevData = prevData.copy(actualWeight = updatedSetData.actualWeight)
+                                        newPrevData.copy(volume = newPrevData.calculateVolume())
+                                    }
+                                    updatedSetData is com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData && 
+                                    updatedState.previousSetData is com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData -> {
+                                        val prevData = updatedState.previousSetData as com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+                                        val newPrevData = prevData.copy(additionalWeight = updatedSetData.additionalWeight)
+                                        newPrevData.copy(volume = newPrevData.calculateVolume())
+                                    }
+                                    else -> updatedState.previousSetData
+                                }
+                                
+                                updatedState.copy(previousSetData = updatedPreviousSetData)
                             } else {
                                 state
                             }
@@ -3453,7 +3469,8 @@ open class WorkoutViewModel(
                     if (stateIndex >= 0 && stateIndex < updatedStates.size) {
                         val state = updatedStates[stateIndex] as? WorkoutState.Set
                         if (state != null && state.set.id == stateToUpdate.set.id) {
-                            updatedStates[stateIndex] = state.copy(plateChangeResult = plateChangeResult)
+                            // Modify plateChangeResult directly without recreating the state instance
+                            state.plateChangeResult = plateChangeResult
                         }
                     }
                 }
