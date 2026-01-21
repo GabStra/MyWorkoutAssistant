@@ -44,6 +44,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -115,14 +116,14 @@ fun SetTableRow(
                         else -> weightText
                     }
 
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(2f),
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightTextColor,
                     )
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
@@ -141,8 +142,8 @@ fun SetTableRow(
                         "BW"
                     }
                     val weightText = when {
-                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "Calibration"
-                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "Pending"
+                        isCalibrationSet && setState.calibrationStep == CalibrationStep.SetExecution && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
                         else -> baseWeightText
                     }
 
@@ -158,14 +159,14 @@ fun SetTableRow(
                         else -> Green
                     }
 
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(2f),
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightTextColor
                     )
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
@@ -177,7 +178,7 @@ fun SetTableRow(
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
@@ -189,7 +190,7 @@ fun SetTableRow(
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
-                    ScalableFadingText(
+                    ScalableText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,

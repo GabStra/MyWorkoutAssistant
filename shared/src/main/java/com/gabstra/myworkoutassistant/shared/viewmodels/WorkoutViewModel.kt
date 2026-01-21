@@ -3186,7 +3186,80 @@ open class WorkoutViewModel(
                         }
                     }
                     
-                    stateMachine = WorkoutStateMachine(updatedStates, currentIndex) { LocalDateTime.now() }
+                    // Calculate plate changes for warmup sets and calibration set execution
+                    if (equipment is Barbell && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
+                        // Collect all sets that need plate changes: warmups + calibration set execution
+                        val setsForPlateCalculation = mutableListOf<WorkoutState.Set>()
+                        warmupStates.filterIsInstance<WorkoutState.Set>().forEach { setsForPlateCalculation.add(it) }
+                        val calibrationSetExecutionState = updatedStates[calibrationSetExecutionIndex] as? WorkoutState.Set
+                        if (calibrationSetExecutionState != null) {
+                            setsForPlateCalculation.add(calibrationSetExecutionState)
+                        }
+                        
+                        if (setsForPlateCalculation.isNotEmpty()) {
+                            // Calculate relative body weight if needed
+                            val relativeBodyWeight = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            } else {
+                                0.0
+                            }
+                            
+                            // Build list of total weights for plate calculation
+                            val weights = mutableListOf<Double>()
+                            for (setState in setsForPlateCalculation) {
+                                when (val set = setState.set) {
+                                    is WeightSet -> {
+                                        weights.add(set.weight)
+                                    }
+                                    is BodyWeightSet -> {
+                                        val totalWeight = relativeBodyWeight + set.additionalWeight
+                                        weights.add(totalWeight)
+                                    }
+                                    else -> {
+                                        // Skip non-weight sets
+                                    }
+                                }
+                            }
+                            
+                            if (weights.isNotEmpty()) {
+                                // Initial plates should always be empty for warmup sets generated after calibration load selection
+                                // The barbell starts empty before the first warmup set
+                                val initialPlates = emptyList<Double>()
+                                
+                                // Calculate plate changes on background thread
+                                val plateChangeResults = withContext(dispatchers.default) {
+                                    getPlateChangeResults(weights, equipment, initialPlates)
+                                }
+                                
+                                // Assign plate changes to sets
+                                if (plateChangeResults.size == setsForPlateCalculation.size) {
+                                    for ((index, plateChangeResult) in plateChangeResults.withIndex()) {
+                                        val setState = setsForPlateCalculation[index]
+                                        val stateIndex = updatedStates.indexOf(setState)
+                                        if (stateIndex >= 0 && stateIndex < updatedStates.size) {
+                                            val state = updatedStates[stateIndex] as? WorkoutState.Set
+                                            if (state != null && state.set.id == setState.set.id) {
+                                                state.plateChangeResult = plateChangeResult
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Log.e("WorkoutViewModel", "Plate change results count (${plateChangeResults.size}) doesn't match sets count (${setsForPlateCalculation.size})")
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Determine the new current index:
+                    // - If warmups exist, point to first warmup (currentIndex + 1)
+                    // - If no warmups, point to calibration set execution (currentIndex, which is now SetExecution)
+                    val newCurrentIndex = if (warmupStates.isNotEmpty()) {
+                        currentIndex + 1 // Point to first warmup
+                    } else {
+                        calibrationSetExecutionIndex // Point to calibration set execution (same as currentIndex when no warmups)
+                    }
+                    
+                    stateMachine = WorkoutStateMachine(updatedStates, newCurrentIndex) { LocalDateTime.now() }
                     updateStateFlowsFromMachine()
                 }
             }
