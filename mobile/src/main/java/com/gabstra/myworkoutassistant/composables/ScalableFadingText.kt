@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,24 +18,31 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import android.R.attr.maxLines
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
+import com.gabstra.myworkoutassistant.workout.ScalableText
+import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FadingText(
+fun ScalableFadingText(
     text: String,
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodyMedium,
@@ -45,8 +51,11 @@ fun FadingText(
     marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
+    minTextSize: TextUnit = 12.sp,
+    scaleDownOnly: Boolean = true,
+    fadeInMillis: Int = 250,
 ) {
-    FadingText(
+    ScalableFadingText(
         text = AnnotatedString(text),
         modifier = modifier,
         style = style,
@@ -54,13 +63,16 @@ fun FadingText(
         fadeWidth = fadeWidth,
         marqueeEnabled = marqueeEnabled,
         textAlign = textAlign,
-        onClick = onClick
+        onClick = onClick,
+        minTextSize = minTextSize,
+        scaleDownOnly = scaleDownOnly,
+        fadeInMillis = fadeInMillis
     )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FadingText(
+fun ScalableFadingText(
     text: AnnotatedString,
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodyMedium,
@@ -69,21 +81,106 @@ fun FadingText(
     marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
+    minTextSize: TextUnit = 12.sp,
+    scaleDownOnly: Boolean = true,
+    fadeInMillis: Int = 250,
 ) {
     val density = LocalDensity.current
     val fadeWidthPx = with(density) { fadeWidth.toPx() }
     val fadeColor = MaterialTheme.colorScheme.background
     
-    var textLayoutResult: TextLayoutResult? by remember { mutableStateOf(null) }
-    var containerWidth: Float by remember { mutableStateOf(0f) }
+    // Convert AnnotatedString to String for ScalableText
+    val textString = text.text
     
-    val hasOverflow = remember(textLayoutResult, containerWidth) {
+    // Use text measurer to detect overflow
+    val measurer = rememberTextMeasurer()
+    var containerWidth: Float by remember { mutableStateOf(0f) }
+    var containerHeight: Float by remember { mutableStateOf(0f) }
+    
+    val baseSize = style.fontSize
+    val upperBound = if (scaleDownOnly) baseSize
+    else if (baseSize.value >= 32f) baseSize else 32.sp
+    
+    // Calculate fitted size using ScalableText binary search logic
+    val fittedSize = remember(textString, containerWidth, containerHeight, minTextSize, upperBound, style, maxLines) {
+        if (containerWidth <= 0f || containerHeight <= 0f) return@remember minTextSize
+        
+        val maxWidthPx = containerWidth.toInt()
+        val maxHeightPx = containerHeight.toInt()
+        
+        fun fits(size: TextUnit): Boolean {
+            val r = measurer.measure(
+                text = textString,
+                style = style.copy(
+                    fontSize = size,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    )
+                ),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                constraints = Constraints(maxWidth = maxWidthPx, maxHeight = maxHeightPx)
+            )
+            
+            return r.size.width <= maxWidthPx + 1 &&
+                    r.size.height <= maxHeightPx + 1 &&
+                    !r.hasVisualOverflow
+        }
+        
+        if (!fits(minTextSize)) return@remember minTextSize
+        if (fits(upperBound)) return@remember upperBound
+        
+        var lo = minTextSize.value
+        var hi = upperBound.value
+        var best = lo
+        var i = 0
+        while (i < 16 && abs(hi - lo) > 0.5f) {
+            val mid = (lo + hi) / 2f
+            if (fits(mid.sp)) {
+                best = mid
+                lo = mid
+            } else {
+                hi = mid
+            }
+            i++
+        }
+        
+        best.sp
+    }
+    
+    // Measure text at fitted size to detect actual overflow after scaling
+    val scaledTextLayoutResult = remember(textString, fittedSize, containerWidth, style) {
+        if (containerWidth > 0f) {
+            measurer.measure(
+                text = textString,
+                style = style.copy(
+                    fontSize = fittedSize,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.Both
+                    )
+                ),
+                maxLines = 1,
+                softWrap = false
+            )
+        } else {
+            null
+        }
+    }
+    
+    val hasOverflow = remember(scaledTextLayoutResult, containerWidth) {
         if (containerWidth <= 0f) {
             false
         } else {
-            textLayoutResult?.size?.width?.toFloat()?.let { it > containerWidth } ?: false
+            scaledTextLayoutResult?.size?.width?.toFloat()?.let { it > containerWidth } ?: false
         }
     }
+    
+    val marqueeActive = marqueeEnabled || hasOverflow
     
     val boxModifier = modifier
         .fillMaxWidth()
@@ -91,6 +188,7 @@ fun FadingText(
         .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
         .onGloballyPositioned { coordinates ->
             containerWidth = coordinates.size.width.toFloat()
+            containerHeight = coordinates.size.height.toFloat()
         }
         .then(
             if (onClick != null) {
@@ -102,7 +200,7 @@ fun FadingText(
         .drawWithContent {
             drawContent()
             
-            if (containerWidth > 0f) {
+            if (containerWidth > 0f && marqueeActive) {
                 val fadeSize = fadeWidthPx.coerceAtMost(containerWidth / 2f)
                 
                 val leftFadeBrush = Brush.horizontalGradient(
@@ -130,8 +228,6 @@ fun FadingText(
             }
         }
     
-    val marqueeActive = marqueeEnabled || hasOverflow
-    
     val textModifier = if (marqueeActive) {
         Modifier.basicMarquee(iterations = Int.MAX_VALUE)
     } else {
@@ -139,18 +235,15 @@ fun FadingText(
     }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
-        Text(
-            text = text,
-            style = style,
+        ScalableText(
+            text = textString,
+            modifier = textModifier.fillMaxWidth(),
             color = color,
-            modifier = textModifier,
+            style = style,
             textAlign = textAlign,
-            onTextLayout = { layoutResult ->
-                textLayoutResult = layoutResult
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Visible,
-            softWrap = false
+            minTextSize = minTextSize,
+            scaleDownOnly = scaleDownOnly,
+            fadeInMillis = fadeInMillis
         )
     }
 }

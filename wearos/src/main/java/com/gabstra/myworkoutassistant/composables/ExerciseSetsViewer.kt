@@ -86,7 +86,9 @@ fun SetTableRow(
         modifier = modifier,
     ){
         Row(
-            modifier = Modifier.fillMaxSize().padding(1.dp),
+            modifier = Modifier.fillMaxSize()
+                .padding(1.dp)
+                .padding(horizontal = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             when (setState.currentSetData) {
@@ -108,19 +110,19 @@ fun SetTableRow(
 
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
-                        isCalibrationSet -> "$weightText (Cal)"
-                        isPendingCalibration -> "$weightText (Pending)"
+                        isCalibrationSet -> "Calibration"
+                        isPendingCalibration -> "Pending"
                         else -> weightText
                     }
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightTextColor,
                     )
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
@@ -139,8 +141,8 @@ fun SetTableRow(
                         "BW"
                     }
                     val weightText = when {
-                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
-                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
+                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "Calibration"
+                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "Pending"
                         else -> baseWeightText
                     }
 
@@ -156,14 +158,14 @@ fun SetTableRow(
                         else -> Green
                     }
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightTextColor
                     )
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
@@ -175,7 +177,7 @@ fun SetTableRow(
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
@@ -187,7 +189,7 @@ fun SetTableRow(
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,
@@ -340,7 +342,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 15.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -380,7 +382,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 15.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(

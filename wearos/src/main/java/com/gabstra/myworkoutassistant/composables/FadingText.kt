@@ -35,12 +35,6 @@ import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
-private data class OverflowInfo(
-    val hasOverflow: Boolean,
-    val leftOverflow: Boolean,
-    val rightOverflow: Boolean
-)
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FadingText(
@@ -84,31 +78,11 @@ fun FadingText(
     var textLayoutResult: TextLayoutResult? by remember { mutableStateOf(null) }
     var containerWidth: Float by remember { mutableStateOf(0f) }
     
-    val overflowInfo = remember(textLayoutResult, containerWidth, marqueeEnabled, textAlign) {
-        if (marqueeEnabled) {
-            OverflowInfo(hasOverflow = false, leftOverflow = false, rightOverflow = false)
+    val hasOverflow = remember(textLayoutResult, containerWidth) {
+        if (containerWidth <= 0f) {
+            false
         } else {
-            textLayoutResult?.let { layoutResult ->
-                val textWidth = layoutResult.size.width
-                val hasOverflow = textWidth > containerWidth
-                
-                if (!hasOverflow || containerWidth <= 0f) {
-                    OverflowInfo(hasOverflow = false, leftOverflow = false, rightOverflow = false)
-                } else {
-                    // Calculate text start position based on alignment
-                    val textStart = when (textAlign) {
-                        TextAlign.Start, TextAlign.Left -> 0f
-                        TextAlign.End, TextAlign.Right -> containerWidth - textWidth
-                        TextAlign.Center, null -> (containerWidth - textWidth) / 2f
-                        else -> (containerWidth - textWidth) / 2f // Default to center
-                    }
-                    
-                    val leftOverflow = textStart < 0f
-                    val rightOverflow = textStart + textWidth > containerWidth
-                    
-                    OverflowInfo(hasOverflow = true, leftOverflow = leftOverflow, rightOverflow = rightOverflow)
-                }
-            } ?: OverflowInfo(hasOverflow = false, leftOverflow = false, rightOverflow = false)
+            textLayoutResult?.size?.width?.toFloat()?.let { it > containerWidth } ?: false
         }
     }
     
@@ -129,47 +103,42 @@ fun FadingText(
         .drawWithContent {
             drawContent()
             
-            // Show fades only on the side(s) that overflow
-            if (overflowInfo.hasOverflow && containerWidth > 0f) {
+            if (containerWidth > 0f) {
                 val fadeSize = fadeWidthPx.coerceAtMost(containerWidth / 2f)
                 
-                // Left fade - only if text overflows on the left
-                if (overflowInfo.leftOverflow) {
-                    val leftFadeBrush = Brush.horizontalGradient(
-                        colors = listOf(fadeColor, fadeColor.copy(alpha = 0f)),
-                        startX = 0f,
-                        endX = fadeSize
-                    )
-                    drawRect(
-                        brush = leftFadeBrush,
-                        topLeft = Offset.Zero,
-                        size = Size(fadeSize, size.height)
-                    )
-                }
+                val leftFadeBrush = Brush.horizontalGradient(
+                    colors = listOf(fadeColor, fadeColor.copy(alpha = 0f)),
+                    startX = 0f,
+                    endX = fadeSize
+                )
+                drawRect(
+                    brush = leftFadeBrush,
+                    topLeft = Offset.Zero,
+                    size = Size(fadeSize, size.height)
+                )
                 
-                // Right fade - only if text overflows on the right
-                if (overflowInfo.rightOverflow) {
-                    val rightFadeStart = containerWidth - fadeSize
-                    val rightFadeBrush = Brush.horizontalGradient(
-                        colors = listOf(fadeColor.copy(alpha = 0f), fadeColor),
-                        startX = rightFadeStart,
-                        endX = containerWidth
-                    )
-                    drawRect(
-                        brush = rightFadeBrush,
-                        topLeft = Offset(rightFadeStart, 0f),
-                        size = Size(fadeSize, size.height)
-                    )
-                }
+                val rightFadeStart = containerWidth - fadeSize
+                val rightFadeBrush = Brush.horizontalGradient(
+                    colors = listOf(fadeColor.copy(alpha = 0f), fadeColor),
+                    startX = rightFadeStart,
+                    endX = containerWidth
+                )
+                drawRect(
+                    brush = rightFadeBrush,
+                    topLeft = Offset(rightFadeStart, 0f),
+                    size = Size(fadeSize, size.height)
+                )
             }
         }
     
-    val textModifier = if (marqueeEnabled) {
+    val marqueeActive = marqueeEnabled || hasOverflow
+    
+    val textModifier = if (marqueeActive) {
         Modifier.basicMarquee(iterations = Int.MAX_VALUE)
     } else {
         Modifier.wrapContentWidth(unbounded = true)
     }
-    
+
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         Text(
             text = text,
