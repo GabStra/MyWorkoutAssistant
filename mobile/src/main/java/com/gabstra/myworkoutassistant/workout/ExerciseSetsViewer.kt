@@ -114,11 +114,25 @@ fun SetTableRow(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val exercise = viewModel.exercisesById[setState.exerciseId]
+            val isCalibrationEnabled = exercise?.requiresLoadCalibration ?: false
+            
             val isWarmupSet = when(val set = setState.set) {
                 is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                 else -> false
             }
+            
+            val isCalibrationSet = when(val set = setState.set) {
+                is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+                else -> false
+            }
+            
+            // Check if this is a work set waiting for calibration
+            val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
+                setState.calibrationStep == null && exercise != null
+            
             if(isWarmupSet){
                 warmupIndicatorComposable()
             }else{
@@ -127,10 +141,16 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
+                    val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
+                    val displayWeightText = when {
+                        isCalibrationSet -> "$weightText (Cal)"
+                        isPendingCalibration -> "$weightText (Pending)"
+                        else -> weightText
+                    }
                     ScalableText(
                         modifier = Modifier
                             .weight(2f),
-                        text = equipment!!.formatWeight(weightSetData.actualWeight),
+                        text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = color
@@ -146,10 +166,15 @@ fun SetTableRow(
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                    val weightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
+                    val baseWeightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
                         "-"
+                    }
+                    val weightText = when {
+                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
+                        else -> baseWeightText
                     }
 
                     ScalableText(

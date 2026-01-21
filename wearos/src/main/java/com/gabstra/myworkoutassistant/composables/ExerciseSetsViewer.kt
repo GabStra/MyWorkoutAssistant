@@ -71,6 +71,16 @@ fun SetTableRow(
         is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
         else -> false
     }
+    
+    val isCalibrationSet = when(val set = setState.set) {
+        is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+        is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+        else -> false
+    }
+    
+    // Check if this is a work set waiting for calibration (work set that comes after calibration set but before calibration is complete)
+    val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
+        setState.calibrationStep == null && exercise != null
 
     Box(
         modifier = modifier,
@@ -97,10 +107,10 @@ fun SetTableRow(
                     }
 
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
-                    val displayWeightText = if (isCalibrationEnabled) {
-                        "$weightText (Cal)"
-                    } else {
-                        weightText
+                    val displayWeightText = when {
+                        isCalibrationSet -> "$weightText (Cal)"
+                        isPendingCalibration -> "$weightText (Pending)"
+                        else -> weightText
                     }
 
                     ScalableText(
@@ -128,10 +138,10 @@ fun SetTableRow(
                     }else {
                         "BW"
                     }
-                    val weightText = if (isCalibrationEnabled && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
-                        "$baseWeightText (Cal)"
-                    } else {
-                        baseWeightText
+                    val weightText = when {
+                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
+                        else -> baseWeightText
                     }
 
                     val weightTextColor = when {

@@ -2688,7 +2688,8 @@ open class WorkoutViewModel(
 
         val exerciseSets = exercise.sets
 
-        if(exercise.generateWarmUpSets && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
+        // Skip warm up generation if calibration is enabled - warm ups will be generated after load selection
+        if(exercise.generateWarmUpSets && !exercise.requiresLoadCalibration && equipment != null && (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)){
             // 1) Work set TOTAL (includes bar or BW)
             val (workWeightTotal, workReps) = exerciseSets.first().let {
                 when (it) {
@@ -2981,30 +2982,216 @@ open class WorkoutViewModel(
     }
 
     fun confirmCalibrationLoad() {
-        val machine = stateMachine ?: return
-        val currentState = machine.currentState as? WorkoutState.Set ?: return
-        
-        if (currentState.calibrationStep == CalibrationStep.LoadSelection) {
-            // Move directly from LoadSelection to SetExecution
-            // Update the set's weight to match the selected weight
-            val currentSetData = currentState.currentSetData
-            val selectedWeight = when (currentSetData) {
-                is WeightSetData -> currentSetData.actualWeight
-                is BodyWeightSetData -> currentSetData.additionalWeight
-                else -> return
-            }
+        viewModelScope.launch(dispatchers.io) {
+            val machine = stateMachine ?: return@launch
+            val currentState = machine.currentState as? WorkoutState.Set ?: return@launch
             
-            val updatedSet = when (val set = currentState.set) {
-                is WeightSet -> set.copy(weight = selectedWeight)
-                is BodyWeightSet -> set.copy(additionalWeight = selectedWeight)
-                else -> return
+            if (currentState.calibrationStep == CalibrationStep.LoadSelection) {
+                // Update the set's weight to match the selected weight
+                val currentSetData = currentState.currentSetData
+                val selectedWeight = when (currentSetData) {
+                    is WeightSetData -> currentSetData.actualWeight
+                    is BodyWeightSetData -> currentSetData.additionalWeight
+                    else -> return@launch
+                }
+                
+                val updatedSet = when (val set = currentState.set) {
+                    is WeightSet -> set.copy(weight = selectedWeight)
+                    is BodyWeightSet -> set.copy(additionalWeight = selectedWeight)
+                    else -> return@launch
+                }
+                
+                val exercise = exercisesById[currentState.exerciseId] ?: return@launch
+                val equipment = currentState.equipment
+                
+                // Generate warm up sets if enabled
+                val warmupStates = mutableListOf<WorkoutState>()
+                if (exercise.generateWarmUpSets && equipment != null && 
+                    (exercise.exerciseType == ExerciseType.BODY_WEIGHT || exercise.exerciseType == ExerciseType.WEIGHT)) {
+                    
+                    // Calculate work weight total from selected calibration weight
+                    val workWeightTotal = when (exercise.exerciseType) {
+                        ExerciseType.BODY_WEIGHT -> {
+                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            relativeBodyWeight + selectedWeight
+                        }
+                        ExerciseType.WEIGHT -> selectedWeight
+                        else -> return@launch
+                    }
+                    
+                    val workReps = when (val set = currentState.set) {
+                        is WeightSet -> set.reps
+                        is BodyWeightSet -> set.reps
+                        else -> return@launch
+                    }
+                    
+                    // Get available totals for warmups
+                    val availableTotals: kotlin.collections.Set<Double> = when (exercise.exerciseType) {
+                        ExerciseType.WEIGHT -> {
+                            getCachedAvailableTotals(equipment)
+                        }
+                        ExerciseType.BODY_WEIGHT -> {
+                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            val extraTotals = getCachedAvailableTotals(equipment)
+                            extraTotals.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
+                        }
+                        else -> emptySet()
+                    }
+                    
+                    fun toSetInternalWeight(desiredTotal: Double): Double {
+                        return when (exercise.exerciseType) {
+                            ExerciseType.BODY_WEIGHT -> {
+                                val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                                desiredTotal - relativeBodyWeight
+                            }
+                            ExerciseType.WEIGHT -> desiredTotal
+                            else -> 0.0
+                        }
+                    }
+                    
+                    fun makeWarmupSet(id: UUID, total: Double, reps: Int): Set {
+                        val internalWeight = toSetInternalWeight(total)
+                        return when (exercise.exerciseType) {
+                            ExerciseType.BODY_WEIGHT -> BodyWeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                            ExerciseType.WEIGHT -> WeightSet(id, reps, internalWeight, subCategory = SetSubCategory.WarmupSet)
+                            else -> throw IllegalArgumentException("Unknown exercise type")
+                        }
+                    }
+                    
+                    // Generate warmup sets
+                    val warmups: List<Pair<Double, Int>> = if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
+                        WarmupPlanner.buildWarmupSetsForBarbell(
+                            availableTotals = availableTotals,
+                            workWeight = workWeightTotal,
+                            workReps = workReps,
+                            barbell = equipment,
+                            initialSetup = emptyList(),
+                            maxWarmups = 4,
+                            context = null // Warmup context not available here, but should be fine
+                        )
+                    } else {
+                        WarmupPlanner.buildWarmupSets(
+                            availableTotals = availableTotals,
+                            workWeight = workWeightTotal,
+                            workReps = workReps,
+                            maxWarmups = 4,
+                            context = null
+                        )
+                    }
+                    
+                    // Create WorkoutState instances for warmup sets
+                    val exerciseInfo = exerciseInfoDao.getExerciseInfoById(exercise.id)
+                    val progressionData = if (exerciseProgressionByExerciseId.containsKey(exercise.id)) exerciseProgressionByExerciseId[exercise.id] else null
+                    val progressionState = progressionData?.second
+                    
+                    warmups.forEachIndexed { warmupIndex, (total, reps) ->
+                        val warmupSet = makeWarmupSet(UUID.randomUUID(), total, reps)
+                        var warmupSetData = initializeSetData(warmupSet)
+                        
+                        if (warmupSetData is BodyWeightSetData) {
+                            warmupSetData = warmupSetData.copy(
+                                relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                            )
+                            warmupSetData = warmupSetData.copy(volume = warmupSetData.calculateVolume())
+                        } else if (warmupSetData is WeightSetData) {
+                            warmupSetData = warmupSetData.copy(volume = warmupSetData.calculateVolume())
+                        }
+                        
+                        val previousWarmupSetData = copySetData(warmupSetData)
+                        
+                        val warmupState = WorkoutState.Set(
+                            exercise.id,
+                            warmupSet,
+                            (warmupIndex * 2).toUInt(), // Account for rest sets
+                            previousWarmupSetData,
+                            currentSetDataState = mutableStateOf(warmupSetData),
+                            true, // isNewSet
+                            startTime = null,
+                            false, // isRestPause
+                            lowerBoundMaxHRPercent = exercise.lowerBoundMaxHRPercent,
+                            upperBoundMaxHRPercent = exercise.upperBoundMaxHRPercent,
+                            bodyWeight.value,
+                            plateChangeResult = null, // Will be recalculated if needed
+                            exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
+                            progressionState,
+                            isWarmupSet = true,
+                            equipment = equipment,
+                            isUnilateral = false,
+                            calibrationStep = null
+                        )
+                        warmupStates.add(warmupState)
+                        
+                        // Add rest between warmups (except after last one)
+                        if (warmupIndex < warmups.size - 1) {
+                            val restSet = RestSet(UUID.randomUUID(), 60)
+                            val restState = WorkoutState.Rest(
+                                set = restSet,
+                                order = (warmupIndex * 2 + 1).toUInt(),
+                                currentSetDataState = mutableStateOf(initializeSetData(restSet)),
+                                exerciseId = exercise.id
+                            )
+                            warmupStates.add(restState)
+                        }
+                    }
+                }
+                
+                // Insert warmup states after current LoadSelection state, then update calibration to SetExecution
+                withContext(dispatchers.main) {
+                    val updatedStates = machine.allStates.toMutableList()
+                    val currentIndex = machine.currentIndex
+                    
+                    // Update calibration set weight
+                    val updatedCalibrationState = currentState.copy(set = updatedSet)
+                    updatedStates[currentIndex] = updatedCalibrationState
+                    
+                    // Also update in allWorkoutStates
+                    if (currentIndex < allWorkoutStates.size) {
+                        allWorkoutStates[currentIndex] = updatedCalibrationState
+                    }
+                    
+                    // Insert warmup states after current state
+                    if (warmupStates.isNotEmpty()) {
+                        updatedStates.addAll(currentIndex + 1, warmupStates)
+                        
+                        // Update allWorkoutStates to include new warmup states
+                        // Use currentIndex directly since machine.allStates and allWorkoutStates should be aligned
+                        // (initializeStateMachine only filters trailing Rest states, so indices should match)
+                        if (currentIndex < allWorkoutStates.size) {
+                            allWorkoutStates.addAll(currentIndex + 1, warmupStates)
+                        } else {
+                            // Fallback: if indices don't align, append to end
+                            allWorkoutStates.addAll(warmupStates)
+                        }
+                        
+                        // Update setStates to include new warmup set states
+                        warmupStates.filterIsInstance<WorkoutState.Set>().forEach { warmupSetState ->
+                            setStates.addLast(warmupSetState)
+                        }
+                    }
+                    
+                    // Update calibration set to SetExecution (after warmups)
+                    val calibrationSetExecutionIndex = currentIndex + warmupStates.size
+                    val calibrationSetExecutionState = updatedStates[calibrationSetExecutionIndex] as? WorkoutState.Set
+                    if (calibrationSetExecutionState != null) {
+                        val updatedCalibrationSetExecutionState = calibrationSetExecutionState.copy(
+                            calibrationStep = CalibrationStep.SetExecution
+                        )
+                        updatedStates[calibrationSetExecutionIndex] = updatedCalibrationSetExecutionState
+                        
+                        // Also update in allWorkoutStates at the same relative position
+                        val allStatesCalibrationIndex = currentIndex + warmupStates.size
+                        if (allStatesCalibrationIndex < allWorkoutStates.size) {
+                            val existingState = allWorkoutStates[allStatesCalibrationIndex]
+                            if (existingState is WorkoutState.Set && existingState.set.id == calibrationSetExecutionState.set.id) {
+                                allWorkoutStates[allStatesCalibrationIndex] = updatedCalibrationSetExecutionState
+                            }
+                        }
+                    }
+                    
+                    stateMachine = WorkoutStateMachine(updatedStates, currentIndex) { LocalDateTime.now() }
+                    updateStateFlowsFromMachine()
+                }
             }
-            
-            val updatedState = currentState.copy(
-                set = updatedSet,
-                calibrationStep = CalibrationStep.SetExecution
-            )
-            updateCurrentStateInMachine(updatedState)
         }
     }
     

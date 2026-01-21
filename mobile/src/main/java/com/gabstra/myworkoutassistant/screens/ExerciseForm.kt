@@ -644,7 +644,13 @@ fun ExerciseForm(
                     trailingContent = {
                         Switch(
                             checked = enableProgression.value,
-                            onCheckedChange = { enableProgression.value = it }
+                            onCheckedChange = { 
+                                enableProgression.value = it
+                                // Disable calibration when progression is enabled
+                                if (it) {
+                                    requiresLoadCalibration.value = false
+                                }
+                            }
                         )
                     }
                 )
@@ -845,7 +851,13 @@ fun ExerciseForm(
                     trailingContent = {
                         Switch(
                             checked = requiresLoadCalibration.value,
-                            onCheckedChange = { requiresLoadCalibration.value = it }
+                            onCheckedChange = { 
+                                requiresLoadCalibration.value = it
+                                // Disable progression when calibration is enabled
+                                if (it) {
+                                    enableProgression.value = false
+                                }
+                            }
                         )
                     }
                 )
