@@ -448,7 +448,7 @@ private fun HeartRateDisplay(
                             text = zoneText,
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.background
                         )
                     }
                 }

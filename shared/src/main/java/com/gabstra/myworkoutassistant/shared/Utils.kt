@@ -319,11 +319,11 @@ val zoneRanges = arrayOf(
  * 
  * @param color The original color to reduce luminance for
  * @param factor The factor by which to reduce luminance (0.0 to 1.0). 
- *               Default 0.4 means the color will be 40% of original luminance (60% reduction).
+ *               Default 0.4 means the color will be 30% of original luminance (60% reduction).
  *               Lower values result in darker colors.
  * @return A new Color with reduced luminance
  */
-fun reduceColorLuminance(color: Color, factor: Float = 0.4f): Color {
+fun reduceColorLuminance(color: Color, factor: Float = 0.3f): Color {
     val clampedFactor = factor.coerceIn(0f, 1f)
     
     // Extract RGB components (0.0 to 1.0)

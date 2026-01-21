@@ -20,7 +20,7 @@ val White = Color(255, 255, 255)
 
 val Green  = Color(0xFF138643)
 val Yellow = Color(0xFFCDAE1D)
-val Red    = Color(0xFFEB0000)
+val Red    = Color(0xFFBE5252)
 
 val MuscleHeatMapBackground = MediumDarkGray
 val PrimaryMuscleGroupColor = Color(0xFFFF6700)
