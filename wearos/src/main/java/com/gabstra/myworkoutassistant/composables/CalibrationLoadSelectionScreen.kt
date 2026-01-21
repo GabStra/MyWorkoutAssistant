@@ -201,24 +201,7 @@ fun CalibrationLoadSelectionScreen(
             )
         }
     }
-    
-    @Composable
-    fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
-        val repsText = "$reps"
-        Row(
-            modifier = modifier.height(40.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ScalableText(
-                modifier = Modifier.fillMaxWidth(),
-                text = repsText,
-                style = style,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-    
+
     // Auto-close picker after 5 seconds of inactivity
     LaunchedEffect(showPicker) {
         if (showPicker) {
@@ -296,53 +279,45 @@ fun CalibrationLoadSelectionScreen(
                 if (extraInfo != null) {
                     extraInfo(state)
                 }
-                Text(
-                    text = "Step 1/3: Select Load",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
 
                 // Two-column layout matching WeightSetScreen/BodyWeightSetScreen
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    Column(
+                        modifier = Modifier.width(70.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
-                        Column(
-                            modifier = Modifier.width(70.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
-                        ) {
-                            Text(
-                                text = "WEIGHT (KG)",
-                                style = headerStyle,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                        }
-
-                        Column(
-                            modifier = Modifier.width(70.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
-                        ) {
-                            Text(
-                                text = "REPS",
-                                style = headerStyle,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                        }
+                        Text(
+                            text = "WEIGHT (KG)",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                     }
                 }
+                
+                FadingText(
+                    text = "Select load for $reps reps at 1-2 RIR",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
+    }
+    
+    // Trigger plate recalculation when weight changes
+    LaunchedEffect(selectedWeight, currentSetData) {
+        val totalWeight = when (currentSetData) {
+            is WeightSetData -> selectedWeight
+            is BodyWeightSetData -> selectedWeight + currentSetData.relativeBodyWeightInKg
+            else -> selectedWeight
+        }
+        viewModel.schedulePlateRecalculation(totalWeight)
     }
 }
