@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -42,9 +40,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -123,6 +118,7 @@ fun PageExercises(
                     fontWeight = FontWeight.SemiBold
                 ),
                 marqueeEnabled = marqueeEnabled,
+                textAlign = TextAlign.Center,
                 onClick = {
                     marqueeEnabled = !marqueeEnabled
                     hapticsViewModel.doGentleVibration()
@@ -136,18 +132,6 @@ fun PageExercises(
                 (selectedExercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
                     viewModel.getAccessoryEquipmentById(id)
                 }
-            }
-            
-            val isWarmupSet = remember(currentStateSet.set, selectedExercise, currentExercise) {
-                currentExercise == selectedExercise && when(val set = currentStateSet.set) {
-                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    else -> false
-                }
-            }
-            
-            val isCalibrationSet = remember(currentStateSet.calibrationStep, selectedExercise, currentExercise) {
-                currentExercise == selectedExercise && currentStateSet.calibrationStep != null
             }
             
             val supersetExercises = remember(selectedExerciseOrSupersetId, isSuperset) {
@@ -164,60 +148,6 @@ fun PageExercises(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                // Status badges row (Warm-up/Calibration)
-                if (isWarmupSet || isCalibrationSet) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (isWarmupSet) {
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        MaterialTheme.colorScheme.background,
-                                        RoundedCornerShape(25)
-                                    )
-                                    .border(
-                                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                        RoundedCornerShape(25)
-                                    )
-                                    .padding(5.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Warm-up",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                        if (isCalibrationSet) {
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        MaterialTheme.colorScheme.background,
-                                        RoundedCornerShape(25)
-                                    )
-                                    .border(
-                                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                        RoundedCornerShape(25)
-                                    )
-                                    .padding(5.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Calibration",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                }
-                
                 // Metadata strip
                 ExerciseMetadataStrip(
                     exerciseLabel = "${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",

@@ -57,6 +57,7 @@ fun ExerciseRenderer(
                     .padding(horizontal = 10.dp),
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                textAlign = TextAlign.Center
             )
         }
     }else{
@@ -75,6 +76,7 @@ fun ExerciseRenderer(
                             .padding(horizontal = 10.dp),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                        textAlign = TextAlign.Center
                     )
                 }
             },

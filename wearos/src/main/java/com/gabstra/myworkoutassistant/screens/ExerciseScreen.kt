@@ -268,7 +268,8 @@ fun ExerciseScreen(
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.SemiBold
                     ),
-                    marqueeEnabled = marqueeEnabled
+                    marqueeEnabled = marqueeEnabled,
+                    textAlign = TextAlign.Center
                 )
             }
 

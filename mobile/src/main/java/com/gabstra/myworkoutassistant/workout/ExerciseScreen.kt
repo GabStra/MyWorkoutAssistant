@@ -208,7 +208,8 @@ fun ExerciseScreen(
                             }
                         ),
                     style = MaterialTheme.typography.titleLarge,
-                    marqueeEnabled = marqueeEnabled
+                    marqueeEnabled = marqueeEnabled,
+                    textAlign = TextAlign.Center
                 )
             }
 

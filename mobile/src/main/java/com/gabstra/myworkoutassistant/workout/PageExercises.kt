@@ -120,6 +120,7 @@ fun PageExercises(
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.titleLarge,
                     marqueeEnabled = marqueeEnabled,
+                    textAlign = TextAlign.Center,
                     onClick = {
                         marqueeEnabled = !marqueeEnabled
                         hapticsViewModel.doGentleVibration()
