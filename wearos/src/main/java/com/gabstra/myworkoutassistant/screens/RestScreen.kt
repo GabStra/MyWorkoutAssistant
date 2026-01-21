@@ -385,7 +385,7 @@ fun RestScreen(
                             .padding(horizontal = 15.dp)
                     ) {
                         when (pageType) {
-                            PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel)
+                            PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel, viewModel)
                             PageType.EXERCISE_DETAIL -> {}
                             PageType.EXERCISES -> {
                                 PageExercises(

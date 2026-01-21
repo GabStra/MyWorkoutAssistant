@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,9 +35,12 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
@@ -59,9 +65,26 @@ private fun Double.compact(): String {
 fun PagePlates(
     updatedState: WorkoutState.Set,
     equipment: WeightLoadedEquipment?,
-    hapticsViewModel: HapticsViewModel
+    hapticsViewModel: HapticsViewModel,
+    viewModel: AppViewModel
 ) {
+    val isRecalculating by viewModel.isPlateRecalculationInProgress.collectAsState()
+    
     var headerMarqueeEnabled by remember { mutableStateOf(false) }
+
+    // Show loading screen during recalculation
+    if (isRecalculating) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(8.dp))
+            LoadingText(baseText = "Loading")
+        }
+        return
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),

@@ -189,6 +189,8 @@ fun WeightSetScreen(
                 delay(1000) // Check every second
             }
         } else {
+            // Flush any pending plate recalculation when exiting edit mode
+            viewModel.flushPlateRecalculation()
             onEditModeDisabled()
         }
     }
@@ -252,6 +254,9 @@ fun WeightSetScreen(
                         actualWeight = newSetData.actualWeight,
                         volume = newSetData.calculateVolume()
                     )
+                    
+                    // Schedule debounced plate recalculation
+                    viewModel.schedulePlateRecalculation(newSetData.actualWeight)
                 }
             }
 
@@ -289,6 +294,9 @@ fun WeightSetScreen(
                         actualWeight = newSetData.actualWeight,
                         volume = newSetData.calculateVolume()
                     )
+                    
+                    // Schedule debounced plate recalculation
+                    viewModel.schedulePlateRecalculation(newSetData.actualWeight)
                 }
             }
 

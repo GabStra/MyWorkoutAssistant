@@ -119,6 +119,8 @@ fun BodyWeightSetScreen(
                 delay(1000) // Check every second
             }
         } else {
+            // Flush any pending plate recalculation when exiting edit mode
+            viewModel.flushPlateRecalculation()
             onEditModeDisabled()
         }
     }
@@ -152,6 +154,10 @@ fun BodyWeightSetScreen(
                         additionalWeight = newSetData.additionalWeight,
                         volume = newSetData.calculateVolume()
                     )
+                    
+                    // Schedule debounced plate recalculation
+                    // For BodyWeightSet, total weight = relativeBodyWeight + additionalWeight
+                    viewModel.schedulePlateRecalculation(newSetData.getWeight())
                 }
             }
 
@@ -188,6 +194,10 @@ fun BodyWeightSetScreen(
                         additionalWeight = newSetData.additionalWeight,
                         volume = newSetData.calculateVolume()
                     )
+                    
+                    // Schedule debounced plate recalculation
+                    // For BodyWeightSet, total weight = relativeBodyWeight + additionalWeight
+                    viewModel.schedulePlateRecalculation(newSetData.getWeight())
                 }
             }
 

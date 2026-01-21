@@ -200,6 +200,12 @@ open class WorkoutViewModel(
     private var _bodyWeight = mutableStateOf(0.0)
     val bodyWeight: State<Double> = _bodyWeight
 
+    // Plate recalculation debouncer and state
+    private val plateRecalculationDebouncer = PlateRecalculationDebouncer(viewModelScope, debounceDelayMs = 400L)
+    private var lastPlateRecalculationWeight: Double? = null
+    private val _isPlateRecalculationInProgress = MutableStateFlow(false)
+    val isPlateRecalculationInProgress = _isPlateRecalculationInProgress.asStateFlow()
+
     private var _backupProgress = mutableStateOf(0f)
     val backupProgress: State<Float> = _backupProgress
 
@@ -2597,26 +2603,68 @@ open class WorkoutViewModel(
     ): List<PlateCalculator.Companion.PlateChangeResult> {
         val plateChangeResults = mutableListOf<PlateCalculator.Companion.PlateChangeResult>()
 
-        if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
-            val sets = exerciseSets.filterIsInstance<WeightSet>()
-            val setWeights = sets.map { it.weight }.toList()
-            val plateWeights = equipment.availablePlates.map { it.weight } .toList()
+        if (equipment is Barbell && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
+            val relativeBodyWeight = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+            } else {
+                0.0
+            }
 
-            try {
-                val results = PlateCalculator.calculatePlateChanges(
-                    plateWeights,
-                    setWeights,
-                    equipment.barWeight,
-                    initialSetup,
-                )
+            val setWeights = mutableListOf<Double>()
+            for (set in exerciseSets) {
+                when (set) {
+                    is WeightSet -> {
+                        setWeights.add(set.weight)
+                    }
+                    is BodyWeightSet -> {
+                        val totalWeight = relativeBodyWeight + set.additionalWeight
+                        setWeights.add(totalWeight)
+                    }
+                    else -> {
+                        // Skip non-weight sets
+                    }
+                }
+            }
 
-                plateChangeResults.addAll(results)
-            } catch (e: Exception) {
-                Log.e("PlatesCalculator", "Error calculating plate changes", e)
+            if (setWeights.isNotEmpty()) {
+                val plateWeights = equipment.availablePlates.map { it.weight }.toList()
+
+                try {
+                    val results = PlateCalculator.calculatePlateChanges(
+                        plateWeights,
+                        setWeights,
+                        equipment.barWeight,
+                        initialSetup,
+                    )
+
+                    plateChangeResults.addAll(results)
+                } catch (e: Exception) {
+                    Log.e("PlatesCalculator", "Error calculating plate changes", e)
+                }
             }
         }
 
         return plateChangeResults
+    }
+
+    protected fun getPlateChangeResults(
+        weights: List<Double>,
+        equipment: Barbell,
+        initialSetup: List<Double> = emptyList()
+    ): List<PlateCalculator.Companion.PlateChangeResult> {
+        val plateWeights = equipment.availablePlates.map { it.weight }.toList()
+
+        return try {
+            PlateCalculator.calculatePlateChanges(
+                plateWeights,
+                weights,
+                equipment.barWeight,
+                initialSetup,
+            )
+        } catch (e: Exception) {
+            Log.e("PlatesCalculator", "Error calculating plate changes", e)
+            emptyList()
+        }
     }
 
     protected suspend fun addStatesFromExercise(
@@ -3122,6 +3170,126 @@ open class WorkoutViewModel(
                 goToNextState()
             }
         }
+    }
+
+    suspend fun recalculatePlatesForCurrentAndSubsequentSets(newWeight: Double) {
+        // Skip if weight hasn't changed (within epsilon for floating point)
+        val lastRecalculatedWeight = lastPlateRecalculationWeight
+        if (lastRecalculatedWeight != null && kotlin.math.abs(newWeight - lastRecalculatedWeight) < 0.01) {
+            return
+        }
+        lastPlateRecalculationWeight = newWeight
+
+        _isPlateRecalculationInProgress.value = true
+        try {
+            val machine = stateMachine ?: return
+            val currentState = machine.currentState as? WorkoutState.Set ?: return
+
+            // Verify it's a WeightSet or BodyWeightSet
+            val isWeightSet = currentState.set is WeightSet
+            val isBodyWeightSet = currentState.set is BodyWeightSet
+            if (!isWeightSet && !isBodyWeightSet) return
+
+            val exercise = exercisesById[currentState.exerciseId] ?: return
+            val equipment = currentState.equipment
+
+            // Verify equipment is Barbell
+            if (equipment !is Barbell) return
+
+            // Get all remaining sets in the exercise (current + subsequent) from machine.allStates
+            val currentIndex = machine.currentIndex
+            val remainingStates = machine.allStates.subList(currentIndex, machine.allStates.size)
+                .filterIsInstance<WorkoutState.Set>()
+                .filter { it.exerciseId == currentState.exerciseId }
+
+            if (remainingStates.isEmpty()) return
+
+            // Build list of weights for plate calculation
+            val relativeBodyWeight = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+            } else {
+                0.0
+            }
+
+            val weights = mutableListOf<Double>()
+            for ((index, state) in remainingStates.withIndex()) {
+                if (index == 0) {
+                    // Current set: use newWeight (already the total weight)
+                    weights.add(newWeight)
+                } else {
+                    // Subsequent sets: calculate total weight from their Set objects
+                    when (val set = state.set) {
+                        is WeightSet -> {
+                            weights.add(set.weight)
+                        }
+                        is BodyWeightSet -> {
+                            val totalWeight = relativeBodyWeight + set.additionalWeight
+                            weights.add(totalWeight)
+                        }
+                        else -> {
+                            // Skip non-weight sets
+                        }
+                    }
+                }
+            }
+
+            if (weights.isEmpty()) return
+
+            // Determine initialPlates: the currentPlates from the previous set's plateChangeResult, or empty if this is the first set
+            val initialPlates = if (currentIndex > 0) {
+                // Find the previous set state in the same exercise
+                val previousState = machine.allStates.subList(0, currentIndex)
+                    .filterIsInstance<WorkoutState.Set>()
+                    .filter { it.exerciseId == currentState.exerciseId }
+                    .lastOrNull()
+                previousState?.plateChangeResult?.currentPlates ?: emptyList()
+            } else {
+                emptyList()
+            }
+
+            // Recalculate plateChangeResults using the new overload (on background thread)
+            val plateChangeResults = withContext(dispatchers.default) {
+                getPlateChangeResults(weights, equipment, initialPlates)
+            }
+
+            if (plateChangeResults.size != remainingStates.size) {
+                Log.e("WorkoutViewModel", "Plate change results count (${plateChangeResults.size}) doesn't match remaining states count (${remainingStates.size})")
+                return
+            }
+
+            // Update all affected states in machine.allStates with new plateChangeResult (on main thread)
+            withContext(dispatchers.main) {
+                val updatedStates = machine.allStates.toMutableList()
+                for ((index, plateChangeResult) in plateChangeResults.withIndex()) {
+                    val stateToUpdate = remainingStates[index]
+                    val stateIndex = machine.allStates.indexOf(stateToUpdate)
+                    if (stateIndex >= 0 && stateIndex < updatedStates.size) {
+                        val state = updatedStates[stateIndex] as? WorkoutState.Set
+                        if (state != null && state.set.id == stateToUpdate.set.id) {
+                            updatedStates[stateIndex] = state.copy(plateChangeResult = plateChangeResult)
+                        }
+                    }
+                }
+
+                // Create new WorkoutStateMachine with updated states
+                stateMachine = WorkoutStateMachine(updatedStates, machine.currentIndex) { LocalDateTime.now() }
+                updateStateFlowsFromMachine()
+            }
+        } finally {
+            _isPlateRecalculationInProgress.value = false
+        }
+    }
+
+    fun schedulePlateRecalculation(newWeight: Double) {
+        viewModelScope.launch {
+            plateRecalculationDebouncer.schedule {
+                recalculatePlatesForCurrentAndSubsequentSets(newWeight)
+            }
+        }
+    }
+
+    suspend fun flushPlateRecalculation() {
+        plateRecalculationDebouncer.flush()
     }
     
     private fun updateCurrentStateInMachine(updatedState: WorkoutState) {

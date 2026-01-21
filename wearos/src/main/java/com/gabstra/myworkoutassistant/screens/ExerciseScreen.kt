@@ -300,7 +300,7 @@ fun ExerciseScreen(
                 ) {
                     when (pageType) {
                         PageType.PLATES -> {
-                            PagePlates(updatedState, equipment, hapticsViewModel)
+                            PagePlates(updatedState, equipment, hapticsViewModel, viewModel)
                         }
 
                         PageType.EXERCISE_DETAIL -> {

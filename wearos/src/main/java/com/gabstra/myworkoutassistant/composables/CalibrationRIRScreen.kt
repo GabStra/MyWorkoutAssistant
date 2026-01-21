@@ -33,10 +33,10 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CalibrationRIRScreen(
+    modifier: Modifier = Modifier,
     initialRIR: Int = 2,
     onRIRConfirmed: (Double, Boolean) -> Unit,
-    hapticsViewModel: HapticsViewModel,
-    modifier: Modifier = Modifier
+    hapticsViewModel: HapticsViewModel
 ) {
     var rirValue by remember { mutableIntStateOf(initialRIR) }
     var showPicker by remember { mutableStateOf(false) }
