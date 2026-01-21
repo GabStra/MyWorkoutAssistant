@@ -1189,7 +1189,12 @@ private suspend fun retryMissingChunks(
         val chunk = chunks[chunkIndex]
         val isLastRetryChunk = retryIndex == missingIndices.size - 1
 
-        val request = PutDataMapRequest.create("/workoutHistoryChunkPath").apply {
+        val chunkPath = DataLayerPaths.buildPath(
+            DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX,
+            transactionId,
+            chunkIndex
+        )
+        val request = PutDataMapRequest.create(chunkPath).apply {
             dataMap.putByteArray("chunk", chunk)
             dataMap.putInt("chunkIndex", chunkIndex)
             dataMap.putBoolean("isRetry", true)

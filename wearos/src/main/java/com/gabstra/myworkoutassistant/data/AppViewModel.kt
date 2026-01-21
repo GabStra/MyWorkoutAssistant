@@ -122,6 +122,12 @@ open class AppViewModel : WorkoutViewModel() {
     private val _syncStatus = MutableStateFlow(SyncStatus.Idle)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
 
+    private val _hasPendingWorkoutSync = mutableStateOf(false)
+    val hasPendingWorkoutSync: State<Boolean> = _hasPendingWorkoutSync
+
+    private var pendingSyncAfterReconnect = false
+    private var pendingSyncContext: Context? = null
+
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
         rebuildScreenState()
@@ -130,6 +136,14 @@ open class AppViewModel : WorkoutViewModel() {
     fun switchHeaderDisplayMode() {
         _headerDisplayMode.value = (_headerDisplayMode.value + 1) % 2
         rebuildScreenState()
+    }
+
+    fun onPhoneConnectionChanged(isConnected: Boolean) {
+        if (!isConnected || !pendingSyncAfterReconnect) return
+        pendingSyncAfterReconnect = false
+        val context = pendingSyncContext
+        pendingSyncContext = null
+        requestWorkoutHistorySync(context)
     }
 
     override fun rebuildScreenState() {
@@ -360,97 +374,8 @@ open class AppViewModel : WorkoutViewModel() {
                     upsertWorkoutRecord(currentState.exerciseId,currentState.setIndex)
                 }
 
-                if (shouldSendData && dataClient != null) {
-                    // Schedule debounced sync - the sync operation will read the current
-                    // accumulated state when it executes, so all sets completed during
-                    // the debounce period will be included in a single sync
-                    viewModelScope.launch(coroutineExceptionHandler) {
-                        syncDebouncer.schedule {
-                            try {
-                                // Check connection before setting syncing state
-                                if (context != null) {
-                                    val hasConnection = checkConnection(context)
-                                    if (!hasConnection) {
-                                        // Don't set syncing state if connection fails
-                                        // Error will be handled silently during workout
-                                        return@schedule
-                                    }
-                                }
-                                
-                                // Only set status to Syncing after connection check succeeds
-                                _syncStatus.value = SyncStatus.Syncing
-
-                                // Read current state at execution time (includes all accumulated sets)
-                                val exerciseInfos = mutableListOf<ExerciseInfo>()
-                                val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
-                                        selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-
-                                exercises.forEach { exercise ->
-                                    exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
-                                        exerciseInfos.add(it)
-                                    }
-                                }
-
-                                val exerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(currentWorkoutHistory!!.id)
-
-                                val errorLogs = try {
-                                    (context?.applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
-                                } catch (e: Exception) {
-                                    Log.e("AppViewModel", "Error getting error logs", e)
-                                    emptyList()
-                                }
-
-                                val result = syncMutex.withLock {
-                                    sendWorkoutHistoryStore(
-                                        dataClient!!,
-                                        WorkoutHistoryStore(
-                                            WorkoutHistory = currentWorkoutHistory!!,
-                                            SetHistories = executedSetsHistory,
-                                            ExerciseInfos = exerciseInfos,
-                                            WorkoutRecord = _workoutRecord,
-                                            ExerciseSessionProgressions = exerciseSessionProgressions,
-                                            ErrorLogs = errorLogs
-                                        ),
-                                        context
-                                    )
-                                }
-
-                                // Clear error logs after successful send
-                                if (result && errorLogs.isNotEmpty() && context != null) {
-                                    try {
-                                        (context.applicationContext as? MyApplication)?.clearErrorLogs()
-                                    } catch (e: Exception) {
-                                        Log.e("AppViewModel", "Error clearing error logs", e)
-                                    }
-                                }
-
-                                // Set status based on result
-                                _syncStatus.value = if (result) SyncStatus.Success else SyncStatus.Failure
-
-                                // Don't show immediate success toast - wait for completion message
-                                // Success toast will be shown when SYNC_COMPLETE is received
-                                if (context != null && !result) {
-                                    withContext(Dispatchers.Main) {
-                                        if (!isWorkoutActive()) {
-                                            Toast.makeText(context, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.e("AppViewModel", "Error in debounced sync", e)
-                                // Log detailed error for debugging but show generic message to user
-                                Log.d("AppViewModel", "Detailed sync error: ${e.message}")
-                                _syncStatus.value = SyncStatus.Failure
-                                if (context != null) {
-                                    withContext(Dispatchers.Main) {
-                                        if (!isWorkoutActive()) {
-                                            Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if (shouldSendData) {
+                    requestWorkoutHistorySync(context)
                 }
             }
             onEnd()
@@ -466,6 +391,7 @@ open class AppViewModel : WorkoutViewModel() {
         // Only flush if phone is connected - prevents sync attempts when mobile app is uninstalled
         if (!isPhoneConnectedAndHasApp || dataClient == null) {
             Log.d("AppViewModel", "Skipping flushWorkoutSync - phone not connected or dataClient unavailable")
+            markPendingReconnect(null)
             return
         }
         viewModelScope.launch(coroutineExceptionHandler) {
@@ -487,6 +413,132 @@ open class AppViewModel : WorkoutViewModel() {
     private fun isWorkoutActive(): Boolean {
         val state = workoutState.value
         return state !is WorkoutState.Completed
+    }
+
+    private fun resolveSyncContext(context: Context?): Context? {
+        return context?.applicationContext ?: applicationContext
+    }
+
+    private fun markScheduledSync(context: Context?) {
+        _hasPendingWorkoutSync.value = true
+        if (pendingSyncContext == null) {
+            pendingSyncContext = resolveSyncContext(context)
+        }
+    }
+
+    private fun markPendingReconnect(context: Context?) {
+        _hasPendingWorkoutSync.value = true
+        pendingSyncAfterReconnect = true
+        if (pendingSyncContext == null) {
+            pendingSyncContext = resolveSyncContext(context)
+        }
+    }
+
+    private fun clearPendingSync() {
+        _hasPendingWorkoutSync.value = false
+        pendingSyncAfterReconnect = false
+        pendingSyncContext = null
+    }
+
+    private fun requestWorkoutHistorySync(context: Context?) {
+        markScheduledSync(context)
+        val syncContext = resolveSyncContext(context)
+        viewModelScope.launch(coroutineExceptionHandler) {
+            syncDebouncer.schedule {
+                performWorkoutHistorySync(syncContext)
+            }
+        }
+    }
+
+    private suspend fun performWorkoutHistorySync(context: Context?) {
+        val syncContext = resolveSyncContext(context)
+        val client = dataClient
+        if (client == null) {
+            markPendingReconnect(syncContext)
+            return
+        }
+
+        if (syncContext != null) {
+            val hasConnection = checkConnection(syncContext)
+            if (!hasConnection) {
+                markPendingReconnect(syncContext)
+                return
+            }
+        }
+
+        clearPendingSync()
+        try {
+            _syncStatus.value = SyncStatus.Syncing
+
+            // Read current state at execution time (includes all accumulated sets)
+            val exerciseInfos = mutableListOf<ExerciseInfo>()
+            val exercises = selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() +
+                    selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+
+            exercises.forEach { exercise ->
+                exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
+                    exerciseInfos.add(it)
+                }
+            }
+
+            val exerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(currentWorkoutHistory!!.id)
+
+            val errorLogs = try {
+                (syncContext?.applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "Error getting error logs", e)
+                emptyList()
+            }
+
+            val result = syncMutex.withLock {
+                sendWorkoutHistoryStore(
+                    client,
+                    WorkoutHistoryStore(
+                        WorkoutHistory = currentWorkoutHistory!!,
+                        SetHistories = executedSetsHistory,
+                        ExerciseInfos = exerciseInfos,
+                        WorkoutRecord = _workoutRecord,
+                        ExerciseSessionProgressions = exerciseSessionProgressions,
+                        ErrorLogs = errorLogs
+                    ),
+                    syncContext
+                )
+            }
+
+            // Clear error logs after successful send
+            if (result && errorLogs.isNotEmpty() && syncContext != null) {
+                try {
+                    (syncContext.applicationContext as? MyApplication)?.clearErrorLogs()
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Error clearing error logs", e)
+                }
+            }
+
+            // Set status based on result
+            _syncStatus.value = if (result) SyncStatus.Success else SyncStatus.Failure
+
+            // Don't show immediate success toast - wait for completion message
+            // Success toast will be shown when SYNC_COMPLETE is received
+            if (syncContext != null && !result) {
+                withContext(Dispatchers.Main) {
+                    if (!isWorkoutActive()) {
+                        Toast.makeText(syncContext, "Failed to send data to phone", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "Error in debounced sync", e)
+            // Log detailed error for debugging but show generic message to user
+            Log.d("AppViewModel", "Detailed sync error: ${e.message}")
+            _syncStatus.value = SyncStatus.Failure
+            if (syncContext != null) {
+                withContext(Dispatchers.Main) {
+                    if (!isWorkoutActive()) {
+                        Toast.makeText(syncContext, "Sync failed", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
     
     // Workout Plan Helper Methods

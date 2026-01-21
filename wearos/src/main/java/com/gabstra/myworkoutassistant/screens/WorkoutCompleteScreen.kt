@@ -64,7 +64,6 @@ fun WorkoutCompleteScreen(
     val context = LocalContext.current
 
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
-    val syncStatus by viewModel.syncStatus.collectAsState()
     val countDownTimer = remember { mutableIntStateOf(30) }
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
@@ -134,7 +133,17 @@ fun WorkoutCompleteScreen(
                 syncComplete = true
             }
             AppViewModel.SyncStatus.Idle -> {
-                // No sync was pending (flush did nothing)
+                if (viewModel.hasPendingWorkoutSync.value) {
+                    // Wait briefly for pending sync to start or clear
+                    withTimeoutOrNull(30_000) {
+                        while (viewModel.hasPendingWorkoutSync.value &&
+                            viewModel.syncStatus.value == AppViewModel.SyncStatus.Idle
+                        ) {
+                            delay(200)
+                        }
+                    }
+                }
+                // No sync was pending or it did not start in time
                 syncComplete = true
             }
             AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {

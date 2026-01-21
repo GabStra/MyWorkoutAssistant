@@ -531,7 +531,9 @@ fun WearApp(
 
         LaunchedEffect(nodes) {
             try {
-                appViewModel.phoneNode = nodes.firstOrNull()
+                val phoneNode = nodes.firstOrNull()
+                appViewModel.phoneNode = phoneNode
+                appViewModel.onPhoneConnectionChanged(phoneNode != null)
                 if (appViewModel.phoneNode != null) {
                     //appViewModel.sendAll(localContext)
                 }
