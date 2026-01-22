@@ -580,11 +580,11 @@ fun EquipmentsBottomBar(
                                             it.extraWeights,
                                             it.maxExtraWeightsPerLoadingPoint
                                         )
-                                        EquipmentType.DUMBBELL -> TODO()
-                                        EquipmentType.PLATELOADEDCABLE -> TODO()
-                                        EquipmentType.WEIGHTVEST -> TODO()
-                                        EquipmentType.MACHINE -> TODO()
-                                        EquipmentType.IRONNECK -> TODO()
+                                        EquipmentType.DUMBBELL -> throw NotImplementedError("Dumbbell equipment copying not yet implemented")
+                                        EquipmentType.PLATELOADEDCABLE -> throw NotImplementedError("PlateLoadedCable equipment copying not yet implemented")
+                                        EquipmentType.WEIGHTVEST -> throw NotImplementedError("WeightVest equipment copying not yet implemented")
+                                        EquipmentType.MACHINE -> throw NotImplementedError("Machine equipment copying not yet implemented")
+                                        EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment copying not yet implemented")
                                         EquipmentType.ACCESSORY -> throw IllegalArgumentException("Accessories cannot be copied here")
                                     }
                                 }

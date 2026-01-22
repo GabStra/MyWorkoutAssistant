@@ -442,7 +442,6 @@ fun EnduranceSetScreen (
 
                 onTimerDisabled()
                 onTimerEnd()
-                showStopDialog = false
             },
             handleNoClick = {
                 hapticsViewModel.doGentleVibration()

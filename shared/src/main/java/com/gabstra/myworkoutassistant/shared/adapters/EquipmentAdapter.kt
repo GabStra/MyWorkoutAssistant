@@ -67,7 +67,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                     addProperty("maxExtraWeightsPerLoadingPoint", machine.maxExtraWeightsPerLoadingPoint)
                     add("extraWeights", context.serialize(machine.extraWeights))
                 }
-                EquipmentType.IRONNECK -> TODO()
+                EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment serialization not yet implemented")
             }
         }
     }
@@ -145,7 +145,7 @@ class EquipmentAdapter : JsonSerializer<WeightLoadedEquipment>, JsonDeserializer
                     maxExtraWeightsPerLoadingPoint = maxExtraWeightsPerLoadingPoint,
                 )
             }
-            EquipmentType.IRONNECK -> TODO()
+            EquipmentType.IRONNECK -> throw NotImplementedError("IronNeck equipment deserialization not yet implemented")
             EquipmentType.PLATELOADEDCABLE -> {
                 val plateListType = object : TypeToken<List<Plate>>() {}.type
                 val sleeveLength = obj.getSleeveLength()

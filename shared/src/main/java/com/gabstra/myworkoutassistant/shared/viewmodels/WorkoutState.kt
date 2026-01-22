@@ -13,12 +13,6 @@ enum class ProgressionState {
     DELOAD, RETRY, PROGRESS, FAILED
 }
 
-enum class CalibrationStep {
-    LoadSelection,
-    SetExecution,
-    RIRRating
-}
-
 sealed class WorkoutState {
     data class Preparing(
         val dataLoaded: Boolean
@@ -44,9 +38,37 @@ sealed class WorkoutState {
         val isUnilateral: Boolean = false,
         val intraSetTotal : UInt? = null,
         var intraSetCounter : UInt = 0u,
-        val calibrationStep: CalibrationStep? = null,
+        val isCalibrationSet: Boolean = false, // Identifies if this Set is a calibration set execution
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
+    }
+
+    data class CalibrationLoadSelection(
+        val exerciseId: UUID,
+        val calibrationSet: com.gabstra.myworkoutassistant.shared.sets.Set, // The calibration set being configured
+        val setIndex: UInt,
+        val previousSetData: SetData?,
+        val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
+        val equipment: WeightLoadedEquipment?,
+        val lowerBoundMaxHRPercent: Float? = null,
+        val upperBoundMaxHRPercent: Float? = null,
+        val currentBodyWeight: Double,
+        val isUnilateral: Boolean = false
+    ) : WorkoutState() {
+        var currentSetData by currentSetDataState // Observable set data
+    }
+
+    data class CalibrationRIRSelection(
+        val exerciseId: UUID,
+        val calibrationSet: com.gabstra.myworkoutassistant.shared.sets.Set, // The calibration set that was just executed
+        val setIndex: UInt,
+        val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
+        val equipment: WeightLoadedEquipment?,
+        val lowerBoundMaxHRPercent: Float? = null,
+        val upperBoundMaxHRPercent: Float? = null,
+        val currentBodyWeight: Double
+    ) : WorkoutState() {
+        var currentSetData by currentSetDataState // Observable set data with RIR
     }
 
     data class Rest(

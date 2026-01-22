@@ -18,7 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +37,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -44,7 +46,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -80,16 +81,24 @@ fun SetTableRow(
     }
     
     // Check if this is a work set waiting for calibration (work set that comes after calibration set but before calibration is complete)
+    // This happens when CalibrationRIRSelection state exists in the workout for the same exercise
+    // We check both currentWorkoutState and allWorkoutStates to see if there's a CalibrationRIRSelection state
+    val currentWorkoutState by viewModel.workoutState.collectAsState()
+    val hasCalibrationRIRSelection = (currentWorkoutState is WorkoutState.CalibrationRIRSelection && 
+        (currentWorkoutState as WorkoutState.CalibrationRIRSelection).exerciseId == setState.exerciseId) ||
+        viewModel.allWorkoutStates.any { state ->
+            state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
+        }
+    
     val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
-        setState.calibrationStep == null && exercise != null
+        !setState.isCalibrationSet && exercise != null && hasCalibrationRIRSelection
 
     Box(
         modifier = modifier,
     ){
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(1.dp)
-                .padding(horizontal = 5.dp),
+                .padding(1.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             when (setState.currentSetData) {
@@ -111,7 +120,7 @@ fun SetTableRow(
 
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
-                        isCalibrationSet -> "Calibration"
+                        isCalibrationSet -> "$weightText (Cal)"
                         isPendingCalibration -> "Pending"
                         else -> weightText
                     }
@@ -142,7 +151,7 @@ fun SetTableRow(
                         "BW"
                     }
                     val weightText = when {
-                        isCalibrationSet && setState.calibrationStep == CalibrationStep.SetExecution && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
                         isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
                         else -> baseWeightText
                     }
@@ -230,14 +239,12 @@ fun ExerciseSetsViewer(
     customTextColor: Color? = null,
     overrideSetIndex: Int? = null
 ){
-    val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
+    val exerciseSetStates = viewModel.getAllExerciseWorkoutStates(exercise.id)
+        .filter { it.set !is RestSet }
+        .filterNot { it.shouldIgnoreCalibration() }
+        .distinctBy { it.set.id }
+    val exerciseSetIds = exerciseSetStates.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
-
-    val exerciseSetStates = remember(exercise.id) {
-        viewModel.getAllExerciseWorkoutStates(exercise.id)
-            .filter { it.set !is RestSet }
-            .distinctBy { it.set.id }
-    }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
@@ -272,21 +279,37 @@ fun ExerciseSetsViewer(
             else -> false
         }
 
+        val isCalibrationSetRow = when(val set = setStateForThisRow.set) {
+            is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+            is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+            else -> false
+        }
+
         // When custom colors are provided, enforce them for ALL sets (previous, current, future)
         // This is used when viewing previous or future exercises
         // When null, use default logic that distinguishes between previous/current/future sets within the exercise
-        val borderColor = customBorderColor ?: when{
-            rowIndex == setIndex -> Orange // Current set: orange border
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        // Calibration sets always use Green coloring, regardless of custom colors
+        val borderColor = when {
+            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
+            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.5f) // Non-current calibration set: reduced Green
+            else -> customBorderColor ?: when {
+                rowIndex == setIndex -> Orange // Current set: orange border
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
         }
 
         val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background // All sets: black background
 
-        val textColor = customTextColor ?: when {
-            rowIndex == setIndex -> Orange // Current set: orange text
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
+        // Calibration sets always use Green coloring, regardless of custom colors
+        val textColor = when {
+            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
+            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.5f) // Non-current calibration set: reduced Green
+            else -> customTextColor ?: when {
+                rowIndex == setIndex -> Orange // Current set: orange text
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
+            }
         }
 
         Row(
@@ -343,7 +366,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 15.dp),
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -383,7 +406,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 15.dp),
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -412,4 +435,16 @@ fun ExerciseSetsViewer(
             }
         }
     }
+}
+
+private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
+    val isCalibrationSet = when (val workoutSet = set) {
+        is BodyWeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
+        is WeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
+        else -> false
+    }
+
+    // Ignore calibration set if it's not in execution state (i.e., if we're in LoadSelection or RIRSelection states)
+    // With new state types, calibration sets are only shown when isCalibrationSet == true (execution state)
+    return isCalibrationSet && !this.isCalibrationSet
 }

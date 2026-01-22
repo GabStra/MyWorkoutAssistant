@@ -61,11 +61,11 @@ import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Job
@@ -317,8 +317,8 @@ fun ExerciseScreen(
                                             }
                                         }
                                         
-                                        val isCalibrationSet = remember(updatedState.calibrationStep) {
-                                            updatedState.calibrationStep == CalibrationStep.SetExecution
+                                        val isCalibrationSet = remember(updatedState.isCalibrationSet) {
+                                            updatedState.isCalibrationSet
                                         }
                                         
                                         val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
@@ -335,6 +335,25 @@ fun ExerciseScreen(
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             verticalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
+                                            // Metadata strip
+                                            ExerciseMetadataStrip(
+                                                exerciseLabel = "${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
+                                                supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
+                                                supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
+                                                setLabel = if (exerciseSetIds.size > 1) {
+                                                    "${setIndex.value + 1}/${exerciseSetIds.size}"
+                                                } else null,
+                                                sideIndicator = if (updatedState.intraSetTotal != null) "① ↔ ②" else null,
+                                                currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
+                                                isUnilateral = updatedState.isUnilateral,
+                                                equipmentName = equipment?.name,
+                                                accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
+                                                textColor = MaterialTheme.colorScheme.onBackground,
+                                                onTap = {
+                                                    hapticsViewModel.doGentleVibration()
+                                                }
+                                            )
+                                            
                                             // Status badges row (Warm-up/Calibration)
                                             if (isWarmupSet || isCalibrationSet) {
                                                 Row(
@@ -372,7 +391,7 @@ fun ExerciseScreen(
                                                                     RoundedCornerShape(25)
                                                                 )
                                                                 .border(
-                                                                    BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                                                    BorderStroke(1.dp, Green),
                                                                     RoundedCornerShape(25)
                                                                 )
                                                                 .padding(5.dp),
@@ -381,32 +400,13 @@ fun ExerciseScreen(
                                                             Text(
                                                                 text = "Calibration",
                                                                 style = MaterialTheme.typography.bodySmall,
-                                                                color = MaterialTheme.colorScheme.primary,
+                                                                color = Green,
                                                                 textAlign = TextAlign.Center
                                                             )
                                                         }
                                                     }
                                                 }
                                             }
-                                            
-                                            // Metadata strip
-                                            ExerciseMetadataStrip(
-                                                exerciseLabel = "${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
-                                                supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                                                supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
-                                                setLabel = if (exerciseSetIds.size > 1) {
-                                                    "${setIndex.value + 1}/${exerciseSetIds.size}"
-                                                } else null,
-                                                sideIndicator = if (updatedState.intraSetTotal != null) "① ↔ ②" else null,
-                                                currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
-                                                isUnilateral = updatedState.isUnilateral,
-                                                equipmentName = equipment?.name,
-                                                accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
-                                                textColor = MaterialTheme.colorScheme.onBackground,
-                                                onTap = {
-                                                    hapticsViewModel.doGentleVibration()
-                                                }
-                                            )
                                         }
                                     },
                                     exerciseTitleComposable = exerciseTitleComposable,

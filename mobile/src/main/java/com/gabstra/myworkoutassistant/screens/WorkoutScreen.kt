@@ -149,6 +149,8 @@ fun WorkoutScreen(
                     is WorkoutState.Set -> "Set"
                     is WorkoutState.Rest -> "Rest"
                     is WorkoutState.Completed -> "Completed"
+                    is WorkoutState.CalibrationLoadSelection -> "CalibrationLoadSelection"
+                    is WorkoutState.CalibrationRIRSelection -> "CalibrationRIRSelection"
                 }
             }
 
@@ -169,6 +171,16 @@ fun WorkoutScreen(
                 contentAlignment = Alignment.Center
             ) { _ ->
                 when (val state = workoutState) {
+                    is WorkoutState.CalibrationLoadSelection -> {
+                        // CalibrationLoadSelection is handled in wearos only
+                        // Mobile version doesn't support calibration flow
+                        Box(modifier = Modifier.fillMaxSize())
+                    }
+                    is WorkoutState.CalibrationRIRSelection -> {
+                        // CalibrationRIRSelection is handled in wearos only
+                        // Mobile version doesn't support calibration flow
+                        Box(modifier = Modifier.fillMaxSize())
+                    }
                     is WorkoutState.Preparing -> {
                         var currentMillis by remember { mutableIntStateOf(0) }
                         var hasTriggeredNextState by remember { mutableStateOf(false) }

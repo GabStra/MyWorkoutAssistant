@@ -296,11 +296,11 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 
 val colorsByZone = arrayOf(
     Color(0x80F0F0F0), // Not used
-    Color(0xFF84B8E6), // Zone 2 (blue)    L≈0.449
-    Color(0xFF92BD9A), // Zone 3 (green)   L≈0.448
-    Color(0xFFE2AA2C), // Zone 1 (yellow)  L≈0.451
-    Color(0xFFF2A14A), // Zone 4 (orange)  L≈0.449
-    Color(0xFFF39B9B)  // Zone 5 (red)     L≈0.449
+    Color(0xFF4FA6FF), // Blue
+    Color(0xFF4FD08A), // Green
+    Color(0xFFE0D84F), // Yellow
+    Color(0xFFF2A24A), // Orange
+    Color(0xFFF26A5A)  // Red
 )
 
 //define an array that for each zone, contains the upper and lower limit in percentage

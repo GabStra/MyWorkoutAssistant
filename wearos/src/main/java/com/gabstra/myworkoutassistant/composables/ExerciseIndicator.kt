@@ -37,11 +37,12 @@ import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
+import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -60,19 +61,22 @@ fun ExerciseIndicator(
 ) {
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     // Derive exerciseIds from allWorkoutStates to ensure workout order (not map key order)
-    val exerciseIds = remember(viewModel.allWorkoutStates) {
-        viewModel.allWorkoutStates
-            .filterIsInstance<WorkoutState.Set>()
-            .map { it.exerciseId }
-            .distinct()
-            .toList()
-    }
+    val exerciseIds = viewModel.allWorkoutStates
+        .filterIsInstance<WorkoutState.Set>()
+        .map { it.exerciseId }
+        .distinct()
+        .toList()
 
     val indicatorProgressByExerciseId by remember(exerciseIds, set) {
         derivedStateOf {
             exerciseIds.associateWith { id ->
-                val completed = viewModel.getAllExerciseCompletedSetsBefore(set).count { it.exerciseId == id }
-                val total = viewModel.getAllExerciseWorkoutStates(id).distinctBy { it.set.id }.size
+                val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
+                    .filterNot { it.shouldIgnoreCalibration() }
+                    .count { it.exerciseId == id }
+                val total = viewModel.getAllExerciseWorkoutStates(id)
+                    .filterNot { it.shouldIgnoreCalibration() }
+                    .distinctBy { it.set.id }
+                    .size
 
                 if (id == set.exerciseId) {
                     if (total == 1) {
@@ -199,7 +203,7 @@ fun ExerciseIndicator(
                 
                 val trackColor = remember(isCurrent, indicatorColor) {
                     if (isCurrent) {
-                        reduceColorLuminance(indicatorColor)
+                        reduceLuminanceOklch(indicatorColor, 0.3f)
                     } else {
                         MediumDarkGray
                     }
@@ -250,6 +254,18 @@ fun ExerciseIndicator(
             ShowRotatingIndicator(set.exerciseId)
         }
     }
+}
+
+private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
+    val isCalibrationSet = when (val workoutSet = set) {
+        is BodyWeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
+        is WeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
+        else -> false
+    }
+
+    // Ignore calibration set if it's not in execution state (i.e., if we're in LoadSelection or RIRSelection states)
+    // With new state types, calibration sets are only shown when isCalibrationSet == true (execution state)
+    return isCalibrationSet && !this.isCalibrationSet
 }
 
 // Create ViewModel outside composable to avoid "Constructing a view model in a composable" warning

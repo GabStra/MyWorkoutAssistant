@@ -18,7 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.shared.DarkOrange
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
@@ -208,7 +208,7 @@ fun MenuSectionHeader(title: String, showDivider: Boolean = true) {
     }
     Text(
         text = title,
-        color = DarkOrange,
+        color = Orange,
         style = MaterialTheme.typography.labelSmall.copy(
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.8.sp

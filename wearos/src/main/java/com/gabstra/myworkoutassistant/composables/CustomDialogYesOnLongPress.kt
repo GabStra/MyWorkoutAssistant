@@ -38,6 +38,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -164,15 +165,16 @@ fun CustomDialogYesOnLongPress(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Top,
                 ) {
-                    Text(
+                    FadingText(
                         text = title,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(20.dp,5.dp)
+                        modifier = Modifier.padding(30.dp,5.dp)
                     )
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
+                        color = MediumLighterGray,
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(5.dp)
                     )

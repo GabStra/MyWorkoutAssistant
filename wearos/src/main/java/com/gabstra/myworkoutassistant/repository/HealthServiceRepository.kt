@@ -127,7 +127,7 @@ class HealthServicesRepository(context: Context) {
             }
 
             override fun onRegistrationFailed(throwable: Throwable) {
-                TODO("Not yet implemented")
+                Log.e("HealthServiceRepository", "Exercise update callback registration failed", throwable)
             }
 
             override fun onAvailabilityChanged(

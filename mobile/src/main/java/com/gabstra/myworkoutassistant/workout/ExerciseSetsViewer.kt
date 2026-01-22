@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.workout
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +39,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -88,6 +93,7 @@ fun SetTableRow(
     isCurrentSet: Boolean,
     markAsDone: Boolean,
     color: Color = MaterialTheme.colorScheme.onBackground,
+    weightTextColor: Color? = null, // Separate color for weight text (defaults to color if not specified)
 ){
     val captionStyle = MaterialTheme.typography.titleSmall
     val equipment = setState.equipment
@@ -129,15 +135,26 @@ fun SetTableRow(
                 else -> false
             }
             
-            // Check if this is a work set waiting for calibration
+            // Check if this is a work set waiting for calibration (work set that comes after calibration set but before calibration is complete)
+            // This happens when CalibrationRIRSelection state exists in the workout for the same exercise
+            // We check both currentWorkoutState and allWorkoutStates to see if there's a CalibrationRIRSelection state
+            val currentWorkoutState by viewModel.workoutState.collectAsState()
+            val hasCalibrationRIRSelection = (currentWorkoutState is WorkoutState.CalibrationRIRSelection && 
+                (currentWorkoutState as WorkoutState.CalibrationRIRSelection).exerciseId == setState.exerciseId) ||
+                viewModel.allWorkoutStates.any { state ->
+                    state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
+                }
+            
             val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
-                setState.calibrationStep == null && exercise != null
+                !setState.isCalibrationSet && exercise != null && hasCalibrationRIRSelection
             
             if(isWarmupSet){
                 warmupIndicatorComposable()
             }else{
                 Spacer(modifier = Modifier.width(36.dp))
             }
+            val actualWeightTextColor = weightTextColor ?: color
+            
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
@@ -153,7 +170,7 @@ fun SetTableRow(
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = actualWeightTextColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
@@ -183,7 +200,7 @@ fun SetTableRow(
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = color
+                        color = actualWeightTextColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
@@ -244,7 +261,9 @@ fun ExerciseSetsViewer(
     hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
     currentSet: Set,
-    customColor: Color? = null,
+    customColor: Color? = null, // Deprecated: use customBorderColor and customTextColor instead
+    customBorderColor: Color? = null,
+    customTextColor: Color? = null,
     customMarkAsDone: Boolean? = null,
     overrideSetIndex: Int? = null
 ){
@@ -285,10 +304,43 @@ fun ExerciseSetsViewer(
         setStateForThisRow:  WorkoutState.Set,
         rowIndex: Int
     ) {
+        val isCalibrationSetRow = when(val set = setStateForThisRow.set) {
+            is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+            is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+            else -> false
+        }
+
         val backgroundColor = if(rowIndex == setIndex)
             MaterialTheme.colorScheme.primary
         else
             MaterialTheme.colorScheme.surfaceVariant
+
+        val borderColor = when {
+            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
+            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            else -> customBorderColor ?: customColor ?: null // No border for non-calibration sets
+        }
+
+        val textColor = when {
+            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
+            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            else -> customTextColor ?: customColor ?: when {
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                else -> MaterialTheme.colorScheme.onBackground
+            }
+        }
+
+        // Weight text should use normal color logic (not Green for calibration sets)
+        val weightTextColor = when {
+            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
+            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            else -> customTextColor ?: customColor ?: when {
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                else -> MaterialTheme.colorScheme.onBackground
+            }
+        }
 
         Row(
             modifier = Modifier
@@ -301,6 +353,13 @@ fun ExerciseSetsViewer(
                     .height(27.5.dp)
                     .padding(bottom = 2.5.dp)
                     .clip(RoundedCornerShape(25))
+                    .then(
+                        if (borderColor != null) {
+                            Modifier.border(BorderStroke(1.dp, borderColor), RoundedCornerShape(25))
+                        } else {
+                            Modifier
+                        }
+                    )
                     .background(backgroundColor),
                 hapticsViewModel = hapticsViewModel, // Accessed from ExerciseSetsViewer's scope
                 viewModel = viewModel,               // Accessed from ExerciseSetsViewer's scope
@@ -308,12 +367,8 @@ fun ExerciseSetsViewer(
                 index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
                 markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
-                color = customColor
-                    ?: when {
-                        rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-                        rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
-                        else -> MaterialTheme.colorScheme.onBackground
-                    }
+                color = textColor,
+                weightTextColor = weightTextColor
             )
         }
     }

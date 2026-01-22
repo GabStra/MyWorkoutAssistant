@@ -904,8 +904,9 @@ class AppViewModel() : ViewModel() {
     }
 
     /**
-     * Immediately saves the workout store, bypassing the debounce delay.
-     * Cancels any pending debounced saves and executes the save immediately with current state.
+     * Immediately executes any pending debounced save operation.
+     * Only saves if a save was actually scheduled via scheduleWorkoutSave().
+     * If no save is pending, this is a no-op.
      *
      * @param context The application context
      * @param workoutStoreRepository The repository for saving workout store
@@ -916,22 +917,19 @@ class AppViewModel() : ViewModel() {
         workoutStoreRepository: WorkoutStoreRepository,
         db: AppDatabase
     ) {
-        // Cancel any pending debounced save
-        saveDebouncer.cancel()
-        // Save current state immediately
-        saveWorkoutStoreWithBackup(context, workoutStore, workoutStoreRepository, db)
+        // Only flush if there's a pending save - flush() is a no-op if no save is scheduled
+        saveDebouncer.flush()
     }
 
     /**
-     * Immediately saves the workout store using context-only version, bypassing the debounce delay.
-     * Cancels any pending debounced saves and executes the save immediately with current state.
+     * Immediately executes any pending debounced save operation using context-only version.
+     * Only saves if a save was actually scheduled via scheduleWorkoutSave().
+     * If no save is pending, this is a no-op.
      *
      * @param context The application context
      */
     suspend fun flushWorkoutSave(context: Context) {
-        // Cancel any pending debounced save
-        saveDebouncer.cancel()
-        // Save current state immediately
-        saveWorkoutStoreWithBackupFromContext(context, workoutStore)
+        // Only flush if there's a pending save - flush() is a no-op if no save is scheduled
+        saveDebouncer.flush()
     }
 }

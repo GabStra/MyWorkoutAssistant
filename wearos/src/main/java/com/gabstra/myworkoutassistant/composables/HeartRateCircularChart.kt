@@ -77,14 +77,14 @@ import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
-import com.gabstra.myworkoutassistant.shared.DarkerOrange
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
-import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
+import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -680,7 +680,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            reduceColorLuminance(colorsByZone[index])
+            reduceLuminanceOklch(colorsByZone[index], 0.3f)
         } else {
             MediumDarkGray
         }
@@ -912,7 +912,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else DarkerOrange,
+                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceLuminanceOklch(Orange, 0.3f),
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp

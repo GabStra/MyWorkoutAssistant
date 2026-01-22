@@ -28,16 +28,26 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CalibrationRIRScreen(
     modifier: Modifier = Modifier,
-    initialRIR: Int = 2,
+    state: WorkoutState.CalibrationRIRSelection,
     onRIRConfirmed: (Double, Boolean) -> Unit,
     hapticsViewModel: HapticsViewModel
 ) {
+    val initialRIR = remember(state.currentSetData) {
+        when (val setData = state.currentSetData) {
+            is WeightSetData -> setData.calibrationRIR?.toInt() ?: 2
+            is BodyWeightSetData -> setData.calibrationRIR?.toInt() ?: 2
+            else -> 2
+        }
+    }
     var rirValue by remember { mutableIntStateOf(initialRIR) }
     var showPicker by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -86,6 +96,15 @@ fun CalibrationRIRScreen(
         // For now, we'll treat RIR 0 as form breaks if user confirms at 0
         // In the future, we could add a separate "Form Breaks" option
         val formBreaks = rirValue == 0
+        
+        // Update set data with RIR
+        val newSetData = when (val currentData = state.currentSetData) {
+            is WeightSetData -> currentData.copy(calibrationRIR = rirValue.toDouble())
+            is BodyWeightSetData -> currentData.copy(calibrationRIR = rirValue.toDouble())
+            else -> currentData
+        }
+        state.currentSetData = newSetData
+        
         onRIRConfirmed(rirValue.toDouble(), formBreaks)
         hapticsViewModel.doGentleVibration()
     }

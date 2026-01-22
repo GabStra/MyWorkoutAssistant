@@ -305,7 +305,6 @@ fun WorkoutDetailScreen(
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.deleteWorkoutRecord()
-            showDeleteDialog = false
         },
         handleNoClick = {
             showDeleteDialog = false
@@ -330,7 +329,6 @@ fun WorkoutDetailScreen(
         message = "An existing paused workout will be deleted. Continue?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            showStartConfirmationDialog = false
             permissionLauncherStart.launch(basePermissions.toTypedArray())
         },
         handleNoClick = {

@@ -30,9 +30,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -47,20 +45,19 @@ fun CalibrationLoadSelectionScreen(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
-    state: WorkoutState.Set,
-    equipment: WeightLoadedEquipment?,
+    state: WorkoutState.CalibrationLoadSelection,
     onWeightSelected: (Double) -> Unit,
     exerciseTitleComposable: @Composable () -> Unit,
-    extraInfo: (@Composable (WorkoutState.Set) -> Unit)? = null,
-    previousSetData: SetData? = null
+    extraInfo: (@Composable (WorkoutState.CalibrationLoadSelection) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val currentSetData = state.currentSetData
     val isWeightSet = currentSetData is WeightSetData
     val isBodyWeightSet = currentSetData is BodyWeightSetData
+    val equipment = state.equipment
     
     var availableWeights by remember(equipment) { mutableStateOf<Set<Double>>(emptySet()) }
-    var selectedWeightIndex by remember(state.set.id) { mutableIntStateOf(0) }
+    var selectedWeightIndex by remember(state.calibrationSet.id) { mutableIntStateOf(0) }
     var showPicker by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     
@@ -77,7 +74,7 @@ fun CalibrationLoadSelectionScreen(
         }
     }
     
-    val initialWeight = remember(state.set.id) {
+    val initialWeight = remember(state.calibrationSet.id) {
         when {
             isWeightSet -> currentSetData.actualWeight
             isBodyWeightSet -> currentSetData.additionalWeight
@@ -113,8 +110,8 @@ fun CalibrationLoadSelectionScreen(
         selectedWeight.toString()
     }
     
-    val reps = remember(state.set) {
-        when (val set = state.set) {
+    val reps = remember(state.calibrationSet) {
+        when (val set = state.calibrationSet) {
             is WeightSet -> set.reps
             is BodyWeightSet -> set.reps
             else -> 0
@@ -299,3 +296,4 @@ fun CalibrationLoadSelectionScreen(
         viewModel.schedulePlateRecalculation(totalWeight)
     }
 }
+

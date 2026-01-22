@@ -162,8 +162,9 @@ class MyReceiver(
 
                 if (appBackupFailed != null) {
                     Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
-                    // Reset backup progress state
+                    // Reset backup progress state and sync status
                     appViewModel.setBackupProgress(0f)
+                    appViewModel.resetSyncStatus() // Clear stuck sync state
                     val currentRoute = navController.currentBackStackEntry?.destination?.route
                     if (currentRoute == Screen.Loading.route) {
                         navController.navigate(Screen.WorkoutSelection.route) {

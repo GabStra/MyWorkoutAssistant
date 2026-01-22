@@ -36,7 +36,6 @@ import com.gabstra.myworkoutassistant.presentation.theme.checkboxButtonColors
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.launch
 
@@ -49,6 +48,8 @@ fun PageButtons(
     navController: NavController
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
+    val screenState by viewModel.screenState.collectAsState()
+    val currentWorkoutState = screenState.workoutState
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -100,14 +101,31 @@ fun PageButtons(
                     text = "Back",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        // Check if in calibration flow (SetExecution or RIRRating)
-                        if (updatedState.calibrationStep != null && updatedState.calibrationStep != CalibrationStep.LoadSelection) {
-                            // In calibration flow: go back one calibration step
-                            viewModel.goBackCalibrationStep()
-                            viewModel.lightScreenUp()
-                        } else {
-                            // Show existing dialog for LoadSelection or non-calibration sets
-                            showGoBackDialog = true
+                        // Check if in calibration flow (CalibrationRIRSelection or Set with isCalibrationSet)
+                        when (currentWorkoutState) {
+                            is WorkoutState.CalibrationRIRSelection -> {
+                                // Go back one step to calibration Set execution
+                                viewModel.undo()
+                                viewModel.lightScreenUp()
+                            }
+                            is WorkoutState.Set -> {
+                                if (currentWorkoutState.isCalibrationSet) {
+                                    // Go back one step to CalibrationLoadSelection
+                                    viewModel.undo()
+                                    viewModel.lightScreenUp()
+                                } else {
+                                    // Show dialog for non-calibration sets
+                                    showGoBackDialog = true
+                                }
+                            }
+                            is WorkoutState.CalibrationLoadSelection -> {
+                                // Show dialog (same as non-calibration sets)
+                                showGoBackDialog = true
+                            }
+                            else -> {
+                                // Show dialog for other states
+                                showGoBackDialog = true
+                            }
                         }
                     },
                     enabled = !isHistoryEmpty,
@@ -224,7 +242,6 @@ fun PageButtons(
             hapticsViewModel.doGentleVibration()
             viewModel.goToPreviousSet()
             viewModel.lightScreenUp()
-            showGoBackDialog = false
         },
         handleNoClick = {
             showGoBackDialog = false

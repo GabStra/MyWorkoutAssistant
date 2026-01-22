@@ -135,14 +135,17 @@ fun PagePlates(
                             append("Tot: ")
                         }
                         append(formatWeight(equipment.barWeight))
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
-                            append(" + ")
+
+                        if(currentSideWeightTotal != 0.0) {
+                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(" + (")
+                            }
+                            append(formatWeight(currentSideWeightTotal))
+                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(" × 2) = ")
+                            }
+                            append(formatWeight(currentWeightTotal))
                         }
-                        append(formatWeight(currentSideWeightTotal))
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
-                            append(" × 2 = ")
-                        }
-                        append(formatWeight(currentWeightTotal))
                     }
 
                     FadingText(
@@ -168,14 +171,16 @@ fun PagePlates(
                             append("Tot: ")
                         }
                         append(formatWeight(equipment.barWeight))
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
-                            append(" + ")
+                        if(currentSideWeightTotal != 0.0) {
+                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(" + (")
+                            }
+                            append(formatWeight(currentSideWeightTotal))
+                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(" × 2) = ")
+                            }
+                            append(formatWeight(currentWeightTotal))
                         }
-                        append(formatWeight(currentSideWeightTotal))
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
-                            append(" × 2 = ")
-                        }
-                        append(formatWeight(currentWeightTotal))
                     }
 
                     FadingText(

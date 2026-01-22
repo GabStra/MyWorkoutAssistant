@@ -414,7 +414,6 @@ fun TimedDurationSetScreen(
 
                 onTimerDisabled()
                 onTimerEnd()
-                showStopDialog = false
             },
             handleNoClick = {
                 hapticsViewModel.doGentleVibration()

@@ -144,8 +144,8 @@ fun PageExercises(
                     }
                 }
                 
-                val isCalibrationSet = remember(currentStateSet.calibrationStep, selectedExercise, currentExercise) {
-                    currentExercise == selectedExercise && currentStateSet.calibrationStep != null
+                val isCalibrationSet = remember(currentStateSet.isCalibrationSet, selectedExercise, currentExercise) {
+                    currentExercise == selectedExercise && currentStateSet.isCalibrationSet
                 }
                 
                 val supersetExercises = remember(selectedExerciseOrSupersetId, isSuperset) {
@@ -235,7 +235,12 @@ fun PageExercises(
                         selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
                         else -> null
                     },
-                    customColor = when {
+                    customBorderColor = when {
+                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> null
+                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> null
+                        else -> null
+                    },
+                    customTextColor = when {
                         selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
                         selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
                         else -> null

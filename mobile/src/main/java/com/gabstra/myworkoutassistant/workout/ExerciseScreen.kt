@@ -37,6 +37,7 @@ import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -249,8 +250,8 @@ fun ExerciseScreen(
                             }
                         }
                         
-                        val isCalibrationSet = remember(updatedState.calibrationStep) {
-                            updatedState.calibrationStep != null
+                        val isCalibrationSet = remember(updatedState.isCalibrationSet) {
+                            updatedState.isCalibrationSet
                         }
                         
                         val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
@@ -273,36 +274,6 @@ fun ExerciseScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            // Status badges row
-                            if (isWarmupSet || isCalibrationSet) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (isWarmupSet) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                            Text(
-                                                text = "Warm-up",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
-                                    if (isCalibrationSet) {
-                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                            Text(
-                                                text = "Calibration",
-                                                style = captionStyle,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            
                             // Metadata strip
                             ExerciseMetadataStrip(
                                 exerciseLabel = if (isSuperset) {
@@ -326,6 +297,36 @@ fun ExerciseScreen(
                                     hapticsViewModel.doGentleVibration()
                                 }
                             )
+                            
+                            // Status badges row
+                            if (isWarmupSet || isCalibrationSet) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isWarmupSet) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
+                                            Text(
+                                                text = "Warm-up",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                    if (isCalibrationSet) {
+                                        Chip(backgroundColor = Green) {
+                                            Text(
+                                                text = "Calibration",
+                                                style = captionStyle,
+                                                color = Green,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     },
                     exerciseTitleComposable = exerciseTitleComposable,

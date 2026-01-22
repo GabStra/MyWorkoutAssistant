@@ -2,9 +2,7 @@ package com.gabstra.myworkoutassistant.shared
 
 import androidx.compose.ui.graphics.Color
 
-val Orange = Color(0xFFFF6700)
-val DarkOrange = Color(0xFFBF4D00)
-val DarkerOrange = Color(0xFF552200)
+val Orange = Color(0xFFFD7933)
 
 val DarkGray = Color(30, 30, 30)
 
@@ -18,9 +16,10 @@ val LighterGray = Color(224, 224, 224)
 val LightGray = Color(224, 224, 224) //Color(240, 240, 240)
 val White = Color(255, 255, 255)
 
-val Green  = Color(0xFF138643)
-val Yellow = Color(0xFFCDAE1D)
-val Red    = Color(0xFFDC3434)
+val Green  = Color(0xFF00C461) // #00C461
+val Yellow = Color(0xFFDCB900) // #DCB900
+val Red    = Color(0xFFFF4040) // #FF4040
+
 
 val MuscleHeatMapBackground = MediumDarkGray
 val PrimaryMuscleGroupColor = Color(0xFFFF6700)

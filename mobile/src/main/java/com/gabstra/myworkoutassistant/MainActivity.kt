@@ -109,8 +109,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -251,6 +253,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         // Flush any pending debounced saves when app is paused
+        // Only saves if a save was actually scheduled (flushWorkoutSave is a no-op if no save is pending)
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
@@ -261,6 +264,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         // Defensive flush on stop as well
+        // Only saves if a save was actually scheduled (flushWorkoutSave is a no-op if no save is pending)
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
@@ -532,6 +536,18 @@ fun MyWorkoutAssistantNavHost(
     }
 
     var isSyncing by remember { mutableStateOf(false) }
+    
+    // Timeout mechanism to clear stuck sync state after 10 seconds
+    LaunchedEffect(isSyncing) {
+        if (isSyncing) {
+            delay(10000L) // 10 seconds timeout
+            if (isSyncing) {
+                // Only reset if still syncing (sync didn't complete)
+                isSyncing = false
+            }
+        }
+    }
+    
     var showPlanNameDialog by remember { mutableStateOf(false) }
     var pendingImportedWorkoutStore by remember {
         mutableStateOf<com.gabstra.myworkoutassistant.shared.WorkoutStore?>(
@@ -2644,7 +2660,7 @@ fun MyWorkoutAssistantNavHost(
                                 )
                             }
 
-                            EquipmentType.IRONNECK -> TODO()
+                            EquipmentType.IRONNECK -> appViewModel.goBack()
                         }
                     }
                 }

@@ -26,6 +26,8 @@ import com.google.android.gms.wearable.Node
 import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -127,6 +129,50 @@ open class AppViewModel : WorkoutViewModel() {
 
     private var pendingSyncAfterReconnect = false
     private var pendingSyncContext: Context? = null
+    
+    // Timeout jobs for sync state cleanup
+    private var isSyncingToPhoneTimeoutJob: Job? = null
+    private var syncStatusTimeoutJob: Job? = null
+    
+    /**
+     * Starts a timeout coroutine that resets _isSyncingToPhone after 10 seconds if still syncing.
+     */
+    private fun startIsSyncingToPhoneTimeout() {
+        isSyncingToPhoneTimeoutJob?.cancel()
+        isSyncingToPhoneTimeoutJob = viewModelScope.launch {
+            delay(10000L) // 10 seconds timeout
+            if (_isSyncingToPhone.value) {
+                // Only reset if still syncing (sync didn't complete)
+                _isSyncingToPhone.value = false
+                Log.w("AppViewModel", "Sync timeout: resetting _isSyncingToPhone after 10 seconds")
+            }
+        }
+    }
+    
+    /**
+     * Starts a timeout coroutine that resets _syncStatus after 10 seconds if still syncing.
+     */
+    private fun startSyncStatusTimeout() {
+        syncStatusTimeoutJob?.cancel()
+        syncStatusTimeoutJob = viewModelScope.launch {
+            delay(10000L) // 10 seconds timeout
+            if (_syncStatus.value == SyncStatus.Syncing) {
+                // Only reset if still syncing (sync didn't complete)
+                _syncStatus.value = SyncStatus.Idle
+                Log.w("AppViewModel", "Sync timeout: resetting _syncStatus after 10 seconds")
+            }
+        }
+    }
+    
+    /**
+     * Cancels timeout jobs when sync completes.
+     */
+    private fun cancelSyncTimeouts() {
+        isSyncingToPhoneTimeoutJob?.cancel()
+        isSyncingToPhoneTimeoutJob = null
+        syncStatusTimeoutJob?.cancel()
+        syncStatusTimeoutJob = null
+    }
 
     fun switchHrDisplayMode() {
         _hrDisplayMode.value = (_hrDisplayMode.value + 1) % 2
@@ -269,6 +315,7 @@ open class AppViewModel : WorkoutViewModel() {
                 // Only set syncing state after connection check succeeds
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = true
+                    startIsSyncingToPhoneTimeout()
                 }
                 
                 val workoutHistory =
@@ -277,6 +324,7 @@ open class AppViewModel : WorkoutViewModel() {
                 if (workoutHistory == null) {
                     withContext(Dispatchers.Main) {
                         _isSyncingToPhone.value = false
+                        cancelSyncTimeouts()
                         onEnd(false)
                     }
                     return@launch
@@ -313,12 +361,14 @@ open class AppViewModel : WorkoutViewModel() {
 
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = false
+                    cancelSyncTimeouts()
                     onEnd(result)
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error sending workout history to phone", e)
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = false
+                    cancelSyncTimeouts()
                     // Log detailed error for debugging but show generic message to user
                     Log.d("AppViewModel", "Detailed sync error: ${e.message}")
                     if (!isWorkoutActive()) {
@@ -469,6 +519,7 @@ open class AppViewModel : WorkoutViewModel() {
         clearPendingSync()
         try {
             _syncStatus.value = SyncStatus.Syncing
+            startSyncStatusTimeout()
 
             // Read current state at execution time (includes all accumulated sets)
             val exerciseInfos = mutableListOf<ExerciseInfo>()
@@ -516,6 +567,7 @@ open class AppViewModel : WorkoutViewModel() {
 
             // Set status based on result
             _syncStatus.value = if (result) SyncStatus.Success else SyncStatus.Failure
+            cancelSyncTimeouts()
 
             // Don't show immediate success toast - wait for completion message
             // Success toast will be shown when SYNC_COMPLETE is received
@@ -531,6 +583,7 @@ open class AppViewModel : WorkoutViewModel() {
             // Log detailed error for debugging but show generic message to user
             Log.d("AppViewModel", "Detailed sync error: ${e.message}")
             _syncStatus.value = SyncStatus.Failure
+            cancelSyncTimeouts()
             if (syncContext != null) {
                 withContext(Dispatchers.Main) {
                     if (!isWorkoutActive()) {

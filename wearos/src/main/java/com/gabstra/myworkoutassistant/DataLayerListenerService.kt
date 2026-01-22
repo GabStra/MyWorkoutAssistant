@@ -293,6 +293,7 @@ class DataLayerListenerService : WearableListenerService() {
     
     /**
      * Cleans up incomplete sync state and notifies UI.
+     * This clears sync state when sync fails or times out.
      */
     private fun cleanupIncompleteSyncState() {
         removeTimeout()
@@ -303,12 +304,13 @@ class DataLayerListenerService : WearableListenerService() {
         ignoreUntilStartOrEnd = false
         currentTransactionId = null
         
-        // Notify UI that sync was interrupted
+        // Notify UI that sync was interrupted - this will reset sync state in AppViewModel
         val intent = Intent(INTENT_ID).apply {
             putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
             setPackage(packageName)
         }
         sendBroadcast(intent)
+        Log.d("DataLayerSync", "Cleaned up incomplete sync state and notified UI")
     }
     
     /**

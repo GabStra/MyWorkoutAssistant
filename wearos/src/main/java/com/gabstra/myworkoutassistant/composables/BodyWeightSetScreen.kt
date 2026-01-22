@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -85,10 +84,6 @@ fun BodyWeightSetScreen(
     val isCalibrationSet = remember(state.set) {
         (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.CalibrationSet
     }
-    val calibrationStep = state.calibrationStep
-    
-    // Only show calibration flow if equipment is present
-    val shouldShowCalibration = isCalibrationSet && state.equipment != null
 
     val plateauReason = remember(state.exerciseId) {
         viewModel.plateauReasonByExerciseId[state.exerciseId]
@@ -185,13 +180,6 @@ fun BodyWeightSetScreen(
         }
     }
 
-    // Close edit modes when entering load selection step
-    LaunchedEffect(calibrationStep) {
-        if (calibrationStep == CalibrationStep.LoadSelection) {
-            isRepsInEditMode = false
-            isWeightInEditMode = false
-        }
-    }
 
     LaunchedEffect(isInEditMode) {
         if (isInEditMode) {
@@ -295,8 +283,6 @@ fun BodyWeightSetScreen(
         val repsText = "${currentSetData.actualReps}"
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
-            // Disable edit mode on Step 2 (SetExecution)
-            if (calibrationStep == CalibrationStep.SetExecution) return
             isRepsInEditMode = !isRepsInEditMode
             updateInteractionTime()
             isWeightInEditMode = false
@@ -371,8 +357,6 @@ fun BodyWeightSetScreen(
         }
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
-            // Disable edit mode on Step 2 (SetExecution)
-            if (calibrationStep == CalibrationStep.SetExecution) return
             isWeightInEditMode = !isWeightInEditMode
             updateInteractionTime()
             isRepsInEditMode = false
@@ -488,54 +472,8 @@ fun BodyWeightSetScreen(
         }
     }
 
-    // Handle calibration flow steps (only if equipment is present)
-    if (shouldShowCalibration && calibrationStep != null) {
-        when (calibrationStep) {
-            CalibrationStep.LoadSelection -> {
-                customComponentWrapper {
-                    CalibrationLoadSelectionScreen(
-                        viewModel = viewModel,
-                        hapticsViewModel = hapticsViewModel,
-                        state = state,
-                        equipment = state.equipment,
-                        onWeightSelected = { selectedWeight ->
-                            // Update set data with selected weight (additionalWeight for body weight)
-                            val newSetData = currentSetData.copy(additionalWeight = selectedWeight)
-                            currentSetData = newSetData.copy(volume = newSetData.calculateVolume())
-                            state.currentSetData = currentSetData
-                            // Move directly to set execution
-                            viewModel.confirmCalibrationLoad()
-                        },
-                        exerciseTitleComposable = exerciseTitleComposable,
-                        extraInfo = extraInfo,
-                        modifier = modifier,
-                        previousSetData = previousSetData
-                    )
-                }
-                return
-            }
-            CalibrationStep.SetExecution -> {
-                // Show normal set screen - continue to normal flow below
-            }
-            CalibrationStep.RIRRating -> {
-                customComponentWrapper {
-                    CalibrationRIRScreen(
-                        initialRIR = currentSetData.calibrationRIR?.toInt() ?: 2,
-                        onRIRConfirmed = { rir, formBreaks ->
-                            // Store RIR and apply adjustments
-                            val newSetData = currentSetData.copy(calibrationRIR = rir)
-                            currentSetData = newSetData
-                            state.currentSetData = currentSetData
-                            viewModel.applyCalibrationRIR(rir, formBreaks)
-                        },
-                        hapticsViewModel = hapticsViewModel,
-                        modifier = modifier
-                    )
-                }
-                return
-            }
-        }
-    }
+    // CalibrationLoadSelection and CalibrationRIRSelection are handled in WorkoutScreen
+    // This screen only handles normal Set states (including calibration set execution with isCalibrationSet == true)
 
     customComponentWrapper {
         Box(

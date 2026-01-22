@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -8,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -20,16 +22,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.core.content.edit
 import androidx.navigation.NavController
-import android.widget.Toast
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.composables.CalibrationLoadSelectionScreen
+import com.gabstra.myworkoutassistant.composables.CalibrationRIRScreen
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
+import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.HrStatusBadge
 import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
-import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
@@ -43,8 +49,9 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationStep
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -153,7 +160,6 @@ fun WorkoutScreen(
                     inclusive = true
                 }
             }
-            showWorkoutInProgressDialog = false
         },
         handleNoClick = {
             hapticsViewModel.doGentleVibration()
@@ -183,12 +189,18 @@ fun WorkoutScreen(
         onSinglePress = {
             if(showWorkoutInProgressDialog) return@CustomBackHandler
             
-            when (workoutState) {
+                when (workoutState) {
                 is WorkoutState.Set -> {
                     Toast.makeText(context, "Double press to complete set", Toast.LENGTH_SHORT).show()
                 }
                 is WorkoutState.Rest -> {
                     Toast.makeText(context, "Double press to skip rest", Toast.LENGTH_SHORT).show()
+                }
+                is WorkoutState.CalibrationLoadSelection -> {
+                    Toast.makeText(context, "Double press to confirm load", Toast.LENGTH_SHORT).show()
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    Toast.makeText(context, "Double press to confirm RIR", Toast.LENGTH_SHORT).show()
                 }
                 else -> {
                     // Keep existing behavior for other states
@@ -204,8 +216,8 @@ fun WorkoutScreen(
                 is WorkoutState.Set -> {
                     val setState = workoutState as WorkoutState.Set
                     
-                    // Check if this is a calibration set in SetExecution step
-                    val isCalibrationSetExecution = setState.calibrationStep == CalibrationStep.SetExecution
+                    // Check if this is a calibration set execution
+                    val isCalibrationSetExecution = setState.isCalibrationSet
                     
                     // Handle intra-set counter if applicable
                     if (setState.intraSetTotal != null) {
@@ -226,6 +238,14 @@ fun WorkoutScreen(
                             viewModel.lightScreenUp()
                         }
                     }
+                }
+                is WorkoutState.CalibrationLoadSelection -> {
+                    // CalibrationLoadSelectionScreen handles its own back button logic
+                    // This case should not be reached, but handle it gracefully
+                }
+                is WorkoutState.CalibrationRIRSelection -> {
+                    // CalibrationRIRScreen handles its own back button logic
+                    // This case should not be reached, but handle it gracefully
                 }
                 is WorkoutState.Rest -> {
                     val restState = workoutState as WorkoutState.Rest
@@ -325,6 +345,8 @@ fun WorkoutScreen(
                     is WorkoutState.Set -> "Set"
                     is WorkoutState.Rest -> "Rest"
                     is WorkoutState.Completed -> "Completed"
+                    is WorkoutState.CalibrationLoadSelection -> "Calibration Load Selection"
+                    is WorkoutState.CalibrationRIRSelection -> "Calibration RIR Selection"
                 }
             }
 
@@ -347,6 +369,53 @@ fun WorkoutScreen(
                             PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
                         else
                             PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
+                    }
+                    is WorkoutState.CalibrationLoadSelection -> {
+                        val state = workoutState as WorkoutState.CalibrationLoadSelection
+                        val exercise = viewModel.exercisesById[state.exerciseId]!!
+                        CalibrationLoadSelectionScreen(
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            state = state,
+                            onWeightSelected = { selectedWeight ->
+                                // Update set data with selected weight
+                                val newSetData = when (val currentData = state.currentSetData) {
+                                    is WeightSetData -> currentData.copy(actualWeight = selectedWeight)
+                                    is BodyWeightSetData -> currentData.copy(additionalWeight = selectedWeight)
+                                    else -> currentData
+                                }
+                                val updatedSetData = when (newSetData) {
+                                    is WeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
+                                    is BodyWeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
+                                    else -> newSetData
+                                }
+                                state.currentSetData = updatedSetData
+                                // Move directly to set execution (or warmups if enabled)
+                                viewModel.confirmCalibrationLoad()
+                            },
+                            exerciseTitleComposable = {
+                                Text(
+                                    text = exercise.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            },
+                            extraInfo = null,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    is WorkoutState.CalibrationRIRSelection -> {
+                        val state = workoutState as WorkoutState.CalibrationRIRSelection
+                        CalibrationRIRScreen(
+                            state = state,
+                            onRIRConfirmed = { rir, formBreaks ->
+                                // Apply calibration RIR adjustments
+                                viewModel.applyCalibrationRIR(rir, formBreaks)
+                            },
+                            hapticsViewModel = hapticsViewModel,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                     is WorkoutState.Set -> {
                         val state = workoutState as WorkoutState.Set

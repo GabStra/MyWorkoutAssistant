@@ -49,9 +49,6 @@ class MeasureDataViewModel(
                                 _heartRateBpm.value = latestHeartRate
                             }
                         }
-
-                        is MeasureMessage.MeasureAvailability -> TODO()
-                        is MeasureMessage.MeasureData -> TODO()
                     }
                 }
         }

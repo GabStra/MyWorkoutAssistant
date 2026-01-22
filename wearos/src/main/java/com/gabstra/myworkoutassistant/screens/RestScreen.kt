@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
@@ -55,7 +56,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
+import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -125,8 +126,14 @@ fun RestScreen(
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
 
-    val exercise = remember(state.nextStateSets.first().exerciseId) {
-        viewModel.exercisesById[state.nextStateSets.first().exerciseId]!!
+    val exercise = remember(state.nextStateSets.firstOrNull()?.exerciseId ?: state.exerciseId) {
+        val exerciseId = state.nextStateSets.firstOrNull()?.exerciseId ?: state.exerciseId
+        if (exerciseId != null) {
+            viewModel.exercisesById[exerciseId]!!
+        } else {
+            // Fallback: return first available exercise if no exerciseId is available
+            viewModel.exercisesById.values.firstOrNull() ?: throw IllegalStateException("No exercises available")
+        }
     }
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -148,12 +155,17 @@ fun RestScreen(
                             .flatMap { it.exercises }).any { it.id == exercise.id })
     }
 
-    val pageTypes = remember(showPlatesPage,showProgressionComparisonPage) {
+    val showNotesPage = remember(exercise) {
+        exercise.notes.isNotEmpty()
+    }
+
+    val pageTypes = remember(showPlatesPage, showProgressionComparisonPage, showNotesPage) {
         mutableListOf<PageType>().apply {
             add(PageType.BUTTONS)  // First item - index 0
             add(PageType.EXERCISES)
             if (showPlatesPage) add(PageType.PLATES)
             if (showProgressionComparisonPage) add(PageType.PROGRESSION_COMPARISON)
+            if (showNotesPage) add(PageType.NOTES)
         }
     }
 
@@ -385,39 +397,57 @@ fun RestScreen(
                             .padding(horizontal = 15.dp)
                     ) {
                         when (pageType) {
-                            PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment, hapticsViewModel, viewModel)
+                            PageType.PLATES -> {
+                                val nextSetState = state.nextStateSets.firstOrNull()
+                                if (nextSetState != null) {
+                                    PagePlates(nextSetState, equipment, hapticsViewModel, viewModel)
+                                }
+                            }
                             PageType.EXERCISE_DETAIL -> {}
                             PageType.EXERCISES -> {
-                                PageExercises(
-                                    selectedExercise,
-                                    state.nextStateSets.first(),
-                                    viewModel,
-                                    hapticsViewModel,
-                                    exercise,
-                                    exerciseOrSupersetIds = exerciseOrSupersetIds,
-                                    onExerciseSelected = {
-                                        selectedExercise = it
-                                    }
-                                )
+                                val nextSetState = state.nextStateSets.firstOrNull()
+                                if (nextSetState != null) {
+                                    PageExercises(
+                                        selectedExercise,
+                                        nextSetState,
+                                        viewModel,
+                                        hapticsViewModel,
+                                        exercise,
+                                        exerciseOrSupersetIds = exerciseOrSupersetIds,
+                                        onExerciseSelected = {
+                                            selectedExercise = it
+                                        }
+                                    )
+                                }
                             }
 
-                            PageType.BUTTONS -> PageButtons(
-                                state.nextStateSets.first(),
-                                viewModel,
-                                hapticsViewModel,
-                                navController
-                            )
-
-                            PageType.NOTES -> TODO()
-                            PageType.PROGRESSION_COMPARISON -> {
-                                key(pageType, pageIndex) {
-                                    PageProgressionComparison(
-                                        viewModel = viewModel,
-                                        hapticsViewModel = hapticsViewModel,
-                                        exercise = exercise,
-                                        state = state.nextStateSets.first(),
-                                        isPageVisible = pagerState.currentPage == progressionComparisonPageIndex
+                            PageType.BUTTONS -> {
+                                val nextSetState = state.nextStateSets.firstOrNull()
+                                if (nextSetState != null) {
+                                    PageButtons(
+                                        nextSetState,
+                                        viewModel,
+                                        hapticsViewModel,
+                                        navController
                                     )
+                                }
+                            }
+
+                            PageType.NOTES -> {
+                                PageNotes(exercise.notes)
+                            }
+                            PageType.PROGRESSION_COMPARISON -> {
+                                val nextSetState = state.nextStateSets.firstOrNull()
+                                if (nextSetState != null) {
+                                    key(pageType, pageIndex) {
+                                        PageProgressionComparison(
+                                            viewModel = viewModel,
+                                            hapticsViewModel = hapticsViewModel,
+                                            exercise = exercise,
+                                            state = nextSetState,
+                                            isPageVisible = pagerState.currentPage == progressionComparisonPageIndex
+                                        )
+                                    }
                                 }
                             }
 
@@ -439,15 +469,18 @@ fun RestScreen(
             },
         contentAlignment = Alignment.Center
     ) {
-        ExerciseIndicator(
-            viewModel,
-            state.nextStateSets.first(),
-            selectedExercise.id
-        )
+        val nextSetState = state.nextStateSets.firstOrNull()
+        if (nextSetState != null) {
+            ExerciseIndicator(
+                viewModel,
+                nextSetState,
+                selectedExercise.id
+            )
+        }
 
         val primaryColor = MaterialTheme.colorScheme.primary
         val trackColor = remember(primaryColor) {
-            reduceColorLuminance(primaryColor)
+            reduceLuminanceOklch(primaryColor, 0.3f)
         }
 
         CircularProgressIndicator(
