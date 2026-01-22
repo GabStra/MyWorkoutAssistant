@@ -1,0 +1,106 @@
+---
+alwaysApply: true
+---
+## Git commit message format and requirements
+
+### When to apply
+
+This rule applies whenever generating Git commit messages, including when:
+- User explicitly asks for a commit message (e.g., "generate commit message", "create a commit message", "write a git commit message")
+- User requests commit message generation in any form
+- Generating commit messages for staged changes or code modifications
+
+When generating a commit message, output exactly **one** Git commit message following the format below.
+
+### Format
+
+Use **Conventional Commits** with multi-line format:
+```
+<type>(<scope>): <summary>
+
+<Why the change was needed - explain the problem or motivation>
+
+<What was changed - high-level description, avoid listing files>
+
+<Impact or benefit - if relevant>
+```
+
+### Summary Line (First Line)
+- Format: `<type>(<scope>): <summary>`
+- Allowed types: feat|fix|refactor|perf|test|docs|build|ci|chore|revert
+- scope is optional; use it only if obvious
+- summary: imperative, intent-focused, <= 72 chars, no trailing period
+- Be concise: avoid listing changed files or implementation details
+
+### Body Section (Required)
+After a blank line, include:
+1. **Why** (mandatory): Explain the problem, motivation, or reason for the change. This is the most important part - make it clear what issue this solves or what improvement it provides.
+2. **What** (mandatory): High-level description of what was changed. Focus on the solution, not individual files. Avoid listing specific files unless necessary for context.
+3. **Impact** (optional): If relevant, describe the benefit or impact of the change.
+
+### Formatting Rules
+- Summary line must be <= 72 characters
+- Body lines should wrap at 72 characters for readability
+- Use blank lines to separate sections
+- Write in imperative mood ("add feature" not "added feature")
+- Focus on explaining the "why" clearly - this helps reviewers understand the context and motivation
+
+### Examples
+
+**Good:**
+```
+feat(workout): add plate recalculation debouncing to improve performance
+
+Plate recalculation was being triggered on every weight input change,
+causing performance issues and UI lag when users rapidly adjusted weights.
+This was especially noticeable in BodyWeightSetScreen and WeightSetScreen
+where frequent updates occurred.
+
+Added PlateRecalculationDebouncer utility with flush() and schedule()
+methods to batch recalculation requests. This reduces unnecessary
+computations while maintaining responsive UI updates.
+
+Improves performance during weight input and reduces UI lag.
+```
+
+**Good:**
+```
+refactor(equipment): rename barLength to sleeveLength to clarify meaning
+
+The term "barLength" was ambiguous - it could refer to the total bar
+length or just the sleeve length. This caused confusion when calculating
+plate capacity and sleeve space.
+
+Renamed the property to sleeveLength throughout the codebase to clearly
+indicate it represents the length of the sleeve where plates are loaded,
+not the total bar length.
+
+Improves code clarity and reduces potential bugs from misunderstanding.
+```
+
+**Bad (too concise, missing "why"):**
+```
+feat: implement plate recalculation debouncer and enhance weight set handling; add flush and schedule methods for improved performance in BodyWeightSetScreen and WeightSetScreen
+```
+
+**Bad (lists files, no "why"):**
+```
+refactor: update Barbell and PlateLoadedCable classes to replace barLength with sleeveLength, enhancing clarity in equipment specifications, and adjust related UI components and tests accordingly
+```
+
+**Bad (single line, no context):**
+```
+fix: resolve performance issue
+```
+
+### Output Format
+Output the complete multi-line commit message exactly as it should appear in git:
+```
+Commit message: <type>(<scope>): <summary>
+
+<Why explanation>
+
+<What changed>
+
+<Impact if relevant>
+```
