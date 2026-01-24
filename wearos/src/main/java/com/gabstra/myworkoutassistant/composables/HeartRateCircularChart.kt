@@ -135,7 +135,7 @@ fun HrTargetGlowEffect(
             val diameter = min(maxWidth, maxHeight)
             val radiusPx = with(density) { (diameter / 2f).toPx() }
             val center = Offset(radiusPx, radiusPx)
-            val glowWidth = with(density) { 8.dp.toPx() }
+            val glowWidth = with(density) { 15.dp.toPx() }
 
             Canvas(
                 modifier = Modifier

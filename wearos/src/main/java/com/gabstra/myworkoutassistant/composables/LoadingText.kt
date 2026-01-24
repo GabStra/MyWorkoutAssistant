@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -19,7 +20,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun LoadingText(
     baseText: String,
-    style: TextStyle = MaterialTheme.typography.titleMedium
+    style: TextStyle = MaterialTheme.typography.titleMedium,
+    color: Color = Color.Unspecified,
 ) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
@@ -47,6 +49,7 @@ fun LoadingText(
         Text(
             text = baseText + ".".repeat(dotCount.intValue),
             style = style,
+            color = color,
             maxLines = 1
         )
     }

@@ -49,13 +49,20 @@ fun SyncStatusBadge(
     LaunchedEffect(syncStatus) {
         when (syncStatus) {
             AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
+                // Store the initial status to check if it changed during delay
+                val initialStatus = syncStatus
                 delay(3000)
                 // Only reset if status hasn't changed (e.g., new sync started)
-                if (viewModel.syncStatus.value == syncStatus) {
+                // This ensures we don't reset if a new sync started during the delay
+                val currentStatus = viewModel.syncStatus.value
+                if (currentStatus == initialStatus && currentStatus != AppViewModel.SyncStatus.Syncing) {
                     viewModel.resetSyncStatus()
                 }
             }
-            else -> {}
+            else -> {
+                // When status changes to Syncing or Idle, the effect restarts
+                // This ensures any pending auto-dismiss is cancelled
+            }
         }
     }
 
@@ -108,11 +115,10 @@ fun SyncStatusBadge(
                                 )
                             )
                             Spacer(modifier = Modifier.size(8.dp))
-                            Text(
-                                text = "Syncing...",
+                            LoadingText(
+                                baseText = "Syncing",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = textColor,
-                                textAlign = TextAlign.Center
+                                color = textColor
                             )
                         }
                         AppViewModel.SyncStatus.Success -> {
