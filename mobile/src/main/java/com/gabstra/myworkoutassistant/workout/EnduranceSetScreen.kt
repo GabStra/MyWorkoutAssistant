@@ -117,7 +117,7 @@ fun EnduranceSetScreen (
 
     // Sync currentMillis with state.currentSetData.endTimer for UI display
     // The timer service updates state.currentSetData.endTimer, so we read from it
-    var currentMillis by remember { mutableIntStateOf((state.currentSetData as EnduranceSetData).endTimer) }
+    var currentMillis by remember(set.id) { mutableIntStateOf(0) }
     
     // Update currentMillis when state changes (from timer service or local edits)
     LaunchedEffect(state.currentSetData) {

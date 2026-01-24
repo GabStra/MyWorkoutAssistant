@@ -96,55 +96,81 @@ fun ExerciseIndicator(
         }
     }
 
+    // Helper function to find time exercise set for selected exercise (doesn't require timer to be started)
+    fun findTimeExerciseSet(exerciseId: UUID, currentSet: WorkoutState.Set): WorkoutState.Set? {
+        val allExerciseSets = viewModel.getAllExerciseWorkoutStates(exerciseId)
+            .filterNot { it.shouldIgnoreCalibration() }
+        
+        // Find the first set that:
+        // 1. Hasn't been completed (is at or after current set in workout flow)
+        // 2. Is a TimedDurationSet or EnduranceSet
+        val currentSetIndex = viewModel.allWorkoutStates.indexOfFirst { 
+            it is WorkoutState.Set && it.set.id == currentSet.set.id 
+        }
+        
+        return allExerciseSets.firstOrNull { exerciseSet ->
+            val setIndex = viewModel.allWorkoutStates.indexOfFirst { 
+                it is WorkoutState.Set && it.set.id == exerciseSet.set.id 
+            }
+            val isNotCompleted = setIndex >= currentSetIndex
+            val isTimerSet = exerciseSet.set is TimedDurationSet || exerciseSet.set is EnduranceSet
+            
+            isNotCompleted && isTimerSet
+        }
+    }
+
     // Calculate indicator progress
     // derivedStateOf automatically tracks all state reads, so reading currentSetData from
     // active timer sets will trigger recomposition when timer service updates them
-    val indicatorProgressByExerciseId by remember(exerciseIds, set) {
-        derivedStateOf {
-            exerciseIds.associateWith { id ->
-                val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
-                    .filterNot { it.shouldIgnoreCalibration() }
-                    .count { it.exerciseId == id }
-                val total = viewModel.getAllExerciseWorkoutStates(id)
-                    .filterNot { it.shouldIgnoreCalibration() }
-                    .distinctBy { it.set.id }
-                    .size
+    val indicatorProgressByExerciseId by derivedStateOf {
+        exerciseIds.associateWith { id ->
+            val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
+                .filterNot { it.shouldIgnoreCalibration() }
+                .count { it.exerciseId == id }
+            val total = viewModel.getAllExerciseWorkoutStates(id)
+                .filterNot { it.shouldIgnoreCalibration() }
+                .distinctBy { it.set.id }
+                .size
 
-                // Check if this exercise has an active timer (current or other exercise)
-                val activeTimerSet = if (id == set.exerciseId) {
-                    // For current exercise, use the set parameter
-                    if (total == 1 && (set.set is TimedDurationSet || set.set is EnduranceSet) 
-                        && set.startTime != null 
-                        && viewModel.workoutTimerService.isTimerRegistered(set.set.id)) {
-                        set
-                    } else null
-                } else {
-                    // For other exercises, find active timer set using helper function
-                    findActiveTimerSet(id, set)
-                }
-
-                if (activeTimerSet != null) {
-                    // Calculate progress based on timer - reading currentSetData here triggers recomposition
-                    // This read is tracked by derivedStateOf, so it will recompute when timer service updates it
-                    when (val d = activeTimerSet.currentSetData) {
-                        is EnduranceSetData -> {
-                            // EnduranceSet counts up, progress is endTimer / startTimer
-                            (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+            // Determine which set to use for timer progress calculation
+            val timerSet: WorkoutState.Set? = when {
+                // 1. Current exercise: use timer progress only if total == 1 and it's a time exercise
+                id == set.exerciseId -> {
+                    if (total == 1 && (set.set is TimedDurationSet || set.set is EnduranceSet)) {
+                        // Check if currentSetData is a time exercise type - read state directly to ensure tracking
+                        when (set.currentSetDataState.value) {
+                            is TimedDurationSetData, is EnduranceSetData -> set
+                            else -> null
                         }
-                        is TimedDurationSetData -> {
-                            // TimedDurationSet counts down, progress is 1 - (endTimer / startTimer)
-                            (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
-                        }
-                        else -> (completed + 1f) / total.toFloat()
-                    }
-                } else {
-                    // No active timer, use completed/total ratio
-                    if (id == set.exerciseId && total == 1) {
-                        (completed + 1f) / total.toFloat()
                     } else {
-                        completed.toFloat() / total.toFloat()
+                        null
                     }
                 }
+                // 2. Selected exercise: find time exercise set and use its currentSetData
+                selectedExerciseId != null && id == selectedExerciseId -> {
+                    findTimeExerciseSet(id, set)
+                }
+                // 3. All other exercises: no timer tracking
+                else -> null
+            }
+
+            if (timerSet != null) {
+                // Calculate progress based on timer - read state value directly to ensure Compose tracks it
+                // Reading currentSetDataState.value ensures state changes are tracked even when screen isn't visible
+                when (val d = timerSet.currentSetDataState.value) {
+                    is EnduranceSetData -> {
+                        // EnduranceSet counts up, progress is endTimer / startTimer
+                        (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+                    }
+                    is TimedDurationSetData -> {
+                        // TimedDurationSet counts down, progress is 1 - (endTimer / startTimer)
+                        (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
+                    }
+                    else -> completed.toFloat() / total.toFloat()
+                }
+            } else {
+                // No timer tracking, use completed/total ratio
+                completed.toFloat() / total.toFloat()
             }
         }
     }
