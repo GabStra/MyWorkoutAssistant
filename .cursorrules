@@ -145,4 +145,36 @@ rules:
         Use `read_lints` tool to check for linter errors after code changes
         and address any issues found.
 
+  - id: logging-conventions
+    description: >
+      All debugging logs must use the Android Log library with a consistent
+      tag for easy filtering.
+    appliesTo:
+      - "**/*.kt"
+      - "**/*.java"
+    priority: high
+    recommendations:
+      - >
+        All debugging logs MUST use android.util.Log (import as `Log`).
+        Do not use println(), System.out.println(), or any other logging
+        mechanism for debugging purposes.
+      - >
+        Each class that logs must define a companion object constant named
+        `TAG` with the class name as the value. For example:
+        `companion object { private const val TAG = "WorkoutViewModel" }`
+        In Java, use: `private static final String TAG = "WorkoutViewModel";`
+      - >
+        Always use the TAG constant when calling Log methods:
+        - `Log.d(TAG, "message")` for debug logs
+        - `Log.e(TAG, "message")` for error logs
+        - `Log.w(TAG, "message")` for warning logs
+        - `Log.i(TAG, "message")` for info logs
+        - `Log.v(TAG, "message")` for verbose logs
+      - >
+        Never hardcode tag strings directly in Log calls. Always use the
+        TAG constant to ensure consistent filtering across the codebase.
+      - >
+        The TAG should match the class name (without package) for easy
+        identification when filtering logs with `adb logcat -s TAG_NAME`.
+
 
