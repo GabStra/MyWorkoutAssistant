@@ -7,7 +7,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -15,15 +14,14 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.Red
 
 
 @Composable
 fun PulsingHeartWithBpm(
     modifier: Modifier = Modifier,
     bpm: Int,
-    tint: Color = Red,
-    size: Dp = 12.5.dp
+    tint: Color,
+    size: Dp = 15.dp //12.5.dp
 ) {
     val shouldPulse = bpm > 0
 

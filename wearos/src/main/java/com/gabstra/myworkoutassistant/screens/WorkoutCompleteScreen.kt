@@ -199,12 +199,14 @@ fun WorkoutCompleteScreen(
                 }
             }
         )
-        Text(
-            modifier = Modifier.padding(top = 2.5.dp),
-            text = "Closing in: ${countDownTimer.intValue}",
-            style = headerStyle,
-            textAlign = TextAlign.Center,
-        )
+        if (syncComplete) {
+            Text(
+                modifier = Modifier.padding(top = 2.5.dp),
+                text = "Closing in: ${countDownTimer.intValue}",
+                style = headerStyle,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 
     CustomDialogYesOnLongPress(

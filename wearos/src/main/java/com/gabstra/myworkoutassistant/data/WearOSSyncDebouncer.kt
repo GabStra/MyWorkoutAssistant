@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -32,10 +33,13 @@ class WearOSSyncDebouncer(
     suspend fun schedule(syncAction: suspend () -> Unit) {
         mutex.withLock {
             // Cancel existing job if any
+            val hadExistingJob = syncJob != null
             syncJob?.cancel()
             
             // Store the latest sync action
             pendingSyncAction = syncAction
+            
+            Log.d("WorkoutSync", "WearOSSyncDebouncer.schedule: ${if (hadExistingJob) "Cancelled previous job and " else ""}Scheduled new sync with ${debounceDelayMs}ms delay")
             
             // Create new job with delay
             syncJob = scope.launch {
@@ -43,9 +47,12 @@ class WearOSSyncDebouncer(
                 mutex.withLock {
                     // Re-check if this job is still current (not cancelled and not replaced)
                     if (syncJob?.isActive == true && pendingSyncAction != null) {
+                        Log.d("WorkoutSync", "WearOSSyncDebouncer.schedule: Debounce delay completed, executing sync action")
                         val action = pendingSyncAction
                         pendingSyncAction = null
                         action?.invoke()
+                    } else {
+                        Log.d("WorkoutSync", "WearOSSyncDebouncer.schedule: Job was cancelled or replaced, not executing")
                     }
                 }
             }
@@ -58,11 +65,15 @@ class WearOSSyncDebouncer(
      */
     suspend fun flush() {
         mutex.withLock {
+            val hadPendingAction = pendingSyncAction != null
             syncJob?.cancel()
             val action = pendingSyncAction
             pendingSyncAction = null
             if (action != null) {
+                Log.d("WorkoutSync", "WearOSSyncDebouncer.flush: Flushing pending sync action immediately")
                 action()
+            } else {
+                Log.d("WorkoutSync", "WearOSSyncDebouncer.flush: No pending sync action to flush")
             }
         }
     }

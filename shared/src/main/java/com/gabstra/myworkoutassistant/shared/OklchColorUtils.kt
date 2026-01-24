@@ -1,7 +1,11 @@
 package com.gabstra.myworkoutassistant.shared
 
 import androidx.compose.ui.graphics.Color
-import kotlin.math.*
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * OKLCH luminance reduction (perceptual), preserving hue and chroma as much as possible.
@@ -9,20 +13,76 @@ import kotlin.math.*
  *
  * factor: 0..1 (e.g. 0.8 keeps 80% of OKLCH lightness)
  */
-fun reduceLuminanceOklch(color: Color, factor: Float): Color {
+/**
+ * Like reduceLuminanceOklch(), but enforces a minimum contrast vs black so it never becomes
+ * “invisible”. If the requested factor makes it too dark, it will use the darkest OKLCH L
+ * that still meets minContrastOnBlack (without going brighter than the original color).
+ *
+ * minContrastOnBlack:
+ *  - 2.5f  good for non-text UI (icons, strokes)
+ *  - 4.5f  for text-level readability
+ */
+fun reduceLuminanceOklch(
+    color: Color,
+    factor: Float,
+    minContrastOnBlack: Float = 2.5f
+): Color {
     val f = factor.coerceIn(0f, 1f)
 
     val sr = color.red
     val sg = color.green
     val sb = color.blue
-    val a = color.alpha
+    val a  = color.alpha
 
     val (L, C, h) = srgbToOklch(sr, sg, sb)
 
-    val newL = (L * f).coerceIn(0f, 1f)
-    val (nr, ng, nb) = oklchToSrgb(newL, C, h)
+    val targetL = (L * f).coerceIn(0f, 1f)
 
+    // Candidate at requested darkness
+    run {
+        val (r, g, b) = oklchToSrgb(targetL, C, h)
+        if (contrastOnBlack(r, g, b, a) >= minContrastOnBlack) {
+            return Color(r, g, b, a)
+        }
+    }
+
+    // If even the original doesn’t meet the threshold, don’t try to “fix” by brightening past it
+    run {
+        val origContrast = contrastOnBlack(sr, sg, sb, a)
+        if (origContrast < minContrastOnBlack) return color
+    }
+
+    // Binary search L in [targetL, L] to find the darkest that still passes
+    var lo = targetL
+    var hi = L
+    var bestL = L
+
+    repeat(24) {
+        val mid = (lo + hi) * 0.5f
+        val (r, g, b) = oklchToSrgb(mid, C, h)
+        val cr = contrastOnBlack(r, g, b, a)
+
+        if (cr >= minContrastOnBlack) {
+            bestL = mid
+            hi = mid // try darker
+        } else {
+            lo = mid // need brighter
+        }
+    }
+
+    val (nr, ng, nb) = oklchToSrgb(bestL, C, h)
     return Color(nr, ng, nb, a)
+}
+
+/* ---------- Contrast vs black (alpha-aware) ---------- */
+
+private fun contrastOnBlack(r: Float, g: Float, b: Float, a: Float): Float {
+    // Blend over black in *linear* space (black = 0), then compute WCAG luminance.
+    val rl = srgbToLinear(r) * a
+    val gl = srgbToLinear(g) * a
+    val bl = srgbToLinear(b) * a
+    val y = 0.2126f * rl + 0.7152f * gl + 0.0722f * bl
+    return (y + 0.05f) / 0.05f
 }
 
 /**

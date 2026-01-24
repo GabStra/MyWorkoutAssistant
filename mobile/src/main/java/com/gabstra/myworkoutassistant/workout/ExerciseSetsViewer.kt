@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -94,6 +94,7 @@ fun SetTableRow(
     markAsDone: Boolean,
     color: Color = MaterialTheme.colorScheme.onBackground,
     weightTextColor: Color? = null, // Separate color for weight text (defaults to color if not specified)
+    isFutureExercise: Boolean = false,
 ){
     val captionStyle = MaterialTheme.typography.titleSmall
     val equipment = setState.equipment
@@ -144,9 +145,12 @@ fun SetTableRow(
                 viewModel.allWorkoutStates.any { state ->
                     state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
                 }
+            val isOnCalibrationSet = currentWorkoutState is WorkoutState.Set &&
+                (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
+                (currentWorkoutState as WorkoutState.Set).isCalibrationSet
             
             val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
-                !setState.isCalibrationSet && exercise != null && hasCalibrationRIRSelection
+                !setState.isCalibrationSet && exercise != null && (hasCalibrationRIRSelection || isOnCalibrationSet || isFutureExercise)
             
             if(isWarmupSet){
                 warmupIndicatorComposable()
@@ -265,7 +269,8 @@ fun ExerciseSetsViewer(
     customBorderColor: Color? = null,
     customTextColor: Color? = null,
     customMarkAsDone: Boolean? = null,
-    overrideSetIndex: Int? = null
+    overrideSetIndex: Int? = null,
+    isFutureExercise: Boolean = false,
 ){
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
@@ -302,7 +307,8 @@ fun ExerciseSetsViewer(
     @Composable
     fun MeasuredSetTableRow(
         setStateForThisRow:  WorkoutState.Set,
-        rowIndex: Int
+        rowIndex: Int,
+        isFutureExerciseParam: Boolean = isFutureExercise,
     ) {
         val isCalibrationSetRow = when(val set = setStateForThisRow.set) {
             is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
@@ -317,13 +323,13 @@ fun ExerciseSetsViewer(
 
         val borderColor = when {
             isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            isCalibrationSetRow -> reduceColorLuminance(Green, 0.3f) // Non-current calibration set: reduced Green
             else -> customBorderColor ?: customColor ?: null // No border for non-calibration sets
         }
 
         val textColor = when {
             isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            isCalibrationSetRow -> reduceColorLuminance(Green, 0.3f) // Non-current calibration set: reduced Green
             else -> customTextColor ?: customColor ?: when {
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
                 rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
@@ -334,7 +340,7 @@ fun ExerciseSetsViewer(
         // Weight text should use normal color logic (not Green for calibration sets)
         val weightTextColor = when {
             isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.3f) // Non-current calibration set: reduced Green
+            isCalibrationSetRow -> reduceColorLuminance(Green, 0.3f) // Non-current calibration set: reduced Green
             else -> customTextColor ?: customColor ?: when {
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
                 rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
@@ -368,7 +374,8 @@ fun ExerciseSetsViewer(
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
                 markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
                 color = textColor,
-                weightTextColor = weightTextColor
+                weightTextColor = weightTextColor,
+                isFutureExercise = isFutureExerciseParam
             )
         }
     }

@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,8 +66,6 @@ fun PagePlates(
     viewModel: AppViewModel
 ) {
     val isRecalculating by viewModel.isPlateRecalculationInProgress.collectAsState()
-    
-    var headerMarqueeEnabled by remember { mutableStateOf(false) }
 
     // Show loading screen during recalculation
     if (isRecalculating) {
@@ -154,15 +151,8 @@ fun PagePlates(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
-                                headerMarqueeEnabled = !headerMarqueeEnabled
                                 hapticsViewModel.doGentleVibration()
                             }
-                            .then(
-                                if (headerMarqueeEnabled)
-                                    Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                                else
-                                    Modifier
-                            )
                     )
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
@@ -189,15 +179,8 @@ fun PagePlates(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
-                                headerMarqueeEnabled = !headerMarqueeEnabled
                                 hapticsViewModel.doGentleVibration()
                             }
-                            .then(
-                                if (headerMarqueeEnabled)
-                                    Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-                                else
-                                    Modifier
-                            )
                     )
                 }
             }

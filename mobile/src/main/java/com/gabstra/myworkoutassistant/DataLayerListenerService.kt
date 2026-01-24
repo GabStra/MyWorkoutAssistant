@@ -451,6 +451,10 @@ class DataLayerListenerService : WearableListenerService() {
 
                         if (finalTransactionId != null) {
                             Log.d(
+                                "WorkoutSync",
+                                "Received SYNC_REQUEST for transaction: $finalTransactionId"
+                            )
+                            Log.d(
                                 "DataLayerSync",
                                 "Received SYNC_REQUEST for transaction: $finalTransactionId"
                             )
@@ -821,6 +825,10 @@ class DataLayerListenerService : WearableListenerService() {
                                 }
 
                                 Log.d(
+                                    "WorkoutSync",
+                                    "Workout history sync started, transaction: $transactionId, expected chunks: $expectedChunks"
+                                )
+                                Log.d(
                                     "DataLayerSync",
                                     "Workout history backup started with expected chunks: $expectedChunks, transactionId: $transactionId"
                                 )
@@ -844,6 +852,10 @@ class DataLayerListenerService : WearableListenerService() {
                                     receivedChunkIndices = currentIndices
 
                                     Log.d(
+                                        "WorkoutSync",
+                                        "Received workout history chunk, transaction: $transactionId, chunkIndex: $chunkIndex, total received: ${workoutHistoryChunks.size}, expected: $expectedChunks"
+                                    )
+                                    Log.d(
                                         "DataLayerSync",
                                         "Received workout history chunk at index $chunkIndex. Total chunks: ${workoutHistoryChunks.size}, expected: $expectedChunks, isRetry: $isRetry"
                                     )
@@ -866,6 +878,10 @@ class DataLayerListenerService : WearableListenerService() {
 
                             if (isLastChunk || isLastRetryChunk) {
                                 Log.d(
+                                    "WorkoutSync",
+                                    "Received last chunk, transaction: $transactionId, processing workout history"
+                                )
+                                Log.d(
                                     "DataLayerSync",
                                     "Received last workout history chunk (isLastChunk: $isLastChunk, isLastRetryChunk: $isLastRetryChunk). Total chunks received: ${workoutHistoryChunks.size}, expected: $expectedChunks"
                                 )
@@ -874,6 +890,7 @@ class DataLayerListenerService : WearableListenerService() {
                                         var processingStep = "initialization"
                                         try {
                                             processingStep = "validating chunks"
+                                            Log.d("WorkoutSync", "Workout history processing started, transaction: $transactionId")
                                             
                                             // Log chunk reception details
                                             val chunkReceptionStartTime = System.currentTimeMillis()
@@ -1188,9 +1205,15 @@ class DataLayerListenerService : WearableListenerService() {
                                             intent.apply { setPackage(packageName) }
                                             sendBroadcast(intent)
 
+                                            Log.d("WorkoutSync", "Workout history processing completed, transaction: $transactionId")
+
                                             // Send completion acknowledgment
                                             transactionId?.let { tid ->
                                                 try {
+                                                    Log.d(
+                                                        "WorkoutSync",
+                                                        "Sent SYNC_COMPLETE for transaction: $tid"
+                                                    )
                                                     Log.d(
                                                         "DataLayerSync",
                                                         "Preparing to send SYNC_COMPLETE for transaction: $tid (workout history processed)"

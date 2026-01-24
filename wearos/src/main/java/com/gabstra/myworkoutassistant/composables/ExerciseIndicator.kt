@@ -37,12 +37,14 @@ import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -67,6 +69,36 @@ fun ExerciseIndicator(
         .distinct()
         .toList()
 
+    // Helper function to find active timer set for an exercise
+    fun findActiveTimerSet(exerciseId: UUID, currentSet: WorkoutState.Set): WorkoutState.Set? {
+        val allExerciseSets = viewModel.getAllExerciseWorkoutStates(exerciseId)
+            .filterNot { it.shouldIgnoreCalibration() }
+        
+        // Find the first set that:
+        // 1. Hasn't been completed (is at or after current set in workout flow)
+        // 2. Has startTime set (timer started)
+        // 3. Has timer registered in service
+        // 4. Is a TimedDurationSet or EnduranceSet
+        val currentSetIndex = viewModel.allWorkoutStates.indexOfFirst { 
+            it is WorkoutState.Set && it.set.id == currentSet.set.id 
+        }
+        
+        return allExerciseSets.firstOrNull { exerciseSet ->
+            val setIndex = viewModel.allWorkoutStates.indexOfFirst { 
+                it is WorkoutState.Set && it.set.id == exerciseSet.set.id 
+            }
+            val isNotCompleted = setIndex >= currentSetIndex
+            val hasTimerStarted = exerciseSet.startTime != null
+            val hasTimerRegistered = viewModel.workoutTimerService.isTimerRegistered(exerciseSet.set.id)
+            val isTimerSet = exerciseSet.set is TimedDurationSet || exerciseSet.set is EnduranceSet
+            
+            isNotCompleted && hasTimerStarted && hasTimerRegistered && isTimerSet
+        }
+    }
+
+    // Calculate indicator progress
+    // derivedStateOf automatically tracks all state reads, so reading currentSetData from
+    // active timer sets will trigger recomposition when timer service updates them
     val indicatorProgressByExerciseId by remember(exerciseIds, set) {
         derivedStateOf {
             exerciseIds.associateWith { id ->
@@ -78,16 +110,40 @@ fun ExerciseIndicator(
                     .distinctBy { it.set.id }
                     .size
 
-                if (id == set.exerciseId) {
-                    if (total == 1) {
-                        when (val d = set.currentSetData) { // reading snapshot state -> recomposes
-                            is EnduranceSetData     -> 1 - (d.endTimer / d.startTimer.toFloat())
-                            is TimedDurationSetData -> 1 - (d.endTimer / d.startTimer.toFloat())
-                            else -> (completed + 1f) / total.toFloat()
-                        }
-                    } else (completed + 1f) / total.toFloat()
+                // Check if this exercise has an active timer (current or other exercise)
+                val activeTimerSet = if (id == set.exerciseId) {
+                    // For current exercise, use the set parameter
+                    if (total == 1 && (set.set is TimedDurationSet || set.set is EnduranceSet) 
+                        && set.startTime != null 
+                        && viewModel.workoutTimerService.isTimerRegistered(set.set.id)) {
+                        set
+                    } else null
                 } else {
-                    completed.toFloat() / total.toFloat()
+                    // For other exercises, find active timer set using helper function
+                    findActiveTimerSet(id, set)
+                }
+
+                if (activeTimerSet != null) {
+                    // Calculate progress based on timer - reading currentSetData here triggers recomposition
+                    // This read is tracked by derivedStateOf, so it will recompute when timer service updates it
+                    when (val d = activeTimerSet.currentSetData) {
+                        is EnduranceSetData -> {
+                            // EnduranceSet counts up, progress is endTimer / startTimer
+                            (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+                        }
+                        is TimedDurationSetData -> {
+                            // TimedDurationSet counts down, progress is 1 - (endTimer / startTimer)
+                            (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
+                        }
+                        else -> (completed + 1f) / total.toFloat()
+                    }
+                } else {
+                    // No active timer, use completed/total ratio
+                    if (id == set.exerciseId && total == 1) {
+                        (completed + 1f) / total.toFloat()
+                    } else {
+                        completed.toFloat() / total.toFloat()
+                    }
                 }
             }
         }
@@ -203,7 +259,7 @@ fun ExerciseIndicator(
                 
                 val trackColor = remember(isCurrent, indicatorColor) {
                     if (isCurrent) {
-                        reduceLuminanceOklch(indicatorColor, 0.3f)
+                        reduceColorLuminance(indicatorColor, 0.3f)
                     } else {
                         MediumDarkGray
                     }

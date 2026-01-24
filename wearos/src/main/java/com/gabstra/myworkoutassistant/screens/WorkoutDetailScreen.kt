@@ -6,7 +6,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -155,7 +154,6 @@ fun WorkoutDetailScreen(
     }
 
     if(viewModel.executeStartWorkout.value == null){
-        var marqueeEnabled by remember { mutableStateOf(false) }
         val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
         val spec = rememberTransformationSpec()
 
@@ -185,11 +183,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Text(
                                 text = workout.name,
-                                modifier = Modifier
-                                    .clickable(onClick = {
-                                        marqueeEnabled = !marqueeEnabled
-                                    })
-                                    .then(if (marqueeEnabled) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier),
+                                modifier = Modifier,
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.titleMedium,
                                 maxLines = 1,

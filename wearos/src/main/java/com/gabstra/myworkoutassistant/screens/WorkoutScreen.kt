@@ -210,10 +210,12 @@ fun WorkoutScreen(
             }
         },
         onDoublePress = {
+            android.util.Log.d("WorkoutSync", "Double-press back button detected, workoutState: $workoutState")
             if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
             
             when (workoutState) {
                 is WorkoutState.Set -> {
+                    android.util.Log.d("WorkoutSync", "Double-press: Handling Set state")
                     val setState = workoutState as WorkoutState.Set
                     
                     // Check if this is a calibration set execution
@@ -233,6 +235,7 @@ fun WorkoutScreen(
                         viewModel.lightScreenUp()
                     } else {
                         val isDone = viewModel.isNextStateCompleted()
+                        android.util.Log.d("WorkoutSync", "Double-press: Calling pushAndStoreWorkoutData for Set, isDone: $isDone")
                         viewModel.pushAndStoreWorkoutData(isDone, context) {
                             viewModel.goToNextState()
                             viewModel.lightScreenUp()
@@ -248,6 +251,7 @@ fun WorkoutScreen(
                     // This case should not be reached, but handle it gracefully
                 }
                 is WorkoutState.Rest -> {
+                    android.util.Log.d("WorkoutSync", "Double-press: Handling Rest state")
                     val restState = workoutState as WorkoutState.Rest
                     val restSetData = restState.currentSetData as RestSetData
                     
@@ -263,6 +267,7 @@ fun WorkoutScreen(
                     try {
                         viewModel.storeSetData()
                         val isDone = viewModel.isNextStateCompleted()
+                        android.util.Log.d("WorkoutSync", "Double-press: Calling pushAndStoreWorkoutData for Rest, isDone: $isDone")
                         viewModel.pushAndStoreWorkoutData(isDone, context) {
                             try {
                                 viewModel.goToNextState()

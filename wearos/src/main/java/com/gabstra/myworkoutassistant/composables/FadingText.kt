@@ -1,24 +1,16 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
@@ -35,7 +27,6 @@ import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FadingText(
     text: String,
@@ -43,7 +34,6 @@ fun FadingText(
     style: TextStyle = LocalTextStyle.current,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 12.dp,
-    marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
 ) {
@@ -53,13 +43,11 @@ fun FadingText(
         style = style,
         color = color,
         fadeWidth = fadeWidth,
-        marqueeEnabled = marqueeEnabled,
         textAlign = textAlign,
         onClick = onClick
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FadingText(
     text: AnnotatedString,
@@ -67,77 +55,38 @@ fun FadingText(
     style: TextStyle = LocalTextStyle.current,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 12.dp,
-    marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
 ) {
     val density = LocalDensity.current
-    val fadeWidthPx = with(density) { fadeWidth.toPx() }
     val fadeColor = MaterialTheme.colorScheme.background
-    
+
     var textLayoutResult: TextLayoutResult? by remember { mutableStateOf(null) }
     var containerWidth: Float by remember { mutableStateOf(0f) }
-    
+
     val hasOverflow = remember(textLayoutResult, containerWidth) {
-        if (containerWidth <= 0f) {
-            false
-        } else {
-            textLayoutResult?.size?.width?.toFloat()?.let { it > containerWidth } ?: false
-        }
+        if (containerWidth <= 0f) false
+        else textLayoutResult?.let { it.hasVisualOverflow || it.size.width.toFloat() > containerWidth } ?: false
     }
-    
+
+    val marqueeState = rememberTrackableMarqueeState()
+
     val boxModifier = modifier
         .fillMaxWidth()
         .clipToBounds()
         .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-        .onGloballyPositioned { coordinates ->
-            containerWidth = coordinates.size.width.toFloat()
-        }
-        .then(
-            if (onClick != null) {
-                Modifier.clickable(onClick = onClick)
-            } else {
-                Modifier
-            }
+        .onGloballyPositioned { containerWidth = it.size.width.toFloat() }
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+
+    val textModifier =  Modifier
+        .fillMaxWidth()
+        .trackableMarquee(
+            state = marqueeState,
+            iterations = Int.MAX_VALUE,
+            // fades are drawn inside the marquee node (updates every frame)
+            edgeFadeWidth = fadeWidth,
+            edgeFadeColor = fadeColor,
         )
-        .drawWithContent {
-            drawContent()
-            
-            if (containerWidth > 0f) {
-                val fadeSize = fadeWidthPx.coerceAtMost(containerWidth / 2f)
-                
-                val leftFadeBrush = Brush.horizontalGradient(
-                    colors = listOf(fadeColor, fadeColor.copy(alpha = 0f)),
-                    startX = 0f,
-                    endX = fadeSize
-                )
-                drawRect(
-                    brush = leftFadeBrush,
-                    topLeft = Offset.Zero,
-                    size = Size(fadeSize, size.height)
-                )
-                
-                val rightFadeStart = containerWidth - fadeSize
-                val rightFadeBrush = Brush.horizontalGradient(
-                    colors = listOf(fadeColor.copy(alpha = 0f), fadeColor),
-                    startX = rightFadeStart,
-                    endX = containerWidth
-                )
-                drawRect(
-                    brush = rightFadeBrush,
-                    topLeft = Offset(rightFadeStart, 0f),
-                    size = Size(fadeSize, size.height)
-                )
-            }
-        }
-    
-    val marqueeActive = marqueeEnabled || hasOverflow
-    
-    val textModifier = if (marqueeActive) {
-        Modifier.basicMarquee(iterations = Int.MAX_VALUE)
-    } else {
-        Modifier.wrapContentWidth(unbounded = true)
-    }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         Text(
@@ -146,11 +95,9 @@ fun FadingText(
             color = color,
             modifier = textModifier,
             textAlign = textAlign,
-            onTextLayout = { layoutResult ->
-                textLayoutResult = layoutResult
-            },
+            onTextLayout = { textLayoutResult = it },
             maxLines = 1,
-            overflow = TextOverflow.Visible,
+            overflow = TextOverflow.Clip,
             softWrap = false
         )
     }

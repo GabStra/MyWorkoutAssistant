@@ -664,19 +664,21 @@ suspend fun checkConnection(context: android.content.Context, maxRetries: Int = 
     var attempt = 0
     while (attempt < maxRetries) {
         try {
-            Log.d("DataLayerSync", "Checking connection (attempt ${attempt + 1}/$maxRetries)")
+            Log.d("WorkoutSync", "checkConnection: Checking connection (attempt ${attempt + 1}/$maxRetries)")
             val nodeClient = Wearable.getNodeClient(context)
             val nodes = Tasks.await(nodeClient.connectedNodes, 10, java.util.concurrent.TimeUnit.SECONDS)
             val hasConnection = nodes.isNotEmpty()
             
+            Log.d("WorkoutSync", "checkConnection: Found ${nodes.size} connected node(s): ${nodes.map { it.id }}")
+            
             if (hasConnection) {
-                Log.d("DataLayerSync", "Connection verified: ${nodes.size} node(s) connected")
+                Log.d("WorkoutSync", "checkConnection: Connection verified: ${nodes.size} node(s) connected")
                 return true
             } else {
-                Log.w("DataLayerSync", "No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
+                Log.w("WorkoutSync", "checkConnection: No connected nodes found (attempt ${attempt + 1}/$maxRetries)")
             }
         } catch (e: Exception) {
-            Log.w("DataLayerSync", "Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}")
+            Log.w("WorkoutSync", "checkConnection: Connection check failed (attempt ${attempt + 1}/$maxRetries): ${e.message}", e)
         }
         
         attempt++
@@ -699,22 +701,8 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
         try {
             Log.d("DataLayerSync", "Starting handshake for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
             
-            // Check connection before attempting sync if context is provided
-            if (context != null) {
-                val hasConnection = checkConnection(context)
-                if (!hasConnection) {
-                    Log.e("DataLayerSync", "No connection available for transaction: $transactionId (attempt ${attempt + 1}/$maxRetries)")
-                    if (attempt < maxRetries - 1) {
-                        // Exponential backoff with jitter
-                        val baseDelay = 500L * (1 shl attempt)
-                        val jitter = (0..100).random().toLong()
-                        delay(baseDelay + jitter)
-                        attempt++
-                        continue
-                    }
-                    return false
-                }
-            }
+            // Note: Connection check is done by the caller (sendWorkoutHistoryStore)
+            // to avoid redundant checks
             
             // Register waiter BEFORE sending request to avoid race condition
             val ackWaiter = SyncHandshakeManager.registerAckWaiter(transactionId)
@@ -810,7 +798,9 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Check if phone is connected before attempting sync
         // This prevents sync attempts when phone is not available
         if (context != null) {
-            val hasConnection = checkConnection(context)
+            val hasConnection = withContext(Dispatchers.IO) {
+                checkConnection(context)
+            }
             if (!hasConnection) {
                 Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $transactionId)")
                 return false

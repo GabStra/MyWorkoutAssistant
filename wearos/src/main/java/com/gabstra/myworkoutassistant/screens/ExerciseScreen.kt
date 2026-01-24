@@ -193,9 +193,6 @@ fun ExerciseScreen(
         }
     }
 
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    var headerMarqueeEnabled by remember { mutableStateOf(false) }
-
     val exerciseOrSupersetIds = remember {
         viewModel.setsByExerciseId.keys.toList()
             .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
@@ -250,7 +247,6 @@ fun ExerciseScreen(
                         .combinedClickable(
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
-                                marqueeEnabled = !marqueeEnabled
                             },
                             onLongClick = {
                                 providedOnLongClick.invoke()
@@ -259,7 +255,6 @@ fun ExerciseScreen(
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.SemiBold
                     ),
-                    marqueeEnabled = marqueeEnabled,
                     textAlign = TextAlign.Center
                 )
             }

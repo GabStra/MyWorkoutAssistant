@@ -247,7 +247,8 @@ fun PageExercises(
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
                         overrideSetIndex
-                    } else null
+                    } else null,
+                    isFutureExercise = selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex
                 )
             }
         }

@@ -35,8 +35,6 @@ fun ExerciseMetadataStrip(
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     onTap: (() -> Unit)? = null,
 ) {
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    
     val baseStyle = MaterialTheme.typography.bodySmall
     val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -174,11 +172,10 @@ fun ExerciseMetadataStrip(
             modifier = modifier.fillMaxWidth(),
             style = baseStyle,
             color = textColor,
-            marqueeEnabled = marqueeEnabled,
             onClick = {
-                marqueeEnabled = !marqueeEnabled
                 onTap?.invoke()
-            }
+            },
+            textAlign = TextAlign.Center
         )
     }
 }

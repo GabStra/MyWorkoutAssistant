@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -208,9 +209,11 @@ fun CalibrationLoadSelectionScreen(
             }
         }
     )
-    
+
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 15.dp, vertical = 30.dp),
         contentAlignment = Alignment.Center
     ) {
         if (showPicker) {
@@ -235,8 +238,7 @@ fun CalibrationLoadSelectionScreen(
                             },
                             onDoubleClick = {
                             }
-                        )
-                    ,
+                        ),
                     text = weightText,
                     style = itemStyle,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -274,7 +276,7 @@ fun CalibrationLoadSelectionScreen(
                         WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
                     }
                 }
-                
+
                 Text(
                     text = "Select load for $reps reps at 1-2 RIR",
                     style = MaterialTheme.typography.bodySmall,
@@ -285,7 +287,7 @@ fun CalibrationLoadSelectionScreen(
             }
         }
     }
-    
+
     // Trigger plate recalculation when weight changes
     LaunchedEffect(selectedWeight, currentSetData) {
         val totalWeight = when (currentSetData) {

@@ -48,7 +48,6 @@ fun ScalableFadingText(
     style: TextStyle = MaterialTheme.typography.bodyMedium,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 16.dp,
-    marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
@@ -61,7 +60,6 @@ fun ScalableFadingText(
         style = style,
         color = color,
         fadeWidth = fadeWidth,
-        marqueeEnabled = marqueeEnabled,
         textAlign = textAlign,
         onClick = onClick,
         minTextSize = minTextSize,
@@ -78,7 +76,6 @@ fun ScalableFadingText(
     style: TextStyle = MaterialTheme.typography.bodyMedium,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 16.dp,
-    marqueeEnabled: Boolean = false,
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
@@ -180,8 +177,6 @@ fun ScalableFadingText(
         }
     }
     
-    val marqueeActive = marqueeEnabled || hasOverflow
-    
     val boxModifier = modifier
         .fillMaxWidth()
         .clipToBounds()
@@ -200,7 +195,7 @@ fun ScalableFadingText(
         .drawWithContent {
             drawContent()
             
-            if (containerWidth > 0f && marqueeActive) {
+            if (containerWidth > 0f && hasOverflow) {
                 val fadeSize = fadeWidthPx.coerceAtMost(containerWidth / 2f)
                 
                 val leftFadeBrush = Brush.horizontalGradient(
@@ -228,7 +223,7 @@ fun ScalableFadingText(
             }
         }
     
-    val textModifier = if (marqueeActive) {
+    val textModifier = if (hasOverflow) {
         Modifier.basicMarquee(iterations = Int.MAX_VALUE)
     } else {
         Modifier.wrapContentWidth(unbounded = true)

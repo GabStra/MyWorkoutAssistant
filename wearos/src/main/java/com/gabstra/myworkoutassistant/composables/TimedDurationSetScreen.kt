@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -69,12 +70,12 @@ fun TimedDurationSetScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var timerJob by remember { mutableStateOf<Job?>(null) }
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(state.set.id) {
         onDispose {
-            timerJob?.cancel()
+            // Unregister timer when composable is disposed
+            viewModel.workoutTimerService.unregisterTimer(state.set.id)
             autoStartJob?.cancel()
         }
     }
@@ -117,15 +118,14 @@ fun TimedDurationSetScreen(
         state.currentSetData = currentSet
     }
 
-    var currentMillis by remember(set.id) { 
-        mutableIntStateOf(
-            // If timer was in progress (endTimer < startTimer), use remaining time
-            if (currentSet.endTimer < currentSet.startTimer && currentSet.endTimer > 0) {
-                currentSet.endTimer
-            } else {
-                currentSet.startTimer
-            }
-        )
+    // Sync currentMillis with state.currentSetData.endTimer for UI display
+    // The timer service updates state.currentSetData.endTimer, so we read from it
+    var currentMillis by remember { mutableIntStateOf((state.currentSetData as TimedDurationSetData).endTimer) }
+    
+    // Update currentMillis when state changes (from timer service or local edits)
+    LaunchedEffect(state.currentSetData) {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
+        currentMillis = setData.endTimer
     }
     var showStopDialog by remember { mutableStateOf(false) }
 
@@ -174,31 +174,24 @@ fun TimedDurationSetScreen(
         updateInteractionTime()
     }
 
-    fun startTimerJob() {
-        timerJob?.cancel()
-        timerJob = scope.launch {
-            val now = LocalDateTime.now()
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-            delay(java.time.Duration.between(now, nextSecond).toMillis())
-            
-            onTimerEnabled()
-
-            while (currentMillis > 0) {
-                val now = LocalDateTime.now()
-                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-                delay(Duration.between(now, nextSecond).toMillis())
-
-                currentMillis = (currentMillis - 1000).coerceAtLeast(0)
-                currentSet = currentSet.copy(endTimer = currentMillis)
-            }
-
-            state.currentSetData = currentSet.copy(
-                endTimer = 0
-            )
-            hapticsViewModel.doHardVibrationTwice()
-            onTimerDisabled()
-            onTimerEnd()
+    fun startTimer() {
+        // Ensure startTime is set
+        if (state.startTime == null) {
+            state.startTime = LocalDateTime.now()
         }
+        
+        // Register timer with service - it will handle updates
+        viewModel.workoutTimerService.registerTimer(
+            state = state,
+            callbacks = WorkoutTimerService.TimerCallbacks(
+                onTimerEnd = {
+                    hapticsViewModel.doHardVibrationTwice()
+                    onTimerEnd()
+                },
+                onTimerEnabled = onTimerEnabled,
+                onTimerDisabled = onTimerDisabled
+            )
+        )
 
         if (!hasBeenStartedOnce) {
             hasBeenStartedOnce = true
@@ -207,21 +200,25 @@ fun TimedDurationSetScreen(
 
     val isPaused by viewModel.isPaused
 
-    LaunchedEffect(set.id, set.autoStart, isPaused) {
+    LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
         if (state.startTime != null) {
+            // Timer has started - ensure it's registered with service
             val now = LocalDateTime.now()
             val elapsedMillis = java.time.Duration.between(state.startTime, now).toMillis()
-            currentMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
-            if (currentMillis > 0 && !isPaused) {
-                startTimerJob()
-            } else if (currentMillis <= 0) {
+            val remainingMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
+            
+            if (remainingMillis > 0 && !isPaused) {
+                // Timer should be running - register if not already registered
+                if (!viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+                    startTimer()
+                }
+            } else if (remainingMillis <= 0) {
+                // Timer already completed
                 state.currentSetData = currentSet.copy(endTimer = 0)
+                viewModel.workoutTimerService.unregisterTimer(set.id)
                 hapticsViewModel.doHardVibrationTwice()
                 onTimerDisabled()
                 onTimerEnd()
-            }
-            if (isPaused) {
-                timerJob?.cancel()
             }
             autoStartJob?.cancel()
             return@LaunchedEffect
@@ -244,7 +241,7 @@ fun TimedDurationSetScreen(
 
                 state.startTime = LocalDateTime.now()
                 hapticsViewModel.doHardVibrationTwice()
-                startTimerJob()
+                startTimer()
             }
         }
     }
@@ -315,7 +312,7 @@ fun TimedDurationSetScreen(
                             }
 
                             hapticsViewModel.doHardVibrationTwice()
-                            startTimerJob()
+                            startTimer()
 
                             showStartButton = false
                             autoStartJob?.cancel()
@@ -327,17 +324,17 @@ fun TimedDurationSetScreen(
                         modifier = Modifier.size(30.dp),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
-                        tint = MaterialTheme.colorScheme.onSurface
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            if (timerJob?.isActive == true) {
+            if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 IconButton(
                     modifier = Modifier.size(50.dp),
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        timerJob?.cancel()
+                        viewModel.workoutTimerService.unregisterTimer(set.id)
                         showStopDialog = true
                     },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Red),
@@ -346,7 +343,7 @@ fun TimedDurationSetScreen(
                         modifier = Modifier.size(30.dp),
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop",
-                        tint = MaterialTheme.colorScheme.onSurface
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -418,7 +415,7 @@ fun TimedDurationSetScreen(
             handleNoClick = {
                 hapticsViewModel.doGentleVibration()
                 showStopDialog = false
-                startTimerJob()
+                startTimer()
             },
             closeTimerInMillis = 5000,
             handleOnAutomaticClose = {},

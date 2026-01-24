@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,9 +55,6 @@ fun PageExercises(
 ) {
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
 
-    var marqueeEnabled by remember { mutableStateOf(false) }
-    var headerMarqueeEnabled by remember { mutableStateOf(false) }
-
     val currentExerciseOrSupersetId =
         remember(currentExercise.id) {
             if (viewModel.supersetIdByExerciseId.containsKey(currentExercise.id)) viewModel.supersetIdByExerciseId[currentExercise.id] else currentExercise.id
@@ -109,18 +105,12 @@ fun PageExercises(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(20.dp)
-                    .padding(horizontal = 22.5.dp)
-                    .clickable {
-                        marqueeEnabled = !marqueeEnabled
-                        hapticsViewModel.doGentleVibration()
-                    },
+                    .padding(horizontal = 22.5.dp),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.SemiBold
                 ),
-                marqueeEnabled = marqueeEnabled,
                 textAlign = TextAlign.Center,
                 onClick = {
-                    marqueeEnabled = !marqueeEnabled
                     hapticsViewModel.doGentleVibration()
                 }
             )
@@ -199,7 +189,8 @@ fun PageExercises(
                 },
                 overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
                     overrideSetIndex
-                } else null
+                } else null,
+                isFutureExercise = selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value
             )
         }
 

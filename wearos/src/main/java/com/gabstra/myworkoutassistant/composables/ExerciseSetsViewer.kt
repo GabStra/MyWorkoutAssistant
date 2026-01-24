@@ -37,7 +37,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -61,6 +61,7 @@ fun SetTableRow(
     isCurrentSet: Boolean,
     markAsDone: Boolean,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
+    isFutureExercise: Boolean = false,
 ){
     val itemStyle = MaterialTheme.typography.numeralSmall
 
@@ -89,9 +90,15 @@ fun SetTableRow(
         viewModel.allWorkoutStates.any { state ->
             state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
         }
+    val isOnCalibrationSet = currentWorkoutState is WorkoutState.Set &&
+        (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
+        (currentWorkoutState as WorkoutState.Set).isCalibrationSet
     
-    val isPendingCalibration = isCalibrationEnabled && !isWarmupSet && !isCalibrationSet && 
-        !setState.isCalibrationSet && exercise != null && hasCalibrationRIRSelection
+    val isPendingCalibration = isCalibrationEnabled &&
+            !isWarmupSet &&
+            !isCalibrationSet &&
+            !setState.isCalibrationSet &&
+            (hasCalibrationRIRSelection || isOnCalibrationSet || isFutureExercise)
 
     Box(
         modifier = modifier,
@@ -124,15 +131,16 @@ fun SetTableRow(
                         isPendingCalibration -> "Pending"
                         else -> weightText
                     }
+                    val weightColor = if (isCalibrationSet) textColor else weightTextColor
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = weightTextColor,
+                        color = weightColor,
                     )
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
@@ -161,6 +169,7 @@ fun SetTableRow(
                         bodyWeightSetData.additionalWeight < previousBodyWeightSetData.additionalWeight  -> Red
                         else -> Green
                     }
+                    val weightColor = if (isCalibrationSet) textColor else weightTextColor
 
                     val repsTextColor = when {
                         bodyWeightSetData.actualReps == previousBodyWeightSetData.actualReps -> textColor
@@ -168,14 +177,14 @@ fun SetTableRow(
                         else -> Green
                     }
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = weightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = weightTextColor
+                        color = weightColor
                     )
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
@@ -187,7 +196,7 @@ fun SetTableRow(
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
@@ -199,7 +208,7 @@ fun SetTableRow(
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
 
-                    ScalableText(
+                    ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,
@@ -237,7 +246,8 @@ fun ExerciseSetsViewer(
     customBorderColor: Color? = null,
     customBackgroundColor: Color? = null,
     customTextColor: Color? = null,
-    overrideSetIndex: Int? = null
+    overrideSetIndex: Int? = null,
+    isFutureExercise: Boolean = false,
 ){
     val exerciseSetStates = viewModel.getAllExerciseWorkoutStates(exercise.id)
         .filter { it.set !is RestSet }
@@ -272,6 +282,7 @@ fun ExerciseSetsViewer(
     fun MeasuredSetTableRow(
         setStateForThisRow:  WorkoutState.Set,
         rowIndex: Int,
+        isFutureExerciseParam: Boolean = isFutureExercise,
     ) {
         val isWarmupSetRow = when(val set = setStateForThisRow.set) {
             is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
@@ -291,7 +302,7 @@ fun ExerciseSetsViewer(
         // Calibration sets always use Green coloring, regardless of custom colors
         val borderColor = when {
             isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.5f) // Non-current calibration set: reduced Green
+            isCalibrationSetRow -> reduceColorLuminance(Green, 0.5f) // Non-current calibration set: reduced Green
             else -> customBorderColor ?: when {
                 rowIndex == setIndex -> Orange // Current set: orange border
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
@@ -304,7 +315,7 @@ fun ExerciseSetsViewer(
         // Calibration sets always use Green coloring, regardless of custom colors
         val textColor = when {
             isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceLuminanceOklch(Green, 0.5f) // Non-current calibration set: reduced Green
+            isCalibrationSetRow -> reduceColorLuminance(Green, 0.5f) // Non-current calibration set: reduced Green
             else -> customTextColor ?: when {
                 rowIndex == setIndex -> Orange // Current set: orange text
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
@@ -349,7 +360,8 @@ fun ExerciseSetsViewer(
                 index = rowIndex,
                 isCurrentSet = rowIndex == setIndex,
                 markAsDone = false,
-                textColor = textColor
+                textColor = textColor,
+                isFutureExercise = isFutureExerciseParam
             )
         }
     }

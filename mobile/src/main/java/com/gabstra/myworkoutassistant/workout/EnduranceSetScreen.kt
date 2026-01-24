@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -65,11 +66,11 @@ fun EnduranceSetScreen (
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var timerJob by remember { mutableStateOf<Job?>(null) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(state.set.id) {
         onDispose {
-            timerJob?.cancel()
+            // Unregister timer when composable is disposed
+            viewModel.workoutTimerService.unregisterTimer(state.set.id)
         }
     }
 
@@ -114,15 +115,16 @@ fun EnduranceSetScreen (
         state.currentSetData = currentSet
     }
 
-    var currentMillis by remember(set.id) { 
-        mutableIntStateOf(
-            // If timer was in progress (endTimer > 0), use elapsed time
-            if (currentSet.endTimer > 0) {
-                currentSet.endTimer
-            } else {
-                0
-            }
-        )
+    // Sync currentMillis with state.currentSetData.endTimer for UI display
+    // The timer service updates state.currentSetData.endTimer, so we read from it
+    var currentMillis by remember { mutableIntStateOf((state.currentSetData as EnduranceSetData).endTimer) }
+    
+    // Update currentMillis when state changes (from timer service or local edits)
+    LaunchedEffect(state.currentSetData) {
+        val setData = state.currentSetData as? EnduranceSetData ?: return@LaunchedEffect
+        currentMillis = setData.endTimer
+        // Update isOverLimit based on current timer value
+        isOverLimit = currentMillis >= setData.startTimer && !set.autoStop
     }
     var showStopDialog by remember { mutableStateOf(false) }
 
@@ -196,51 +198,31 @@ fun EnduranceSetScreen (
         }
     }
 
-    fun startTimerJob() {
-        timerJob?.cancel()
-        timerJob = scope.launch {
-            onTimerEnabled()
-
-            var finishedNaturally = false
-            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
-
-            while (isActive) {
-                val now = SystemClock.elapsedRealtime()
-                val waitTime = (nextExecutionTime - now).coerceAtLeast(0)
-                delay(waitTime)
-
-                if (!isActive) break // cooperative cancel after delay
-
-                // tick
-                currentMillis += 1000
-                currentSet = currentSet.copy(endTimer = currentMillis)
-
-                if (!isOverLimit && currentMillis >= currentSet.startTimer) {
-                    hapticsViewModel.doHardVibrationTwice()
-                    if (set.autoStop) {
-                        finishedNaturally = true
-                        break
-                    } else {
-                        isOverLimit = true
-                    }
-                }
-
-                nextExecutionTime += 1000
-            }
-
-            if (finishedNaturally) {
-                state.currentSetData = currentSet.copy(endTimer = currentSet.startTimer)
-                onTimerDisabled()
-                onTimerEnd()
-            }
+    fun startTimer() {
+        // Ensure startTime is set
+        if (state.startTime == null) {
+            state.startTime = LocalDateTime.now()
         }
+        
+        // Register timer with service - it will handle updates
+        viewModel.workoutTimerService.registerTimer(
+            state = state,
+            callbacks = WorkoutTimerService.TimerCallbacks(
+                onTimerEnd = {
+                    hapticsViewModel.doHardVibrationTwice()
+                    onTimerEnd()
+                },
+                onTimerEnabled = onTimerEnabled,
+                onTimerDisabled = onTimerDisabled
+            )
+        )
 
         if (!hasBeenStartedOnce) hasBeenStartedOnce = true
     }
 
     val isPaused by viewModel.isPaused
 
-    LaunchedEffect(set.id, set.autoStart, isPaused) {
+    LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
         val startedAt = state.startTime
         if (startedAt != null) {
             // Elapsed since start
@@ -248,20 +230,20 @@ fun EnduranceSetScreen (
             val elapsedMillis = Duration.between(startedAt, now).toMillis()
                 .toInt().coerceAtLeast(0)
 
-            currentMillis = elapsedMillis
+            currentMillis = elapsedMillis.coerceAtMost(currentSet.startTimer)
+            isOverLimit = currentMillis >= currentSet.startTimer && !set.autoStop
 
-            if (currentMillis >= currentSet.startTimer) {
-                isOverLimit = !set.autoStop
-                if (set.autoStop) {
-                    state.currentSetData = currentSet.copy(endTimer = currentSet.startTimer)
-                    onTimerDisabled()
-                    onTimerEnd()
-                    return@LaunchedEffect
-                }
+            if (currentMillis >= currentSet.startTimer && set.autoStop) {
+                // Timer reached limit with autoStop - complete it
+                state.currentSetData = currentSet.copy(endTimer = currentSet.startTimer)
+                viewModel.workoutTimerService.unregisterTimer(set.id)
+                onTimerDisabled()
+                onTimerEnd()
+                return@LaunchedEffect
             }
 
-            if (!isPaused && timerJob?.isActive != true) {
-                startTimerJob()
+            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+                startTimer()
             }
             return@LaunchedEffect
         }
@@ -276,9 +258,7 @@ fun EnduranceSetScreen (
             }
 
             hapticsViewModel.doHardVibrationTwice()
-            if (timerJob?.isActive != true) {
-                startTimerJob()
-            }
+            startTimer()
         }
     }
 
@@ -315,7 +295,7 @@ fun EnduranceSetScreen (
                                 }
 
                                 hapticsViewModel.doHardVibrationTwice()
-                                startTimerJob()
+                                startTimer()
 
                                 showStartButton = false
                             }
@@ -330,10 +310,10 @@ fun EnduranceSetScreen (
                     }
                 }else{
                     IconButton(
-                        modifier = Modifier.size(35.dp).alpha(if(timerJob?.isActive == true) 1f else 0f),
+                        modifier = Modifier.size(35.dp).alpha(if(viewModel.workoutTimerService.isTimerRegistered(set.id)) 1f else 0f),
                         onClick = {
                             hapticsViewModel.doGentleVibration()
-                            timerJob?.cancel()
+                            viewModel.workoutTimerService.unregisterTimer(set.id)
                             showStopDialog = true
                         },
                         colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -405,7 +385,7 @@ fun EnduranceSetScreen (
             handleNoClick = {
                 hapticsViewModel.doGentleVibration()
                 showStopDialog = false
-                startTimerJob()
+                startTimer()
             },
             handleOnAutomaticClose = {},
             holdTimeInMillis = 1000,

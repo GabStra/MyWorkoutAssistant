@@ -7,9 +7,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
@@ -77,14 +79,14 @@ import com.gabstra.myworkoutassistant.data.getValueInRange
 import com.gabstra.myworkoutassistant.data.round
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
-import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -409,48 +411,50 @@ private fun HeartRateDisplay(
                 colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
-        Row{
+        Text(
+            modifier = Modifier.alignByBaseline(),
+            text = textToDisplay,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
+        )
+        if (bpm != 0 && displayMode == 0) {
+            Spacer(modifier = Modifier.width(2.5.dp))
             Text(
                 modifier = Modifier.alignByBaseline(),
-                text = textToDisplay,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
+                text = "bpm",
+                style = MaterialTheme.typography.bodyExtraSmall,
+                color = MaterialTheme.colorScheme.onBackground
             )
-            if (bpm != 0 && displayMode == 0) {
-                Spacer(modifier = Modifier.width(2.5.dp))
-                Text(
-                    modifier = Modifier.alignByBaseline(),
-                    text = "bpm",
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
 
-                if(currentZone >= 1){
-                    Spacer(modifier = Modifier.width(2.5.dp))
-                    // Zone chip with zone color background and white text
-                    val chipBackgroundColor = if (currentZone >= colorsByZone.size)
-                        MediumDarkGray
-                    else
-                        colorsByZone[currentZone]
-                    val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = chipBackgroundColor,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                            .alignByBaseline()
-                            .wrapContentSize(align = Alignment.Center),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = zoneText,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.background
+            if(currentZone >= 1){
+                Spacer(modifier = Modifier.width(2.5.dp))
+                // Zone chip with black background, colored border, and colored text
+                val chipBorderColor = if (currentZone >= colorsByZone.size)
+                    MediumDarkGray
+                else
+                    colorsByZone[currentZone]
+                val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
+                val shape = RoundedCornerShape(12.dp)
+                Box(
+                    modifier = Modifier
+                        .border(BorderStroke(1.dp, chipBorderColor), shape)
+                        .background(
+                            color = MaterialTheme.colorScheme.background,
+                            shape = shape
                         )
-                    }
+                        .width(30.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+
+                        text = zoneText,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
+                                includeFontPadding = false
+                            )
+                        ),
+                        color = chipBorderColor
+                    )
                 }
             }
         }
@@ -680,7 +684,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            reduceLuminanceOklch(colorsByZone[index], 0.3f)
+            reduceColorLuminance(colorsByZone[index], 0.3f)
         } else {
             MediumDarkGray
         }
@@ -912,7 +916,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceLuminanceOklch(Orange, 0.3f),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceColorLuminance(Orange, 0.3f),
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp

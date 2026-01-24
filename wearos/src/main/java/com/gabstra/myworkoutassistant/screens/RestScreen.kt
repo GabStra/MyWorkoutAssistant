@@ -56,7 +56,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.reduceLuminanceOklch
+import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -480,7 +480,7 @@ fun RestScreen(
 
         val primaryColor = MaterialTheme.colorScheme.primary
         val trackColor = remember(primaryColor) {
-            reduceLuminanceOklch(primaryColor, 0.3f)
+            reduceColorLuminance(primaryColor, 0.3f)
         }
 
         CircularProgressIndicator(

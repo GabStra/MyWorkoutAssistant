@@ -181,6 +181,12 @@ open class WorkoutViewModel(
     private val _isPaused = mutableStateOf(false) // Private mutable state
     open val isPaused: State<Boolean> = _isPaused // read-only State access
 
+    // Timer service for managing workout timers independently of composable lifecycle
+    val workoutTimerService = WorkoutTimerService(
+        viewModelScope = viewModelScope,
+        isPaused = { _isPaused.value }
+    )
+
     fun pauseWorkout() {
         _isPaused.value = true
         rebuildScreenState()
@@ -564,6 +570,7 @@ open class WorkoutViewModel(
     }
 
     fun resetAll() {
+        workoutTimerService.unregisterAll()
         resetWorkoutStore()
         workoutStoreRepository.saveWorkoutStore(workoutStore)
         viewModelScope.launch(dispatchers.main) {
@@ -2994,8 +3001,14 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return
         if (machine.isCompleted) return
 
-        stateMachine = machine.next()
+        val nextState = machine.next()
+        stateMachine = nextState
         updateStateFlowsFromMachine()
+        
+        // Clean up timers when workout completes
+        if (nextState.currentState is WorkoutState.Completed) {
+            workoutTimerService.unregisterAll()
+        }
     }
 
     fun confirmCalibrationLoad() {
@@ -3170,7 +3183,7 @@ open class WorkoutViewModel(
                     exerciseId = exercise.id,
                     set = updatedSet,
                     setIndex = currentState.setIndex,
-                    previousSetData = currentState.previousSetData,
+                    previousSetData = copySetData(finalCalibrationSetData),
                     currentSetDataState = mutableStateOf(finalCalibrationSetData),
                     hasNoHistory = true,
                     startTime = null,

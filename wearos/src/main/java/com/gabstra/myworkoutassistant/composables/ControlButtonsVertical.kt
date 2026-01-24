@@ -99,7 +99,7 @@ fun ControlButtonsVertical(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowUpward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -153,7 +153,7 @@ fun ControlButtonsVertical(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowDownward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

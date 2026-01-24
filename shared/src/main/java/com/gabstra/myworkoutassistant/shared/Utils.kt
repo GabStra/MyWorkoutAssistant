@@ -314,79 +314,143 @@ val zoneRanges = arrayOf(
 )
 
 /**
- * Reduces the luminance (lightness) of a color while preserving its hue and saturation.
- * Uses HSL color space conversion to maintain color identity while reducing brightness.
- * 
- * @param color The original color to reduce luminance for
- * @param factor The factor by which to reduce luminance (0.0 to 1.0). 
- *               Default 0.4 means the color will be 30% of original luminance (60% reduction).
- *               Lower values result in darker colors.
- * @return A new Color with reduced luminance
+ * Reduces luminance via HSL lightness scaling, but guarantees a minimum contrast vs black.
+ *
+ * minContrastOnBlack:
+ *  - 3.0f  good for non-text UI (icons, strokes)
+ *  - 4.5f  for text-level readability
+ *
+ * If the requested factor makes the color too dark, it will return the darkest version
+ * (not darker than requested) that still meets the contrast threshold. It will NOT
+ * brighten beyond the original color.
  */
-fun reduceColorLuminance(color: Color, factor: Float = 0.3f): Color {
-    val clampedFactor = factor.coerceIn(0f, 1f)
-    
-    // Extract RGB components (0.0 to 1.0)
-    val r = color.red
-    val g = color.green
-    val b = color.blue
-    
-    // Convert RGB to HSL
-    val max = maxOf(r, g, b)
-    val min = minOf(r, g, b)
+fun reduceColorLuminance(
+    color: Color,
+    factor: Float = 0.3f,
+    minContrastOnBlack: Float = 2.5f
+): Color {
+    val f = factor.coerceIn(0f, 1f)
+
+    // Original
+    val r0 = color.red
+    val g0 = color.green
+    val b0 = color.blue
+    val a0 = color.alpha
+
+    // Convert RGB -> HSL
+    val max = maxOf(r0, g0, b0)
+    val min = minOf(r0, g0, b0)
     val delta = max - min
-    
-    // Calculate lightness (L)
-    val l = (max + min) / 2f
-    
-    // Handle edge cases (grayscale colors)
+
+    val l0 = (max + min) / 2f
+
+    // Grayscale edge case
     if (delta == 0f) {
-        // Grayscale - just reduce the lightness
-        val newL = (l * clampedFactor).coerceIn(0f, 1f)
-        return Color(newL, newL, newL, color.alpha)
-    }
-    
-    // Calculate saturation (S)
-    val s = if (l > 0.5f) {
-        delta / (2f - max - min)
-    } else {
-        delta / (max + min)
-    }
-    
-    // Calculate hue (H)
-    val h = when {
-        max == r -> {
-            val hValue = ((g - b) / delta) % 6f
-            if (hValue < 0) hValue + 6f else hValue
+        val targetL = (l0 * f).coerceIn(0f, 1f)
+        val candidate = Color(targetL, targetL, targetL, a0)
+        if (contrastOnBlack(candidate) >= minContrastOnBlack) return candidate
+
+        // If original already below threshold, don't brighten past it
+        if (contrastOnBlack(color) < minContrastOnBlack) return color
+
+        // Binary search L in [targetL, l0] to find darkest that passes
+        var lo = targetL
+        var hi = l0
+        var best = l0
+        repeat(24) {
+            val mid = (lo + hi) * 0.5f
+            val midColor = Color(mid, mid, mid, a0)
+            if (contrastOnBlack(midColor) >= minContrastOnBlack) {
+                best = mid
+                hi = mid
+            } else {
+                lo = mid
+            }
         }
-        max == g -> (b - r) / delta + 2f
-        else -> (r - g) / delta + 4f
-    } / 6f
-    
-    // Reduce lightness
-    val newL = l * clampedFactor
-    
-    // Convert HSL back to RGB
-    val c = (1f - abs(2f * newL - 1f)) * s
-    val x = c * (1f - abs((h * 6f) % 2f - 1f))
-    val m = newL - c / 2f
-    
-    val (newR, newG, newB) = when {
-        h < 1f / 6f -> Triple(c, x, 0f)
-        h < 2f / 6f -> Triple(x, c, 0f)
-        h < 3f / 6f -> Triple(0f, c, x)
-        h < 4f / 6f -> Triple(0f, x, c)
-        h < 5f / 6f -> Triple(x, 0f, c)
-        else -> Triple(c, 0f, x)
+        return Color(best, best, best, a0)
     }
-    
-    return Color(
-        red = (newR + m).coerceIn(0f, 1f),
-        green = (newG + m).coerceIn(0f, 1f),
-        blue = (newB + m).coerceIn(0f, 1f),
-        alpha = color.alpha
-    )
+
+    // Saturation
+    val s0 = if (l0 > 0.5f) delta / (2f - max - min) else delta / (max + min)
+
+    // Hue
+    val h0 = (when {
+        max == r0 -> {
+            val hv = ((g0 - b0) / delta) % 6f
+            if (hv < 0) hv + 6f else hv
+        }
+        max == g0 -> (b0 - r0) / delta + 2f
+        else -> (r0 - g0) / delta + 4f
+    } / 6f).coerceIn(0f, 1f)
+
+    fun hslToRgb(h: Float, s: Float, l: Float): Triple<Float, Float, Float> {
+        val c = (1f - abs(2f * l - 1f)) * s
+        val x = c * (1f - abs((h * 6f) % 2f - 1f))
+        val m = l - c / 2f
+
+        val (rr, gg, bb) = when {
+            h < 1f / 6f -> Triple(c, x, 0f)
+            h < 2f / 6f -> Triple(x, c, 0f)
+            h < 3f / 6f -> Triple(0f, c, x)
+            h < 4f / 6f -> Triple(0f, x, c)
+            h < 5f / 6f -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
+
+        return Triple(
+            (rr + m).coerceIn(0f, 1f),
+            (gg + m).coerceIn(0f, 1f),
+            (bb + m).coerceIn(0f, 1f),
+        )
+    }
+
+    val targetL = (l0 * f).coerceIn(0f, 1f)
+    run {
+        val (cr, cg, cb) = hslToRgb(h0, s0, targetL)
+        val candidate = Color(cr, cg, cb, a0)
+        if (contrastOnBlack(candidate) >= minContrastOnBlack) return candidate
+    }
+
+    // If original already below threshold, don't brighten past it
+    if (contrastOnBlack(color) < minContrastOnBlack) return color
+
+    // Binary search L in [targetL, l0] to find darkest that passes
+    var lo = targetL
+    var hi = l0
+    var best = l0
+    repeat(24) {
+        val mid = (lo + hi) * 0.5f
+        val (cr, cg, cb) = hslToRgb(h0, s0, mid)
+        val midColor = Color(cr, cg, cb, a0)
+
+        if (contrastOnBlack(midColor) >= minContrastOnBlack) {
+            best = mid
+            hi = mid // try darker
+        } else {
+            lo = mid // need brighter
+        }
+    }
+
+    val (fr, fg, fb) = hslToRgb(h0, s0, best)
+    return Color(fr, fg, fb, a0)
 }
+
+/**
+ * WCAG-style contrast vs black, alpha-aware (blends over black in linear space).
+ */
+private fun contrastOnBlack(color: Color): Float =
+    contrastOnBlack(color.red, color.green, color.blue, color.alpha)
+
+private fun contrastOnBlack(r: Float, g: Float, b: Float, a: Float): Float {
+    val rl = srgbToLinear(r.coerceIn(0f, 1f)) * a
+    val gl = srgbToLinear(g.coerceIn(0f, 1f)) * a
+    val bl = srgbToLinear(b.coerceIn(0f, 1f)) * a
+    val y = 0.2126f * rl + 0.7152f * gl + 0.0722f * bl
+    return (y + 0.05f) / 0.05f
+}
+
+private fun srgbToLinear(x: Float): Float =
+    if (x <= 0.04045f) x / 12.92f else ((x + 0.055f) / 1.055f).pow(2.4f)
 
 
 fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{

@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -37,6 +39,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
+import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import kotlinx.coroutines.Job
@@ -171,12 +174,18 @@ fun CustomDialogYesOnLongPress(
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.padding(30.dp,5.dp)
                     )
+
+                    val scrollState = rememberScrollState()
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
                         color = MediumLighterGray,
                         style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(5.dp)
+                        modifier = Modifier
+                            .padding(5.dp)
+                            .weight(1f)
+                            .verticalColumnScrollbar(scrollState = scrollState)
+                            .verticalScroll(scrollState)
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
