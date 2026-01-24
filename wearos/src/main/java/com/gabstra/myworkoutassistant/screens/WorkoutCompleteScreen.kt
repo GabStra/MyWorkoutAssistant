@@ -65,11 +65,11 @@ fun WorkoutCompleteScreen(
     val workout by viewModel.selectedWorkout
     val context = LocalContext.current
 
-    val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val countDownTimer = remember { mutableIntStateOf(30) }
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
     var syncComplete by remember { mutableStateOf(false) }
+    var completionSyncInitiated by remember { mutableStateOf(false) }
 
     val headerStyle = MaterialTheme.typography.bodySmall
 
@@ -113,12 +113,16 @@ fun WorkoutCompleteScreen(
         cancelWorkoutInProgressNotification(context)
 
         // Ensure final workout history is stored with isDone=true and scheduled for sync.
-        viewModel.pushAndStoreWorkoutData(isDone = true, context = context, forceNotSend = false) {
-            android.util.Log.d(
-                "WorkoutSync",
-                "SYNC_TRACE event=completion_force_send side=wear isDone=true"
-            )
-            viewModel.flushWorkoutSync()
+        // Guard against duplicate execution if LaunchedEffect runs multiple times
+        if (!completionSyncInitiated) {
+            completionSyncInitiated = true
+            viewModel.pushAndStoreWorkoutData(isDone = true, context = context, forceNotSend = false) {
+                android.util.Log.d(
+                    "WorkoutSync",
+                    "SYNC_TRACE event=completion_force_send side=wear isDone=true"
+                )
+                viewModel.flushWorkoutSync()
+            }
         }
 
         // Wait for sync to start and complete

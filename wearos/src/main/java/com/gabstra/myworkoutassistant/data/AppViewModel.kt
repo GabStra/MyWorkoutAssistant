@@ -130,6 +130,9 @@ open class AppViewModel : WorkoutViewModel() {
     private var pendingSyncAfterReconnect = false
     private var pendingSyncContext: Context? = null
     
+    // Guard to prevent duplicate completion syncs
+    private var completionSyncInitiated = false
+    
     // Timeout jobs for sync state cleanup
     private var isSyncingToPhoneTimeoutJob: Job? = null
     private var syncStatusTimeoutJob: Job? = null
@@ -381,7 +384,9 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun startWorkout() {
-
+        // Reset completion sync flag for new workout
+        completionSyncInitiated = false
+        
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
         super.startWorkout()
@@ -393,6 +398,8 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
+        // Reset completion sync flag for resumed workout
+        completionSyncInitiated = false
 
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
@@ -527,6 +534,19 @@ open class AppViewModel : WorkoutViewModel() {
             "SYNC_TRACE event=sync_execute side=wear historyId=${currentWorkoutHistory?.id} isDone=${currentWorkoutHistory?.isDone} sets=${executedSetsHistory.size}"
         )
         Log.d("WorkoutSync", "performWorkoutHistorySync: phoneNode=${phoneNode?.id}, isPhoneConnectedAndHasApp=$isPhoneConnectedAndHasApp, dataClient=${dataClient != null}")
+        
+        // Guard against duplicate completion syncs
+        val isCompletionSync = currentWorkoutHistory?.isDone == true
+        if (isCompletionSync && completionSyncInitiated) {
+            Log.d("WorkoutSync", "performWorkoutHistorySync: Skipping duplicate completion sync")
+            clearPendingSync()
+            return
+        }
+        if (isCompletionSync) {
+            completionSyncInitiated = true
+            Log.d("WorkoutSync", "performWorkoutHistorySync: Marking completion sync as initiated")
+        }
+        
         val syncContext = resolveSyncContext(context)
         val client = dataClient
         if (client == null) {
