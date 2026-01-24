@@ -2,10 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -133,11 +129,7 @@ fun PreparingPolarScreen(
             )
             Spacer(modifier = Modifier.height(15.dp))
 
-            AnimatedVisibility(
-                visible = !(canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState),
-                enter = fadeIn(animationSpec = tween(500)),
-                exit = fadeOut(animationSpec = tween(500))
-            ) {
+            if(!(canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState)){
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.Center,
@@ -147,15 +139,8 @@ fun PreparingPolarScreen(
                     Spacer(Modifier.height(8.dp))
                     LoadingText(baseText = "Connecting")
                 }
-            }
-
-            AnimatedVisibility(
-                visible = canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState,
-                enter = fadeIn(animationSpec = tween(500)),
-                exit = fadeOut(animationSpec = tween(500))
-            ) {
+            }else{
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Spacer(modifier = Modifier.height(25.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
