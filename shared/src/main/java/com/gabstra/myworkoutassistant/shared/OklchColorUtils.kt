@@ -107,8 +107,6 @@ fun reduceChromaOklch(color: Color, factor: Float): Color {
 
 /* ----------------------------- OKLCH conversions ----------------------------- */
 
-private data class Oklch(val L: Float, val C: Float, val hDeg: Float)
-
 private fun srgbToOklch(r: Float, g: Float, b: Float): Oklch {
     // sRGB -> linear
     val rl = srgbToLinear(r)

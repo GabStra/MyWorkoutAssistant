@@ -834,10 +834,14 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
             .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
             .create()
-        val jsonString = gson.toJson(workoutHistoryStore)
-        val chunkSize = 50000 // Adjust the chunk size as needed
-        val compressedData = compressString(jsonString)
-        val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
+    val jsonString = gson.toJson(workoutHistoryStore)
+    val chunkSize = 50000 // Adjust the chunk size as needed
+    val compressedData = compressString(jsonString)
+    val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
+    Log.d(
+        "WorkoutSync",
+        "SYNC_TRACE event=start side=wear direction=send tx=$transactionId historyId=${workoutHistoryStore.WorkoutHistory.id} isDone=${workoutHistoryStore.WorkoutHistory.isDone} chunks=${chunks.size} bytes=${compressedData.size}"
+    )
 
         val startPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_START_PREFIX, transactionId)
         val startRequest = PutDataMapRequest.create(startPath).apply {
@@ -866,6 +870,10 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                 dataMap.putString("transactionId", transactionId)
             }.asPutDataRequest().setUrgent()
 
+            Log.d(
+                "WorkoutSync",
+                "SYNC_TRACE event=chunk side=wear direction=send tx=$transactionId index=$index isLast=$isLastChunk isRetry=false"
+            )
             dataClient.putDataItem(request)
 
             if (!isLastChunk) {
@@ -922,12 +930,20 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                         currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
                         continue
                     }
+                    Log.d(
+                        "WorkoutSync",
+                        "SYNC_TRACE event=complete side=wear direction=recv tx=$transactionId result=timeout"
+                    )
                     SyncHandshakeManager.cleanup(transactionId)
                     return false
                 }
                 result.first -> {
                     // Completion received
                     Log.d("DataLayerSync", "Sync completed successfully for workout history transaction: $transactionId")
+                    Log.d(
+                        "WorkoutSync",
+                        "SYNC_TRACE event=complete side=wear direction=recv tx=$transactionId result=success"
+                    )
                     SyncHandshakeManager.cleanup(transactionId)
                     return true
                 }
@@ -935,6 +951,10 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                     // Error received
                     val errorMessage = result.second ?: "Unknown error"
                     Log.e("DataLayerSync", "Sync error for workout history transaction: $transactionId, error: $errorMessage (attempt $retryAttempt)")
+                    Log.d(
+                        "WorkoutSync",
+                        "SYNC_TRACE event=error side=wear direction=recv tx=$transactionId message=$errorMessage"
+                    )
                     
                     // Check if it's a missing chunks error and we can retry
                     if (errorMessage.startsWith("MISSING_CHUNKS:") && retryAttempt < maxRetries) {
@@ -948,6 +968,10 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                             }
                             
                             Log.d("DataLayerSync", "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices")
+                            Log.d(
+                                "WorkoutSync",
+                                "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$transactionId missing=$missingIndices"
+                            )
                             try {
                                 // Register new waiters for the retry attempt
                                 // registerCompletionWaiter now handles race conditions atomically
@@ -1168,6 +1192,10 @@ private suspend fun retryMissingChunks(
     }
 
     Log.d("DataLayerSync", "Retrying ${missingIndices.size} missing chunks for transaction: $transactionId, indices: $missingIndices")
+    Log.d(
+        "WorkoutSync",
+        "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$transactionId missing=$missingIndices"
+    )
 
     // Send missing chunks one by one
     missingIndices.forEachIndexed { retryIndex, chunkIndex ->
@@ -1195,6 +1223,10 @@ private suspend fun retryMissingChunks(
             dataMap.putString("transactionId", transactionId)
         }.asPutDataRequest().setUrgent()
 
+        Log.d(
+            "WorkoutSync",
+            "SYNC_TRACE event=chunk side=wear direction=send tx=$transactionId index=$chunkIndex isLast=$isLastRetryChunk isRetry=true"
+        )
         dataClient.putDataItem(request)
 
         if (!isLastRetryChunk) {

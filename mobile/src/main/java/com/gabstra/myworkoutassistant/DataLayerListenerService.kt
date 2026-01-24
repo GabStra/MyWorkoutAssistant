@@ -491,245 +491,6 @@ class DataLayerListenerService : WearableListenerService() {
                         }
                     }
 
-                    path == WORKOUT_HISTORY_STORE_PATH -> {
-                        // Only process CHANGED events, ignore DELETED
-                        if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
-                            return@forEach
-                        }
-                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
-                        val compressedJson = dataMap.getByteArray("compressedJson")
-                        val transactionId = dataMap.getString("transactionId")
-
-                        // Use a standalone IO scope for long-running DB work so it isn't
-                        // cancelled if the short-lived service instance is destroyed.
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                val workoutHistoryStoreJson = decompressToString(compressedJson!!)
-
-                                val gson = GsonBuilder()
-                                    .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
-                                    .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
-                                    .registerTypeAdapter(
-                                        LocalDateTime::class.java,
-                                        LocalDateTimeAdapter()
-                                    )
-                                    .registerTypeAdapter(SetData::class.java, SetDataAdapter())
-                                    .create()
-
-                                val workoutHistoryStore = workoutHistoryGson.fromJson(
-                                    workoutHistoryStoreJson,
-                                    WorkoutHistoryStore::class.java
-                                )
-
-                                val workoutStore = workoutStoreRepository.getWorkoutStore()
-                                val workout =
-                                    workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
-
-                                if (workout == null) {
-                                    return@launch
-                                }
-
-                                workoutHistoryDao.insertWithVersionCheck(workoutHistoryStore.WorkoutHistory)
-                                setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
-
-                                if (workoutHistoryStore.WorkoutRecord != null) {
-                                    workoutRecordDao.deleteByWorkoutId(workout.id)
-                                    workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
-                                }
-
-                                if (workoutHistoryStore.WorkoutHistory.isDone) {
-                                    exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
-                                    exerciseSessionProgressionDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseSessionProgressions.toTypedArray())
-                                    workoutRecordDao.deleteByWorkoutId(workout.id)
-
-                                    val setHistoriesByExerciseId = workoutHistoryStore.SetHistories
-                                        .filter { it.exerciseId != null }
-                                        .groupBy { it.exerciseId }
-
-                                    val exercises =
-                                        workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>()
-                                            .flatMap { it.exercises }
-                                    var workoutComponents = workout.workoutComponents
-
-                                    for (exercise in exercises) {
-                                        if (exercise.doNotStoreHistory) continue
-                                        val setHistories =
-                                            setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order }
-                                                ?: continue
-
-                                        workoutComponents = removeSetsFromExerciseRecursively(
-                                            workoutComponents,
-                                            exercise
-                                        )
-
-                                        val validSetHistories = setHistories
-                                            .dropWhile { it.setData is RestSetData }
-                                            .dropLastWhile { it.setData is RestSetData }
-                                            .filter { it ->
-                                                when (val setData = it.setData) {
-                                                    is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                    is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                    is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                    else -> true
-                                                }
-                                            }
-
-                                        for (setHistory in validSetHistories) {
-                                            val newSet = getNewSetFromSetHistory(setHistory)
-                                            workoutComponents = addSetToExerciseRecursively(
-                                                workoutComponents,
-                                                exercise,
-                                                newSet,
-                                                setHistory.order
-                                            )
-                                        }
-                                    }
-
-                                    // Ensure rest sets are properly positioned after rebuilding from history
-                                    workoutComponents = workoutComponents.map { workoutComponent ->
-                                        when (workoutComponent) {
-                                            is Exercise -> workoutComponent.copy(
-                                                sets = ensureRestSeparatedBySets(workoutComponent.sets)
-                                            )
-                                            is Superset -> workoutComponent.copy(
-                                                exercises = workoutComponent.exercises.map { exercise ->
-                                                    exercise.copy(
-                                                        sets = ensureRestSeparatedBySets(exercise.sets)
-                                                    )
-                                                }
-                                            )
-                                            is Rest -> workoutComponent
-                                        }
-                                    }
-
-                                    val newWorkout =
-                                        workout.copy(workoutComponents = workoutComponents)
-                                    val updatedWorkoutStore = workoutStore.copy(
-                                        workouts = updateWorkoutOld(
-                                            workoutStore.workouts,
-                                            workout,
-                                            newWorkout
-                                        )
-                                    )
-                                    workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
-                                    val db = AppDatabase.getDatabase(this@DataLayerListenerService)
-                                    saveWorkoutStoreToDownloads(
-                                        this@DataLayerListenerService,
-                                        updatedWorkoutStore,
-                                        db
-                                    )
-                                }
-
-                                // Save error logs if present
-                                if (workoutHistoryStore.ErrorLogs.isNotEmpty()) {
-                                    errorLogDao.insertAll(*workoutHistoryStore.ErrorLogs.toTypedArray())
-                                }
-
-                                val intent = Intent(INTENT_ID).apply {
-                                    putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
-                                }
-
-                                intent.apply { setPackage(packageName) }
-                                sendBroadcast(intent)
-
-                                // Send completion acknowledgment
-                                transactionId?.let { tid ->
-                                    try {
-                                        Log.d(
-                                            "DataLayerSync",
-                                            "Preparing to send SYNC_COMPLETE for transaction: $tid (workout history processed)"
-                                        )
-                                        val completePath = DataLayerPaths.buildPath(
-                                            DataLayerPaths.SYNC_COMPLETE_PREFIX,
-                                            tid
-                                        )
-                                        val completeDataMapRequest =
-                                            PutDataMapRequest.create(completePath)
-                                        completeDataMapRequest.dataMap.putString(
-                                            "transactionId",
-                                            tid
-                                        )
-                                        val timestamp = System.currentTimeMillis().toString()
-                                        completeDataMapRequest.dataMap.putString(
-                                            "timestamp",
-                                            timestamp
-                                        )
-
-                                        val completeRequest =
-                                            completeDataMapRequest.asPutDataRequest().setUrgent()
-                                        Log.d(
-                                            "DataLayerSync",
-                                            "Sending SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp"
-                                        )
-                                        val task = dataClient.putDataItem(completeRequest)
-                                        Tasks.await(task)
-                                        Log.d(
-                                            "DataLayerSync",
-                                            "Successfully sent SYNC_COMPLETE for transaction: $tid (workout history)"
-                                        )
-                                        // Note: Toast is shown on WearOS when it receives this completion message
-                                    } catch (exception: Exception) {
-                                        Log.e(
-                                            "DataLayerSync",
-                                            "Failed to send SYNC_COMPLETE for transaction: $tid",
-                                            exception
-                                        )
-                                    }
-                                }
-
-                            } catch (exception: Exception) {
-                                Log.e(
-                                    "DataLayerSync",
-                                    "Error processing workout history store",
-                                    exception
-                                )
-                                exception.printStackTrace()
-
-                                // Send error response back to sender
-                                transactionId?.let { tid ->
-                                    try {
-                                        Log.e(
-                                            "DataLayerSync",
-                                            "Sending SYNC_ERROR for transaction: $tid due to processing error"
-                                        )
-                                        val errorMessage = exception.message
-                                            ?: "Unknown error processing workout history store"
-                                        val errorPath = DataLayerPaths.buildPath(
-                                            DataLayerPaths.SYNC_ERROR_PREFIX,
-                                            tid
-                                        )
-                                        val errorDataMapRequest =
-                                            PutDataMapRequest.create(errorPath)
-                                        errorDataMapRequest.dataMap.putString("transactionId", tid)
-                                        errorDataMapRequest.dataMap.putString(
-                                            "errorMessage",
-                                            errorMessage
-                                        )
-                                        errorDataMapRequest.dataMap.putString(
-                                            "timestamp",
-                                            System.currentTimeMillis().toString()
-                                        )
-
-                                        val errorRequest =
-                                            errorDataMapRequest.asPutDataRequest().setUrgent()
-                                        val task = dataClient.putDataItem(errorRequest)
-                                        Tasks.await(task)
-                                        Log.e(
-                                            "DataLayerSync",
-                                            "Successfully sent SYNC_ERROR for transaction: $tid"
-                                        )
-                                    } catch (sendErrorException: Exception) {
-                                        Log.e(
-                                            "DataLayerSync",
-                                            "Failed to send SYNC_ERROR for transaction: $tid",
-                                            sendErrorException
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     // Handle transaction-scoped workout history paths
                     DataLayerPaths.matchesPrefix(
                         path,
@@ -829,6 +590,10 @@ class DataLayerListenerService : WearableListenerService() {
                                     "Workout history sync started, transaction: $transactionId, expected chunks: $expectedChunks"
                                 )
                                 Log.d(
+                                    "WorkoutSync",
+                                    "SYNC_TRACE event=start side=mobile direction=recv tx=$transactionId expectedChunks=$expectedChunks"
+                                )
+                                Log.d(
                                     "DataLayerSync",
                                     "Workout history backup started with expected chunks: $expectedChunks, transactionId: $transactionId"
                                 )
@@ -859,6 +624,10 @@ class DataLayerListenerService : WearableListenerService() {
                                         "DataLayerSync",
                                         "Received workout history chunk at index $chunkIndex. Total chunks: ${workoutHistoryChunks.size}, expected: $expectedChunks, isRetry: $isRetry"
                                     )
+                                    Log.d(
+                                        "WorkoutSync",
+                                        "SYNC_TRACE event=chunk side=mobile direction=recv tx=$transactionId index=$chunkIndex isLast=$isLastChunk isRetry=$isRetry received=${workoutHistoryChunks.size} expected=$expectedChunks"
+                                    )
                                 } else {
                                     // Fallback for backwards compatibility - should not happen with new implementation
                                     Log.w(
@@ -873,6 +642,10 @@ class DataLayerListenerService : WearableListenerService() {
                                     val currentIndices = receivedChunkIndices.toMutableSet()
                                     currentIndices.add(nextIndex)
                                     receivedChunkIndices = currentIndices
+                                    Log.d(
+                                        "WorkoutSync",
+                                        "SYNC_TRACE event=chunk side=mobile direction=recv tx=$transactionId index=$nextIndex isLast=$isLastChunk isRetry=$isRetry received=${workoutHistoryChunks.size} expected=$expectedChunks"
+                                    )
                                 }
                             }
 
@@ -926,6 +699,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                     "DataLayerSync",
                                                     "Validation failed: Missing chunks. Expected: $expectedChunks, Received: ${workoutHistoryChunks.size}, Missing indices: $missingIndices, Validation time: ${validationTime}ms"
                                                 )
+                                                Log.d(
+                                                    "WorkoutSync",
+                                                    "SYNC_TRACE event=missing_chunks side=mobile direction=send tx=$transactionId expected=$expectedChunks received=${workoutHistoryChunks.size} missing=$missingIndices"
+                                                )
                                                 // Log chunk delivery metrics
                                                 val deliveryRate = (workoutHistoryChunks.size.toFloat() / expectedChunks * 100).toInt()
                                                 Log.e(
@@ -941,6 +718,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                         Log.e(
                                                             "DataLayerSync",
                                                             "Sending SYNC_ERROR for transaction: $tid due to missing chunks"
+                                                        )
+                                                        Log.d(
+                                                            "WorkoutSync",
+                                                            "SYNC_TRACE event=error side=mobile direction=send tx=$tid message=$errorMessage"
                                                         )
                                                         val errorPath = DataLayerPaths.buildPath(
                                                             DataLayerPaths.SYNC_ERROR_PREFIX,
@@ -1212,6 +993,14 @@ class DataLayerListenerService : WearableListenerService() {
                                                 try {
                                                     Log.d(
                                                         "WorkoutSync",
+                                                        "SYNC_TRACE event=process_done side=mobile tx=$tid historyId=${workoutHistoryStore.WorkoutHistory.id} isDone=${workoutHistoryStore.WorkoutHistory.isDone} sets=${workoutHistoryStore.SetHistories.size}"
+                                                    )
+                                                    Log.d(
+                                                        "WorkoutSync",
+                                                        "SYNC_TRACE event=complete side=mobile direction=send tx=$tid"
+                                                    )
+                                                    Log.d(
+                                                        "WorkoutSync",
                                                         "Sent SYNC_COMPLETE for transaction: $tid"
                                                     )
                                                     Log.d(
@@ -1305,6 +1094,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                     Log.e(
                                                         "DataLayerSync",
                                                         "Sending SYNC_ERROR for transaction: $tid due to workout history processing error"
+                                                    )
+                                                    Log.d(
+                                                        "WorkoutSync",
+                                                        "SYNC_TRACE event=error side=mobile direction=send tx=$tid message=$errorMessage"
                                                     )
                                                     val errorPath = DataLayerPaths.buildPath(
                                                         DataLayerPaths.SYNC_ERROR_PREFIX,
@@ -1445,8 +1238,6 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     companion object {
-        private const val WORKOUT_HISTORY_STORE_PATH = "/workoutHistoryStore"
-        private const val WORKOUT_HISTORY_CHUNK_PATH = "/workoutHistoryChunkPath"
         private const val OPEN_PAGE_PATH = "/openPagePath" // Define your new URI path here
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
@@ -1454,10 +1245,6 @@ class DataLayerListenerService : WearableListenerService() {
         const val UPDATE_WORKOUTS = "update_workouts"
         const val ERROR_LOGS_SYNCED = "error_logs_synced"
         const val PAGE = "page"
-        const val SYNC_REQUEST_PATH = "/syncRequest"
-        const val SYNC_ACK_PATH = "/syncAck"
-        const val SYNC_COMPLETE_PATH = "/syncComplete"
-        const val SYNC_ERROR_PATH = "/syncError"
         const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections
         const val COMPLETION_TIMEOUT_MS =
             30000L // Legacy constant, use calculateCompletionTimeout instead

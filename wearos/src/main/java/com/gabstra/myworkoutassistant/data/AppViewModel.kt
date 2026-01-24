@@ -413,6 +413,10 @@ open class AppViewModel : WorkoutViewModel() {
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
             if (!forceNotSend) {
                 val currentState = workoutState.value
+                Log.d(
+                    "WorkoutSync",
+                    "SYNC_TRACE event=push_store side=wear isDone=$isDone forceNotSend=$forceNotSend state=$currentState"
+                )
                 Log.d("WorkoutSync", "pushAndStoreWorkoutData: currentState=$currentState")
                 // We want to send workout history whenever we finish storing a set
                 // (including the last set), so that incomplete workouts can be resumed
@@ -443,6 +447,10 @@ open class AppViewModel : WorkoutViewModel() {
      * Only flushes if phone is connected to prevent sync attempts when mobile app is uninstalled.
      */
     fun flushWorkoutSync() {
+        Log.d(
+            "WorkoutSync",
+            "SYNC_TRACE event=sync_flush side=wear pending=${_hasPendingWorkoutSync.value} phoneConnected=$isPhoneConnectedAndHasApp dataClient=${dataClient != null}"
+        )
         // Only flush if phone is connected - prevents sync attempts when mobile app is uninstalled
         if (!isPhoneConnectedAndHasApp || dataClient == null) {
             Log.d("AppViewModel", "Skipping flushWorkoutSync - phone not connected or dataClient unavailable")
@@ -498,6 +506,10 @@ open class AppViewModel : WorkoutViewModel() {
     private fun requestWorkoutHistorySync(context: Context?) {
         Log.d("WorkoutSync", "requestWorkoutHistorySync called")
         markScheduledSync(context)
+        Log.d(
+            "WorkoutSync",
+            "SYNC_TRACE event=sync_scheduled side=wear pending=${_hasPendingWorkoutSync.value}"
+        )
         val syncContext = resolveSyncContext(context)
         viewModelScope.launch(coroutineExceptionHandler) {
             Log.d("WorkoutSync", "requestWorkoutHistorySync: Scheduling debounced sync")
@@ -510,6 +522,10 @@ open class AppViewModel : WorkoutViewModel() {
 
     private suspend fun performWorkoutHistorySync(context: Context?) {
         Log.d("WorkoutSync", "performWorkoutHistorySync: Starting sync execution")
+        Log.d(
+            "WorkoutSync",
+            "SYNC_TRACE event=sync_execute side=wear historyId=${currentWorkoutHistory?.id} isDone=${currentWorkoutHistory?.isDone} sets=${executedSetsHistory.size}"
+        )
         Log.d("WorkoutSync", "performWorkoutHistorySync: phoneNode=${phoneNode?.id}, isPhoneConnectedAndHasApp=$isPhoneConnectedAndHasApp, dataClient=${dataClient != null}")
         val syncContext = resolveSyncContext(context)
         val client = dataClient
@@ -574,6 +590,10 @@ open class AppViewModel : WorkoutViewModel() {
                 )
             }
             Log.d("WorkoutSync", "performWorkoutHistorySync: Sync result: $result")
+            Log.d(
+                "WorkoutSync",
+                "SYNC_TRACE event=send_result side=wear result=$result historyId=${currentWorkoutHistory?.id} isDone=${currentWorkoutHistory?.isDone}"
+            )
 
             // Clear error logs after successful send
             if (result && errorLogs.isNotEmpty() && syncContext != null) {

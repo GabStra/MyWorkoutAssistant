@@ -48,6 +48,8 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
+private const val TAG = "WorkoutCompleteScreen"
+
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -110,50 +112,114 @@ fun WorkoutCompleteScreen(
         }
         cancelWorkoutInProgressNotification(context)
 
-        // Capture initial sync status before flush
-        val initialStatus = viewModel.syncStatus.value
+        // Ensure final workout history is stored with isDone=true and scheduled for sync.
+        viewModel.pushAndStoreWorkoutData(isDone = true, context = context, forceNotSend = false) {
+            android.util.Log.d(
+                "WorkoutSync",
+                "SYNC_TRACE event=completion_force_send side=wear isDone=true"
+            )
+            viewModel.flushWorkoutSync()
+        }
 
-        // Flush any pending debounced sync to ensure the final workout state (with isDone=true)
-        // is synced immediately, preventing cancellation if the app closes or navigates away.
-        viewModel.flushWorkoutSync()
-
-        // Small delay to allow sync action to start and set status to Syncing
-        delay(200)
-
-        // Check syncStatus after delay
-        val currentStatus = viewModel.syncStatus.value
-        when (currentStatus) {
-            AppViewModel.SyncStatus.Syncing -> {
-                // A sync was pending and started, wait for it to complete
-                val completedStatus = withTimeoutOrNull(30_000) {
-                    viewModel.syncStatus
-                        .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
-                }
-                // Set syncComplete regardless of timeout - proceed even if sync takes too long
-                syncComplete = true
+        // Wait for sync to start and complete
+        // First, wait for sync status to become Syncing (with timeout)
+        val syncStarted = withTimeoutOrNull(5_000) {
+            viewModel.syncStatus
+                .first { it == AppViewModel.SyncStatus.Syncing }
+        }
+        
+        if (syncStarted != null) {
+            // Sync started, now wait for it to complete (Success or Failure)
+            val completedStatus = withTimeoutOrNull(30_000) {
+                viewModel.syncStatus
+                    .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
             }
-            AppViewModel.SyncStatus.Idle -> {
-                if (viewModel.hasPendingWorkoutSync.value) {
-                    // Wait briefly for pending sync to start or clear
-                    withTimeoutOrNull(30_000) {
-                        while (viewModel.hasPendingWorkoutSync.value &&
-                            viewModel.syncStatus.value == AppViewModel.SyncStatus.Idle
-                        ) {
-                            delay(200)
-                        }
+            // Only mark as complete if we got a confirmed completion status
+            if (completedStatus != null) {
+                syncComplete = true
+            } else {
+                // Sync started but didn't complete within timeout
+                // Check current status - if it's Success/Failure, we're done
+                // Otherwise, sync may have timed out or failed silently
+                val finalStatus = viewModel.syncStatus.value
+                if (finalStatus == AppViewModel.SyncStatus.Success || finalStatus == AppViewModel.SyncStatus.Failure) {
+                    syncComplete = true
+                } else {
+                    // Sync started but didn't complete - wait a bit more and check again
+                    delay(1_000)
+                    val checkStatus = viewModel.syncStatus.value
+                    if (checkStatus == AppViewModel.SyncStatus.Success || checkStatus == AppViewModel.SyncStatus.Failure) {
+                        syncComplete = true
+                    } else {
+                        // Sync didn't complete, but proceed anyway to avoid blocking UI indefinitely
+                        android.util.Log.w(
+                            TAG,
+                            "Sync started but did not complete within timeout. Current status: $checkStatus"
+                        )
+                        syncComplete = true
                     }
                 }
-                // No sync was pending or it did not start in time
-                syncComplete = true
             }
-            AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
-                // Sync already completed (from a previous sync)
-                syncComplete = true
+        } else {
+            // Sync didn't start within timeout - check if it's already done or won't happen
+            val currentStatus = viewModel.syncStatus.value
+            when (currentStatus) {
+                AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
+                    // Sync already completed (from a previous sync or completed very quickly)
+                    syncComplete = true
+                }
+                AppViewModel.SyncStatus.Idle -> {
+                    // Check if there's a pending sync that might start
+                    if (viewModel.hasPendingWorkoutSync.value) {
+                        // Wait a bit more for pending sync to start
+                        val pendingSyncStatus = withTimeoutOrNull(3_000) {
+                            while (viewModel.hasPendingWorkoutSync.value &&
+                                viewModel.syncStatus.value == AppViewModel.SyncStatus.Idle
+                            ) {
+                                delay(200)
+                            }
+                            viewModel.syncStatus.value
+                        }
+                        
+                        if (pendingSyncStatus == AppViewModel.SyncStatus.Syncing) {
+                            // Pending sync started, wait for completion
+                            val completedStatus = withTimeoutOrNull(30_000) {
+                                viewModel.syncStatus
+                                    .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
+                            }
+                            if (completedStatus != null) {
+                                syncComplete = true
+                            } else {
+                                // Check final status
+                                val finalStatus = viewModel.syncStatus.value
+                                syncComplete = (finalStatus == AppViewModel.SyncStatus.Success || finalStatus == AppViewModel.SyncStatus.Failure)
+                            }
+                        } else if (pendingSyncStatus == AppViewModel.SyncStatus.Success || pendingSyncStatus == AppViewModel.SyncStatus.Failure) {
+                            // Sync completed very quickly
+                            syncComplete = true
+                        } else {
+                            // No sync will happen (no connection, etc.) - proceed
+                            syncComplete = true
+                        }
+                    } else {
+                        // No sync pending and status is Idle - no sync will happen, proceed
+                        syncComplete = true
+                    }
+                }
+                AppViewModel.SyncStatus.Syncing -> {
+                    // Sync is in progress (started between checks), wait for completion
+                    val completedStatus = withTimeoutOrNull(30_000) {
+                        viewModel.syncStatus
+                            .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
+                    }
+                    syncComplete = (completedStatus != null || 
+                        viewModel.syncStatus.value == AppViewModel.SyncStatus.Success ||
+                        viewModel.syncStatus.value == AppViewModel.SyncStatus.Failure)
+                }
             }
         }
 
-        // The last set completion already synced the workout history with isDone=true to mobile.
-        // We just need to clean up the workout record on the watch.
+        // Clean up the workout record on the watch after final sync attempt.
         viewModel.deleteWorkoutRecord()
     }
 

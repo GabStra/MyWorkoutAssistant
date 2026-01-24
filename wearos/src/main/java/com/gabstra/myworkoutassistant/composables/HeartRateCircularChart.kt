@@ -212,7 +212,7 @@ fun HrStatusBadge(
             modifier = modifier
                 .fillMaxWidth()
                 .alpha(alpha)
-                .padding(top = 10.dp),
+                .padding(top = 15.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             val message = when (hrStatus) {
@@ -230,7 +230,11 @@ fun HrStatusBadge(
             Box(
                 modifier = Modifier
                     .background(
-                        color = Red,
+                        color = MaterialTheme.colorScheme.background,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        BorderStroke(1.dp, Red),
                         shape = RoundedCornerShape(12.dp)
                     )
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -243,13 +247,13 @@ fun HrStatusBadge(
                         imageVector = icon,
                         contentDescription = "HR Status",
                         modifier = Modifier.size(16.dp),
-                        tint = Color.White
+                        tint = Red
                     )
                     Spacer(modifier = Modifier.size(8.dp))
                     Text(
                         text = message,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White,
+                        color = Red,
                         textAlign = TextAlign.Center
                     )
                 }

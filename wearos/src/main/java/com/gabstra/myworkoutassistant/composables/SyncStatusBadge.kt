@@ -2,7 +2,9 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.Green
@@ -61,27 +64,31 @@ fun SyncStatusBadge(
             modifier = modifier
                 .fillMaxWidth()
                 .alpha(alpha)
-                .padding(top = 10.dp),
+                .padding(top = 15.dp),
             contentAlignment = Alignment.TopCenter
         ) {
-            val backgroundColor = when (syncStatus) {
-                AppViewModel.SyncStatus.Syncing -> MaterialTheme.colorScheme.surfaceContainer
-                AppViewModel.SyncStatus.Success -> Green // Green
-                AppViewModel.SyncStatus.Failure -> Red // Red
+            val borderColor = when (syncStatus) {
+                AppViewModel.SyncStatus.Syncing -> MaterialTheme.colorScheme.primary
+                AppViewModel.SyncStatus.Success -> Green
+                AppViewModel.SyncStatus.Failure -> Red
                 AppViewModel.SyncStatus.Idle -> Color.Transparent
             }
 
             val textColor = when (syncStatus) {
-                AppViewModel.SyncStatus.Syncing -> MaterialTheme.colorScheme.onSurface
-                AppViewModel.SyncStatus.Success -> Color.White
-                AppViewModel.SyncStatus.Failure -> Color.White
+                AppViewModel.SyncStatus.Syncing -> MaterialTheme.colorScheme.primary
+                AppViewModel.SyncStatus.Success -> Green
+                AppViewModel.SyncStatus.Failure -> Red
                 AppViewModel.SyncStatus.Idle -> Color.Transparent
             }
 
             Box(
                 modifier = Modifier
                     .background(
-                        color = backgroundColor,
+                        color = MaterialTheme.colorScheme.background,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        BorderStroke(1.dp, borderColor),
                         shape = RoundedCornerShape(12.dp)
                     )
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -94,7 +101,11 @@ fun SyncStatusBadge(
                         AppViewModel.SyncStatus.Syncing -> {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
+                                strokeWidth = 2.dp,
+                                colors = ProgressIndicatorDefaults.colors(
+                                    indicatorColor = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.background
+                                )
                             )
                             Spacer(modifier = Modifier.size(8.dp))
                             Text(

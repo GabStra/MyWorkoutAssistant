@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -36,6 +35,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.hueTowards
 
 
 @Composable
@@ -91,15 +91,14 @@ fun ControlButtonsVertical(
             Box(
                 modifier = Modifier
                     .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Green),
+                    .subtleVerticalGradientBackground(Green,CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowUpward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.hueTowards(Green)
                 )
             }
         }
@@ -145,15 +144,14 @@ fun ControlButtonsVertical(
             Box(
                 modifier = Modifier
                     .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Red),
+                    .subtleVerticalGradientBackground(Red,CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowDownward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.hueTowards(Red)
                 )
             }
         }

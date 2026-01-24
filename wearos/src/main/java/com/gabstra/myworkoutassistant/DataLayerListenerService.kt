@@ -508,6 +508,10 @@ class DataLayerListenerService : WearableListenerService() {
                                 "DataLayerSync",
                                 "Received SYNC_COMPLETE for transaction: $tid, timestamp: $timestamp"
                             )
+                            Log.d(
+                                "WorkoutSync",
+                                "SYNC_TRACE event=complete side=wear direction=recv tx=$tid timestamp=$timestamp"
+                            )
                             com.gabstra.myworkoutassistant.data.SyncHandshakeManager.completeCompletion(
                                 tid
                             )
@@ -540,6 +544,10 @@ class DataLayerListenerService : WearableListenerService() {
                             Log.e(
                                 "DataLayerSync",
                                 "Received SYNC_ERROR for transaction: $tid, error: $errorMessage"
+                            )
+                            Log.d(
+                                "WorkoutSync",
+                                "SYNC_TRACE event=error side=wear direction=recv tx=$tid message=$errorMessage"
                             )
                             com.gabstra.myworkoutassistant.data.SyncHandshakeManager.completeError(
                                 tid,
@@ -1481,8 +1489,6 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     companion object {
-        private const val WORKOUT_STORE_PATH = "/workoutStore"
-        private const val BACKUP_CHUNK_PATH = "/backupChunkPath"
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"
@@ -1492,10 +1498,6 @@ class DataLayerListenerService : WearableListenerService() {
         const val APP_BACKUP_FAILED = "appBackupFailed"
         const val APP_BACKUP_PROGRESS_UPDATE = "progress_update"
         const val SYNC_COMPLETE = "syncComplete"
-        const val SYNC_REQUEST_PATH = "/syncRequest"
-        const val SYNC_ACK_PATH = "/syncAck"
-        const val SYNC_COMPLETE_PATH = "/syncComplete"
-        const val SYNC_ERROR_PATH = "/syncError"
         const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections
         const val COMPLETION_TIMEOUT_MS =
             30000L // Legacy constant, use calculateCompletionTimeout instead

@@ -47,12 +47,16 @@ import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
@@ -723,3 +727,130 @@ fun <T> removeRestAndRestPause(
     }
     return out
 }
+
+/**
+ * Moves `from`'s OKLCH hue towards `to`'s hue by `amount` (0..1),
+ * keeping `from`'s lightness (L) and chroma (C) unchanged.
+ *
+ * Notes:
+ * - If either color is near-gray (very low chroma), hue is undefined -> returns `from`.
+ * - Uses OKLab <-> OKLCH conversions (per Björn Ottosson's OKLab definition).
+ */
+fun tintHueTowardsOklch(
+    from: Color,
+    to: Color,
+    amount: Float,
+    neutralChroma: Float = 0.03f, // typical 0.02–0.05 for “tinted white”
+): Color {
+    val t = amount.coerceIn(0f, 1f)
+
+    val (L1, C1, h1) = from.toOklch()
+    val (L2, C2, h2) = to.toOklch()
+
+    val chromaEps = 1e-4f
+
+    val outHue: Float
+    val outChroma: Float
+
+    if (C1 < chromaEps) {
+        outHue = h2
+        outChroma = neutralChroma.coerceIn(0f, 0.2f)
+    } else if (C2 < chromaEps) {
+        // target neutral -> nothing meaningful to tint towards
+        return from
+    } else {
+        outHue = lerpHueDegrees(h1, h2, t)
+        outChroma = C1 // keep original chroma
+    }
+
+    return Color.fromOklch(L1, outChroma, outHue, from.alpha)
+}
+
+/** Convenience extension. */
+fun Color.hueTowards(target: Color, amount: Float = 0.35f): Color =
+    tintHueTowardsOklch(this, target, amount)
+
+/* ----------------------------- OKLCH helpers ----------------------------- */
+
+data class Oklch(val L: Float, val C: Float, val hDeg: Float)
+
+private fun Color.toOklch(): Oklch {
+    val (L, a, b) = toOklab()
+    val C = hypot(a, b)
+    val hRad = atan2(b, a) // [-pi, pi]
+    val hDeg = ((hRad * 180.0 / Math.PI).toFloat() + 360f) % 360f
+    return Oklch(L, C, hDeg)
+}
+
+private fun Color.Companion.fromOklch(L: Float, C: Float, hDeg: Float, alpha: Float = 1f): Color {
+    val hRad = (hDeg * Math.PI / 180.0).toFloat()
+    val a = C * cos(hRad)
+    val b = C * sin(hRad)
+    return fromOklab(L, a, b, alpha)
+}
+
+/* ----------------------------- Hue interpolation ----------------------------- */
+
+private fun lerpHueDegrees(h1: Float, h2: Float, t: Float): Float {
+    // shortest path around the circle
+    var delta = (h2 - h1) % 360f
+    if (delta > 180f) delta -= 360f
+    if (delta < -180f) delta += 360f
+    return (h1 + delta * t + 360f) % 360f
+}
+
+/* ----------------------------- OKLab conversion ----------------------------- */
+
+private data class Oklab(val L: Float, val a: Float, val b: Float)
+
+private fun Color.toOklab(): Oklab {
+    val r = srgbToLinear(red)
+    val g = srgbToLinear(green)
+    val b = srgbToLinear(blue)
+
+    // linear sRGB -> LMS
+    val l = 0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b
+    val m = 0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b
+    val s = 0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b
+
+    val l_ = cbrt(l)
+    val m_ = cbrt(m)
+    val s_ = cbrt(s)
+
+    // LMS -> OKLab
+    val L = 0.2104542553f * l_ + 0.7936177850f * m_ - 0.0040720468f * s_
+    val A = 1.9779984951f * l_ - 2.4285922050f * m_ + 0.4505937099f * s_
+    val B = 0.0259040371f * l_ + 0.7827717662f * m_ - 0.8086757660f * s_
+
+    return Oklab(L, A, B)
+}
+
+private fun Color.Companion.fromOklab(L: Float, a: Float, b: Float, alpha: Float = 1f): Color {
+    // OKLab -> LMS'
+    val l_ = L + 0.3963377774f * a + 0.2158037573f * b
+    val m_ = L - 0.1055613458f * a - 0.0638541728f * b
+    val s_ = L - 0.0894841775f * a - 1.2914855480f * b
+
+    // cube
+    val l = l_ * l_ * l_
+    val m = m_ * m_ * m_
+    val s = s_ * s_ * s_
+
+    // LMS -> linear sRGB
+    val rLin = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s
+    val gLin = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s
+    val bLin = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s
+
+    val r = linearToSrgb(rLin).coerceIn(0f, 1f)
+    val g = linearToSrgb(gLin).coerceIn(0f, 1f)
+    val bb = linearToSrgb(bLin).coerceIn(0f, 1f)
+
+    return Color(r, g, bb, alpha)
+}
+
+/* ----------------------------- sRGB helpers ----------------------------- */
+
+private fun linearToSrgb(c: Float): Float =
+    if (c <= 0.0031308f) 12.92f * c else 1.055f * c.pow(1f / 2.4f) - 0.055f
+
+private fun cbrt(x: Float): Float = x.pow(1f / 3f)

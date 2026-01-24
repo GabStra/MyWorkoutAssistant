@@ -133,14 +133,20 @@ fun PreparingPolarScreen(
             )
             Spacer(modifier = Modifier.height(15.dp))
 
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+            AnimatedVisibility(
+                visible = !(canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState),
+                enter = fadeIn(animationSpec = tween(500)),
+                exit = fadeOut(animationSpec = tween(500))
             ) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(8.dp))
-                LoadingText(baseText = "Connecting")
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(8.dp))
+                    LoadingText(baseText = "Connecting")
+                }
             }
 
             AnimatedVisibility(
