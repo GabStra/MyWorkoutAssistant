@@ -1,0 +1,78 @@
+---
+alwaysApply: true
+---
+## Logging conventions and requirements
+
+### When to apply
+
+This rule applies whenever writing or modifying code that includes logging statements, including:
+- Adding new logging statements
+- Modifying existing logging code
+- Refactoring code that contains logging
+- Debugging or troubleshooting code
+
+### Format
+
+All debugging logs must use the Android Log library with a consistent tag for easy filtering.
+
+### Requirements
+
+1. **Use Android Log library only**
+   - All debugging logs MUST use `android.util.Log` (import as `Log`)
+   - Do not use `println()`, `System.out.println()`, or any other logging mechanism for debugging purposes
+
+2. **Define TAG constant**
+   - Each class that logs must define a companion object constant named `TAG` with the class name as the value
+   - In Kotlin: `companion object { private const val TAG = "WorkoutViewModel" }`
+   - In Java: `private static final String TAG = "WorkoutViewModel";`
+
+3. **Use TAG constant in all Log calls**
+   - Always use the TAG constant when calling Log methods:
+     - `Log.d(TAG, "message")` for debug logs
+     - `Log.e(TAG, "message")` for error logs
+     - `Log.w(TAG, "message")` for warning logs
+     - `Log.i(TAG, "message")` for info logs
+     - `Log.v(TAG, "message")` for verbose logs
+   - Never hardcode tag strings directly in Log calls
+
+4. **TAG naming convention**
+   - The TAG should match the class name (without package) for easy identification
+   - This enables consistent filtering across the codebase with `adb logcat -s TAG_NAME`
+
+### Examples
+
+**Good (Kotlin):**
+```kotlin
+class WorkoutViewModel : ViewModel() {
+    companion object {
+        private const val TAG = "WorkoutViewModel"
+    }
+    
+    fun startWorkout() {
+        Log.d(TAG, "Starting workout session")
+        // ...
+    }
+}
+```
+
+**Good (Java):**
+```java
+public class WorkoutViewModel extends ViewModel {
+    private static final String TAG = "WorkoutViewModel";
+    
+    public void startWorkout() {
+        Log.d(TAG, "Starting workout session");
+        // ...
+    }
+}
+```
+
+**Bad (hardcoded tag):**
+```kotlin
+Log.d("WorkoutViewModel", "Starting workout session")  // Don't hardcode tags
+```
+
+**Bad (using println):**
+```kotlin
+println("Starting workout session")  // Don't use println for debugging
+```

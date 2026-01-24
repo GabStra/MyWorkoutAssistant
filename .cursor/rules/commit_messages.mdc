@@ -1,6 +1,8 @@
 ---
-alwaysApply: true
+description: 
+alwaysApply: false
 ---
+
 ## Git commit message format and requirements
 
 ### When to apply
