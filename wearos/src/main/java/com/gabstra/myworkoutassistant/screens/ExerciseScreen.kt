@@ -461,20 +461,34 @@ fun ExerciseScreen(
 
         CustomDialogYesOnLongPress(
             show = showNextDialog,
-            title = if (updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",
-            message = "Do you want to proceed?",
+            title = when {
+                updatedState.isCalibrationSet -> "Complete Calibration Set"
+                updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!! -> "Switch side"
+                else -> "Complete Set"
+            },
+            message = if (updatedState.isCalibrationSet) "Rate your RIR after completing this set." else "Do you want to proceed?",
             handleYesClick = {
-
+                // Handle intra-set counter if applicable
                 if (updatedState.intraSetTotal != null) {
                     updatedState.intraSetCounter++
                 }
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
-                val isDone = viewModel.isNextStateCompleted()
-                viewModel.pushAndStoreWorkoutData(isDone, context) {
-                    viewModel.goToNextState()
+                
+                // Check if this is a calibration set execution
+                val isCalibrationSetExecution = updatedState.isCalibrationSet
+                
+                if (isCalibrationSetExecution) {
+                    // Move to RIR rating step instead of going to next state
+                    viewModel.completeCalibrationSet()
                     viewModel.lightScreenUp()
+                } else {
+                    val isDone = viewModel.isNextStateCompleted()
+                    viewModel.pushAndStoreWorkoutData(isDone, context) {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    }
                 }
 
                 viewModel.closeCustomDialog()

@@ -54,6 +54,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.viewmodels.applyCalibrationRIR
+import com.gabstra.myworkoutassistant.shared.viewmodels.confirmCalibrationLoad
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 
@@ -191,10 +193,12 @@ fun WorkoutScreen(
             
                 when (workoutState) {
                 is WorkoutState.Set -> {
-                    Toast.makeText(context, "Double press to complete set", Toast.LENGTH_SHORT).show()
+                    viewModel.openCustomDialog()
+                    viewModel.lightScreenUp()
                 }
                 is WorkoutState.Rest -> {
-                    Toast.makeText(context, "Double press to skip rest", Toast.LENGTH_SHORT).show()
+                    viewModel.openCustomDialog()
+                    viewModel.lightScreenUp()
                 }
                 is WorkoutState.CalibrationLoadSelection -> {
                     Toast.makeText(context, "Double press to confirm load", Toast.LENGTH_SHORT).show()
@@ -215,32 +219,8 @@ fun WorkoutScreen(
             
             when (workoutState) {
                 is WorkoutState.Set -> {
-                    android.util.Log.d("WorkoutSync", "Double-press: Handling Set state")
-                    val setState = workoutState as WorkoutState.Set
-                    
-                    // Check if this is a calibration set execution
-                    val isCalibrationSetExecution = setState.isCalibrationSet
-                    
-                    // Handle intra-set counter if applicable
-                    if (setState.intraSetTotal != null) {
-                        setState.intraSetCounter++
-                    }
-                    
-                    hapticsViewModel.doGentleVibration()
-                    viewModel.storeSetData()
-                    
-                    if (isCalibrationSetExecution) {
-                        // Move to RIR rating step instead of going to next state
-                        viewModel.completeCalibrationSet()
-                        viewModel.lightScreenUp()
-                    } else {
-                        val isDone = viewModel.isNextStateCompleted()
-                        android.util.Log.d("WorkoutSync", "Double-press: Calling pushAndStoreWorkoutData for Set, isDone: $isDone")
-                        viewModel.pushAndStoreWorkoutData(isDone, context) {
-                            viewModel.goToNextState()
-                            viewModel.lightScreenUp()
-                        }
-                    }
+                    // Set completion now handled by single-press dialog in ExerciseScreen
+                    // No-op for double-press
                 }
                 is WorkoutState.CalibrationLoadSelection -> {
                     // CalibrationLoadSelectionScreen handles its own back button logic
@@ -251,34 +231,8 @@ fun WorkoutScreen(
                     // This case should not be reached, but handle it gracefully
                 }
                 is WorkoutState.Rest -> {
-                    android.util.Log.d("WorkoutSync", "Double-press: Handling Rest state")
-                    val restState = workoutState as WorkoutState.Rest
-                    val restSetData = restState.currentSetData as RestSetData
-                    
-                    // Update currentSetData with current timer value (endTimer should already be current, but ensure it's set)
-                    // The endTimer is kept in sync by RestScreen's LaunchedEffect, so we can use it directly
-                    restState.currentSetData = restSetData.copy(
-                        endTimer = restSetData.endTimer
-                    )
-                    
-                    hapticsViewModel.doGentleVibration()
-                    
-                    // Execute the same logic as the skip rest dialog's onTimerEnd callback
-                    try {
-                        viewModel.storeSetData()
-                        val isDone = viewModel.isNextStateCompleted()
-                        android.util.Log.d("WorkoutSync", "Double-press: Calling pushAndStoreWorkoutData for Rest, isDone: $isDone")
-                        viewModel.pushAndStoreWorkoutData(isDone, context) {
-                            try {
-                                viewModel.goToNextState()
-                                viewModel.lightScreenUp()
-                            } catch (exception: Exception) {
-                                android.util.Log.e("WorkoutScreen", "Error in skip rest callback", exception)
-                            }
-                        }
-                    } catch (exception: Exception) {
-                        android.util.Log.e("WorkoutScreen", "Error handling skip rest", exception)
-                    }
+                    // Rest skip now handled by single-press dialog in RestScreen
+                    // No-op for double-press
                 }
                 else -> {
                     // Keep existing behavior for other states (pause workout)

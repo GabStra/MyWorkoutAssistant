@@ -37,7 +37,6 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -46,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -81,24 +81,16 @@ fun SetTableRow(
         else -> false
     }
     
-    // Check if this is a work set waiting for calibration (work set that comes after calibration set but before calibration is complete)
-    // This happens when CalibrationRIRSelection state exists in the workout for the same exercise
-    // We check both currentWorkoutState and allWorkoutStates to see if there's a CalibrationRIRSelection state
     val currentWorkoutState by viewModel.workoutState.collectAsState()
-    val hasCalibrationRIRSelection = (currentWorkoutState is WorkoutState.CalibrationRIRSelection && 
-        (currentWorkoutState as WorkoutState.CalibrationRIRSelection).exerciseId == setState.exerciseId) ||
-        viewModel.allWorkoutStates.any { state ->
-            state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
-        }
-    val isOnCalibrationSet = currentWorkoutState is WorkoutState.Set &&
-        (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
-        (currentWorkoutState as WorkoutState.Set).isCalibrationSet
-    
-    val isPendingCalibration = isCalibrationEnabled &&
-            !isWarmupSet &&
-            !isCalibrationSet &&
-            !setState.isCalibrationSet &&
-            (hasCalibrationRIRSelection || isOnCalibrationSet || isFutureExercise)
+    val isPendingCalibration = CalibrationHelper.isPendingCalibration(
+        currentWorkoutState,
+        viewModel.allWorkoutStates,
+        setState,
+        isCalibrationEnabled,
+        isWarmupSet,
+        isCalibrationSet,
+        isFutureExercise
+    )
 
     Box(
         modifier = modifier,
@@ -131,7 +123,7 @@ fun SetTableRow(
                         isPendingCalibration -> "Pending"
                         else -> weightText
                     }
-                    val weightColor = if (isCalibrationSet) textColor else weightTextColor
+                    val weightColor = weightTextColor
 
                     ScalableFadingText(
                         modifier = Modifier.weight(2f),
@@ -169,7 +161,7 @@ fun SetTableRow(
                         bodyWeightSetData.additionalWeight < previousBodyWeightSetData.additionalWeight  -> Red
                         else -> Green
                     }
-                    val weightColor = if (isCalibrationSet) textColor else weightTextColor
+                    val weightColor = weightTextColor
 
                     val repsTextColor = when {
                         bodyWeightSetData.actualReps == previousBodyWeightSetData.actualReps -> textColor
@@ -290,37 +282,21 @@ fun ExerciseSetsViewer(
             else -> false
         }
 
-        val isCalibrationSetRow = when(val set = setStateForThisRow.set) {
-            is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
-            is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
-            else -> false
-        }
-
         // When custom colors are provided, enforce them for ALL sets (previous, current, future)
         // This is used when viewing previous or future exercises
         // When null, use default logic that distinguishes between previous/current/future sets within the exercise
-        // Calibration sets always use Green coloring, regardless of custom colors
-        val borderColor = when {
-            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceColorLuminance(Green, 0.5f) // Non-current calibration set: reduced Green
-            else -> customBorderColor ?: when {
-                rowIndex == setIndex -> Orange // Current set: orange border
-                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
-            }
+        val borderColor = customBorderColor ?: when {
+            rowIndex == setIndex -> Orange // Current set: orange border
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
         val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background // All sets: black background
 
-        // Calibration sets always use Green coloring, regardless of custom colors
-        val textColor = when {
-            isCalibrationSetRow && rowIndex == setIndex -> Green // Current calibration set: full Green
-            isCalibrationSetRow -> reduceColorLuminance(Green, 0.5f) // Non-current calibration set: reduced Green
-            else -> customTextColor ?: when {
-                rowIndex == setIndex -> Orange // Current set: orange text
-                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
-            }
+        val textColor = customTextColor ?: when {
+            rowIndex == setIndex -> Orange // Current set: orange text
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
         }
 
         Row(

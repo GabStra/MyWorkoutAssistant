@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutStateMachine
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.LinkedList
 import java.util.UUID
@@ -285,7 +286,7 @@ fun ExerciseIndicator(
                 
                 val trackColor = remember(isCurrent, indicatorColor) {
                     if (isCurrent) {
-                        reduceColorLuminance(indicatorColor, 0.3f)
+                        reduceColorLuminance(indicatorColor)
                     } else {
                         MediumDarkGray
                     }
@@ -463,14 +464,22 @@ private fun ExerciseIndicatorPreview() {
         // Set up ViewModel state using reflection
         val viewModel = previewAppViewModel
         
-        // Populate allWorkoutStates (accessible as open val)
-        viewModel.allWorkoutStates.clear()
-        viewModel.allWorkoutStates.addAll(listOf(
+        val previewStates = listOf(
             workoutState1_1, workoutState1_2, workoutState1_3,
             workoutState2_1, workoutState2_2,
             workoutState3_1, workoutState3_2, workoutState3_3, workoutState3_4,
             workoutState4_1
-        ))
+        )
+        // Set state machine so allWorkoutStates getter returns preview states; current set is workoutState1_3 (index 2)
+        try {
+            val machine = WorkoutStateMachine.fromStates(previewStates, { java.time.LocalDateTime.now() }, startIndex = 2)
+            val stateMachineField = viewModel::class.java.superclass
+                ?.declaredFields?.find { it.name == "stateMachine" }
+            stateMachineField?.isAccessible = true
+            stateMachineField?.set(viewModel, machine)
+        } catch (e: Exception) {
+            // If reflection fails, the preview may not work perfectly but won't crash
+        }
         
         // Populate setStates using reflection (protected field)
         try {

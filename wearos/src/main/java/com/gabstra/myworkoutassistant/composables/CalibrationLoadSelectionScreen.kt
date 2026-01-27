@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +30,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -60,6 +60,7 @@ fun CalibrationLoadSelectionScreen(
     var availableWeights by remember(equipment) { mutableStateOf<Set<Double>>(emptySet()) }
     var selectedWeightIndex by remember(state.calibrationSet.id) { mutableIntStateOf(0) }
     var showPicker by remember { mutableStateOf(false) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     
     LaunchedEffect(equipment) {
@@ -190,7 +191,7 @@ fun CalibrationLoadSelectionScreen(
         }
     }
     
-    // Back button handler: double press to confirm, single press shows toast or closes picker
+    // Back button handler: single press opens dialog, closes picker if open
     CustomBackHandler(
         enabled = true,
         onPress = {
@@ -200,13 +201,11 @@ fun CalibrationLoadSelectionScreen(
             if (showPicker) {
                 onClosePicker()
             } else {
-                Toast.makeText(context, "Double press to confirm", Toast.LENGTH_SHORT).show()
+                showConfirmDialog = true
             }
         },
         onDoublePress = {
-            if (!showPicker) {
-                onConfirmClick()
-            }
+            // Double-press no longer used for confirmation
         }
     )
 
@@ -297,5 +296,27 @@ fun CalibrationLoadSelectionScreen(
         }
         viewModel.schedulePlateRecalculation(totalWeight)
     }
+
+    CustomDialogYesOnLongPress(
+        show = showConfirmDialog,
+        title = "Confirm Load",
+        message = "Do you want to proceed with this load?",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            onConfirmClick()
+            showConfirmDialog = false
+        },
+        handleNoClick = {
+            hapticsViewModel.doGentleVibration()
+            showConfirmDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = {
+            showConfirmDialog = false
+        },
+        onVisibilityChange = { isVisible ->
+            // Dialog visibility change handling if needed
+        }
+    )
 }
 

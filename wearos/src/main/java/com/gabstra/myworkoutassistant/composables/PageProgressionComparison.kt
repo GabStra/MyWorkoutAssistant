@@ -62,7 +62,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -217,6 +219,13 @@ fun calculateSetDifference(
     }
 }
 
+private fun isWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
+    is RestSet -> false
+    is WeightSet -> set.subCategory == SetSubCategory.WorkSet
+    is BodyWeightSet -> set.subCategory == SetSubCategory.WorkSet
+    is EnduranceSet, is TimedDurationSet -> true
+}
+
 @Composable
 fun PlaceholderSetRow(
     modifier: Modifier = Modifier,
@@ -331,7 +340,7 @@ fun PageProgressionComparison(
                     if (lastSessionExercise != null) {
                         val states = viewModel.createStatesFromExercise(lastSessionExercise)
                         previousSetStates.value = states.filterIsInstance<WorkoutState.Set>()
-                            .filter { it.set !is RestSet }
+                            .filter { isWorkSet(it.set) }
                             .distinctBy { it.set.id }
                     }
                 }
@@ -340,19 +349,16 @@ fun PageProgressionComparison(
         }
     }
 
-    // Get progression sets from current exercise states
+    // Get progression sets from current exercise states (work sets only)
     val progressionSetStates = remember(exercise.id) {
         viewModel.getAllExerciseWorkoutStates(exercise.id)
-            .filter { it.set !is RestSet }
+            .filter { isWorkSet(it.set) }
             .distinctBy { it.set.id }
     }
 
-    // Calculate the current set index (actual active set)
-    val exerciseSetIds = remember(exercise.id) {
-        viewModel.setsByExerciseId[exercise.id]?.map { it.set.id } ?: emptyList()
-    }
-    val setIndex = remember(state.set.id, exerciseSetIds) {
-        exerciseSetIds.indexOf(state.set.id)
+    // Current work-set index (for comparison row and "Set: X/Y")
+    val setIndex = remember(state.set.id, progressionSetStates) {
+        progressionSetStates.indexOfFirst { it.set.id == state.set.id }.takeIf { it >= 0 } ?: 0
     }
 
     // Set index state for navigation

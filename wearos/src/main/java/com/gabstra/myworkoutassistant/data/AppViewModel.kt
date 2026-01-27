@@ -233,7 +233,7 @@ open class AppViewModel : WorkoutViewModel() {
                                 setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
                             val exercises = it.workoutComponents.filterIsInstance<Exercise>() + it.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                             val exerciseInfos = exercises.mapNotNull { exercise ->
-                                exerciseInfoDao.getExerciseInfoById(exercise.id)
+                                getExerciseInfoDao().getExerciseInfoById(exercise.id)
                             }
 
                             val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(it.id)
@@ -338,9 +338,9 @@ open class AppViewModel : WorkoutViewModel() {
 
                 val exerciseInfos =
                     selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>().mapNotNull {
-                        exerciseInfoDao.getExerciseInfoById(it.id)
+                        getExerciseInfoDao().getExerciseInfoById(it.id)
                     } + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }.mapNotNull {
-                        exerciseInfoDao.getExerciseInfoById(it.id)
+                        getExerciseInfoDao().getExerciseInfoById(it.id)
                     }
 
                 val exerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(workoutHistory.id)
@@ -580,7 +580,7 @@ open class AppViewModel : WorkoutViewModel() {
                     selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
 
             exercises.forEach { exercise ->
-                exerciseInfoDao.getExerciseInfoById(exercise.id)?.let {
+                getExerciseInfoDao().getExerciseInfoById(exercise.id)?.let {
                     exerciseInfos.add(it)
                 }
             }

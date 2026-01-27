@@ -112,6 +112,7 @@ fun WorkoutsScreen(
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
+    onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
     selectedTabIndex: Int
@@ -151,25 +152,6 @@ fun WorkoutsScreen(
 
     val activeWorkouts = remember(filteredWorkouts) {
         filteredWorkouts.filter { it.isActive }.sortedBy { it.order }
-    }
-
-    // Filter equipment and accessories by selected plan
-    val filteredEquipments = remember(equipments, selectedPlanFilter) {
-        val planId = selectedPlanFilter
-        if (planId != null) {
-            appViewModel.getEquipmentForPlan(planId)
-        } else {
-            emptyList()
-        }
-    }
-
-    val filteredAccessories = remember(accessories, selectedPlanFilter) {
-        val planId = selectedPlanFilter
-        if (planId != null) {
-            appViewModel.getAccessoriesForPlan(planId)
-        } else {
-            emptyList()
-        }
     }
 
     val workoutsByPlan = remember(activeWorkouts, allPlans, selectedPlanFilter) {
@@ -490,6 +472,7 @@ fun WorkoutsScreen(
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts,
                         onExportWorkoutPlan = onExportWorkoutPlan,
+                        onExportEquipment = onExportEquipment,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
                         onViewErrorLogs = onViewErrorLogs,
                         onMenuItemClick = {
@@ -567,7 +550,7 @@ fun WorkoutsScreen(
                         2 -> {
                             EquipmentsBottomBar(
                                 selectedEquipments = selectedEquipments,
-                                equipments = filteredEquipments,
+                                equipments = equipments,
                                 appViewModel = appViewModel,
                                 onSelectionChange = { selectedEquipments = it },
                                 onSelectionModeChange = { isEquipmentSelectionModeActive = it },
@@ -575,7 +558,7 @@ fun WorkoutsScreen(
                             )
                             AccessoriesBottomBar(
                                 selectedAccessories = selectedAccessories,
-                                accessories = filteredAccessories,
+                                accessories = accessories,
                                 appViewModel = appViewModel,
                                 onSelectionChange = { selectedAccessories = it },
                                 onSelectionModeChange = { isAccessorySelectionModeActive = it },
@@ -752,8 +735,8 @@ fun WorkoutsScreen(
 
                                     2 -> {
                                         WorkoutsGearTab(
-                                            equipments = filteredEquipments,
-                                            accessories = filteredAccessories,
+                                            equipments = equipments,
+                                            accessories = accessories,
                                             selectedEquipments = selectedEquipments,
                                             selectedAccessories = selectedAccessories,
                                             isEquipmentSelectionModeActive = isEquipmentSelectionModeActive,

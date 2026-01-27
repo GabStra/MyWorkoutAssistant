@@ -300,11 +300,11 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 
 val colorsByZone = arrayOf(
     Color(0x80F0F0F0), // Not used
-    Color(0xFF4FA6FF), // Blue
-    Color(0xFF4FD08A), // Green
-    Color(0xFFE0D84F), // Yellow
-    Color(0xFFF2A24A), // Orange
-    Color(0xFFF26A5A)  // Red
+    Color(0xFF47b1b1), // Blue
+    Color(0xFF62b741), // Green
+    Color(0xFFba9b40), // Yellow
+    Color(0xFFee7746), // Orange
+    Color(0xFFBD0E12)  // Red
 )
 
 //define an array that for each zone, contains the upper and lower limit in percentage
@@ -316,6 +316,70 @@ val zoneRanges = arrayOf(
     80f to 90f,
     90f to 100f
 )
+
+fun reduceColorLuminance(
+    color: Color,
+    factor: Float = 0.3f
+): Color {
+    val f = factor.coerceIn(0f, 1f)
+
+    // Original
+    val r0 = color.red
+    val g0 = color.green
+    val b0 = color.blue
+    val a0 = color.alpha
+
+    // Convert RGB -> HSL
+    val max = maxOf(r0, g0, b0)
+    val min = minOf(r0, g0, b0)
+    val delta = max - min
+
+    val l0 = (max + min) / 2f
+
+    // Grayscale edge case
+    if (delta == 0f) {
+        val targetL = (l0 * f).coerceIn(0f, 1f)
+        return Color(targetL, targetL, targetL, a0)
+    }
+
+    // Saturation
+    val s0 = if (l0 > 0.5f) delta / (2f - max - min) else delta / (max + min)
+
+    // Hue
+    val h0 = (when {
+        max == r0 -> {
+            val hv = ((g0 - b0) / delta) % 6f
+            if (hv < 0) hv + 6f else hv
+        }
+        max == g0 -> (b0 - r0) / delta + 2f
+        else -> (r0 - g0) / delta + 4f
+    } / 6f).coerceIn(0f, 1f)
+
+    fun hslToRgb(h: Float, s: Float, l: Float): Triple<Float, Float, Float> {
+        val c = (1f - kotlin.math.abs(2f * l - 1f)) * s
+        val x = c * (1f - kotlin.math.abs((h * 6f) % 2f - 1f))
+        val m = l - c / 2f
+
+        val (rr, gg, bb) = when {
+            h < 1f / 6f -> Triple(c, x, 0f)
+            h < 2f / 6f -> Triple(x, c, 0f)
+            h < 3f / 6f -> Triple(0f, c, x)
+            h < 4f / 6f -> Triple(0f, x, c)
+            h < 5f / 6f -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
+
+        return Triple(
+            (rr + m).coerceIn(0f, 1f),
+            (gg + m).coerceIn(0f, 1f),
+            (bb + m).coerceIn(0f, 1f)
+        )
+    }
+
+    val targetL = (l0 * f).coerceIn(0f, 1f)
+    val (cr, cg, cb) = hslToRgb(h0, s0, targetL)
+    return Color(cr, cg, cb, a0)
+}
 
 /**
  * Reduces luminance via HSL lightness scaling, but guarantees a minimum contrast vs black.

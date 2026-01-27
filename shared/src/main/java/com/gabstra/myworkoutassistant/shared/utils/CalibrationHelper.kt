@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+
 object CalibrationHelper {
     /**
      * Calculates the weight adjustment multiplier based on calibration set RIR.
@@ -58,5 +60,62 @@ object CalibrationHelper {
     ): Double {
         val multiplier = calculateWeightAdjustment(calibrationRIR, formBreaks)
         return calibrationWeight * multiplier
+    }
+
+    /**
+     * Returns true when the given set is a work set whose weight should be shown as "Pending"
+     * because calibration is not yet complete. This includes: CalibrationLoadSelection or
+     * CalibrationRIRSelection for this exercise, being on the calibration set, or being on a
+     * warmup set that comes before the calibration set for this exercise.
+     *
+     * @param currentWorkoutState The current workout state from the state machine
+     * @param allWorkoutStates The full ordered list of workout states
+     * @param setState The set state for the row being rendered
+     * @param isCalibrationEnabled Whether the exercise requires load calibration
+     * @param isWarmupSet Whether the row's set is a warmup set
+     * @param isCalibrationSet Whether the row's set is the calibration set (by subCategory)
+     * @param isFutureExercise Whether this exercise has not been reached yet in the workout
+     * @return true if work set weight should display "Pending"
+     */
+    fun isPendingCalibration(
+        currentWorkoutState: WorkoutState,
+        allWorkoutStates: List<WorkoutState>,
+        setState: WorkoutState.Set,
+        isCalibrationEnabled: Boolean,
+        isWarmupSet: Boolean,
+        isCalibrationSet: Boolean,
+        isFutureExercise: Boolean
+    ): Boolean {
+        val hasCalibrationRIRSelection = (currentWorkoutState is WorkoutState.CalibrationRIRSelection &&
+            (currentWorkoutState as WorkoutState.CalibrationRIRSelection).exerciseId == setState.exerciseId) ||
+            allWorkoutStates.any { state ->
+                state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
+            }
+        val hasCalibrationLoadSelection = (currentWorkoutState is WorkoutState.CalibrationLoadSelection &&
+            (currentWorkoutState as WorkoutState.CalibrationLoadSelection).exerciseId == setState.exerciseId) ||
+            allWorkoutStates.any { state ->
+                state is WorkoutState.CalibrationLoadSelection && state.exerciseId == setState.exerciseId
+            }
+        val isOnCalibrationSet = currentWorkoutState is WorkoutState.Set &&
+            (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
+            (currentWorkoutState as WorkoutState.Set).isCalibrationSet
+        val calibrationIndex = allWorkoutStates.indexOfFirst { state ->
+            state is WorkoutState.Set &&
+                (state as WorkoutState.Set).exerciseId == setState.exerciseId &&
+                (state as WorkoutState.Set).isCalibrationSet
+        }
+        val currentIndex = allWorkoutStates.indexOf(currentWorkoutState)
+        val isOnWarmupBeforeCalibration = currentWorkoutState is WorkoutState.Set &&
+            (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
+            (currentWorkoutState as WorkoutState.Set).isWarmupSet &&
+            calibrationIndex >= 0 &&
+            currentIndex >= 0 &&
+            currentIndex <= calibrationIndex
+
+        return isCalibrationEnabled &&
+            !isWarmupSet &&
+            !isCalibrationSet &&
+            !setState.isCalibrationSet &&
+            (hasCalibrationRIRSelection || isOnCalibrationSet || isOnWarmupBeforeCalibration || hasCalibrationLoadSelection || isFutureExercise)
     }
 }

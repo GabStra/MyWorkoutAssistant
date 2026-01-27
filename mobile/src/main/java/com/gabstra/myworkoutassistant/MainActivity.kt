@@ -101,6 +101,8 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.exportEquipmentToDownloads
+import com.gabstra.myworkoutassistant.exportWorkoutPlanToMarkdown
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -218,6 +220,8 @@ class MainActivity : ComponentActivity() {
 
     private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
 
+    private var backupCleanupAttempted = false
+
     private val readStoragePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -248,6 +252,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Safety check: if permissions are available but cleanup hasn't run, run it now
+        if (!backupCleanupAttempted && hasDownloadsAccess()) {
+            runBackupCleanup()
+        }
     }
 
     override fun onPause() {
@@ -361,8 +373,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun runBackupCleanup() {
+        backupCleanupAttempted = true
         lifecycleScope.launch(Dispatchers.IO) {
-            cleanupDuplicateBackupFiles(this@MainActivity)
+            cleanupDuplicateBackupFilesByContent(this@MainActivity)
         }
     }
 
@@ -1191,6 +1204,31 @@ fun MyWorkoutAssistantNavHost(
                                                 appViewModel.workoutStore
                                             )
                                         }
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Export failed: ${e.message}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            },
+                            onExportEquipment = {
+                                scope.launch {
+                                    try {
+                                        val planId = appViewModel.selectedWorkoutPlanIdFlow.value
+                                        val filename = withContext(Dispatchers.IO) {
+                                            exportEquipmentToDownloads(
+                                                context,
+                                                appViewModel.workoutStore,
+                                                planId
+                                            )
+                                        }
+                                        Toast.makeText(
+                                            context,
+                                            "Equipment exported to: $filename",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,

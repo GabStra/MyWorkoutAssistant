@@ -415,51 +415,53 @@ private fun HeartRateDisplay(
                 colorsByZone[currentZone]
         )
         Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            modifier = Modifier.alignByBaseline(),
-            text = textToDisplay,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
-        )
-        if (bpm != 0 && displayMode == 0) {
-            Spacer(modifier = Modifier.width(2.5.dp))
+        Row{
             Text(
                 modifier = Modifier.alignByBaseline(),
-                text = "bpm",
-                style = MaterialTheme.typography.bodyExtraSmall,
-                color = MaterialTheme.colorScheme.onBackground
+                text = textToDisplay,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
             )
-
-            if(currentZone >= 1){
+            if (bpm != 0 && displayMode == 0) {
                 Spacer(modifier = Modifier.width(2.5.dp))
-                // Zone chip with black background, colored border, and colored text
-                val chipBorderColor = if (currentZone >= colorsByZone.size)
-                    MediumDarkGray
-                else
-                    colorsByZone[currentZone]
-                val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
-                val shape = RoundedCornerShape(12.dp)
-                Box(
-                    modifier = Modifier
-                        .border(BorderStroke(1.dp, chipBorderColor), shape)
-                        .background(
-                            color = MaterialTheme.colorScheme.background,
-                            shape = shape
-                        )
-                        .width(30.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-
-                        text = zoneText,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
-                                includeFontPadding = false
-                            )
-                        ),
-                        color = chipBorderColor
+                Text(
+                    modifier = Modifier.alignByBaseline(),
+                    text = "bpm",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
+        if(currentZone >= 1){
+            Spacer(modifier = Modifier.width(2.5.dp))
+            // Zone chip with black background, colored border, and colored text
+            val chipBorderColor = if (currentZone >= colorsByZone.size)
+                MediumDarkGray
+            else
+                colorsByZone[currentZone]
+            val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
+            val shape = RoundedCornerShape(12.dp)
+            Box(
+                modifier = Modifier
+                    .border(BorderStroke(1.dp, chipBorderColor), shape)
+                    .background(
+                        color = MaterialTheme.colorScheme.background,
+                        shape = shape
                     )
-                }
+                    .width(30.dp)
+                    .padding(2.5.dp)
+                ,
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = zoneText,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
+                        includeFontPadding = false
+                    )
+                    ),
+                    color = chipBorderColor
+                )
             }
         }
         Spacer(modifier = Modifier.weight(1f))
@@ -536,6 +538,7 @@ private fun TargetRangeArc(
                     .capturable(controller1)
                     .fillMaxSize()
                     .padding(borderWidth)
+                    .offset(x = 10000.dp)
                     .onGloballyPositioned {
                         isLayoutReady1 = true
                     }
@@ -616,6 +619,7 @@ private fun TargetRangeArc(
                     .capturable(controller2)
                     .fillMaxSize()
                     .padding(borderWidth - innerBorderWidth)
+                    .offset(x = 10000.dp)
                     .onGloballyPositioned {
                         isLayoutReady2 = true
                     }
@@ -688,11 +692,14 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            reduceColorLuminance(colorsByZone[index], 0.3f)
+            reduceColorLuminance(colorsByZone[index])
         } else {
             MediumDarkGray
         }
     }
+
+
+
 
     CircularProgressIndicator(
         progress = {
@@ -852,7 +859,7 @@ private fun HeartRateView(
         HeartRateDisplay(
             modifier = Modifier
                 .width(120.dp)
-                .height(20.dp)
+                .height(25.dp)
                 .offset(y = (-8).dp)
                 .clickable(onClick = onSwitchClick, enabled = hr != 0),
             bpm = hr,
@@ -920,7 +927,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceColorLuminance(Orange, 0.3f),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceColorLuminance(Orange),
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp
@@ -1048,10 +1055,10 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(59f, 30),
+            hr = getHeartRateFromPercentage(85f, 30),
             age = 30,
-            lowerBoundMaxHRPercent = 70f,
-            upperBoundMaxHRPercent = 80f
+            lowerBoundMaxHRPercent = 60f,
+            upperBoundMaxHRPercent = 70f
         )
     }
 }

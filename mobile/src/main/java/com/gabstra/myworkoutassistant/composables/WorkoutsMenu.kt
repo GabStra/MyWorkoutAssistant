@@ -35,6 +35,7 @@ fun WorkoutsMenu(
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
+    onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
     onMenuItemClick: () -> Unit = {},
@@ -88,6 +89,13 @@ fun WorkoutsMenu(
             text = { Text("Export Workout Plan (Markdown)") },
             onClick = {
                 onExportWorkoutPlan()
+                onMenuItemClick()
+            }
+        )
+        AppDropdownMenuItem(
+            text = { Text("Export Equipment (JSON)") },
+            onClick = {
+                onExportEquipment()
                 onMenuItemClick()
             }
         )

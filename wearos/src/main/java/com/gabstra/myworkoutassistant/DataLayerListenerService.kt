@@ -258,6 +258,7 @@ class DataLayerListenerService : WearableListenerService() {
                             "Attempting auto-heal for transaction: $transactionId. Missing ${missingIndices.size} chunks: $missingIndices"
                         )
                         sendMissingChunksError(transactionId ?: return@launch, missingIndices, expectedChunks, receivedChunkIndices.size)
+                        postRetryTimeout(maxOf(expectedChunks, 1))
                     } else {
                         // No chunks received yet - request full retry
                         Log.d(
@@ -268,6 +269,7 @@ class DataLayerListenerService : WearableListenerService() {
                             transactionId ?: return@launch,
                             "MISSING_CHUNKS: Expected $expectedChunks chunks, received 0. Missing indices: ${(0 until expectedChunks).toList()}"
                         )
+                        postRetryTimeout(maxOf(expectedChunks, 1))
                     }
                     
                     // Keep state to allow phone retry - don't clean up yet
@@ -297,6 +299,7 @@ class DataLayerListenerService : WearableListenerService() {
      */
     private fun cleanupIncompleteSyncState() {
         removeTimeout()
+        removeRetryTimeout()
         backupChunks = mutableMapOf()
         receivedChunkIndices = mutableSetOf()
         expectedChunks = 0
@@ -369,6 +372,9 @@ class DataLayerListenerService : WearableListenerService() {
     @Volatile // Ensure visibility across threads
     private var timeoutOperationCancelled = false
 
+    @Volatile
+    private var retryTimeoutOperationCancelled = false
+
     private val timeoutRunnable = Runnable {
         if (timeoutOperationCancelled) {
             return@Runnable // Exit if cancelled
@@ -381,12 +387,21 @@ class DataLayerListenerService : WearableListenerService() {
         }
         sendBroadcast(intent)
 
+        removeRetryTimeout()
         backupChunks = mutableMapOf()
         receivedChunkIndices = mutableSetOf()
         expectedChunks = 0
         hasStartedSync = false
         currentTransactionId = null
         ignoreUntilStartOrEnd = true
+    }
+
+    private val retryTimeoutRunnable = Runnable {
+        if (retryTimeoutOperationCancelled) {
+            return@Runnable
+        }
+        Log.w("DataLayerSync", "Retry timeout triggered - aborting stuck backup sync")
+        cleanupIncompleteSyncState()
     }
 
     private fun postTimeout(chunksCount: Int = expectedChunks) {
@@ -402,10 +417,27 @@ class DataLayerListenerService : WearableListenerService() {
         handler.postDelayed(timeoutRunnable, timeoutMs)
     }
 
+    private fun postRetryTimeout(chunksCount: Int = expectedChunks) {
+        retryTimeoutOperationCancelled = false
+        val baseTimeout = if (chunksCount > 0) {
+            calculateCompletionTimeout(chunksCount)
+        } else {
+            BASE_COMPLETION_TIMEOUT_MS
+        }
+        val retryTimeoutMs = minOf(baseTimeout * 2, MAX_COMPLETION_TIMEOUT_MS)
+        Log.d("DataLayerSync", "Posting retry timeout: ${retryTimeoutMs}ms for $chunksCount chunks")
+        handler.postDelayed(retryTimeoutRunnable, retryTimeoutMs)
+    }
+
     // Helper function to remove timeout
     private fun removeTimeout() {
         timeoutOperationCancelled = true // Set flag to indicate cancellation intent
         handler.removeCallbacks(timeoutRunnable)
+    }
+
+    private fun removeRetryTimeout() {
+        retryTimeoutOperationCancelled = true
+        handler.removeCallbacks(retryTimeoutRunnable)
     }
     
     /**
@@ -798,6 +830,7 @@ class DataLayerListenerService : WearableListenerService() {
 
                             if (!ignoreUntilStartOrEnd && shouldStop && !isRetry) {
                                 removeTimeout()
+                                removeRetryTimeout()
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
                                     setPackage(packageName)
@@ -823,14 +856,15 @@ class DataLayerListenerService : WearableListenerService() {
                                 // If starting a new sync with different transaction ID, clean up old incomplete sync
                                 if (hasStartedSync && currentTransactionId != null && currentTransactionId != transactionId) {
                                     Log.d(
-                                        "DataLayerSync",
-                                        "New sync starting with transaction: $transactionId. Cleaning up old incomplete sync: $currentTransactionId"
-                                    )
-                                    // Clean up old incomplete sync state
-                                    removeTimeout()
-                                    backupChunks = mutableMapOf()
-                                    receivedChunkIndices = mutableSetOf()
-                                    expectedChunks = 0
+                                    "DataLayerSync",
+                                    "New sync starting with transaction: $transactionId. Cleaning up old incomplete sync: $currentTransactionId"
+                                )
+                                // Clean up old incomplete sync state
+                                removeTimeout()
+                                removeRetryTimeout()
+                                backupChunks = mutableMapOf()
+                                receivedChunkIndices = mutableSetOf()
+                                expectedChunks = 0
                                 }
 
                                 Log.d(
@@ -851,10 +885,9 @@ class DataLayerListenerService : WearableListenerService() {
                                 sendBroadcast(intent)
 
                                 removeTimeout()
-                                // Post initial timeout based on expected chunks
-                                if (expectedChunks > 0) {
-                                    postTimeout(expectedChunks)
-                                }
+                                removeRetryTimeout()
+                                // Post initial timeout based on expected chunks (fallback to 1)
+                                postTimeout(maxOf(expectedChunks, 1))
                             }
 
                             if (backupChunk != null && (!ignoreUntilStartOrEnd || isRetry)) {
@@ -862,6 +895,10 @@ class DataLayerListenerService : WearableListenerService() {
                                 removeTimeout()
                                 val remainingChunks = expectedChunks - receivedChunkIndices.size
                                 postTimeout(maxOf(remainingChunks, 1)) // At least 1 to ensure timeout is set
+                                if (isRetry) {
+                                    removeRetryTimeout()
+                                    postRetryTimeout(maxOf(expectedChunks, 1))
+                                }
 
                                 // Handle chunk with index
                                 if (chunkIndex >= 0) {
@@ -1004,6 +1041,8 @@ class DataLayerListenerService : WearableListenerService() {
 
                                                 // Don't clear chunk state yet - may receive retry chunks
                                                 // Don't send APP_BACKUP_FAILED - keep syncing screen visible for retry
+                                                removeRetryTimeout()
+                                                postRetryTimeout(maxOf(expectedChunks, 1))
                                                 return@launch
                                             }
 
@@ -1210,6 +1249,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                 hasStartedSync = false
                                                 ignoreUntilStartOrEnd = false
                                                 currentTransactionId = null
+                                                removeRetryTimeout()
                                             }
                                         } catch (exception: Exception) {
                                             // Build comprehensive error message
@@ -1364,6 +1404,7 @@ class DataLayerListenerService : WearableListenerService() {
                                             }
 
                                             // Clean up state and notify UI of failure
+                                            removeRetryTimeout()
                                             backupChunks = mutableMapOf()
                                             receivedChunkIndices = mutableSetOf()
                                             expectedChunks = 0
@@ -1403,6 +1444,7 @@ class DataLayerListenerService : WearableListenerService() {
             exception.printStackTrace()
             Log.e("DataLayerListenerService", "Error processing data", exception)
             removeTimeout()
+            removeRetryTimeout()
             val intent = Intent(INTENT_ID).apply {
                 putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
                 setPackage(packageName)

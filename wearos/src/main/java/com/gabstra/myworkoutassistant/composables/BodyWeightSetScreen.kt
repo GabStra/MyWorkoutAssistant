@@ -73,7 +73,7 @@ fun BodyWeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as BodyWeightSetData
-    var currentSetData by remember(state.set.id, (state.set as? BodyWeightSet)?.additionalWeight) {
+    var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
 
@@ -154,20 +154,6 @@ fun BodyWeightSetScreen(
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle = remember(typography) { typography.numeralSmall.copy(fontWeight = FontWeight.Medium) }
-
-    // Sync state.set.additionalWeight to local currentSetData when set weight changes
-    // This ensures weights updated after RIR calibration are reflected in the UI
-    LaunchedEffect(state.set.id, (state.set as? BodyWeightSet)?.additionalWeight) {
-        val bodyWeightSet = state.set as? BodyWeightSet
-        if (bodyWeightSet != null && bodyWeightSet.additionalWeight != currentSetData.additionalWeight) {
-            // Update additionalWeight to match the set's weight and recalculate volume
-            val updatedSetData = currentSetData.copy(additionalWeight = bodyWeightSet.additionalWeight)
-            val finalSetData = updatedSetData.copy(volume = updatedSetData.calculateVolume())
-            currentSetData = finalSetData
-            // Also update state.currentSetData to keep it in sync
-            state.currentSetData = finalSetData
-        }
-    }
 
     LaunchedEffect(currentSetData) {
         state.currentSetData = currentSetData

@@ -12,21 +12,37 @@ import kotlin.math.pow
 fun Modifier.subtleVerticalGradientBackground(
     base: Color,
     shape: Shape,
-    deltaLightness: Float = 0.03f, // 0.02–0.04 typical
+    deltaLightness: Float = 0.08f,   // Wear OS: 0.06–0.12
+    highlightAlpha: Float = 0.03f,   // 0.02–0.06
+    gradientSpan: Float = 0.55f,     // portion of height used for gradient (0.35–0.7)
 ): Modifier = this.then(
     Modifier.drawWithCache {
-        val d = deltaLightness.coerceIn(0f, 0.12f)
+        val d = deltaLightness.coerceIn(0f, 0.18f)
+        val outline = shape.createOutline(size, LayoutDirection.Ltr, this)
+
+        // Make the change happen sooner (top part) so it’s visible on short buttons
+        val endY = (size.height * gradientSpan.coerceIn(0.1f, 1f)).coerceAtLeast(1f)
+
         val top = base.adjustOklabLightness(+d)
         val bottom = base
 
-        val outline = shape.createOutline(size, LayoutDirection.Ltr, this)
         val brush = Brush.verticalGradient(
             colors = listOf(top, bottom),
             startY = 0f,
-            endY = size.height
+            endY = endY
         )
 
-        onDrawBehind { drawOutline(outline, brush) }
+        // tiny top specular highlight
+        val highlight = Brush.verticalGradient(
+            colors = listOf(Color.White.copy(alpha = highlightAlpha.coerceIn(0f, 0.12f)), Color.Transparent),
+            startY = 0f,
+            endY = (size.height * 0.25f).coerceAtLeast(1f)
+        )
+
+        onDrawBehind {
+            drawOutline(outline, brush)
+            drawOutline(outline, highlight)
+        }
     }
 )
 

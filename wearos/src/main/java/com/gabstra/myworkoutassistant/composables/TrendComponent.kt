@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LightGray
+
 
 import com.gabstra.myworkoutassistant.shared.Red
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator

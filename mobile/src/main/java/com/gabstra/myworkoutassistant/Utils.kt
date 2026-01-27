@@ -64,6 +64,8 @@ import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
+import com.gabstra.myworkoutassistant.shared.export.extractEquipmentFromWorkoutPlan
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
@@ -119,6 +121,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
+import java.security.MessageDigest
 
 /**
  * Specific error types for sync operations to improve error handling and debugging.
@@ -1160,6 +1163,175 @@ private suspend fun readFileContentFromDownloadsFolder(context: Context, uri: an
 }
 
 /**
+ * Finds all backup files matching both automatic and manual backup patterns.
+ * - Automatic backups: workout_store_backup.json (and variations)
+ * - Manual backups: workout_backup_*.json
+ */
+private suspend fun findAllBackupFiles(context: Context): List<BackupFileEntry> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val automaticBackups = findAllBackupFilesInDownloadsFolder(context, "workout_store_backup.json")
+            
+            // Find manual backups (workout_backup_*.json pattern)
+            val manualBackups = findManualBackupFiles(context)
+            
+            // Combine and deduplicate by URI
+            val allBackups = (automaticBackups + manualBackups).distinctBy { it.uri }
+            
+            Log.d("Utils", "Found ${allBackups.size} total backup files (${automaticBackups.size} automatic, ${manualBackups.size} manual)")
+            allBackups
+        } catch (e: Exception) {
+            Log.e("Utils", "Error finding all backup files", e)
+            emptyList()
+        }
+    }
+}
+
+/**
+ * Finds manual backup files matching the pattern workout_backup_*.json
+ */
+private suspend fun findManualBackupFiles(context: Context): List<BackupFileEntry> {
+    return withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val projection = arrayOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.RELATIVE_PATH
+            )
+            
+            val manualBackupPattern = Regex("^workout_backup_.*\\.json$", RegexOption.IGNORE_CASE)
+            val files = mutableListOf<BackupFileEntry>()
+            
+            fun queryCollection(
+                collectionUri: android.net.Uri,
+                limitToDownloads: Boolean,
+                restrictToOwner: Boolean
+            ): List<BackupFileEntry> {
+                val foundFiles = mutableListOf<BackupFileEntry>()
+                val baseSelectionParts = mutableListOf<String>()
+                val baseSelectionArgs = mutableListOf<String>()
+                
+                if (restrictToOwner && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    baseSelectionParts.add("${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
+                    baseSelectionArgs.add(context.packageName)
+                }
+                
+                if (limitToDownloads) {
+                    baseSelectionParts.add("${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+                    baseSelectionArgs.add("${Environment.DIRECTORY_DOWNLOADS}/%")
+                }
+                
+                val allSelection = if (baseSelectionParts.isEmpty()) {
+                    null
+                } else {
+                    baseSelectionParts.joinToString(" AND ")
+                }
+                val allSelectionArgs = if (baseSelectionArgs.isEmpty()) {
+                    null
+                } else {
+                    baseSelectionArgs.toTypedArray()
+                }
+                
+                resolver.query(
+                    collectionUri,
+                    projection,
+                    allSelection,
+                    allSelectionArgs,
+                    "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idIndex)
+                        val name = cursor.getString(nameIndex)
+                        val dateModified = cursor.getLong(dateIndex)
+                        if (manualBackupPattern.matches(name)) {
+                            foundFiles.add(
+                                BackupFileEntry(
+                                    ContentUris.withAppendedId(collectionUri, id),
+                                    name,
+                                    dateModified
+                                )
+                            )
+                        }
+                    }
+                }
+                
+                return foundFiles
+            }
+            
+            // Try Downloads first
+            val downloadsFiles = queryCollection(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                limitToDownloads = false,
+                restrictToOwner = true
+            )
+            
+            val downloadsFallbackFiles = if (downloadsFiles.isEmpty()) {
+                queryCollection(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    limitToDownloads = false,
+                    restrictToOwner = false
+                )
+            } else {
+                emptyList()
+            }
+            
+            val resolvedDownloadsFiles = if (downloadsFiles.isEmpty()) {
+                downloadsFallbackFiles
+            } else {
+                downloadsFiles
+            }
+            
+            val filesCollectionFiles = if (resolvedDownloadsFiles.isEmpty()) {
+                queryCollection(
+                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
+                    limitToDownloads = true,
+                    restrictToOwner = false
+                )
+            } else {
+                emptyList()
+            }
+            
+            (resolvedDownloadsFiles + filesCollectionFiles).distinctBy { it.uri }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error finding manual backup files", e)
+            emptyList()
+        }
+    }
+}
+
+/**
+ * Reads file bytes from a URI.
+ * Returns null if the file can't be read.
+ */
+private suspend fun readFileBytes(context: Context, uri: android.net.Uri): ByteArray? {
+    return withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                inputStream.readBytes()
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error reading file bytes from URI: $uri", e)
+            null
+        }
+    }
+}
+
+/**
+ * Calculates SHA-256 hash of byte array.
+ * Returns hex string representation of the hash.
+ */
+private fun calculateContentHash(bytes: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hashBytes = digest.digest(bytes)
+    return hashBytes.joinToString("") { "%02x".format(it) }
+}
+
+/**
  * Creates an AppBackup from the current workout store and database state.
  * This is a helper function that extracts the backup creation logic.
  */
@@ -1356,6 +1528,110 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
             }
         } catch (e: Exception) {
             Log.e("Utils", "Error cleaning up duplicate backup files", e)
+        }
+    }
+}
+
+/**
+ * Cleans up duplicate backup files by comparing content hashes.
+ * Finds all backup files (both automatic and manual patterns), groups them by content hash,
+ * and keeps only the most recent file from each unique content group.
+ * This ensures that files with identical content are deduplicated while preserving unique versions.
+ */
+suspend fun cleanupDuplicateBackupFilesByContent(context: Context) {
+    withContext(Dispatchers.IO) {
+        try {
+            fun showCleanupToast(message: String) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            Log.d("Utils", "Content-based backup cleanup started")
+            
+            // Find all backup files (both automatic and manual patterns)
+            val allBackupFiles = findAllBackupFiles(context)
+            
+            if (allBackupFiles.isEmpty()) {
+                Log.d("Utils", "No backup files found to clean up")
+                return@withContext
+            }
+            
+            if (allBackupFiles.size == 1) {
+                Log.d("Utils", "Only one backup file found, no cleanup needed")
+                return@withContext
+            }
+            
+            Log.d("Utils", "Found ${allBackupFiles.size} backup files, analyzing content for duplicates")
+            
+            // Read bytes and calculate hash for each file
+            val fileHashes = mutableMapOf<String, MutableList<BackupFileEntry>>()
+            
+            for (file in allBackupFiles) {
+                try {
+                    val bytes = readFileBytes(context, file.uri)
+                    if (bytes == null) {
+                        Log.w("Utils", "Failed to read bytes from file: ${file.name}, skipping")
+                        continue
+                    }
+                    
+                    // Skip empty files
+                    if (bytes.isEmpty()) {
+                        Log.w("Utils", "File is empty: ${file.name}, skipping")
+                        continue
+                    }
+                    
+                    val hash = calculateContentHash(bytes)
+                    fileHashes.getOrPut(hash) { mutableListOf() }.add(file)
+                    Log.d("Utils", "File: ${file.name}, hash: ${hash.take(16)}..., size: ${bytes.size} bytes")
+                } catch (e: Exception) {
+                    Log.w("Utils", "Error processing file ${file.name}, skipping", e)
+                }
+            }
+            
+            // Group files by hash and identify duplicates
+            var totalDuplicates = 0
+            var deletedCount = 0
+            
+            for ((hash, files) in fileHashes) {
+                if (files.size > 1) {
+                    // Multiple files with same content - keep only the most recent
+                    val sortedFiles = files.sortedByDescending { it.dateModified }
+                    val fileToKeep = sortedFiles.first()
+                    val duplicatesToDelete = sortedFiles.drop(1)
+                    
+                    totalDuplicates += duplicatesToDelete.size
+                    Log.d("Utils", "Found ${duplicatesToDelete.size} duplicate(s) of ${fileToKeep.name} (hash: ${hash.take(16)}...), keeping most recent: ${fileToKeep.name}")
+                    
+                    for (duplicate in duplicatesToDelete) {
+                        try {
+                            val deleted = deleteBackupFile(context, duplicate.uri)
+                            if (deleted) {
+                                deletedCount++
+                                Log.d("Utils", "Deleted duplicate backup file: ${duplicate.name} (same content as ${fileToKeep.name})")
+                            } else {
+                                Log.w("Utils", "No rows deleted for duplicate backup file: ${duplicate.name}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("Utils", "Failed to delete duplicate backup file: ${duplicate.name}", e)
+                        }
+                    }
+                } else {
+                    // Single file with this content - keep it
+                    Log.d("Utils", "File ${files.first().name} has unique content (hash: ${hash.take(16)}...), keeping")
+                }
+            }
+            
+            val uniqueFiles = fileHashes.size
+            Log.d("Utils", "Cleanup complete: $uniqueFiles unique content(s), $totalDuplicates duplicate(s) found, $deletedCount deleted, ${allBackupFiles.size - deletedCount} kept")
+            
+            if (deletedCount > 0) {
+                showCleanupToast("Deleted $deletedCount duplicate backup file(s), kept $uniqueFiles unique version(s)")
+            } else if (totalDuplicates == 0) {
+                Log.d("Utils", "No duplicates found - all backup files have unique content")
+            }
+        } catch (e: Exception) {
+            Log.e("Utils", "Error cleaning up duplicate backup files by content", e)
         }
     }
 }
@@ -2628,6 +2904,40 @@ suspend fun exportWorkoutPlanToMarkdown(
         Log.e("WorkoutPlanExport", "Error exporting workout plan", e)
         withContext(Dispatchers.Main) {
             Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+suspend fun exportEquipmentToDownloads(
+    context: Context,
+    workoutStore: WorkoutStore,
+    planId: UUID?
+): String {
+    return withContext(Dispatchers.IO) {
+        try {
+            val (equipments, accessoryEquipments) = extractEquipmentFromWorkoutPlan(workoutStore, planId)
+            val jsonString = equipmentToJSON(equipments, accessoryEquipments)
+            
+            val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+            val timestamp = sdf.format(Date())
+            
+            val planName = if (planId != null) {
+                val plan = workoutStore.workoutPlans.find { it.id == planId }
+                plan?.name?.replace(Regex("[^a-zA-Z0-9]"), "_") ?: "plan"
+            } else {
+                "all"
+            }
+            
+            val filename = "equipment_${planName}_$timestamp.json"
+            writeJsonToDownloadsFolder(context, filename, jsonString)
+            
+            filename
+        } catch (e: Exception) {
+            Log.e("EquipmentExport", "Error exporting equipment", e)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+            throw e
         }
     }
 }
