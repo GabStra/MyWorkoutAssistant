@@ -1,5 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.annotation.SuppressLint
+import android.os.Build
+import android.os.PowerManager
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.getSystemService
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
@@ -24,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
+@SuppressLint("WakelockTimeout")
 fun KeepOn(
     appViewModel: AppViewModel,
     enableDimming: Boolean = false,
@@ -33,6 +38,13 @@ fun KeepOn(
     val context = LocalContext.current
     val activity = context.findActivity()
     val window = activity?.window
+    val powerManager = context.getSystemService<PowerManager>()
+    val wakeLock = remember(powerManager) {
+        powerManager?.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "MyWorkoutAssistant:ScreenOn"
+        )?.apply { setReferenceCounted(false) }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -45,6 +57,44 @@ fun KeepOn(
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
             screenBrightness = brightness
+        }
+    }
+
+    fun applyWindowFlags() {
+        window?.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            activity?.setShowWhenLocked(true)
+            activity?.setTurnScreenOn(true)
+        }
+    }
+
+    fun clearWindowFlags() {
+        window?.clearFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            activity?.setShowWhenLocked(false)
+            activity?.setTurnScreenOn(false)
+        }
+    }
+
+    fun acquireWakeLock() {
+        if (wakeLock?.isHeld == false) {
+            wakeLock.acquire()
+        }
+    }
+
+    fun releaseWakeLock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock.release()
         }
     }
 
@@ -61,7 +111,8 @@ fun KeepOn(
         if (updatedEnableDimming) {
             dimmingJob = scope.launch {
                 delay(updatedDimDelay)
-                setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF) // Use OFF for minimal brightness
+                // Keep the display alive but visibly dimmed instead of completely off
+                setScreenBrightness(0.05f)
                 isDimmed = true
             }
         }
@@ -70,26 +121,35 @@ fun KeepOn(
     LifecycleObserver(
         onPaused = {
             dimmingJob?.cancel()
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            clearWindowFlags()
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
+            releaseWakeLock()
         },
         onStarted = {
-            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            applyWindowFlags()
+            acquireWakeLock()
             wakeUpAndResetTimer()
         },
         onResumed = {
-            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            applyWindowFlags()
+            acquireWakeLock()
             wakeUpAndResetTimer()
+        },
+        onStopped = {
+            releaseWakeLock()
         }
     )
 
     DisposableEffect(Unit) {
+        applyWindowFlags()
+        acquireWakeLock()
         onDispose {
             dimmingJob?.cancel()
             // Ensure flags and brightness are reset when leaving the screen
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            clearWindowFlags()
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            releaseWakeLock()
         }
     }
 
@@ -103,7 +163,8 @@ fun KeepOn(
     LaunchedEffect(enableDimming) {
         if(!enableDimming){
             dimmingJob?.cancel()
-            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            applyWindowFlags()
+            acquireWakeLock()
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }else{

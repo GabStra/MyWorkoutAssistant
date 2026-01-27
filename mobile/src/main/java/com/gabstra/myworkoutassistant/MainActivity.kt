@@ -1216,12 +1216,10 @@ fun MyWorkoutAssistantNavHost(
                             onExportEquipment = {
                                 scope.launch {
                                     try {
-                                        val planId = appViewModel.selectedWorkoutPlanIdFlow.value
                                         val filename = withContext(Dispatchers.IO) {
                                             exportEquipmentToDownloads(
                                                 context,
-                                                appViewModel.workoutStore,
-                                                planId
+                                                appViewModel.workoutStore
                                             )
                                         }
                                         Toast.makeText(

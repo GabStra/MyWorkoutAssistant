@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
@@ -862,7 +863,7 @@ fun WorkoutsScreen(
             }
         )
 
-        LoadingOverlay(isVisible = isSaving, text = "Saving...")
+        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
         LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
     }
 }

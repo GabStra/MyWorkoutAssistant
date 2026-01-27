@@ -34,6 +34,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -458,17 +459,15 @@ class WorkoutViewModelDatabaseTest {
         // Verify sets were stored in memory
         assertTrue("Should have stored sets in executedSetsHistory", viewModel.executedSetsHistory.isNotEmpty())
         
-        // Phase 4: Save Progress
+        // Phase 4: Save Progress (no pushAndStoreWorkoutData was called yet, so currentWorkoutHistory and _workoutRecord are null;
+        // upsertWorkoutRecord no-ops and does not insert)
         workoutState = viewModel.workoutState.value
         if (workoutState is WorkoutState.Set) {
             viewModel.upsertWorkoutRecord(workoutState.exerciseId, workoutState.setIndex)
             advanceUntilIdle()
             joinViewModelJobs()
-            
-            // Verify WorkoutRecord is stored
             val workoutRecord = database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
-            assertNotNull("WorkoutRecord should be stored", workoutRecord)
-            assertEquals("WorkoutRecord workoutId should match", testWorkoutId, workoutRecord?.workoutId)
+            assertNull("No WorkoutRecord when both _workoutRecord and currentWorkoutHistory are null", workoutRecord)
         }
         
         // Phase 5: Complete Workout
@@ -640,6 +639,107 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Progression volumes should include Prev", progressionSection.contains("Prev"))
         assertTrue("Progression volumes should include Exp", progressionSection.contains("Exp"))
         assertTrue("Progression volumes should include Exec", progressionSection.contains("Exec"))
+    }
+
+    @Test
+    fun upsertWorkoutRecord_whenNoHistoryOrRecord_doesNotCrashAndDoesNotInsert() = runTest(testDispatcher) {
+        // Simulate "Go Home" from first set of first exercise: never called pushAndStoreWorkoutData,
+        // so currentWorkoutHistory and _workoutRecord are both null.
+        val workoutStore = createTestWorkoutStore()
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        delay(10)
+        advanceUntilIdle()
+
+        var workoutState = viewModel.workoutState.value
+        assertTrue("Should be in Preparing state", workoutState is WorkoutState.Preparing)
+
+        var attempts = 0
+        while (attempts < 200) {
+            advanceUntilIdle()
+            Thread.sleep(5)
+            workoutState = viewModel.workoutState.value
+            if (workoutState is WorkoutState.Preparing && workoutState.dataLoaded) break
+            if (workoutState !is WorkoutState.Preparing) break
+            attempts++
+            if (attempts % 10 == 0) {
+                delay(1)
+                advanceUntilIdle()
+                Thread.sleep(5)
+            }
+        }
+
+        val currentState = viewModel.workoutState.value
+        if (currentState is WorkoutState.Preparing && !currentState.dataLoaded) {
+            @Suppress("UNCHECKED_CAST")
+            val stateMachine = stateMachineField.get(viewModel) as? WorkoutStateMachine
+            if (stateMachine != null && stateMachine.nextStates.isNotEmpty()) {
+                @Suppress("UNCHECKED_CAST")
+                val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+                workoutStateFlow.value = WorkoutState.Preparing(dataLoaded = true)
+                workoutState = workoutStateFlow.value
+            } else {
+                assertTrue("dataLoaded should become true", false)
+            }
+        } else {
+            workoutState = currentState
+        }
+
+        var queuePopulated = false
+        var queueAttempts = 0
+        while (!queuePopulated && queueAttempts < 100) {
+            advanceUntilIdle()
+            delay(10)
+            advanceUntilIdle()
+            Thread.sleep(5)
+            @Suppress("UNCHECKED_CAST")
+            val sm = stateMachineField.get(viewModel) as? WorkoutStateMachine
+            queuePopulated = sm != null && sm.nextStates.isNotEmpty()
+            queueAttempts++
+        }
+
+        workoutState = viewModel.workoutState.value
+        if (workoutState is WorkoutState.Preparing && workoutState.dataLoaded) {
+            viewModel.goToNextState()
+            advanceUntilIdle()
+            joinViewModelJobs()
+            delay(10)
+            advanceUntilIdle()
+            joinViewModelJobs()
+            workoutState = viewModel.workoutState.value
+        }
+
+        assertTrue("Should have left Preparing", workoutState !is WorkoutState.Preparing)
+        viewModel.setWorkoutStart()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        // Advance until we're on a Set (first set of first exercise); may be Rest first.
+        var steps = 0
+        while (steps < 50) {
+            workoutState = viewModel.workoutState.value
+            if (workoutState is WorkoutState.Set && !workoutState.isWarmupSet) break
+            if (workoutState is WorkoutState.Completed) break
+            viewModel.goToNextState()
+            advanceUntilIdle()
+            joinViewModelJobs()
+            steps++
+        }
+        workoutState = viewModel.workoutState.value
+        assertTrue("Should be on a Set (first set of first exercise)", workoutState is WorkoutState.Set)
+        val setState = workoutState as WorkoutState.Set
+        // currentWorkoutHistory and _workoutRecord are still null (never called pushAndStoreWorkoutData).
+        viewModel.upsertWorkoutRecord(setState.exerciseId, setState.setIndex)
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val record = database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
+        assertNull("No WorkoutRecord should be inserted when both _workoutRecord and currentWorkoutHistory are null", record)
     }
 }
 

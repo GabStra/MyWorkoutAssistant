@@ -109,6 +109,10 @@ open class WorkoutViewModel(
     internal val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
     private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore()
 ) : ViewModel() {
+    companion object {
+        private const val TAG = "WorkoutViewModel"
+    }
+
     private var storeSetDataJob: Job? = null
 
     private val _keepScreenOn = mutableStateOf(false)
@@ -614,24 +618,30 @@ open class WorkoutViewModel(
 
     fun upsertWorkoutRecord(exerciseId : UUID,setIndex: UInt) {
         viewModelScope.launch(dispatchers.io) {
-            if (_workoutRecord == null && currentWorkoutHistory != null) {
-                _workoutRecord = WorkoutRecord(
-                    id = UUID.randomUUID(),
-                    workoutId = selectedWorkout.value.id,
-                    exerciseId = exerciseId,
-                    setIndex = setIndex,
-                    workoutHistoryId = currentWorkoutHistory!!.id
-                )
-            } else {
-                _workoutRecord = _workoutRecord!!.copy(
-                    exerciseId = exerciseId,
-                    setIndex = setIndex,
-                )
+            when {
+                _workoutRecord == null && currentWorkoutHistory != null -> {
+                    _workoutRecord = WorkoutRecord(
+                        id = UUID.randomUUID(),
+                        workoutId = selectedWorkout.value.id,
+                        exerciseId = exerciseId,
+                        setIndex = setIndex,
+                        workoutHistoryId = currentWorkoutHistory!!.id
+                    )
+                    workoutRecordDao.insert(_workoutRecord!!)
+                    _hasWorkoutRecord.value = true
+                }
+                _workoutRecord != null -> {
+                    _workoutRecord = _workoutRecord!!.copy(
+                        exerciseId = exerciseId,
+                        setIndex = setIndex,
+                    )
+                    workoutRecordDao.insert(_workoutRecord!!)
+                    _hasWorkoutRecord.value = true
+                }
+                else -> {
+                    // First set of first exercise: no history/record created yet, nothing to persist
+                }
             }
-
-            workoutRecordDao.insert(_workoutRecord!!)
-
-            _hasWorkoutRecord.value = true
             rebuildScreenState()
         }
     }

@@ -2910,25 +2910,16 @@ suspend fun exportWorkoutPlanToMarkdown(
 
 suspend fun exportEquipmentToDownloads(
     context: Context,
-    workoutStore: WorkoutStore,
-    planId: UUID?
+    workoutStore: WorkoutStore
 ): String {
     return withContext(Dispatchers.IO) {
         try {
-            val (equipments, accessoryEquipments) = extractEquipmentFromWorkoutPlan(workoutStore, planId)
+            val (equipments, accessoryEquipments) = extractEquipmentFromWorkoutPlan(workoutStore, null)
             val jsonString = equipmentToJSON(equipments, accessoryEquipments)
             
             val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
             val timestamp = sdf.format(Date())
-            
-            val planName = if (planId != null) {
-                val plan = workoutStore.workoutPlans.find { it.id == planId }
-                plan?.name?.replace(Regex("[^a-zA-Z0-9]"), "_") ?: "plan"
-            } else {
-                "all"
-            }
-            
-            val filename = "equipment_${planName}_$timestamp.json"
+            val filename = "equipment_$timestamp.json"
             writeJsonToDownloadsFolder(context, filename, jsonString)
             
             filename
