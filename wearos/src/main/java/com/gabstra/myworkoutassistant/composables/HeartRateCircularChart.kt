@@ -86,7 +86,6 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
-import com.gabstra.myworkoutassistant.shared.reduceColorLuminance
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -538,7 +537,6 @@ private fun TargetRangeArc(
                     .capturable(controller1)
                     .fillMaxSize()
                     .padding(borderWidth)
-                    .offset(x = 10000.dp)
                     .onGloballyPositioned {
                         isLayoutReady1 = true
                     }
@@ -619,7 +617,6 @@ private fun TargetRangeArc(
                     .capturable(controller2)
                     .fillMaxSize()
                     .padding(borderWidth - innerBorderWidth)
-                    .offset(x = 10000.dp)
                     .onGloballyPositioned {
                         isLayoutReady2 = true
                     }
@@ -692,13 +689,11 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            reduceColorLuminance(colorsByZone[index])
+            colorsByZone[index].copy(alpha = 0.25f)
         } else {
             MediumDarkGray
         }
     }
-
-
 
 
     CircularProgressIndicator(
@@ -927,7 +922,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else reduceColorLuminance(Orange),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.25f),
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp
@@ -1055,10 +1050,10 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(85f, 30),
+            hr = getHeartRateFromPercentage(95f, 30),
             age = 30,
-            lowerBoundMaxHRPercent = 60f,
-            upperBoundMaxHRPercent = 70f
+            lowerBoundMaxHRPercent = null, //60f,
+            upperBoundMaxHRPercent = null  // 70f
         )
     }
 }
