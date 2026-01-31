@@ -165,6 +165,7 @@ fun CustomDialogYesOnLongPress(
                     .padding(20.dp), contentAlignment = Alignment.Center
             ) {
                 Column(
+                    modifier = Modifier.padding(vertical = 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Top,
                 ) {

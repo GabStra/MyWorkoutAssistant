@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
 import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
@@ -955,7 +956,7 @@ fun ExerciseForm(
             Spacer(Modifier.height(Spacing.xl))
         }
     }
-    LoadingOverlay(isVisible = isSaving, text = "Saving...")
+    LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
 

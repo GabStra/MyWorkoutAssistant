@@ -410,30 +410,22 @@ fun PageProgressionComparison(
         // Set number indicator (combined with Repeat and Plateau Detected if applicable)
         if (maxSets > 0) {
             val baseStyle = MaterialTheme.typography.bodySmall
-            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, colorScheme.primary, colorScheme.tertiary, baseStyle) {
+            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle) {
                 buildAnnotatedString {
-                    fun pipe() {
-                        withStyle(
-                            baseStyle.toSpanStyle().copy(
-                                color = MediumLighterGray,
-                                fontWeight = FontWeight.Thin
-                            )
-                        ) {
-                            append(" | ")
+                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                        fun pipe() {
+                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
+                                append(" | ")
+                            }
                         }
-                    }
-                    if (isRetry) {
-                        withStyle(
-                            style = baseStyle.toSpanStyle().copy(
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.primary
-                            )
-                        ) {
-                            append("Repeat")
+                        if (isRetry) {
+                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Bold)) {
+                                append("Repeat")
+                            }
+                            pipe()
                         }
-                        pipe()
+                        append("Set: ${currentSetIndex + 1}/$maxSets")
                     }
-                    append("Set: ${currentSetIndex + 1}/$maxSets")
                 }
             }
 

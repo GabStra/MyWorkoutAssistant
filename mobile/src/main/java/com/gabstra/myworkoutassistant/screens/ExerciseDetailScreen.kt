@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -77,6 +79,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -291,6 +294,7 @@ fun ExerciseDetailScreen(
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
+    var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val selectedEquipmentId = exercise?.equipmentId
@@ -547,6 +551,7 @@ fun ExerciseDetailScreen(
                                                     )
 
                                                     updateExerciseWithHistory(updatedExercise)
+                                                    pendingSetBringIntoViewId = selectedComponent.id
                                                 },
                                                 colors = selectionIconColors
                                             ) {
@@ -604,6 +609,7 @@ fun ExerciseDetailScreen(
                                                     )
 
                                                     updateExerciseWithHistory(updatedExercise)
+                                                    pendingSetBringIntoViewId = selectedComponent.id
                                                 },
                                                 colors = selectionIconColors
                                             ) {
@@ -918,43 +924,54 @@ fun ExerciseDetailScreen(
                             },
                             isDragDisabled = true,
                             itemContent = { it ->
-                                Column {
-                                    ComponentRenderer(it, appViewModel, exercise)
-                                    // Show "Add rest" button when:
-                                    // - Current item is not a RestSet
-                                    // - Not the last item in the actual sets list
-                                    // - Next item in actual sets list is not a RestSet
-                                    if (showRest && it !is RestSet) {
-                                        val currentIndex =
-                                            sets.indexOfFirst { set -> set.id == it.id }
-                                        val isNotLast =
-                                            currentIndex >= 0 && currentIndex < sets.size - 1
-                                        val nextItem =
-                                            if (isNotLast && currentIndex + 1 < sets.size) {
-                                                sets[currentIndex + 1]
-                                            } else {
-                                                null
-                                            }
-                                        val shouldShowButton =
-                                            isNotLast && nextItem != null && nextItem !is RestSet
+                                val bringIntoViewRequester = remember { BringIntoViewRequester() }
+                                LaunchedEffect(pendingSetBringIntoViewId == it.id) {
+                                    if (pendingSetBringIntoViewId == it.id) {
+                                        bringIntoViewRequester.bringIntoView()
+                                        pendingSetBringIntoViewId = null
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
+                                ) {
+                                    Column {
+                                        ComponentRenderer(it, appViewModel, exercise)
+                                        // Show "Add rest" button when:
+                                        // - Current item is not a RestSet
+                                        // - Not the last item in the actual sets list
+                                        // - Next item in actual sets list is not a RestSet
+                                        if (showRest && it !is RestSet) {
+                                            val currentIndex =
+                                                sets.indexOfFirst { set -> set.id == it.id }
+                                            val isNotLast =
+                                                currentIndex >= 0 && currentIndex < sets.size - 1
+                                            val nextItem =
+                                                if (isNotLast && currentIndex + 1 < sets.size) {
+                                                    sets[currentIndex + 1]
+                                                } else {
+                                                    null
+                                                }
+                                            val shouldShowButton =
+                                                isNotLast && nextItem != null && nextItem !is RestSet
 
-                                        if (shouldShowButton) {
-                                            Button(
-                                                onClick = {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.InsertRestSetAfter(
-                                                            workout.id,
-                                                            exercise.id,
-                                                            it.id
+                                            if (shouldShowButton) {
+                                                Button(
+                                                    onClick = {
+                                                        appViewModel.setScreenData(
+                                                            ScreenData.InsertRestSetAfter(
+                                                                workout.id,
+                                                                exercise.id,
+                                                                it.id
+                                                            )
                                                         )
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        contentColor = MaterialTheme.colorScheme.background
                                                     )
-                                                },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    contentColor = MaterialTheme.colorScheme.background
-                                                )
-                                            ) {
-                                                Text("Add rest")
+                                                ) {
+                                                    Text("Add rest")
+                                                }
                                             }
                                         }
                                     }
@@ -994,7 +1011,7 @@ fun ExerciseDetailScreen(
                 }
             }
         }
-        LoadingOverlay(isVisible = isSaving, text = "Saving...")
+        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
 

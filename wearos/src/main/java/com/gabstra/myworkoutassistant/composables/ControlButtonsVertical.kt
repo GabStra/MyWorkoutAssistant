@@ -35,7 +35,6 @@ import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.hueTowards
 
 
 @Composable
@@ -98,7 +97,7 @@ fun ControlButtonsVertical(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowUpward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.hueTowards(Green)
+                    tint = MaterialTheme.colorScheme.onBackground
                 )
             }
         }
@@ -151,7 +150,7 @@ fun ControlButtonsVertical(
                     modifier = Modifier.size(30.dp),
                     imageVector = Icons.Filled.ArrowDownward,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.hueTowards(Red)
+                    tint = MaterialTheme.colorScheme.onBackground
                 )
             }
         }

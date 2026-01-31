@@ -28,7 +28,7 @@
 
 ### 3) Build and release configuration
 - [x] Enable release optimizations (`isMinifyEnabled=true`, `isShrinkResources=true`) for release builds in both modules.
-- [ ] Verify and expand `proguard-rules.pro` for Compose/Room/serialization as needed.
+- [x] Verify and expand `proguard-rules.pro` for Compose/Room/serialization as needed.
 - [x] Pin Compose BOM to `2025.12.01` (replace `compose-bom:+`).
 - [ ] Review alpha dependencies (Wear Compose, Horologist) and decide whether to upgrade to stable versions or accept alpha risk for production.
 - [x] Align `targetSdk` in `wearos` with `mobile`.

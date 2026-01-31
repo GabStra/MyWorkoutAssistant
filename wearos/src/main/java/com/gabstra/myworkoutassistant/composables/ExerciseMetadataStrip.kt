@@ -36,9 +36,7 @@ fun ExerciseMetadataStrip(
     onTap: (() -> Unit)? = null,
 ) {
     val baseStyle = MaterialTheme.typography.bodySmall
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
-    
+
     val metadataText = remember(
         exerciseLabel,
         supersetExerciseLabel,
@@ -48,130 +46,93 @@ fun ExerciseMetadataStrip(
         isUnilateral,
         equipmentName,
         accessoryNames,
-        baseStyle,
-        primaryColor,
-        surfaceContainerHigh
+        baseStyle
     ) {
         buildAnnotatedString {
-            fun pipe() {
-                withStyle(
-                    baseStyle.toSpanStyle().copy(
-                        color = MediumLighterGray,
-                        fontWeight = FontWeight.Thin
-                    )
-                ) {
-                    append(" | ")
+            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                fun pipe() {
+                    withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
+                        append(" | ")
+                    }
                 }
-            }
-            
-            fun separator() {
-                withStyle(
-                    baseStyle.toSpanStyle().copy(
-                        color = MediumLighterGray,
-                        baselineShift = BaselineShift(0.18f)
-                    )
-                ) {
-                    append("↔")
+
+                fun separator() {
+                    withStyle(baseStyle.toSpanStyle().copy(baselineShift = BaselineShift(0.18f))) {
+                        append("↔")
+                    }
                 }
-            }
-            
-            var first = true
-            
-            fun sep() {
-                if (!first) {
-                    pipe()
+
+                var first = true
+
+                fun sep() {
+                    if (!first) {
+                        pipe()
+                    }
+                    first = false
                 }
-                first = false
-            }
-            
-            exerciseLabel?.let {
-                sep()
-                withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+
+                exerciseLabel?.let {
+                    sep()
                     append("Ex: ")
+                    append(it)
                 }
-                append(it)
-            }
-            
-            if (supersetExerciseTotal != null && supersetExerciseIndex != null) {
-                sep()
-                pipe()
-                (0 until supersetExerciseTotal).forEach { i ->
-                    if (i > 0) {
-                        separator()
-                    }
-                    withStyle(
-                        SpanStyle(
-                            color = if (i == supersetExerciseIndex) primaryColor else surfaceContainerHigh,
-                            fontWeight = FontWeight.Bold
-                        )
-                    ) {
-                        append(('A' + i).toString())
+
+                if (supersetExerciseTotal != null && supersetExerciseIndex != null) {
+                    sep()
+                    pipe()
+                    (0 until supersetExerciseTotal).forEach { i ->
+                        if (i > 0) {
+                            separator()
+                        }
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                            append(('A' + i).toString())
+                        }
                     }
                 }
-            }
-            
-            setLabel?.let {
-                sep()
-                withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+
+                setLabel?.let {
+                    sep()
                     append("Set: ")
+                    append(it)
                 }
-                append(it)
-            }
-            
-            sideIndicator?.let {
-                sep()
-                // For side indicator, use ① ↔ ② format
-                val side1Color = if (currentSideIndex == 1u) primaryColor else surfaceContainerHigh
-                val side2Color = if (currentSideIndex == 2u) primaryColor else surfaceContainerHigh
-                
-                withStyle(
-                    SpanStyle(
-                        color = side1Color,
-                        fontWeight = FontWeight.Bold
-                    )
-                ) {
-                    append("①")
+
+                sideIndicator?.let {
+                    sep()
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("①")
+                    }
+                    separator()
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("②")
+                    }
                 }
-                separator()
-                withStyle(
-                    SpanStyle(
-                        color = side2Color,
-                        fontWeight = FontWeight.Bold
-                    )
-                ) {
-                    append("②")
+
+                if (isUnilateral) {
+                    sep()
+                    append("Unilateral")
                 }
-            }
-            
-            if (isUnilateral) {
-                sep()
-                append("Unilateral")
-            }
-            
-            equipmentName?.let {
-                sep()
-                withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+
+                equipmentName?.let {
+                    sep()
                     append("Eq: ")
+                    append(it)
                 }
-                append(it)
-            }
-            
-            accessoryNames?.takeIf { it.isNotEmpty() }?.let {
-                sep()
-                withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+
+                accessoryNames?.takeIf { it.isNotEmpty() }?.let {
+                    sep()
                     append("Acc: ")
+                    append(it)
                 }
-                append(it)
             }
         }
     }
-    
+
     if (metadataText.text.isNotEmpty()) {
         FadingText(
             text = metadataText,
             modifier = modifier.fillMaxWidth(),
             style = baseStyle,
-            color = textColor,
+            color = MediumLighterGray,
             onClick = {
                 onTap?.invoke()
             },

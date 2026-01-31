@@ -98,11 +98,10 @@ fun SyncStatusBadge(
                         BorderStroke(1.dp, borderColor),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(5.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 4.dp)
                 ) {
                     when (syncStatus) {
                         AppViewModel.SyncStatus.Syncing -> {

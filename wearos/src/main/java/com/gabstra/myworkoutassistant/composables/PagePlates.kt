@@ -130,24 +130,20 @@ fun PagePlates(
                     val topLine = buildAnnotatedString {
                         withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                             append("Tot: ")
-                        }
-                        append(formatWeight(equipment.barWeight))
-
-                        if(currentSideWeightTotal != 0.0) {
-                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                            append(formatWeight(equipment.barWeight))
+                            if (currentSideWeightTotal != 0.0) {
                                 append(" + (")
-                            }
-                            append(formatWeight(currentSideWeightTotal))
-                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(formatWeight(currentSideWeightTotal))
                                 append(" × 2) = ")
+                                append(formatWeight(currentWeightTotal))
                             }
-                            append(formatWeight(currentWeightTotal))
                         }
                     }
 
                     FadingText(
                         text = topLine,
                         style = baseStyle,
+                        color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
@@ -159,23 +155,20 @@ fun PagePlates(
                     val topLine = buildAnnotatedString {
                         withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
                             append("Tot: ")
-                        }
-                        append(formatWeight(equipment.barWeight))
-                        if(currentSideWeightTotal != 0.0) {
-                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                            append(formatWeight(equipment.barWeight))
+                            if (currentSideWeightTotal != 0.0) {
                                 append(" + (")
-                            }
-                            append(formatWeight(currentSideWeightTotal))
-                            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                                append(formatWeight(currentSideWeightTotal))
                                 append(" × 2) = ")
+                                append(formatWeight(currentWeightTotal))
                             }
-                            append(formatWeight(currentWeightTotal))
                         }
                     }
 
                     FadingText(
                         text = topLine,
                         style = baseStyle,
+                        color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {

@@ -15,9 +15,9 @@ val DisabledContentGray = Color(100, 100, 100)
 val MediumLighterGray = Color(167, 171, 177, 255)
 val LighterGray = Color(218, 222, 229)
 
-val Green  = Color(0xFF62b741)
-val Yellow = Color(0xFFba9b40)
-val Red    = Color(0xFFBD0E12)
+val Green  = Color(0xFF20ab47)
+val Yellow = Color(0xFFab8b2a)
+val Red    = Color(0xFFff3534)
 
 val MuscleHeatMapBackground = MediumDarkGray
 val PrimaryMuscleGroupColor   = Color(0xFFfe6a07)

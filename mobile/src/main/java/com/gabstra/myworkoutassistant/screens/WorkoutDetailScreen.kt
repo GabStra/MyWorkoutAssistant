@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -94,6 +96,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -315,6 +318,7 @@ fun WorkoutDetailScreen(
         workout.workoutComponents.filter { it.id in selectedComponentIds }
     }
     var isSelectionModeActive by remember { mutableStateOf(false) }
+    var pendingComponentBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
 
     var showRest by remember { mutableStateOf(true) }
 
@@ -508,6 +512,7 @@ fun WorkoutDetailScreen(
                                     val updatedWorkout =
                                         workout.copy(workoutComponents = adjustedComponents)
                                     updateWorkoutWithHistory(updatedWorkout)
+                                    pendingComponentBringIntoViewId = selectedComponent.id
                                 },
                                 colors = selectionIconColors
                             ) {
@@ -559,6 +564,7 @@ fun WorkoutDetailScreen(
                                     val updatedWorkout =
                                         workout.copy(workoutComponents = adjustedComponents)
                                     updateWorkoutWithHistory(updatedWorkout)
+                                    pendingComponentBringIntoViewId = selectedComponent.id
                                 },
                                 colors = selectionIconColors
                             ) {
@@ -1316,45 +1322,56 @@ fun WorkoutDetailScreen(
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
                             itemContent = { it ->
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                val bringIntoViewRequester = remember { BringIntoViewRequester() }
+                                LaunchedEffect(pendingComponentBringIntoViewId == it.id) {
+                                    if (pendingComponentBringIntoViewId == it.id) {
+                                        bringIntoViewRequester.bringIntoView()
+                                        pendingComponentBringIntoViewId = null
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
                                 ) {
-                                    WorkoutComponentRenderer(
-                                        workout = workout,
-                                        workoutComponent = it,
-                                        showRest = showRest,
-                                        appViewModel = appViewModel
-                                    )
-                                    // Show "Add rest" button when:
-                                    // - Current component is not a Rest
-                                    // - Not the last component in the actual workout components list
-                                    // - Next component in actual workout components list is not a Rest
-                                    if (showRest && it !is Rest) {
-                                        val currentIndex = workout.workoutComponents.indexOfFirst { component -> component.id == it.id }
-                                        val isNotLast = currentIndex >= 0 && currentIndex < workout.workoutComponents.size - 1
-                                        val nextComponent = if (isNotLast && currentIndex + 1 < workout.workoutComponents.size) {
-                                            workout.workoutComponents[currentIndex + 1]
-                                        } else {
-                                            null
-                                        }
-                                        val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
-                                        
-                                        if (shouldShowButton) {
-                                            Box(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Button(
-                                                    onClick = {
-                                                        appViewModel.setScreenData(
-                                                            ScreenData.InsertRestAfter(workout.id, it.id)
-                                                        )
-                                                    },
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        contentColor = MaterialTheme.colorScheme.background
-                                                    )
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                    ) {
+                                        WorkoutComponentRenderer(
+                                            workout = workout,
+                                            workoutComponent = it,
+                                            showRest = showRest,
+                                            appViewModel = appViewModel
+                                        )
+                                        // Show "Add rest" button when:
+                                        // - Current component is not a Rest
+                                        // - Not the last component in the actual workout components list
+                                        // - Next component in actual workout components list is not a Rest
+                                        if (showRest && it !is Rest) {
+                                            val currentIndex = workout.workoutComponents.indexOfFirst { component -> component.id == it.id }
+                                            val isNotLast = currentIndex >= 0 && currentIndex < workout.workoutComponents.size - 1
+                                            val nextComponent = if (isNotLast && currentIndex + 1 < workout.workoutComponents.size) {
+                                                workout.workoutComponents[currentIndex + 1]
+                                            } else {
+                                                null
+                                            }
+                                            val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
+                                            
+                                            if (shouldShowButton) {
+                                                Box(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text("Add Rest")
+                                                    Button(
+                                                        onClick = {
+                                                            appViewModel.setScreenData(
+                                                                ScreenData.InsertRestAfter(workout.id, it.id)
+                                                            )
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            contentColor = MaterialTheme.colorScheme.background
+                                                        )
+                                                    ) {
+                                                        Text("Add Rest")
+                                                    }
                                                 }
                                             }
                                         }
@@ -1471,7 +1488,7 @@ fun WorkoutDetailScreen(
                     showStartConfirmationDialog = false
                 }
             )
-            LoadingOverlay(isVisible = isSaving, text = "Saving...")
+            LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
         }
     }
 }

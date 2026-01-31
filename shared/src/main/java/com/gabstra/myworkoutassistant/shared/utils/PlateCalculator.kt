@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import kotlin.math.abs
 
 class PlateCalculator {
@@ -420,6 +421,242 @@ class PlateCalculator {
 
             backtrack(0, mutableListOf(), 0.0)
             return results.toList().sortedBy { it.size }          // fewer plates preferred
+        }
+
+        /**
+         * Optimizes weights for barbell exercises given a work weight and list of weight percentages.
+         * The algorithm minimizes plate changes, keeps weights within a tolerance band, and minimizes total plates used.
+         * Uses a two-phase approach: first tries add-only (monotonic) transitions, then falls back to add-and-remove.
+         *
+         * @param workWeight The target work weight (100% reference)
+         * @param weightPercentages List of percentages (e.g., [0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+         * @param barbell The barbell equipment with available plates
+         * @param initialPlates Initial plate setup (default: empty)
+         * @param toleranceBandPercent Percentage tolerance band (default: 0.05 = ±5%)
+         * @param sidesOnBarbell Number of sides (default: 2u)
+         * @return List of optimized weights matching the order of input percentages
+         */
+        @JvmStatic
+        fun optimizeWeightsForPercentages(
+            workWeight: Double,
+            weightPercentages: List<Double>,
+            barbell: Barbell,
+            initialPlates: List<Double> = emptyList(),
+            toleranceBandPercent: Double = 0.05,
+            sidesOnBarbell: UInt = 2u
+        ): List<Double> {
+            // Validate inputs
+            require(workWeight > 0) { "workWeight must be positive" }
+            require(weightPercentages.isNotEmpty()) { "weightPercentages cannot be empty" }
+            require(weightPercentages.all { it <= 1.0 + 1e-9 }) { "All percentages must be <= 1.0" }
+            require(barbell.availablePlates.isNotEmpty()) { "Barbell must have available plates" }
+            require(toleranceBandPercent >= 0 && toleranceBandPercent <= 1) { "toleranceBandPercent must be between 0 and 1" }
+
+            // Calculate target weights
+            val targetWeights = weightPercentages.map { workWeight * it }
+
+            // Get achievable weights
+            val achievableTotals = barbell.getWeightsCombinations().sorted()
+
+            // Build candidate lists: for each target, find achievable weights within tolerance band
+            val perSideCounts = barbell.availablePlates.map { it.weight }.groupingBy { it }.eachCount()
+            val candidateLists = targetWeights.map { target ->
+                val lowerBound = target * (1 - toleranceBandPercent)
+                val upperBound = target * (1 + toleranceBandPercent)
+                val candidates = achievableTotals.filter { it >= lowerBound && it <= upperBound }
+                
+                // Generate plate combinations for each candidate
+                candidates.mapNotNull { candidate ->
+                    val needPlateTotal = (candidate - barbell.barWeight).coerceAtLeast(0.0)
+                    val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
+                    if (combos.isNotEmpty()) {
+                        Candidate(candidate, combos.sortedBy { it.size })
+                    } else {
+                        null
+                    }
+                }
+            }
+
+            // Handle edge case: if no candidates found for a target, use closest achievable weight
+            val finalCandidateLists = candidateLists.mapIndexed { index, candidates ->
+                if (candidates.isEmpty()) {
+                    val target = targetWeights[index]
+                    val closest = achievableTotals.minByOrNull { abs(it - target) }
+                        ?: throw IllegalArgumentException("No achievable weight found for target ${target}")
+                    val needPlateTotal = (closest - barbell.barWeight).coerceAtLeast(0.0)
+                    val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
+                    listOf(Candidate(closest, combos.sortedBy { it.size }))
+                } else {
+                    candidates
+                }
+            }
+
+            // Phase 1: Try add-only optimization
+            val phase1Result = optimizePhase(
+                candidateLists = finalCandidateLists,
+                initialPlates = initialPlates,
+                addOnly = true
+            )
+
+            if (phase1Result != null) {
+                return phase1Result.map { it.candidate.total }
+            }
+
+            // Phase 2: Fallback to add-and-remove optimization
+            val phase2Result = optimizePhase(
+                candidateLists = finalCandidateLists,
+                initialPlates = initialPlates,
+                addOnly = false
+            )
+
+            return phase2Result?.map { it.candidate.total }
+                ?: throw IllegalStateException("Failed to find a solution in both phases")
+        }
+
+        /**
+         * Helper data class to hold candidate weight and its plate combinations
+         */
+        private data class Candidate(
+            val total: Double,
+            val combos: List<List<Double>>
+        )
+
+        /**
+         * Helper data class to hold a solution pick
+         */
+        private data class SolutionPick(
+            val candidate: Candidate,
+            val combo: List<Double>
+        )
+
+        /**
+         * Helper function to check if a plate transition only adds plates (no removals)
+         */
+        private fun isAddOnlyTransition(from: List<Double>, to: List<Double>): Boolean {
+            val steps = generatePhysicalSteps(from, to)
+            return steps.all { it.action == Action.ADD }
+        }
+
+        /**
+         * Score for multi-objective optimization: deviation, plate count, changes
+         */
+        private data class OptimizationScore(
+            val deviation: Double,
+            val totalPlates: Int,
+            val totalChanges: Int
+        ) {
+            fun isBetterThan(other: OptimizationScore, eps: Double = 1e-9): Boolean = when {
+                deviation < other.deviation - eps -> true
+                deviation > other.deviation + eps -> false
+                totalPlates < other.totalPlates -> true
+                totalPlates > other.totalPlates -> false
+                totalChanges < other.totalChanges -> true
+                totalChanges > other.totalChanges -> false
+                else -> false
+            }
+        }
+
+        /**
+         * Optimization phase: either add-only or add-and-remove
+         */
+        private fun optimizePhase(
+            candidateLists: List<List<Candidate>>,
+            initialPlates: List<Double>,
+            addOnly: Boolean
+        ): List<SolutionPick>? {
+            val targetWeights = candidateLists.map { it.firstOrNull()?.total ?: 0.0 }
+            
+            var bestScore = OptimizationScore(Double.POSITIVE_INFINITY, Int.MAX_VALUE, Int.MAX_VALUE)
+            var bestSolution: List<SolutionPick>? = null
+
+            fun search(
+                index: Int,
+                previousPlates: List<Double>,
+                previousWeight: Double,
+                accumulatedScore: OptimizationScore,
+                currentSolution: MutableList<SolutionPick>
+            ) {
+                if (index == candidateLists.size) {
+                    if (accumulatedScore.isBetterThan(bestScore)) {
+                        bestScore = accumulatedScore
+                        bestSolution = currentSolution.toList()
+                    }
+                    return
+                }
+
+                // Branch and bound pruning
+                if (accumulatedScore.deviation > bestScore.deviation) return
+                if (abs(accumulatedScore.deviation - bestScore.deviation) < 1e-9) {
+                    if (accumulatedScore.totalPlates > bestScore.totalPlates) return
+                    if (accumulatedScore.totalPlates == bestScore.totalPlates &&
+                        accumulatedScore.totalChanges > bestScore.totalChanges) return
+                }
+
+                val target = targetWeights[index]
+                for (candidate in candidateLists[index]) {
+                    // Add-only constraint: weight must be >= previous weight
+                    if (addOnly && candidate.total < previousWeight - 1e-9) continue
+
+                    // Find best combo for this candidate
+                    var bestCombo = candidate.combos[0]
+                    var bestComboPlates = bestCombo.size
+                    var bestComboChanges = generatePhysicalSteps(previousPlates, bestCombo).size
+
+                    // Check add-only constraint for combo
+                    if (addOnly && !isAddOnlyTransition(previousPlates, bestCombo)) {
+                        // Try other combos
+                        var foundValidCombo = false
+                        for (combo in candidate.combos.drop(1)) {
+                            val comboPlates = combo.size
+                            val comboChanges = generatePhysicalSteps(previousPlates, combo).size
+                            if (isAddOnlyTransition(previousPlates, combo)) {
+                                if (comboPlates < bestComboPlates ||
+                                    (comboPlates == bestComboPlates && comboChanges < bestComboChanges)) {
+                                    bestCombo = combo
+                                    bestComboPlates = comboPlates
+                                    bestComboChanges = comboChanges
+                                    foundValidCombo = true
+                                }
+                            }
+                        }
+                        if (!foundValidCombo) continue // Skip this candidate if no add-only combo found
+                    } else {
+                        // Try other combos to find better one
+                        for (combo in candidate.combos.drop(1)) {
+                            val comboPlates = combo.size
+                            val comboChanges = generatePhysicalSteps(previousPlates, combo).size
+                            if (!addOnly || isAddOnlyTransition(previousPlates, combo)) {
+                                if (comboPlates < bestComboPlates ||
+                                    (comboPlates == bestComboPlates && comboChanges < bestComboChanges)) {
+                                    bestCombo = combo
+                                    bestComboPlates = comboPlates
+                                    bestComboChanges = comboChanges
+                                }
+                            }
+                        }
+                    }
+
+                    val deviation = abs(candidate.total - target)
+                    val newScore = OptimizationScore(
+                        deviation = accumulatedScore.deviation + deviation,
+                        totalPlates = accumulatedScore.totalPlates + bestComboPlates,
+                        totalChanges = accumulatedScore.totalChanges + bestComboChanges
+                    )
+
+                    currentSolution.add(SolutionPick(candidate, bestCombo))
+                    search(
+                        index + 1,
+                        bestCombo,
+                        candidate.total,
+                        newScore,
+                        currentSolution
+                    )
+                    currentSolution.removeAt(currentSolution.lastIndex)
+                }
+            }
+
+            search(0, initialPlates, 0.0, OptimizationScore(0.0, 0, 0), mutableListOf())
+            return bestSolution
         }
 
     }
