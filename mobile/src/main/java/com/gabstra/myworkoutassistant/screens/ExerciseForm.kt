@@ -69,6 +69,7 @@ import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -128,6 +129,7 @@ fun ExerciseForm(
     val maxReps = rememberSaveable { mutableFloatStateOf(exercise?.maxReps?.toFloat() ?: 12f) }
 
     val generateWarmupSets = rememberSaveable { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
+    val selectedExerciseCategory = rememberSaveable { mutableStateOf(exercise?.exerciseCategory) }
     val enableProgression = rememberSaveable { mutableStateOf(exercise?.enableProgression ?: false) }
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
@@ -636,6 +638,46 @@ fun ExerciseForm(
                         )
                     }
                 )
+
+                // Exercise category (determines warm-up volume: heavy / moderate / isolation)
+                var exerciseCategoryExpanded by rememberSaveable { mutableStateOf(false) }
+                val exerciseCategoryOptions = listOf(
+                    null to "Not set",
+                    ExerciseCategory.HEAVY_COMPOUND to "Heavy compound (squat, deadlift, bench, OHP, rows)",
+                    ExerciseCategory.MODERATE_COMPOUND to "Moderate compound (lunges, pull-ups, machine presses)",
+                    ExerciseCategory.ISOLATION to "Isolation (curls, lateral raises, calf raises)"
+                )
+                ExposedDropdownMenuBox(
+                    expanded = exerciseCategoryExpanded,
+                    onExpandedChange = { exerciseCategoryExpanded = it },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = exerciseCategoryOptions.firstOrNull { it.first == selectedExerciseCategory.value }?.second ?: "Not set",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Exercise category", style = MaterialTheme.typography.labelLarge) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = exerciseCategoryExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = exerciseCategoryExpanded,
+                        onDismissRequest = { exerciseCategoryExpanded = false }
+                    ) {
+                        exerciseCategoryOptions.forEach { (category, label) ->
+                            AppDropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    selectedExerciseCategory.value = category
+                                    exerciseCategoryExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(Spacing.sm))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Enable progression
@@ -944,7 +986,8 @@ fun ExerciseForm(
                             muscleGroups = if (selectedMuscleGroups.value.isEmpty()) null else selectedMuscleGroups.value,
                             secondaryMuscleGroups = if (selectedSecondaryMuscleGroups.value.isEmpty()) null else selectedSecondaryMuscleGroups.value,
                             requiredAccessoryEquipmentIds = selectedAccessoryIds.value,
-                            requiresLoadCalibration = requiresLoadCalibration.value
+                            requiresLoadCalibration = requiresLoadCalibration.value,
+                            exerciseCategory = selectedExerciseCategory.value
                         )
                         onExerciseUpsert(newExercise)
                     },

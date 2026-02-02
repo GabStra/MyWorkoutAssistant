@@ -68,10 +68,6 @@ fun ExerciseScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val exerciseSetIds = remember(exercise) {
-        viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
-    }
-
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
@@ -153,7 +149,7 @@ fun ExerciseScreen(
 
     val captionStyle = MaterialTheme.typography.bodySmall
 
-    val exerciseOrSupersetIds = remember {
+    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
             .distinct()
@@ -190,8 +186,6 @@ fun ExerciseScreen(
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
         }, label = ""
     ) { updatedState ->
-        val setIndex = remember(updatedState.set.id) { exerciseSetIds.indexOf(updatedState.set.id) }
-
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
                 FadingText(
@@ -284,9 +278,12 @@ fun ExerciseScreen(
                                 supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
                                     "Exercise: ${supersetIndex + 1}/${supersetExercises!!.size}"
                                 } else null,
-                                setLabel = if (exerciseSetIds.size > 1) {
-                                    "Set: ${setIndex + 1}/${exerciseSetIds.size}"
-                                } else null,
+                                setLabel = viewModel.getSetCounterForExercise(
+                                    state.exerciseId,
+                                    updatedState
+                                )?.let { (current, total) ->
+                                    if (total > 1) "Set: $current/$total" else null
+                                },
                                 sideIndicator = sideIndicator,
                                 currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
                                 isUnilateral = updatedState.isUnilateral,

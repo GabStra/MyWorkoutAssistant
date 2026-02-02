@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -162,10 +162,11 @@ fun CustomDialogYesOnLongPress(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp), contentAlignment = Alignment.Center
+                    .padding(20.dp), 
+                contentAlignment = Alignment.Center
             ) {
                 Column(
-                    modifier = Modifier.padding(vertical = 5.dp),
+                    modifier = Modifier.padding(vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Top,
                 ) {
@@ -173,15 +174,18 @@ fun CustomDialogYesOnLongPress(
                         text = title,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(30.dp,5.dp)
+                        modifier = Modifier
+                            .padding(horizontal = 30.dp)
                     )
+
+
 
                     val scrollState = rememberScrollState()
                     Text(
                         text = message,
                         textAlign = TextAlign.Center,
                         color = MediumLighterGray,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraLight),
                         modifier = Modifier
                             .padding(5.dp)
                             .weight(1f)
@@ -189,7 +193,6 @@ fun CustomDialogYesOnLongPress(
                             .verticalScroll(scrollState)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
 
                     val contentColor = MaterialTheme.colorScheme.onSurface
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -59,119 +60,132 @@ import kotlin.math.sin
 @Composable
 fun ExerciseIndicator(
     viewModel: AppViewModel,
-    set: WorkoutState.Set,
+    currentStateOverride: WorkoutState? = null,
     selectedExerciseId: UUID? = null
 ) {
+    val workoutStateValue by viewModel.workoutState.collectAsState()
+    val currentState = currentStateOverride ?: workoutStateValue
+
+    // Derive exerciseId from currentState (Set, CalibrationLoadSelection, CalibrationRIRSelection have it)
+    val currentExerciseId = when (currentState) {
+        is WorkoutState.Set -> currentState.exerciseId
+        is WorkoutState.CalibrationLoadSelection -> currentState.exerciseId
+        is WorkoutState.CalibrationRIRSelection -> currentState.exerciseId
+        else -> null
+    }
+
+    // Position index in workout for ordering and completed count (when currentState is Calibration)
+    val currentPositionIndex = when (currentState) {
+        is WorkoutState.Set -> viewModel.allWorkoutStates.indexOfFirst {
+            it is WorkoutState.Set && it.set.id == currentState.set.id
+        }.takeIf { it >= 0 } ?: 0
+        else -> viewModel.allWorkoutStates.indexOf(currentState).coerceAtLeast(0)
+    }
+
     // --- Flattened order: every exercise once; supersets kept contiguous ---
-    // Derive exerciseIds from allWorkoutStates to ensure workout order (not map key order)
+    // Include Set, CalibrationLoadSelection, CalibrationRIRSelection so exercises on calibration screens appear
     val exerciseIds = viewModel.allWorkoutStates
-        .filterIsInstance<WorkoutState.Set>()
-        .map { it.exerciseId }
+        .mapNotNull { state ->
+            when (state) {
+                is WorkoutState.Set -> state.exerciseId
+                is WorkoutState.CalibrationLoadSelection -> state.exerciseId
+                is WorkoutState.CalibrationRIRSelection -> state.exerciseId
+                else -> null
+            }
+        }
         .distinct()
         .toList()
 
-    // Helper function to find active timer set for an exercise
-    fun findActiveTimerSet(exerciseId: UUID, currentSet: WorkoutState.Set): WorkoutState.Set? {
+    // Helper function to find active timer set for an exercise (uses position index for ordering)
+    fun findActiveTimerSet(exerciseId: UUID, positionIndex: Int): WorkoutState.Set? {
         val allExerciseSets = viewModel.getAllExerciseWorkoutStates(exerciseId)
             .filterNot { it.shouldIgnoreCalibration() }
-        
-        // Find the first set that:
-        // 1. Hasn't been completed (is at or after current set in workout flow)
-        // 2. Has startTime set (timer started)
-        // 3. Has timer registered in service
-        // 4. Is a TimedDurationSet or EnduranceSet
-        val currentSetIndex = viewModel.allWorkoutStates.indexOfFirst { 
-            it is WorkoutState.Set && it.set.id == currentSet.set.id 
-        }
-        
         return allExerciseSets.firstOrNull { exerciseSet ->
-            val setIndex = viewModel.allWorkoutStates.indexOfFirst { 
-                it is WorkoutState.Set && it.set.id == exerciseSet.set.id 
+            val setIndex = viewModel.allWorkoutStates.indexOfFirst {
+                it is WorkoutState.Set && it.set.id == exerciseSet.set.id
             }
-            val isNotCompleted = setIndex >= currentSetIndex
+            val isNotCompleted = setIndex >= positionIndex
             val hasTimerStarted = exerciseSet.startTime != null
             val hasTimerRegistered = viewModel.workoutTimerService.isTimerRegistered(exerciseSet.set.id)
             val isTimerSet = exerciseSet.set is TimedDurationSet || exerciseSet.set is EnduranceSet
-            
             isNotCompleted && hasTimerStarted && hasTimerRegistered && isTimerSet
         }
     }
 
-    // Helper function to find time exercise set for selected exercise (doesn't require timer to be started)
-    fun findTimeExerciseSet(exerciseId: UUID, currentSet: WorkoutState.Set): WorkoutState.Set? {
+    // Helper function to find time exercise set for selected exercise
+    fun findTimeExerciseSet(exerciseId: UUID, positionIndex: Int): WorkoutState.Set? {
         val allExerciseSets = viewModel.getAllExerciseWorkoutStates(exerciseId)
             .filterNot { it.shouldIgnoreCalibration() }
-        
-        // Find the first set that:
-        // 1. Hasn't been completed (is at or after current set in workout flow)
-        // 2. Is a TimedDurationSet or EnduranceSet
-        val currentSetIndex = viewModel.allWorkoutStates.indexOfFirst { 
-            it is WorkoutState.Set && it.set.id == currentSet.set.id 
-        }
-        
         return allExerciseSets.firstOrNull { exerciseSet ->
-            val setIndex = viewModel.allWorkoutStates.indexOfFirst { 
-                it is WorkoutState.Set && it.set.id == exerciseSet.set.id 
+            val setIndex = viewModel.allWorkoutStates.indexOfFirst {
+                it is WorkoutState.Set && it.set.id == exerciseSet.set.id
             }
-            val isNotCompleted = setIndex >= currentSetIndex
+            val isNotCompleted = setIndex >= positionIndex
             val isTimerSet = exerciseSet.set is TimedDurationSet || exerciseSet.set is EnduranceSet
-            
             isNotCompleted && isTimerSet
         }
     }
 
-    // Calculate indicator progress
-    // derivedStateOf automatically tracks all state reads, so reading currentSetData from
-    // active timer sets will trigger recomposition when timer service updates them
-    val indicatorProgressByExerciseId by derivedStateOf {
-        exerciseIds.associateWith { id ->
-            val completed = viewModel.getAllExerciseCompletedSetsBefore(set)
+    // Get completed sets count before current position (for progress)
+    fun completedSetsBeforeCurrent(exerciseId: UUID): Int {
+        return when (currentState) {
+            is WorkoutState.Set -> viewModel.getAllExerciseCompletedSetsBefore(currentState)
                 .filterNot { it.shouldIgnoreCalibration() }
-                .count { it.exerciseId == id }
-            val total = viewModel.getAllExerciseWorkoutStates(id)
+                .count { it.exerciseId == exerciseId }
+            else -> viewModel.allWorkoutStates
+                .take(currentPositionIndex)
+                .filterIsInstance<WorkoutState.Set>()
                 .filterNot { it.shouldIgnoreCalibration() }
+                .filter { it.exerciseId == exerciseId }
                 .distinctBy { it.set.id }
                 .size
+        }
+    }
 
-            // Determine which set to use for timer progress calculation
+    // Get current state's set (for type check) and currentSetDataState (for timer) when applicable
+    val currentStateSet = when (currentState) {
+        is WorkoutState.Set -> currentState.set
+        is WorkoutState.CalibrationLoadSelection -> currentState.calibrationSet
+        is WorkoutState.CalibrationRIRSelection -> currentState.calibrationSet
+        else -> null
+    }
+    val currentStateSetDataState = when (currentState) {
+        is WorkoutState.Set -> currentState.currentSetDataState
+        is WorkoutState.CalibrationLoadSelection -> currentState.currentSetDataState
+        is WorkoutState.CalibrationRIRSelection -> currentState.currentSetDataState
+        else -> null
+    }
+
+    // Calculate indicator progress
+    val indicatorProgressByExerciseId by derivedStateOf {
+        exerciseIds.associateWith { id ->
+            val completed = completedSetsBeforeCurrent(id)
+            val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
+
             val timerSet: WorkoutState.Set? = when {
-                // 1. Current exercise: use timer progress only if total == 1 and it's a time exercise
-                id == set.exerciseId -> {
-                    if (total == 1 && (set.set is TimedDurationSet || set.set is EnduranceSet)) {
-                        // Check if currentSetData is a time exercise type - read state directly to ensure tracking
-                        when (set.currentSetDataState.value) {
-                            is TimedDurationSetData, is EnduranceSetData -> set
-                            else -> null
-                        }
-                    } else {
-                        null
-                    }
-                }
-                // 2. Selected exercise: find time exercise set and use its currentSetData
-                selectedExerciseId != null && id == selectedExerciseId -> {
-                    findTimeExerciseSet(id, set)
-                }
-                // 3. All other exercises: no timer tracking
+                selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
                 else -> null
             }
 
-            if (timerSet != null) {
-                // Calculate progress based on timer - read state value directly to ensure Compose tracks it
-                // Reading currentSetDataState.value ensures state changes are tracked even when screen isn't visible
-                when (val d = timerSet.currentSetDataState.value) {
-                    is EnduranceSetData -> {
-                        // EnduranceSet counts up, progress is endTimer / startTimer
-                        (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+            val currentExerciseTimerProgress: Float? = when {
+                id == currentExerciseId && total == 1 && currentStateSet != null && (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) && currentStateSetDataState != null -> {
+                    when (val d = currentStateSetDataState.value) {
+                        is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+                        is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
+                        else -> null
                     }
-                    is TimedDurationSetData -> {
-                        // TimedDurationSet counts down, progress is 1 - (endTimer / startTimer)
-                        (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
-                    }
+                }
+                else -> null
+            }
+
+            when {
+                currentExerciseTimerProgress != null -> currentExerciseTimerProgress
+                timerSet != null -> when (val d = timerSet.currentSetDataState.value) {
+                    is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+                    is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
                     else -> completed.toFloat() / total.toFloat()
                 }
-            } else {
-                // No timer tracking, use completed/total ratio
-                completed.toFloat() / total.toFloat()
+                else -> completed.toFloat() / total.toFloat()
             }
         }
     }
@@ -195,9 +209,9 @@ fun ExerciseIndicator(
     val exerciseCount = flatExerciseOrder.size
 
     // Focus (by selected or current)
-    val focusId = selectedExerciseId?.takeIf { flatExerciseOrder.contains(it) } ?: set.exerciseId
+    val focusId = selectedExerciseId?.takeIf { flatExerciseOrder.contains(it) } ?: currentExerciseId
     val focusIdx = globalIndexByExerciseId[focusId] ?: 0
-    val currentGlobalIdx = globalIndexByExerciseId[set.exerciseId] ?: 0
+    val currentGlobalIdx = globalIndexByExerciseId[currentExerciseId] ?: 0
 
     // --- Sliding window over FLAT list (no wrap) ---
     val maxVisible = 10
@@ -331,10 +345,10 @@ fun ExerciseIndicator(
     }
 
     Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
-        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && set.exerciseId != selectedExerciseId) {
+        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && currentExerciseId != selectedExerciseId) {
             ShowRotatingIndicator(selectedExerciseId)
-        } else {
-            ShowRotatingIndicator(set.exerciseId)
+        } else if (currentExerciseId != null) {
+            ShowRotatingIndicator(currentExerciseId)
         }
     }
 }
@@ -517,13 +531,11 @@ private fun ExerciseIndicatorPreview() {
             exercise3Id to supersetId
         )
         
-        // Current set is the third set of exercise 1 (middle of workout)
-        val currentSet = workoutState1_3
-        
+        // Current set is the third set of exercise 1 (middle of workout); pass as override so preview focuses on it
         Box(modifier = Modifier.fillMaxSize()) {
             ExerciseIndicator(
                 viewModel = viewModel,
-                set = currentSet,
+                currentStateOverride = workoutState1_3,
                 selectedExerciseId = null
             )
         }

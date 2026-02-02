@@ -269,7 +269,7 @@ fun ExerciseSetsViewer(
     val exerciseSetIds = viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
     val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
 
-    val exerciseSetStates = remember(exercise.id) {
+    val exerciseSetStates = remember(exercise.id, viewModel.allWorkoutStates.size) {
         viewModel.getAllExerciseWorkoutStates(exercise.id)
             .filter { it.set !is RestSet }
             .distinctBy { it.set.id }

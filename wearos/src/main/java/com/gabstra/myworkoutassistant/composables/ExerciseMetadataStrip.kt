@@ -36,6 +36,8 @@ fun ExerciseMetadataStrip(
     onTap: (() -> Unit)? = null,
 ) {
     val baseStyle = MaterialTheme.typography.bodySmall
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
 
     val metadataText = remember(
         exerciseLabel,
@@ -46,10 +48,12 @@ fun ExerciseMetadataStrip(
         isUnilateral,
         equipmentName,
         accessoryNames,
-        baseStyle
+        baseStyle,
+        primaryColor,
+        surfaceContainerHigh
     ) {
         buildAnnotatedString {
-            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
                 fun pipe() {
                     withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
                         append(" | ")
@@ -84,7 +88,12 @@ fun ExerciseMetadataStrip(
                         if (i > 0) {
                             separator()
                         }
-                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        withStyle(
+                            SpanStyle(
+                                color = if (i == supersetExerciseIndex) primaryColor else surfaceContainerHigh,
+                                fontWeight = FontWeight.Bold
+                            )
+                        ) {
                             append(('A' + i).toString())
                         }
                     }
@@ -98,11 +107,13 @@ fun ExerciseMetadataStrip(
 
                 sideIndicator?.let {
                     sep()
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                    val side1Color = if (currentSideIndex == 1u) primaryColor else surfaceContainerHigh
+                    val side2Color = if (currentSideIndex == 2u) primaryColor else surfaceContainerHigh
+                    withStyle(SpanStyle(color = side1Color, fontWeight = FontWeight.Bold)) {
                         append("①")
                     }
                     separator()
-                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                    withStyle(SpanStyle(color = side2Color, fontWeight = FontWeight.Bold)) {
                         append("②")
                     }
                 }
@@ -131,7 +142,7 @@ fun ExerciseMetadataStrip(
         FadingText(
             text = metadataText,
             modifier = modifier.fillMaxWidth(),
-            style = baseStyle,
+            style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
             color = MediumLighterGray,
             onClick = {
                 onTap?.invoke()

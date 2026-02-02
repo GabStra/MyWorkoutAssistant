@@ -551,9 +551,10 @@ class DataLayerListenerService : WearableListenerService() {
                                 "DataLayerSync",
                                 "Completed completion waiter for transaction: $tid"
                             )
-                            // Send broadcast to MainActivity to handle toast (with syncStatus check)
+                            // Send broadcast to MainActivity to handle toast and mark history synced (with syncStatus check)
                             val intent = Intent(INTENT_ID).apply {
                                 putExtra(SYNC_COMPLETE, SYNC_COMPLETE)
+                                putExtra(TRANSACTION_ID, tid)
                                 setPackage(packageName)
                             }
                             sendBroadcast(intent)
@@ -1540,6 +1541,7 @@ class DataLayerListenerService : WearableListenerService() {
         const val APP_BACKUP_FAILED = "appBackupFailed"
         const val APP_BACKUP_PROGRESS_UPDATE = "progress_update"
         const val SYNC_COMPLETE = "syncComplete"
+        const val TRANSACTION_ID = "transactionId"
         const val HANDSHAKE_TIMEOUT_MS = 15000L // Increased from 5000L for slow connections
         const val COMPLETION_TIMEOUT_MS =
             30000L // Legacy constant, use calculateCompletionTimeout instead

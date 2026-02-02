@@ -150,12 +150,13 @@ private fun WorkoutViewModel.findCalibrationSetExecutionState(
     return Pair(calibrationSetExecutionState, calibrationSetIndex)
 }
 
-private fun WorkoutViewModel.updateWorkSetStates(
-    statesWithoutRIR: MutableList<WorkoutState>,
+private fun WorkoutViewModel.updateWorkSetStatesInList(
+    states: MutableList<WorkoutState>,
     currentState: WorkoutState.CalibrationRIRSelection,
     setUpdates: Map<UUID, Set>
 ) {
-    for (state in statesWithoutRIR) {
+    for (i in states.indices) {
+        val state = states[i]
         if (state is WorkoutState.Set && state.exerciseId == currentState.exerciseId) {
             val updatedSet = setUpdates[state.set.id]
             if (updatedSet != null && !state.isCalibrationSet) {
@@ -167,10 +168,7 @@ private fun WorkoutViewModel.updateWorkSetStates(
                 // Calibration set: update previousSetData to match currentSetData
                 val updatedPreviousSetData = updateCalibrationSetPreviousData(state)
                 if (updatedPreviousSetData != null) {
-                    val calibrationStateIndex = statesWithoutRIR.indexOf(state)
-                    if (calibrationStateIndex >= 0) {
-                        statesWithoutRIR[calibrationStateIndex] = state.copy(previousSetData = updatedPreviousSetData)
-                    }
+                    states[i] = state.copy(previousSetData = updatedPreviousSetData)
                 }
             }
         }
@@ -188,32 +186,6 @@ private fun WorkoutViewModel.calculateNewCurrentIndex(
         currentIndex
     } else {
         finalUpdatedStates.size - 1
-    }
-}
-
-private fun WorkoutViewModel.triggerPlateRecalculationIfNeeded(
-    finalUpdatedStates: List<WorkoutState>,
-    newCurrentIndex: Int,
-    currentState: WorkoutState.CalibrationRIRSelection,
-    exercise: Exercise,
-    equipment: WeightLoadedEquipment?
-) {
-    val firstWorkSetState = finalUpdatedStates.getOrNull(newCurrentIndex) as? WorkoutState.Set
-    if (firstWorkSetState != null && 
-        firstWorkSetState.exerciseId == currentState.exerciseId &&
-        equipment is Barbell && 
-        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
-        val totalWeight = when (val set = firstWorkSetState.set) {
-            is WeightSet -> set.weight
-            is BodyWeightSet -> {
-                val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                relativeBodyWeight + set.additionalWeight
-            }
-            else -> null
-        }
-        if (totalWeight != null) {
-            schedulePlateRecalculation(totalWeight)
-        }
     }
 }
 
@@ -263,33 +235,84 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                 machine, currentState.exerciseId
             )
             
-            // Remove CalibrationRIRSelection state and move to next state
-            val statesWithoutRIR = machine.allStates.toMutableList()
-            statesWithoutRIR.removeAt(currentIndex)
-            
-            // Update work set states: directly mutate in place instead of mapping
-            updateWorkSetStates(statesWithoutRIR, currentState, setUpdates)
-            
-            val finalUpdatedStates = statesWithoutRIR
-            
             // Store the calibration set with RIR in executedSetsHistory before removing CalibrationRIRSelection
             if (calibrationSetIndex >= 0 && calibrationSetExecutionState != null) {
                 // Temporarily set current state to calibration Set execution to store it
-                stateMachine = WorkoutStateMachine(machine.allStates, calibrationSetIndex) { LocalDateTime.now() }
+                val tempMachine = WorkoutStateMachine.fromSequence(machine.stateSequence, { LocalDateTime.now() }, calibrationSetIndex)
+                stateMachine = tempMachine
                 storeSetData()
+            }
+            
+            // Remove CalibrationRIRSelection state from sequence
+            val updatedSequence = machine.stateSequence.map { item ->
+                when (item) {
+                    is WorkoutStateSequenceItem.Container -> {
+                        when (val container = item.container) {
+                            is WorkoutStateContainer.ExerciseState -> {
+                                if (container.exerciseId == currentState.exerciseId) {
+                                    val updatedChildStates = container.childStates.filterNot { 
+                                        it is WorkoutState.CalibrationRIRSelection 
+                                    }.toMutableList()
+                                    // Update work set states
+                                    updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
+                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                                } else {
+                                    item
+                                }
+                            }
+                            is WorkoutStateContainer.SupersetState -> {
+                                val updatedChildStates = container.childStates.filterNot { 
+                                    it is WorkoutState.CalibrationRIRSelection 
+                                }.toMutableList()
+                                // Update work set states
+                                updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
+                                WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                            }
+                        }
+                    }
+                    is WorkoutStateSequenceItem.RestBetweenExercises -> item
+                }
             }
             
             // Adjust current index if we removed CalibrationRIRSelection
             // If we were at CalibrationRIRSelection, move to next state after calibration Set execution
-            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, finalUpdatedStates)
+            val tempMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, 0)
+            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, tempMachine.allStates)
             
-            stateMachine = WorkoutStateMachine(finalUpdatedStates, newCurrentIndex) { LocalDateTime.now() }
+            stateMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, newCurrentIndex)
+            populateNextStateSets()
             updateStateFlowsFromMachine()
             
-            // Trigger plate recalculation for the first work set after RIR
-            triggerPlateRecalculationIfNeeded(
-                finalUpdatedStates, newCurrentIndex, currentState, exercise, equipment
-            )
+            // Recalculate plate configs for all work sets (current state is Rest so schedulePlateRecalculation would no-op)
+            if (equipment is Barbell &&
+                (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
+                val firstWorkSetStateIndex = calibrationSetIndex + 2
+                val machine = stateMachine ?: return@withContext
+                val allStates = machine.allStates
+                if (firstWorkSetStateIndex < allStates.size) {
+                    val remainingStates = allStates.subList(firstWorkSetStateIndex, allStates.size)
+                        .filterIsInstance<WorkoutState.Set>()
+                        .filter { it.exerciseId == currentState.exerciseId }
+                    val weights = remainingStates.map { state ->
+                        when (val set = state.set) {
+                            is WeightSet -> set.weight
+                            is BodyWeightSet -> {
+                                val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                                relativeBodyWeight + set.additionalWeight
+                            }
+                            else -> 0.0
+                        }
+                    }
+                    if (weights.size == remainingStates.size) {
+                        recalculatePlatesForExerciseFromIndex(
+                            currentState.exerciseId,
+                            firstWorkSetStateIndex,
+                            weights,
+                            equipment
+                        )
+                    }
+                }
+            }
         }
     }
 }

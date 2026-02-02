@@ -92,7 +92,7 @@ fun WeightInfoDialog(
                         ) {
                             Text(
                                 text = "WEIGHT (KG)",
-                                style = headerStyle,
+                                style = headerStyle.copy(fontWeight = FontWeight.ExtraLight),
                                 color = MediumLighterGray,
                                 textAlign = TextAlign.Center
                             )
@@ -130,7 +130,7 @@ fun WeightInfoDialog(
                         ) {
                             Text(
                                 text = "WEIGHT (KG)",
-                                style = headerStyle,
+                                style = headerStyle.copy(fontWeight = FontWeight.ExtraLight),
                                 color = MediumLighterGray,
                                 textAlign = TextAlign.Center
                             )

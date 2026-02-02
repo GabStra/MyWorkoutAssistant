@@ -558,6 +558,16 @@ class AppViewModel() : ViewModel() {
         setWorkoutStoreState(workoutStore.copy(workouts = newWorkouts))
     }
 
+    /**
+     * Reorders workouts within a plan (or unassigned when planId is null).
+     * Assigns order = index to each workout in newOrderedWorkouts and merges with workouts from other plans.
+     */
+    fun reorderWorkoutsInPlan(planId: UUID?, newOrderedWorkouts: List<Workout>) {
+        val reordered = newOrderedWorkouts.mapIndexed { index, w -> w.copy(order = index) }
+        val otherWorkouts = workouts.filter { it.workoutPlanId != planId }
+        updateWorkouts(otherWorkouts + reordered)
+    }
+
     fun deleteWorkoutsById(workoutIdsToDelete: kotlin.collections.Set<UUID>) {
         deleteWorkouts(workoutIdsToDelete)
     }

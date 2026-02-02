@@ -92,10 +92,6 @@ fun ExerciseScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val exerciseSetIds = remember(exercise) {
-        viewModel.setsByExerciseId[exercise.id]!!.map { it.set.id }
-    }
-
     val equipment = remember(exercise) {
         exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     }
@@ -227,15 +223,11 @@ fun ExerciseScreen(
     }
 
     AnimatedContent(
-        targetState = state,
+        targetState = state.set.id,
         transitionSpec = {
             fadeIn(animationSpec = tween(250)) togetherWith fadeOut(animationSpec = tween(250))
         }, label = ""
-    ) { updatedState ->
-        val setIndex = remember(updatedState.set.id, exerciseSetIds) {
-            derivedStateOf { exerciseSetIds.indexOf(updatedState.set.id) }
-        }
-
+    ) { _ ->
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
                 FadingText(
@@ -291,29 +283,29 @@ fun ExerciseScreen(
                 ) {
                     when (pageType) {
                         PageType.PLATES -> {
-                            PagePlates(updatedState, equipment, hapticsViewModel, viewModel)
+                            PagePlates(state, equipment, hapticsViewModel, viewModel)
                         }
 
                         PageType.EXERCISE_DETAIL -> {
                             key(pageType, pageIndex) {
                                 ExerciseDetail(
-                                    updatedState = updatedState,
+                                    updatedState = state,
                                     viewModel = viewModel,
                                     onEditModeDisabled = { allowHorizontalScrolling = true },
                                     onEditModeEnabled = { allowHorizontalScrolling = false },
                                     onTimerDisabled = { },
                                     onTimerEnabled = { },
                                     extraInfo = { _ ->
-                                        val isWarmupSet = remember(updatedState.set) {
-                                            when (val set = updatedState.set) {
+                                        val isWarmupSet = remember(state.set) {
+                                            when (val set = state.set) {
                                                 is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                                 else -> false
                                             }
                                         }
                                         
-                                        val isCalibrationSet = remember(updatedState.isCalibrationSet) {
-                                            updatedState.isCalibrationSet
+                                        val isCalibrationSet = remember(state.isCalibrationSet) {
+                                            state.isCalibrationSet
                                         }
                                         
                                         val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
@@ -335,12 +327,15 @@ fun ExerciseScreen(
                                                 exerciseLabel = "${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
                                                 supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
                                                 supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
-                                                setLabel = if (exerciseSetIds.size > 1) {
-                                                    "${setIndex.value + 1}/${exerciseSetIds.size}"
-                                                } else null,
-                                                sideIndicator = if (updatedState.intraSetTotal != null) "① ↔ ②" else null,
-                                                currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
-                                                isUnilateral = updatedState.isUnilateral,
+                                                setLabel = viewModel.getSetCounterForExercise(
+                                                    state.exerciseId,
+                                                    state
+                                                )?.let { (current, total) ->
+                                                    if (total > 1) "$current/$total" else null
+                                                },
+                                                sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
+                                                currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
+                                                isUnilateral = state.isUnilateral,
                                                 equipmentName = equipment?.name,
                                                 accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
                                                 textColor = MaterialTheme.colorScheme.onBackground,
@@ -426,7 +421,7 @@ fun ExerciseScreen(
                             key(pageType, pageIndex) {
                                 PageExercises(
                                     selectedExercise,
-                                    updatedState,
+                                    state,
                                     viewModel, hapticsViewModel,
                                     exercise,
                                     exerciseOrSupersetIds = exerciseOrSupersetIds,
@@ -441,7 +436,7 @@ fun ExerciseScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 exercise = exercise,
-                                state = updatedState,
+                                state = state,
                                 isPageVisible = pagerState.currentPage == progressionComparisonPageIndex
                             )
                         }
@@ -451,7 +446,7 @@ fun ExerciseScreen(
                         }
 
                         PageType.BUTTONS -> {
-                            PageButtons(updatedState, viewModel, hapticsViewModel, navController)
+                            PageButtons(state, viewModel, hapticsViewModel, navController)
                         }
                     }
                 }
@@ -462,22 +457,22 @@ fun ExerciseScreen(
         CustomDialogYesOnLongPress(
             show = showNextDialog,
             title = when {
-                updatedState.isCalibrationSet -> "Complete Calibration Set"
-                updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!! -> "Switch side"
+                state.isCalibrationSet -> "Complete Calibration Set"
+                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
                 else -> "Complete Set"
             },
-            message = if (updatedState.isCalibrationSet) "Rate your RIR after completing this set." else "Do you want to proceed?",
+            message = if (state.isCalibrationSet) "Rate your RIR after completing this set." else "Do you want to proceed?",
             handleYesClick = {
                 // Handle intra-set counter if applicable
-                if (updatedState.intraSetTotal != null) {
-                    updatedState.intraSetCounter++
+                if (state.intraSetTotal != null) {
+                    state.intraSetCounter++
                 }
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
                 
                 // Check if this is a calibration set execution
-                val isCalibrationSetExecution = updatedState.isCalibrationSet
+                val isCalibrationSetExecution = state.isCalibrationSet
                 
                 if (isCalibrationSetExecution) {
                     // Move to RIR rating step instead of going to next state
@@ -517,8 +512,7 @@ fun ExerciseScreen(
         ) {
             ExerciseIndicator(
                 viewModel,
-                updatedState,
-                selectedExercise.id
+                selectedExerciseId = selectedExercise.id
             )
 
             Box {

@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.workoutcomponents
 
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
 
@@ -35,6 +36,7 @@ data class Exercise (
     val secondaryMuscleGroups: kotlin.collections.Set<MuscleGroup>? = null,
     val requiredAccessoryEquipmentIds: List<UUID>? = null,
     val requiresLoadCalibration: Boolean = false,
+    val exerciseCategory: ExerciseCategory? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -67,6 +69,7 @@ data class Exercise (
         result = 31 * result + (secondaryMuscleGroups?.hashCode() ?: 0)
         result = 31 * result + (requiredAccessoryEquipmentIds?.hashCode() ?: 0)
         result = 31 * result + requiresLoadCalibration.hashCode()
+        result = 31 * result + (exerciseCategory?.hashCode() ?: 0)
         return result
     }
     
@@ -101,6 +104,7 @@ data class Exercise (
         if (secondaryMuscleGroups != other.secondaryMuscleGroups) return false
         if ((requiredAccessoryEquipmentIds ?: emptyList<UUID>()) != (other.requiredAccessoryEquipmentIds ?: emptyList<UUID>())) return false
         if (requiresLoadCalibration != other.requiresLoadCalibration) return false
+        if (exerciseCategory != other.exerciseCategory) return false
         
         return true
     }

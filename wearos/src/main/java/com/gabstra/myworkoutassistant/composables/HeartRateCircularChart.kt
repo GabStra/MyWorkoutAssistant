@@ -1,12 +1,15 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.SensorsOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -199,33 +203,28 @@ fun HrStatusBadge(
     hrStatus: HeartRateStatus?,
     modifier: Modifier = Modifier
 ) {
-    // Animate visibility
-    val alpha by animateFloatAsState(
-        targetValue = if (hrStatus != null) 1f else 0f,
-        animationSpec = tween(durationMillis = 300),
-        label = "hrBadgeAlpha"
-    )
-
-    if (hrStatus != null) {
+    AnimatedVisibility(
+        visible = hrStatus != null,
+        enter = fadeIn(animationSpec = tween(durationMillis = 300)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 300))
+    ) {
+        val status = hrStatus!!
+        val message = when (status) {
+            HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
+            HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+            HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
+        }
+        val icon = when (status) {
+            HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
+            HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
+            HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
+        }
         Box(
             modifier = modifier
                 .fillMaxWidth()
-                .alpha(alpha)
                 .padding(top = 15.dp),
             contentAlignment = Alignment.TopCenter
         ) {
-            val message = when (hrStatus) {
-                HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
-                HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
-                HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
-            }
-
-            val icon = when (hrStatus) {
-                HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
-                HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
-                HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
-            }
-
             Box(
                 modifier = Modifier
                     .background(
@@ -236,18 +235,18 @@ fun HrStatusBadge(
                         BorderStroke(1.dp, Red),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    .padding(5.dp)
+                    .padding(10.dp)
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = "HR Status",
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(15.dp),
                         tint = Red
                     )
-                    Spacer(modifier = Modifier.size(8.dp))
+                    Spacer(modifier = Modifier.size(5.dp))
                     Text(
                         text = message,
                         style = MaterialTheme.typography.bodySmall,
@@ -412,11 +411,12 @@ private fun HeartRateDisplay(
             else
                 colorsByZone[currentZone]
         )
-        Spacer(modifier = Modifier.width(5.dp))
+
         Row{
             Text(
-                modifier = Modifier.alignByBaseline(),
+                modifier = Modifier.alignByBaseline().width(30.dp),
                 text = textToDisplay,
+                textAlign = TextAlign.End,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
             )
@@ -430,14 +430,12 @@ private fun HeartRateDisplay(
                 )
             }
         }
-        if(currentZone >= 1){
+        if(bpm != 0){
             Spacer(modifier = Modifier.width(2.5.dp))
             // Zone chip with black background, colored border, and colored text
-            val chipBorderColor = if (currentZone >= colorsByZone.size)
-                MediumDarkGray
-            else
-                colorsByZone[currentZone]
-            val zoneText = if (currentZone in 1 until colorsByZone.size) "Z$currentZone" else "Z-"
+            val chipBorderColor = colorsByZone[currentZone]
+
+            val zoneText = "Z$currentZone"
             val shape = RoundedCornerShape(12.dp)
             Box(
                 modifier = Modifier
@@ -462,6 +460,7 @@ private fun HeartRateDisplay(
                 )
             }
         }
+
         Spacer(modifier = Modifier.weight(1f))
     }
 }
@@ -688,7 +687,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            colorsByZone[index].copy(alpha = 0.25f)
+            colorsByZone[index].copy(alpha = 0.35f)
         } else {
             MediumDarkGray
         }
@@ -809,14 +808,10 @@ private fun HeartRateView(
 
     val textToDisplay by remember(hr, mhrPercentage, displayMode) {
         derivedStateOf {
-            if (hr == 0) {
-                "-"
-            } else {
-                when (displayMode) {
-                    0 -> hr.toString()
-                    1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
-                    else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
-                }
+            when (displayMode) {
+                0 -> hr.toString()
+                1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+                else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
             }
         }
     }
@@ -850,18 +845,29 @@ private fun HeartRateView(
         modifier = modifier,
         contentAlignment = Alignment.BottomCenter
     ) {
-        HeartRateDisplay(
-            modifier = Modifier
-                .width(120.dp)
-                .height(25.dp)
-                .offset(y = (-8).dp)
-                .clickable(onClick = onSwitchClick, enabled = hr != 0),
-            bpm = hr,
-            textToDisplay = textToDisplay,
-            currentZone = currentZone,
-            colorsByZone = colorsByZone,
-            displayMode = displayMode
-        )
+        if (hr == 0) {
+            Icon(
+                imageVector = Icons.Filled.SensorsOff,
+                contentDescription = "Disconnected",
+                modifier = Modifier
+                    .size(15.dp)
+                    .offset(y = (-8).dp),
+                tint = MediumDarkGray
+            )
+        } else {
+            HeartRateDisplay(
+                modifier = Modifier
+                    .width(120.dp)
+                    .height(25.dp)
+                    .offset(y = (-8).dp)
+                    .clickable(onClick = onSwitchClick),
+                bpm = hr,
+                textToDisplay = textToDisplay,
+                currentZone = currentZone,
+                colorsByZone = colorsByZone,
+                displayMode = displayMode
+            )
+        }
 
         val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(
             zoneCount = zoneCount,
@@ -921,7 +927,7 @@ private fun HeartRateView(
                     .padding(4.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.25f),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.35f),
                 strokeWidth = 16.dp,
                 borderWidth = 5.dp,
                 innerBorderWidth = 4.dp
@@ -1049,7 +1055,7 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(95f, 30),
+            hr = getHeartRateFromPercentage(62f, 30),
             age = 30,
             lowerBoundMaxHRPercent = null, //60f,
             upperBoundMaxHRPercent = null  // 70f

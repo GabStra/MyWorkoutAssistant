@@ -90,7 +90,7 @@ fun ControlButtonsVertical(
             Box(
                 modifier = Modifier
                     .size(50.dp)
-                    .subtleVerticalGradientBackground(Green,CircleShape),
+                    .background(Green,CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -105,7 +105,7 @@ fun ControlButtonsVertical(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 2.5.dp),
+                .padding(vertical = 5.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
@@ -143,7 +143,7 @@ fun ControlButtonsVertical(
             Box(
                 modifier = Modifier
                     .size(50.dp)
-                    .subtleVerticalGradientBackground(Red,CircleShape),
+                    .background(Red,CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

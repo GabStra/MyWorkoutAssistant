@@ -7,9 +7,12 @@ import java.util.UUID
  * Pure Kotlin state machine that encapsulates workout state queue/history logic.
  * Manages progression through workout states (Set, Rest, Completed) with support
  * for next, undo, and skip operations.
+ * 
+ * Internally uses a hierarchical structure with containers (ExerciseState/SupersetState)
+ * but exposes a flattened list of states for navigation.
  */
 data class WorkoutStateMachine(
-    val allStates: List<WorkoutState>,
+    internal val stateSequence: List<WorkoutStateSequenceItem>,
     internal val currentIndex: Int,
     private val timeProvider: () -> LocalDateTime = { LocalDateTime.now() }
 ) {
@@ -19,9 +22,47 @@ data class WorkoutStateMachine(
     }
 
     /**
-     * Creates a new state machine starting at the first state.
+     * Flattened list of all workout states computed from stateSequence.
+     * This is what pagination and navigation work with.
+     */
+    val allStates: List<WorkoutState>
+        get() = buildList {
+            stateSequence.forEach { item ->
+                when (item) {
+                    is WorkoutStateSequenceItem.Container -> {
+                        when (val container = item.container) {
+                            is WorkoutStateContainer.ExerciseState -> addAll(container.childStates)
+                            is WorkoutStateContainer.SupersetState -> addAll(container.childStates)
+                        }
+                    }
+                    is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                        add(item.rest)
+                    }
+                }
+            }
+        }
+
+    /**
+     * Creates a new state machine from a sequence of containers and Rest states.
      */
     companion object {
+        fun fromSequence(
+            sequence: List<WorkoutStateSequenceItem>,
+            timeProvider: () -> LocalDateTime = { LocalDateTime.now() },
+            startIndex: Int = 0
+        ): WorkoutStateMachine {
+            val machine = WorkoutStateMachine(sequence, currentIndex = startIndex, timeProvider)
+            require(machine.allStates.isNotEmpty()) { "State sequence cannot be empty" }
+            require(startIndex >= 0) { "startIndex must be >= 0" }
+            require(startIndex < machine.allStates.size) { "startIndex must be < allStates.size" }
+            return machine
+        }
+
+        /**
+         * Creates a new state machine from a flat list of states (backward compatibility).
+         * Wraps all states in a single ExerciseState container.
+         */
+        @Deprecated("Use fromSequence instead", ReplaceWith("fromSequence"))
         fun fromStates(
             states: List<WorkoutState>,
             timeProvider: () -> LocalDateTime = { LocalDateTime.now() },
@@ -30,7 +71,14 @@ data class WorkoutStateMachine(
             require(states.isNotEmpty()) { "States list cannot be empty" }
             require(startIndex >= 0) { "startIndex must be >= 0" }
             require(startIndex < states.size) { "startIndex must be < states.size" }
-            return WorkoutStateMachine(states, currentIndex = startIndex, timeProvider)
+            // Create a dummy exercise container for backward compatibility
+            val dummyExerciseId = UUID.randomUUID()
+            val container = WorkoutStateContainer.ExerciseState(
+                exerciseId = dummyExerciseId,
+                childStates = states.toMutableList()
+            )
+            val sequence = listOf(WorkoutStateSequenceItem.Container(container))
+            return WorkoutStateMachine(sequence, currentIndex = startIndex, timeProvider)
         }
     }
 
@@ -105,7 +153,9 @@ data class WorkoutStateMachine(
             allStates
         }
 
-        return WorkoutStateMachine(updatedStates, nextIndex, timeProvider)
+        // Rebuild stateSequence with updated states
+        val updatedSequence = rebuildSequenceWithUpdatedStates(updatedStates)
+        return WorkoutStateMachine(updatedSequence, nextIndex, timeProvider)
     }
 
     /**
@@ -118,7 +168,7 @@ data class WorkoutStateMachine(
         }
 
         val previousIndex = currentIndex - 1
-        return WorkoutStateMachine(allStates, previousIndex, timeProvider)
+        return WorkoutStateMachine(stateSequence, previousIndex, timeProvider)
     }
 
     /**
@@ -131,13 +181,13 @@ data class WorkoutStateMachine(
         while (targetIndex < allStates.size) {
             val state = allStates[targetIndex]
             if (predicate(state) || state is WorkoutState.Completed) {
-                return WorkoutStateMachine(allStates, targetIndex, timeProvider)
+                return WorkoutStateMachine(stateSequence, targetIndex, timeProvider)
             }
             targetIndex++
         }
 
         // If we reach here, we're at the last state (should be Completed)
-        return WorkoutStateMachine(allStates, allStates.size - 1, timeProvider)
+        return WorkoutStateMachine(stateSequence, allStates.size - 1, timeProvider)
     }
 
     /**
@@ -154,11 +204,194 @@ data class WorkoutStateMachine(
                 else -> null
             }
             if (setId == targetSetId) {
-                return WorkoutStateMachine(allStates, i, timeProvider)
+                return WorkoutStateMachine(stateSequence, i, timeProvider)
             }
         }
         // If not found, return current position
         return this
+    }
+
+    /**
+     * Insert states into an ExerciseState container's childStates.
+     * Returns a new WorkoutStateMachine with the inserted states.
+     */
+    fun insertStatesIntoExercise(
+        exerciseId: UUID,
+        states: List<WorkoutState>,
+        afterChildIndex: Int?
+    ): WorkoutStateMachine {
+        val updatedSequence = stateSequence.map { item ->
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    when (val container = item.container) {
+                        is WorkoutStateContainer.ExerciseState -> {
+                            if (container.exerciseId == exerciseId) {
+                                val updatedChildStates = container.childStates.toMutableList()
+                                val insertIndex = if (afterChildIndex != null) {
+                                    (afterChildIndex + 1).coerceIn(0, updatedChildStates.size)
+                                } else {
+                                    updatedChildStates.size
+                                }
+                                updatedChildStates.addAll(insertIndex, states)
+                                WorkoutStateSequenceItem.Container(
+                                    container.copy(childStates = updatedChildStates)
+                                )
+                            } else {
+                                item
+                            }
+                        }
+                        is WorkoutStateContainer.SupersetState -> {
+                            // Check if any exercise in the superset matches
+                            val updatedChildStates = container.childStates.toMutableList()
+                            var found = false
+                            for (i in updatedChildStates.indices.reversed()) {
+                                val state = updatedChildStates[i]
+                                if (state is WorkoutState.Set && state.exerciseId == exerciseId) {
+                                    val insertIndex = if (afterChildIndex != null) {
+                                        (i + afterChildIndex + 1).coerceIn(0, updatedChildStates.size)
+                                    } else {
+                                        i + 1
+                                    }
+                                    updatedChildStates.addAll(insertIndex, states)
+                                    found = true
+                                    break
+                                }
+                            }
+                            if (found) {
+                                WorkoutStateSequenceItem.Container(
+                                    container.copy(childStates = updatedChildStates)
+                                )
+                            } else {
+                                item
+                            }
+                        }
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> item
+            }
+        }
+        return WorkoutStateMachine(updatedSequence, currentIndex, timeProvider)
+    }
+
+    /**
+     * Get the ExerciseState container containing the current state.
+     */
+    fun getCurrentExerciseContainer(): WorkoutStateContainer.ExerciseState? {
+        val currentState = allStates[currentIndex]
+        return findContainerForState(currentState) as? WorkoutStateContainer.ExerciseState
+    }
+
+    /**
+     * Get the SupersetState container containing the current state.
+     */
+    fun getCurrentSupersetContainer(): WorkoutStateContainer.SupersetState? {
+        val currentState = allStates[currentIndex]
+        return findContainerForState(currentState) as? WorkoutStateContainer.SupersetState
+    }
+
+    /**
+     * Get all states for a specific exercise from its container.
+     */
+    fun getStatesForExercise(exerciseId: UUID): List<WorkoutState> {
+        return stateSequence.flatMap { item ->
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    when (val container = item.container) {
+                        is WorkoutStateContainer.ExerciseState -> {
+                            if (container.exerciseId == exerciseId) {
+                                container.childStates
+                            } else {
+                                emptyList()
+                            }
+                        }
+                        is WorkoutStateContainer.SupersetState -> {
+                            container.childStates.filter { state ->
+                                when (state) {
+                                    is WorkoutState.Set -> state.exerciseId == exerciseId
+                                    is WorkoutState.CalibrationLoadSelection -> state.exerciseId == exerciseId
+                                    is WorkoutState.CalibrationRIRSelection -> state.exerciseId == exerciseId
+                                    else -> false
+                                }
+                            }
+                        }
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> emptyList()
+            }
+        }
+    }
+
+    /**
+     * Helper to find the container containing a specific state.
+     */
+    private fun findContainerForState(targetState: WorkoutState): WorkoutStateContainer? {
+        var currentFlatIndex = 0
+        for (item in stateSequence) {
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    val container = item.container
+                    val childStates = when (container) {
+                        is WorkoutStateContainer.ExerciseState -> container.childStates
+                        is WorkoutStateContainer.SupersetState -> container.childStates
+                    }
+                    val endIndex = currentFlatIndex + childStates.size
+                    if (currentFlatIndex <= allStates.indexOf(targetState) && 
+                        allStates.indexOf(targetState) < endIndex) {
+                        return container
+                    }
+                    currentFlatIndex = endIndex
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                    if (targetState == item.rest) {
+                        return null // Rest between exercises is not in a container
+                    }
+                    currentFlatIndex++
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Rebuild stateSequence with updated states (for next() when Completed state is updated).
+     */
+    private fun rebuildSequenceWithUpdatedStates(updatedStates: List<WorkoutState>): List<WorkoutStateSequenceItem> {
+        val result = mutableListOf<WorkoutStateSequenceItem>()
+        var stateIndex = 0
+        
+        for (item in stateSequence) {
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    when (val container = item.container) {
+                        is WorkoutStateContainer.ExerciseState -> {
+                            val childCount = container.childStates.size
+                            val updatedChildStates = updatedStates.subList(stateIndex, stateIndex + childCount).toMutableList()
+                            result.add(WorkoutStateSequenceItem.Container(
+                                container.copy(childStates = updatedChildStates)
+                            ))
+                            stateIndex += childCount
+                        }
+                        is WorkoutStateContainer.SupersetState -> {
+                            val childCount = container.childStates.size
+                            val updatedChildStates = updatedStates.subList(stateIndex, stateIndex + childCount).toMutableList()
+                            result.add(WorkoutStateSequenceItem.Container(
+                                container.copy(childStates = updatedChildStates)
+                            ))
+                            stateIndex += childCount
+                        }
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                    if (stateIndex < updatedStates.size && updatedStates[stateIndex] == item.rest) {
+                        result.add(item)
+                        stateIndex++
+                    } else {
+                        result.add(item)
+                    }
+                }
+            }
+        }
+        return result
     }
 }
 

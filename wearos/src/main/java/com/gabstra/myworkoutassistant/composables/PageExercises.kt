@@ -66,16 +66,11 @@ fun PageExercises(
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
 
-    val overrideSetIndex = remember(isSuperset, currentExercise) {
+    val overrideSetIndex = remember(isSuperset, currentExercise, viewModel.allWorkoutStates.size) {
         if (isSuperset) {
             viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
                 .indexOf(currentStateSet.set.id)
         } else null
-    }
-
-    // Optimize: Use setsByExerciseId which is already cached in viewModel instead of filtering allWorkoutStates
-    val currentExerciseSetIds = remember(currentExercise.id) {
-        viewModel.setsByExerciseId[currentExercise.id]?.map { it.set.id } ?: emptyList()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -142,9 +137,13 @@ fun PageExercises(
                     exerciseLabel = "${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
                     supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
                     supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
-                    setLabel = if (currentExercise == selectedExercise && currentExerciseSetIds.size > 1) {
-                        val setIndex = remember(currentStateSet.set.id) { currentExerciseSetIds.indexOf(currentStateSet.set.id) }
-                        "${setIndex + 1}/${currentExerciseSetIds.size}"
+                    setLabel = if (currentExercise == selectedExercise) {
+                        viewModel.getSetCounterForExercise(
+                            currentExercise.id,
+                            currentStateSet
+                        )?.let { (current, total) ->
+                            if (total > 1) "$current/$total" else null
+                        }
                     } else null,
                     sideIndicator = if (currentExercise == selectedExercise && currentStateSet.intraSetTotal != null) "① ↔ ②" else null,
                     currentSideIndex = if (currentExercise == selectedExercise) {

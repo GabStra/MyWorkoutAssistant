@@ -36,11 +36,46 @@ import java.util.UUID
 import com.gabstra.myworkoutassistant.data.checkConnection
 
 open class AppViewModel : WorkoutViewModel() {
-    
+
+    companion object {
+        private const val SYNCED_WORKOUT_HISTORY_IDS_PREFS = "synced_workout_history_ids"
+        private const val SYNCED_IDS_KEY = "ids"
+    }
+
     private var applicationContext: android.content.Context? = null
-    
+
+    /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
+    private val pendingSyncTransactions = mutableMapOf<String, UUID>()
+
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
+    }
+
+    private fun getSyncedWorkoutHistoryIds(context: Context): Set<UUID> {
+        val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
+        val ids = prefs.getStringSet(SYNCED_IDS_KEY, null) ?: emptySet()
+        return ids.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }.toSet()
+    }
+
+    private fun addSyncedWorkoutHistoryId(context: Context, id: UUID) {
+        val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(SYNCED_IDS_KEY, null)?.toMutableSet() ?: mutableSetOf()
+        current.add(id.toString())
+        prefs.edit().putStringSet(SYNCED_IDS_KEY, current).apply()
+    }
+
+    /** Call before sending a store so SYNC_COMPLETE can mark that history as synced. */
+    private fun registerPendingSyncTransaction(transactionId: String, workoutHistoryId: UUID) {
+        pendingSyncTransactions[transactionId] = workoutHistoryId
+    }
+
+    /** Called when SYNC_COMPLETE broadcast is received; marks the corresponding history as synced. */
+    fun markHistorySyncedForTransaction(transactionId: String?) {
+        if (transactionId == null) return
+        val historyId = pendingSyncTransactions.remove(transactionId) ?: return
+        val ctx = applicationContext ?: return
+        addSyncedWorkoutHistoryId(ctx, historyId)
+        Log.d("AppViewModel", "Marked workout history $historyId as synced for transaction $transactionId")
     }
     
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -246,7 +281,7 @@ open class AppViewModel : WorkoutViewModel() {
                                 emptyList()
                             }
 
-                            val result = syncMutex.withLock {
+                            val (success, _) = syncMutex.withLock {
                                 sendWorkoutHistoryStore(
                                     dataClient!!,
                                     WorkoutHistoryStore(
@@ -262,7 +297,7 @@ open class AppViewModel : WorkoutViewModel() {
                             }
                             
                             // Clear error logs after successful send
-                            if (result && errorLogs.isNotEmpty()) {
+                            if (success && errorLogs.isNotEmpty()) {
                                 try {
                                     (context.applicationContext as? MyApplication)?.clearErrorLogs()
                                 } catch (e: Exception) {
@@ -270,7 +305,7 @@ open class AppViewModel : WorkoutViewModel() {
                                 }
                             }
                             
-                            statuses.add(result)
+                            statuses.add(success)
                         } catch (e: Exception) {
                             Log.e("AppViewModel", "Error sending workout data for ${it.id}", e)
                             statuses.add(false)
@@ -296,6 +331,74 @@ open class AppViewModel : WorkoutViewModel() {
                         Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Sends only workout histories that have not yet been confirmed synced (additive catch-up at start).
+     * Call when app is initialized and phone is connected.
+     */
+    fun sendUnsyncedHistories(context: Context) {
+        viewModelScope.launch(coroutineExceptionHandler) {
+            try {
+                withContext(Dispatchers.IO) {
+                    val client = dataClient ?: return@withContext
+                    val syncedIds = getSyncedWorkoutHistoryIds(context)
+                    val allCompleted = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
+                    val unsynced = allCompleted.filter { it.id !in syncedIds }
+                    if (unsynced.isEmpty()) return@withContext
+
+                    Log.d("DataLayerSync", "sendUnsyncedHistories: sending ${unsynced.size} unsynced histories")
+                    unsynced.forEachIndexed { index, workoutHistory ->
+                        try {
+                            Log.d("DataLayerSync", "Sending unsynced history id=${workoutHistory.id} (${index + 1} of ${unsynced.size})")
+                            val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
+                                ?: return@forEachIndexed
+                            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                            val exercises = workout.workoutComponents.filterIsInstance<Exercise>() +
+                                workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+                            val exerciseInfos = exercises.mapNotNull { getExerciseInfoDao().getExerciseInfoById(it.id) }
+                            val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
+                            val exerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(workoutHistory.id)
+                            val errorLogs = try {
+                                (context.applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
+                            } catch (e: Exception) {
+                                Log.e("AppViewModel", "Error getting error logs", e)
+                                emptyList()
+                            }
+
+                            val transactionId = UUID.randomUUID().toString()
+                            registerPendingSyncTransaction(transactionId, workoutHistory.id)
+                            val (success, _) = syncMutex.withLock {
+                                sendWorkoutHistoryStore(
+                                    client,
+                                    WorkoutHistoryStore(
+                                        WorkoutHistory = workoutHistory,
+                                        SetHistories = setHistories,
+                                        ExerciseInfos = exerciseInfos,
+                                        WorkoutRecord = workoutRecord,
+                                        ExerciseSessionProgressions = exerciseSessionProgressions,
+                                        ErrorLogs = errorLogs
+                                    ),
+                                    context,
+                                    transactionId
+                                )
+                            }
+                            if (success && errorLogs.isNotEmpty()) {
+                                try {
+                                    (context.applicationContext as? MyApplication)?.clearErrorLogs()
+                                } catch (e: Exception) {
+                                    Log.e("AppViewModel", "Error clearing error logs", e)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("AppViewModel", "Error sending unsynced history ${workoutHistory.id}", e)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "Error in sendUnsyncedHistories", e)
             }
         }
     }
@@ -347,7 +450,7 @@ open class AppViewModel : WorkoutViewModel() {
 
                 // Note: Error logs will be included in pushAndStoreWorkoutData instead
                 // since we don't have context here
-                val result = dataClient?.let {
+                val (success, _) = dataClient?.let {
                     syncMutex.withLock {
                         sendWorkoutHistoryStore(
                             it, WorkoutHistoryStore(
@@ -360,12 +463,12 @@ open class AppViewModel : WorkoutViewModel() {
                             context
                         )
                     }
-                } ?: false
+                } ?: Pair(false, "")
 
                 withContext(Dispatchers.Main) {
                     _isSyncingToPhone.value = false
                     cancelSyncTimeouts()
-                    onEnd(result)
+                    onEnd(success)
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error sending workout history to phone", e)
@@ -595,7 +698,9 @@ open class AppViewModel : WorkoutViewModel() {
             }
 
             Log.d("WorkoutSync", "performWorkoutHistorySync: Sending workout history store (sets: ${executedSetsHistory.size}, exerciseInfos: ${exerciseInfos.size})")
-            val result = syncMutex.withLock {
+            val transactionIdForSync = java.util.UUID.randomUUID().toString()
+            registerPendingSyncTransaction(transactionIdForSync, currentWorkoutHistory!!.id)
+            val (result, _) = syncMutex.withLock {
                 sendWorkoutHistoryStore(
                     client,
                     WorkoutHistoryStore(
@@ -606,7 +711,8 @@ open class AppViewModel : WorkoutViewModel() {
                         ExerciseSessionProgressions = exerciseSessionProgressions,
                         ErrorLogs = errorLogs
                     ),
-                    syncContext
+                    syncContext,
+                    transactionIdForSync
                 )
             }
             Log.d("WorkoutSync", "performWorkoutHistorySync: Sync result: $result")

@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -65,6 +66,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -326,8 +328,8 @@ fun WorkoutSelectionScreen(
                                 .animateItem(),
                             text = "Enable Alarms for scheduled workouts",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onBackground
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                            color = MediumLighterGray
                         )
                     }
                     item {
@@ -370,8 +372,8 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Complete configuration on the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onBackground
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                color = MediumLighterGray
                             )
                         } else {
                             Text(
@@ -382,8 +384,8 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Install the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onBackground
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                color = MediumLighterGray
                             )
                         }
                     }
@@ -423,7 +425,8 @@ fun WorkoutSelectionScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = "No Workouts Available",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                color = MediumLighterGray
                             )
                         }
                     } else {

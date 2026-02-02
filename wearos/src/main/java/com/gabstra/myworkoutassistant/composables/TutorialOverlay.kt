@@ -17,11 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Button
@@ -35,62 +32,32 @@ import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
-/**
- * Converts tutorial text string to AnnotatedString with proper styling.
- * Tutorial text follows the pattern: sections separated by \n\n,
- * where each section has a title on the first line followed by description lines.
- *
- * @param text The tutorial text string to convert
- * @param titleFontSize The font size to use for titles (typically titleSmall.fontSize)
- * @param bodyFontSize The font size to use for descriptions (typically bodySmall.fontSize)
- * @return AnnotatedString with titles styled as bold with titleSmall size and descriptions as bodySmall
- */
+/** A single tutorial step with a title and description. */
+data class TutorialStep(val title: String, val description: String)
+
 @Composable
-private fun formatTutorialText(
-    text: String,
-    titleFontSize: androidx.compose.ui.unit.TextUnit = MaterialTheme.typography.titleSmall.fontSize,
-    bodyFontSize: androidx.compose.ui.unit.TextUnit = MaterialTheme.typography.bodySmall.fontSize
-): AnnotatedString {
-    val baseStyle = MaterialTheme.typography.bodySmall
-    return buildAnnotatedString {
-        val sections = text.split("\n\n")
-        
-        sections.forEachIndexed { sectionIndex, section ->
-            if (sectionIndex > 0) {
-                // Add spacing between sections
-                append("\n\n")
-            }
-            
-            val lines = section.split("\n")
-            if (lines.isNotEmpty()) {
-                // First line is the title
-                val title = lines[0]
-                val description = lines.drop(1).joinToString("\n")
-                
-                // Add title with bold titleSmall style
-                withStyle(
-                    style = baseStyle.toSpanStyle().copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = titleFontSize,
-                        color = LighterGray
-                    )
-                ) {
-                    append(title)
-                }
-                
-                // Add description with bodySmall style (if present)
-                if (description.isNotEmpty()) {
-                    append("\n")
-                    withStyle(
-                        style = baseStyle.toSpanStyle().copy(
-                            fontSize = bodyFontSize,
-                            color = MediumLighterGray
-                        )
-                    ) {
-                        append(description)
-                    }
-                }
-            }
+private fun TutorialStepItem(
+    title: String,
+    description: String,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = title,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = LighterGray,
+            textAlign = TextAlign.Center
+        )
+        if (description.isNotEmpty()) {
+            Text(
+                text = description,
+                modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                color = MediumLighterGray,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -99,12 +66,12 @@ private fun formatTutorialText(
  * Simple dimmed overlay used as a lightweight "coach-mark" style tutorial.
  *
  * This is intentionally generic so it can be reused on multiple screens.
- * Tutorial text is automatically formatted with titles in bold and descriptions in regular text.
+ * Each step is shown as a stacked item with title in bold and description in regular text.
  */
 @Composable
 fun TutorialOverlay(
     visible: Boolean,
-    text: String,
+    steps: List<TutorialStep>,
     modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
     buttonText: String = "Got it",
@@ -154,16 +121,22 @@ fun TutorialOverlay(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val annotatedText = formatTutorialText(text)
-                    Text(
-                        text = annotatedText,
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
                             .padding(top = 20.dp)
                             .padding(horizontal = 25.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        textAlign = TextAlign.Center
-                    )
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        steps.forEach { step ->
+                            TutorialStepItem(
+                                title = step.title,
+                                description = step.description,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
 
                     // Button now scrolls with the text
                     Button(

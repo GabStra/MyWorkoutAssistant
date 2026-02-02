@@ -425,15 +425,17 @@ class PlateCalculator {
 
         /**
          * Optimizes weights for barbell exercises given a work weight and list of weight percentages.
-         * The algorithm minimizes plate changes, keeps weights within a tolerance band, and minimizes total plates used.
-         * Uses a two-phase approach: first tries add-only (monotonic) transitions, then falls back to add-and-remove.
+         * The algorithm minimizes plate changes (between adjacent sets and globally), keeps weights
+         * within a tolerance band, and minimizes total plates used. Uses a two-phase approach:
+         * first tries add-only (monotonic) transitions, then falls back to add-and-remove.
          *
-         * @param workWeight The target work weight (100% reference)
+         * @param workWeight The target work weight (100% reference) and first work set
          * @param weightPercentages List of percentages (e.g., [0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
          * @param barbell The barbell equipment with available plates
          * @param initialPlates Initial plate setup (default: empty)
          * @param toleranceBandPercent Percentage tolerance band (default: 0.05 = ±5%)
          * @param sidesOnBarbell Number of sides (default: 2u)
+         * @param additionalWorkWeights Optional list of known work weights after the first (e.g. [120.0, 100.0] for set 2 and 3). The full sequence cost is minimized: warmups → workWeight → additionalWorkWeights.
          * @return List of optimized weights matching the order of input percentages
          */
         @JvmStatic
@@ -443,7 +445,8 @@ class PlateCalculator {
             barbell: Barbell,
             initialPlates: List<Double> = emptyList(),
             toleranceBandPercent: Double = 0.05,
-            sidesOnBarbell: UInt = 2u
+            sidesOnBarbell: UInt = 2u,
+            additionalWorkWeights: List<Double> = emptyList()
         ): List<Double> {
             // Validate inputs
             require(workWeight > 0) { "workWeight must be positive" }
@@ -451,6 +454,7 @@ class PlateCalculator {
             require(weightPercentages.all { it <= 1.0 + 1e-9 }) { "All percentages must be <= 1.0" }
             require(barbell.availablePlates.isNotEmpty()) { "Barbell must have available plates" }
             require(toleranceBandPercent >= 0 && toleranceBandPercent <= 1) { "toleranceBandPercent must be between 0 and 1" }
+            require(additionalWorkWeights.all { it > 0 }) { "All additionalWorkWeights must be positive" }
 
             // Calculate target weights
             val targetWeights = weightPercentages.map { workWeight * it }
@@ -491,10 +495,24 @@ class PlateCalculator {
                 }
             }
 
+            // Work-weight combos: include cost from last warmup to work weight (and through additional work weights) in total cost
+            val needPlateTotalWork = (workWeight - barbell.barWeight).coerceAtLeast(0.0)
+            val workWeightCombos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotalWork, sidesOnBarbell)
+
+            // Additional work weights: build combo list for each
+            val additionalWorkWeightCombos = additionalWorkWeights.map { w ->
+                val need = (w - barbell.barWeight).coerceAtLeast(0.0)
+                val combos = generateValidCombosPerSideCounts(perSideCounts, need, sidesOnBarbell)
+                require(combos.isNotEmpty()) { "No achievable combo for additional work weight $w" }
+                combos
+            }
+
             // Phase 1: Try add-only optimization
             val phase1Result = optimizePhase(
                 candidateLists = finalCandidateLists,
                 initialPlates = initialPlates,
+                workWeightCombos = workWeightCombos,
+                additionalWorkWeightCombos = additionalWorkWeightCombos,
                 addOnly = true
             )
 
@@ -506,6 +524,8 @@ class PlateCalculator {
             val phase2Result = optimizePhase(
                 candidateLists = finalCandidateLists,
                 initialPlates = initialPlates,
+                workWeightCombos = workWeightCombos,
+                additionalWorkWeightCombos = additionalWorkWeightCombos,
                 addOnly = false
             )
 
@@ -557,11 +577,38 @@ class PlateCalculator {
         }
 
         /**
-         * Optimization phase: either add-only or add-and-remove
+         * Minimum total plate-change cost through the work chain: previousPlates → workWeightCombos → additionalWorkWeightCombos[0] → ...
+         */
+        private fun minCostThroughWorkChain(
+            previousPlates: List<Double>,
+            workWeightCombos: List<List<Double>>,
+            additionalWorkWeightCombos: List<List<List<Double>>>
+        ): Int {
+            val chainComboLists = listOf(workWeightCombos) + additionalWorkWeightCombos
+            if (chainComboLists.isEmpty()) return 0
+            // dp[i][j] = min cost to reach combo j at position i
+            var prevCosts = workWeightCombos.map { generatePhysicalSteps(previousPlates, it).size }
+            for (i in 1 until chainComboLists.size) {
+                val currentCombos = chainComboLists[i]
+                val prevCombos = chainComboLists[i - 1]
+                prevCosts = currentCombos.map { currentCombo ->
+                    prevCombos.indices.minOfOrNull { j ->
+                        prevCosts[j] + generatePhysicalSteps(prevCombos[j], currentCombo).size
+                    } ?: Int.MAX_VALUE
+                }
+            }
+            return prevCosts.minOrNull() ?: 0
+        }
+
+        /**
+         * Optimization phase: either add-only or add-and-remove.
+         * Includes plate cost from last warmup through work weight(s) (and optional additional work weights) in total cost.
          */
         private fun optimizePhase(
             candidateLists: List<List<Candidate>>,
             initialPlates: List<Double>,
+            workWeightCombos: List<List<Double>>,
+            additionalWorkWeightCombos: List<List<List<Double>>>,
             addOnly: Boolean
         ): List<SolutionPick>? {
             val targetWeights = candidateLists.map { it.firstOrNull()?.total ?: 0.0 }
@@ -577,8 +624,18 @@ class PlateCalculator {
                 currentSolution: MutableList<SolutionPick>
             ) {
                 if (index == candidateLists.size) {
-                    if (accumulatedScore.isBetterThan(bestScore)) {
-                        bestScore = accumulatedScore
+                    val changeThroughWorkChain = minCostThroughWorkChain(
+                        previousPlates,
+                        workWeightCombos,
+                        additionalWorkWeightCombos
+                    )
+                    val adjustedScore = OptimizationScore(
+                        deviation = accumulatedScore.deviation,
+                        totalPlates = accumulatedScore.totalPlates,
+                        totalChanges = accumulatedScore.totalChanges + changeThroughWorkChain
+                    )
+                    if (adjustedScore.isBetterThan(bestScore)) {
+                        bestScore = adjustedScore
                         bestSolution = currentSolution.toList()
                     }
                     return

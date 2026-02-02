@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
@@ -78,6 +80,8 @@ fun WorkoutsBottomBar(
     onShowMoveWorkoutDialogChange: (Boolean) -> Unit,
     onUpdateWorkoutsEnabledState: (Boolean) -> Unit,
     onGroupedWorkoutsHistoriesChange: (Map<java.time.LocalDate, List<WorkoutHistory>>?) -> Unit,
+    onMoveWorkoutUp: () -> Unit,
+    onMoveWorkoutDown: () -> Unit,
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
@@ -166,6 +170,61 @@ fun WorkoutsBottomBar(
                                     }
                                     Text(
                                         "Deselect all",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 2,
+                                        modifier = Modifier.heightIn(min = 0.dp)
+                                    )
+                                }
+                                val selectedIndexInActive = if (selectedWorkouts.size == 1 && activeWorkouts.isNotEmpty()) {
+                                    activeWorkouts.indexOfFirst { it.id == selectedWorkouts.first().id }
+                                } else -1
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.width(56.dp)
+                                ) {
+                                    IconButton(
+                                        enabled = selectedWorkouts.size == 1 && selectedIndexInActive > 0,
+                                        onClick = onMoveWorkoutUp,
+                                        colors = IconButtonDefaults.iconButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.onBackground,
+                                            disabledContentColor = DisabledContentGray
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowUpward,
+                                            contentDescription = "Move Up",
+                                            tint = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                    Text(
+                                        "Move Up",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 2,
+                                        modifier = Modifier.heightIn(min = 0.dp)
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.width(56.dp)
+                                ) {
+                                    IconButton(
+                                        enabled = selectedWorkouts.size == 1 && selectedIndexInActive in 0 until activeWorkouts.size - 1,
+                                        onClick = onMoveWorkoutDown,
+                                        colors = IconButtonDefaults.iconButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.onBackground,
+                                            disabledContentColor = DisabledContentGray
+                                        )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowDownward,
+                                            contentDescription = "Move Down",
+                                            tint = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    }
+                                    Text(
+                                        "Move Down",
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,

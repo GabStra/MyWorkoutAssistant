@@ -19,15 +19,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -35,11 +35,14 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CalibrationRIRScreen(
+fun PageCalibrationRIR(
     modifier: Modifier = Modifier,
+    viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
     state: WorkoutState.CalibrationRIRSelection,
     onRIRConfirmed: (Double, Boolean) -> Unit,
-    hapticsViewModel: HapticsViewModel
+    exerciseTitleComposable: @Composable () -> Unit,
+    extraInfo: (@Composable (WorkoutState.CalibrationRIRSelection) -> Unit)? = null,
 ) {
     val initialRIR = remember(state.currentSetData) {
         when (val setData = state.currentSetData) {
@@ -57,9 +60,7 @@ fun CalibrationRIRScreen(
     val itemStyle = remember(typography) { 
         typography.numeralSmall.copy(fontWeight = FontWeight.Medium) 
     }
-    val rirLabelStyle = MaterialTheme.typography.titleLarge.copy(
-        fontWeight = FontWeight.SemiBold
-    )
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
     
     fun updateInteractionTime() {
         lastInteractionTime = System.currentTimeMillis()
@@ -94,8 +95,6 @@ fun CalibrationRIRScreen(
     
     fun onConfirmClick() {
         // RIR 0 can mean either 0 RIR or form breaks
-        // For now, we'll treat RIR 0 as form breaks if user confirms at 0
-        // In the future, we could add a separate "Form Breaks" option
         val formBreaks = rirValue == 0
         
         // Update set data with RIR
@@ -110,9 +109,7 @@ fun CalibrationRIRScreen(
         hapticsViewModel.doGentleVibration()
     }
     
-    val rirText = if (rirValue == 0) {
-        "0 (Form Breaks)"
-    } else if (rirValue >= 5) {
+    val rirText = if (rirValue >= 5) {
         "$rirValue+"
     } else {
         rirValue.toString()
@@ -129,9 +126,7 @@ fun CalibrationRIRScreen(
             }
         }
     }
-    
-    val context = LocalContext.current
-    
+
     // Back button handler: single press opens dialog, closes picker if open
     CustomBackHandler(
         enabled = true,
@@ -207,20 +202,45 @@ fun CalibrationRIRScreen(
                 )
             }
         } else {
-            // Initial state: show header and RIR value
+            // Initial state: show exercise info, header, and RIR value
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)
             ) {
+                exerciseTitleComposable()
+
+                if (extraInfo != null) {
+                    extraInfo(state)
+                }
+
+                // Header and RIR value matching Load's layout
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                    ) {
+                        Text(
+                            text = "RIR",
+                            style = headerStyle,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        RIRRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                    }
+                }
+
                 Text(
-                    text = "RIR",
-                    style = rirLabelStyle,
+                    text = "0 = Form Breaks",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                    color = MediumLighterGray,
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground
+                    modifier = Modifier.fillMaxWidth()
                 )
-                
-                RIRRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
             }
         }
     }

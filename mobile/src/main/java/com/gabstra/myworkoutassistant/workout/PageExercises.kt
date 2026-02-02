@@ -46,7 +46,7 @@ fun PageExercises(
     onExerciseSelected: (UUID) -> Unit
 ) {
     val exerciseIds = viewModel.setsByExerciseId.keys.toList()
-    val exerciseOrSupersetIds = remember {
+    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .map { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
             .distinct()
@@ -66,16 +66,14 @@ fun PageExercises(
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
 
-    val overrideSetIndex = remember(isSuperset, currentExercise) {
+    val overrideSetIndex = remember(isSuperset, currentExercise, viewModel.allWorkoutStates.size) {
         if (isSuperset) {
             viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
                 .indexOf(currentStateSet.set.id)
         } else null
     }
 
-    val currentExerciseSetIds = remember(
-        currentExercise
-    ) {
+    val currentExerciseSetIds = remember(currentExercise, viewModel.allWorkoutStates.size) {
         viewModel.allWorkoutStates
             .asSequence()
             .filterIsInstance<WorkoutState.Set>()

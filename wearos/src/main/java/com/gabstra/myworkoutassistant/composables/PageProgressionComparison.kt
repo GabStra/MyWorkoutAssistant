@@ -412,7 +412,7 @@ fun PageProgressionComparison(
             val baseStyle = MaterialTheme.typography.bodySmall
             val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle) {
                 buildAnnotatedString {
-                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
                         fun pipe() {
                             withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
                                 append(" | ")
@@ -448,11 +448,12 @@ fun PageProgressionComparison(
             }
         }
 
-        val afterSetData by remember(currentSetIndex, setIndex, state.currentSetData, progressionSetStates) {
+        val afterSetData by remember(currentSetIndex, setIndex, state.currentSetData, state.set, progressionSetStates) {
             derivedStateOf {
                 if (currentSetIndex == setIndex) {
-                    // Use the current state's set data directly to reflect real-time changes
-                    state.currentSetData
+                    // Use the current state's set data only when it's a work set; otherwise use work set data so comparison is work set vs work set
+                    if (isWorkSet(state.set)) state.currentSetData
+                    else progressionSetStates.getOrNull(currentSetIndex)?.currentSetData
                 } else if (currentSetIndex < progressionSetStates.size) {
                     progressionSetStates[currentSetIndex].currentSetData
                 } else null
@@ -467,11 +468,12 @@ fun PageProgressionComparison(
             }
         }
 
-        val afterSetState by remember(currentSetIndex, setIndex, state, progressionSetStates) {
+        val afterSetState by remember(currentSetIndex, setIndex, state, state.set, progressionSetStates) {
             derivedStateOf {
                 if (currentSetIndex == setIndex) {
-                    // Use the current state directly to reflect real-time changes
-                    state
+                    // Use the current state only when it's a work set; otherwise use work set state so comparison is work set vs work set
+                    if (isWorkSet(state.set)) state
+                    else progressionSetStates.getOrNull(currentSetIndex)
                 } else if (currentSetIndex < progressionSetStates.size) {
                     progressionSetStates[currentSetIndex]
                 } else null

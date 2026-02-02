@@ -53,6 +53,7 @@ import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
+import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
@@ -151,6 +152,8 @@ class MyReceiver(
                 }
 
                 if (syncComplete != null) {
+                    val transactionId = intent.getStringExtra(DataLayerListenerService.TRANSACTION_ID)
+                    appViewModel.markHistorySyncedForTransaction(transactionId)
                     Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
                     // Only show toast if SyncStatusBadge is not showing "Syncing..." and workout is not active
                     val workoutState = appViewModel.workoutState.value
@@ -535,11 +538,15 @@ fun WearApp(
                 val phoneNode = nodes.firstOrNull()
                 appViewModel.phoneNode = phoneNode
                 appViewModel.onPhoneConnectionChanged(phoneNode != null)
-                if (appViewModel.phoneNode != null) {
-                    //appViewModel.sendAll(localContext)
-                }
             } catch (exception: Exception) {
                 Log.e("MainActivity", "Error handling nodes update", exception)
+            }
+        }
+
+        // Sync unsynced workout histories at start when initialized and phone connected (additive)
+        LaunchedEffect(initialized, nodes) {
+            if (initialized && nodes.firstOrNull() != null) {
+                appViewModel.sendUnsyncedHistories(localContext)
             }
         }
 
@@ -599,7 +606,10 @@ fun WearApp(
                             if (showWorkoutSelectionTutorial) {
                                 TutorialOverlay(
                                     visible = true,
-                                    text = "Welcome!\nTap any workout to see details and start.\n\nQuick tips\nLong-press the header for app info.\nDouble-tap the header for sync tools.",
+                                    steps = listOf(
+                                        TutorialStep("Welcome!", "Tap any workout to see details and start."),
+                                        TutorialStep("Quick tips", "Long-press the header for app info.\nDouble-tap the header for sync tools.")
+                                    ),
                                     onDismiss = {
                                         showWorkoutSelectionTutorial = false
                                         tutorialState = TutorialPreferences.update(

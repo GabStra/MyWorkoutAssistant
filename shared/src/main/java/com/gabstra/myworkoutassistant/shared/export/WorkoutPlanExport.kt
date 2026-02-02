@@ -207,7 +207,8 @@ private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, inde
                         component,
                         componentIndex + 1,
                         workoutStore,
-                        warmupContext
+                        warmupContext,
+                        processedExercises
                     )
                     processedExercises.add(component)
                 }
@@ -230,7 +231,8 @@ private fun appendExerciseDetails(
     exercise: Exercise,
     index: Int,
     workoutStore: WorkoutStore,
-    warmupContext: WarmupContext?
+    warmupContext: WarmupContext?,
+    priorExercises: List<Exercise> = emptyList()
 ) {
     markdown.append("${index}. **${exercise.name}**\n\n")
     
@@ -280,17 +282,20 @@ private fun appendExerciseDetails(
                             workWeight = workWeight,
                             workReps = workReps,
                             barbell = equipment,
+                            exercise = exercise,
+                            priorExercises = priorExercises,
                             initialSetup = emptyList(),
-                            maxWarmups = 4,
-                            context = warmupContext
+                            maxWarmups = 4
                         )
                     } else {
                         WarmupPlanner.buildWarmupSets(
                             availableTotals = availableTotals,
                             workWeight = workWeight,
                             workReps = workReps,
-                            maxWarmups = 4,
-                            context = warmupContext
+                            exercise = exercise,
+                            priorExercises = priorExercises,
+                            equipment = equipment,
+                            maxWarmups = 4
                         )
                     }
                     

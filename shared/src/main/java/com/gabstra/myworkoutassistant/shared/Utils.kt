@@ -299,7 +299,7 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 }
 
 val colorsByZone = arrayOf(
-    Color(0x80F0F0F0), // Not used
+    MediumLighterGray, // Not used
     Color(0xFF19699c), // Blue
     Color(0xFF088543), // Green
     Color(0xFF8c8317), // Yellow
@@ -610,6 +610,16 @@ enum class SetType {
 
 enum class ExerciseType {
     COUNTUP, BODY_WEIGHT, COUNTDOWN, WEIGHT
+}
+
+/**
+ * Exercise category for evidence-based warm-up volume (NSCA/ACSM).
+ * Heavy compound: high axial load (squat, deadlift, bench, OHP, rows). Moderate: lunges, split squats, hip thrusts, machine presses, pull-ups. Isolation: curls, lateral raises, triceps, calf raises.
+ */
+enum class ExerciseCategory {
+    HEAVY_COMPOUND,
+    MODERATE_COMPOUND,
+    ISOLATION
 }
 
 fun getSetTypeFromSet(set: Set): SetType {

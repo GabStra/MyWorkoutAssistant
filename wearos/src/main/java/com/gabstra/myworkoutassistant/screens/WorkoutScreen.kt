@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -22,13 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.core.content.edit
 import androidx.navigation.NavController
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.composables.CalibrationLoadSelectionScreen
-import com.gabstra.myworkoutassistant.composables.CalibrationRIRScreen
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
@@ -40,6 +34,7 @@ import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
+import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -50,7 +45,6 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
@@ -286,7 +280,11 @@ fun WorkoutScreen(
         if (showHeartRateTutorial) {
             TutorialOverlay(
                 visible = true,
-                text = "Heart rate (left)\nTap the number to change the display format.\n\nWorkout progress (right)\nSee your current position in the workout.\n\nBack button\nDouble-press to complete the set.",
+                steps = listOf(
+                    TutorialStep("Heart rate (left)", "Tap the number to change the display format."),
+                    TutorialStep("Workout progress (right)", "See your current position in the workout."),
+                    TutorialStep("Back button", "Double-press to complete the set.")
+                ),
                 onDismiss = onDismissHeartRateTutorial,
                 hapticsViewModel = hapticsViewModel,
                 onVisibilityChange = { isVisible ->
@@ -323,19 +321,22 @@ fun WorkoutScreen(
 
                 when(workoutState){
                     is WorkoutState.Preparing -> {
-                        val state = workoutState as WorkoutState.Preparing
+                        val state = workoutState
                         if(!selectedWorkout.usePolarDevice)
                             PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
                         else
                             PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
                     }
                     is WorkoutState.CalibrationLoadSelection -> {
-                        val state = workoutState as WorkoutState.CalibrationLoadSelection
-                        val exercise = viewModel.exercisesById[state.exerciseId]!!
-                        CalibrationLoadSelectionScreen(
+                        val state = workoutState
+                        CalibrationLoadScreen(
                             viewModel = viewModel,
                             hapticsViewModel = hapticsViewModel,
                             state = state,
+                            navController = navController,
+                            hearthRateChart = {
+                                heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
+                            },
                             onWeightSelected = { selectedWeight ->
                                 // Update set data with selected weight
                                 val newSetData = when (val currentData = state.currentSetData) {
@@ -351,29 +352,23 @@ fun WorkoutScreen(
                                 state.currentSetData = updatedSetData
                                 // Move directly to set execution (or warmups if enabled)
                                 viewModel.confirmCalibrationLoad()
-                            },
-                            exerciseTitleComposable = {
-                                Text(
-                                    text = exercise.name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            },
-                            extraInfo = null,
-                            modifier = Modifier.fillMaxSize()
+                            }
                         )
                     }
                     is WorkoutState.CalibrationRIRSelection -> {
                         val state = workoutState as WorkoutState.CalibrationRIRSelection
                         CalibrationRIRScreen(
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
                             state = state,
+                            navController = navController,
+                            hearthRateChart = {
+                                heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
+                            },
                             onRIRConfirmed = { rir, formBreaks ->
                                 // Apply calibration RIR adjustments
                                 viewModel.applyCalibrationRIR(rir, formBreaks)
-                            },
-                            hapticsViewModel = hapticsViewModel,
-                            modifier = Modifier.fillMaxSize()
+                            }
                         )
                     }
                     is WorkoutState.Set -> {
@@ -389,7 +384,12 @@ fun WorkoutScreen(
                         if (showSetScreenTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Navigate pages\nSwipe left or right to move between views.\n\nScroll long text\nTap the exercise title or header to scroll.\n\nAuto-return\nYou'll return to workout details after 10 seconds of inactivity.\n\nComplete the set\nTap 'Complete Set' or press the back button when done.",
+                                steps = listOf(
+                                    TutorialStep("Navigate pages", "Swipe left or right to move between views."),
+                                    TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
+                                    TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
+                                    TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
+                                ),
                                 onDismiss = onDismissSetScreenTutorial,
                                 hapticsViewModel = hapticsViewModel,
                                 onVisibilityChange = { isVisible ->
@@ -427,7 +427,12 @@ fun WorkoutScreen(
                         if (showRestScreenTutorial) {
                             TutorialOverlay(
                                 visible = true,
-                                text = "Rest timer\nAutomatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons.\n\nExercise preview\nSee your current and next exercises.\nTap the left or right side to view previous or upcoming exercises.\n\nReminder\nYour screen will light up when 5 seconds remain.\n\nSkip rest\nDouble-press the back button to skip ahead.",
+                                steps = listOf(
+                                    TutorialStep("Rest timer", "Automatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons."),
+                                    TutorialStep("Exercise preview", "See your current and next exercises.\nTap the left or right side to view previous or upcoming exercises."),
+                                    TutorialStep("Reminder", "Your screen will light up when 5 seconds remain."),
+                                    TutorialStep("Skip rest", "Double-press the back button to skip ahead.")
+                                ),
                                 onDismiss = onDismissRestScreenTutorial,
                                 hapticsViewModel = hapticsViewModel,
                                 onVisibilityChange = { isVisible ->

@@ -21,4 +21,4 @@ val Red    = Color(0xFFff3534)
 
 val MuscleHeatMapBackground = MediumDarkGray
 val PrimaryMuscleGroupColor   = Color(0xFFfe6a07)
-val SecondaryMuscleGroupColor = Color(0xFFfe9751)
+val SecondaryMuscleGroupColor = Color(0xFFa0430f)

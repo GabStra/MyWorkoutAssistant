@@ -114,7 +114,7 @@ fun RestScreen(
         indicatorProgress.floatValue = computeProgress()
     }
 
-    val exerciseOrSupersetIds = remember {
+    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
             .distinct()
@@ -472,8 +472,8 @@ fun RestScreen(
         if (nextSetState != null) {
             ExerciseIndicator(
                 viewModel,
-                nextSetState,
-                selectedExercise.id
+                currentStateOverride = nextSetState,
+                selectedExerciseId = selectedExercise.id
             )
         }
 

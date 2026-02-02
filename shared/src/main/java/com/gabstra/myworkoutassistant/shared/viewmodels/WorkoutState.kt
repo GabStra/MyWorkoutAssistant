@@ -13,6 +13,30 @@ enum class ProgressionState {
     DELOAD, RETRY, PROGRESS, FAILED
 }
 
+/**
+ * Containers for organizing workout states by exercise or superset.
+ * These are organizational only and NOT states themselves.
+ */
+sealed class WorkoutStateContainer {
+    data class ExerciseState(
+        val exerciseId: UUID,
+        val childStates: MutableList<WorkoutState>
+    ) : WorkoutStateContainer()
+    
+    data class SupersetState(
+        val supersetId: UUID,
+        val childStates: MutableList<WorkoutState>
+    ) : WorkoutStateContainer()
+}
+
+/**
+ * Items in the state sequence - can be either a container or a Rest state between exercises.
+ */
+sealed class WorkoutStateSequenceItem {
+    data class Container(val container: WorkoutStateContainer) : WorkoutStateSequenceItem()
+    data class RestBetweenExercises(val rest: WorkoutState.Rest) : WorkoutStateSequenceItem()
+}
+
 sealed class WorkoutState {
     data class Preparing(
         val dataLoaded: Boolean

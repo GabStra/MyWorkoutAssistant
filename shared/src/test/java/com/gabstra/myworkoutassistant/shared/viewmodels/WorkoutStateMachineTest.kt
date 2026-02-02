@@ -280,7 +280,138 @@ class WorkoutStateMachineTest {
     @Test(expected = IllegalArgumentException::class)
     fun testInvalidCurrentIndexThrows() {
         val set1 = createSetState(exerciseId1, setId1, 0u)
-        WorkoutStateMachine(listOf(set1), currentIndex = 5) // Index out of bounds
+        val container = WorkoutStateContainer.ExerciseState(exerciseId1, mutableListOf(set1))
+        val sequence = listOf(WorkoutStateSequenceItem.Container(container))
+        WorkoutStateMachine.fromSequence(sequence, startIndex = 5) // Index out of bounds
+    }
+
+    @Test
+    fun testHierarchicalStructure() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val rest1 = createRestState(restSetId1)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+        val restBetween = createRestState(UUID.randomUUID())
+        val set3 = createSetState(exerciseId2, setId3, 0u)
+        val completed = WorkoutState.Completed(LocalDateTime.now())
+
+        val exercise1Container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(set1, rest1, set2)
+        )
+        val exercise2Container = WorkoutStateContainer.ExerciseState(
+            exerciseId2,
+            mutableListOf(set3, completed)
+        )
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(exercise1Container),
+            WorkoutStateSequenceItem.RestBetweenExercises(restBetween),
+            WorkoutStateSequenceItem.Container(exercise2Container)
+        )
+
+        val machine = WorkoutStateMachine.fromSequence(sequence)
+
+        // Verify allStates flattens correctly
+        assertEquals(listOf(set1, rest1, set2, restBetween, set3, completed), machine.allStates)
+        assertEquals(set1, machine.currentState)
+    }
+
+    @Test
+    fun testInsertStatesIntoExercise() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+        val restBetween = createRestState(UUID.randomUUID())
+        val set3 = createSetState(exerciseId2, setId3, 0u)
+
+        val exercise1Container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(set1, set2)
+        )
+        val exercise2Container = WorkoutStateContainer.ExerciseState(
+            exerciseId2,
+            mutableListOf(set3)
+        )
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(exercise1Container),
+            WorkoutStateSequenceItem.RestBetweenExercises(restBetween),
+            WorkoutStateSequenceItem.Container(exercise2Container)
+        )
+
+        var machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1) // At set2
+
+        // Insert new states after set1 (index 0)
+        val newSet1 = createSetState(exerciseId1, UUID.randomUUID(), 2u)
+        val newSet2 = createSetState(exerciseId1, UUID.randomUUID(), 3u)
+        machine = machine.insertStatesIntoExercise(exerciseId1, listOf(newSet1, newSet2), afterChildIndex = 0)
+
+        // Verify insertion
+        val exerciseContainer = machine.getCurrentExerciseContainer()
+        assertNotNull(exerciseContainer)
+        assertEquals(exerciseId1, exerciseContainer!!.exerciseId)
+        assertEquals(listOf(set1, newSet1, newSet2, set2), exerciseContainer.childStates)
+
+        // Verify allStates is updated
+        assertEquals(listOf(set1, newSet1, newSet2, set2, restBetween, set3), machine.allStates)
+    }
+
+    @Test
+    fun testGetCurrentExerciseContainer() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+        val restBetween = createRestState(UUID.randomUUID())
+        val set3 = createSetState(exerciseId2, setId3, 0u)
+
+        val exercise1Container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(set1, set2)
+        )
+        val exercise2Container = WorkoutStateContainer.ExerciseState(
+            exerciseId2,
+            mutableListOf(set3)
+        )
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(exercise1Container),
+            WorkoutStateSequenceItem.RestBetweenExercises(restBetween),
+            WorkoutStateSequenceItem.Container(exercise2Container)
+        )
+
+        var machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1) // At set2
+        var container = machine.getCurrentExerciseContainer()
+        assertNotNull(container)
+        assertEquals(exerciseId1, container!!.exerciseId)
+
+        machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 3) // At set3 (set1=0, set2=1, restBetween=2, set3=3)
+        container = machine.getCurrentExerciseContainer()
+        assertNotNull(container)
+        assertEquals(exerciseId2, container!!.exerciseId)
+    }
+
+    @Test
+    fun testGetStatesForExercise() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+        val restBetween = createRestState(UUID.randomUUID())
+        val set3 = createSetState(exerciseId2, setId3, 0u)
+
+        val exercise1Container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(set1, set2)
+        )
+        val exercise2Container = WorkoutStateContainer.ExerciseState(
+            exerciseId2,
+            mutableListOf(set3)
+        )
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(exercise1Container),
+            WorkoutStateSequenceItem.RestBetweenExercises(restBetween),
+            WorkoutStateSequenceItem.Container(exercise2Container)
+        )
+
+        val machine = WorkoutStateMachine.fromSequence(sequence)
+        val exercise1States = machine.getStatesForExercise(exerciseId1)
+        assertEquals(listOf(set1, set2), exercise1States)
+
+        val exercise2States = machine.getStatesForExercise(exerciseId2)
+        assertEquals(listOf(set3), exercise2States)
     }
 }
 

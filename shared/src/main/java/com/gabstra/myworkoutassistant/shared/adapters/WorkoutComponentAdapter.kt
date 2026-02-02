@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -90,6 +91,9 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 }
                 if (src.requiredAccessoryEquipmentIds != null && src.requiredAccessoryEquipmentIds.isNotEmpty()) {
                     jsonObject.add("requiredAccessoryEquipmentIds", context.serialize(src.requiredAccessoryEquipmentIds))
+                }
+                if (src.exerciseCategory != null) {
+                    jsonObject.addProperty("exerciseCategory", src.exerciseCategory.name)
                 }
             }
 
@@ -276,6 +280,25 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
+                // Support both exerciseCategory and legacy warmupCategory for backward compatibility
+                val exerciseCategory = when {
+                    jsonObject.has("exerciseCategory") && !jsonObject.get("exerciseCategory").isJsonNull -> {
+                        try {
+                            ExerciseCategory.valueOf(jsonObject.get("exerciseCategory").asString)
+                        } catch (e: IllegalArgumentException) {
+                            null
+                        }
+                    }
+                    jsonObject.has("warmupCategory") && !jsonObject.get("warmupCategory").isJsonNull -> {
+                        try {
+                            ExerciseCategory.valueOf(jsonObject.get("warmupCategory").asString)
+                        } catch (e: IllegalArgumentException) {
+                            null
+                        }
+                    }
+                    else -> null
+                }
+
                 Exercise(
                     id,
                     enabled,
@@ -303,7 +326,8 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     muscleGroups,
                     secondaryMuscleGroups,
                     requiredAccessoryEquipmentIds,
-                    requiresLoadCalibration
+                    requiresLoadCalibration,
+                    exerciseCategory
                 )
             }
 

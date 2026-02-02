@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -128,7 +129,7 @@ fun PagePlates(
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -142,7 +143,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle,
+                        style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
@@ -153,7 +154,7 @@ fun PagePlates(
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -167,7 +168,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle,
+                        style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier

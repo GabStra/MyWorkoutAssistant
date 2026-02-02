@@ -98,7 +98,7 @@ fun SyncStatusBadge(
                         BorderStroke(1.dp, borderColor),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    .padding(5.dp)
+                    .padding(10.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -106,7 +106,7 @@ fun SyncStatusBadge(
                     when (syncStatus) {
                         AppViewModel.SyncStatus.Syncing -> {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
+                                modifier = Modifier.size(15.dp),
                                 strokeWidth = 2.dp,
                                 colors = ProgressIndicatorDefaults.colors(
                                     indicatorColor = MaterialTheme.colorScheme.primary,
@@ -124,7 +124,7 @@ fun SyncStatusBadge(
                             // Checkmark using text character
                             Text(
                                 text = "✓",
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = textColor,
                                 modifier = Modifier.padding(end = 4.dp)
                             )
@@ -139,7 +139,7 @@ fun SyncStatusBadge(
                             // Cross using text character
                             Text(
                                 text = "✕",
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = textColor,
                                 modifier = Modifier.padding(end = 4.dp)
                             )

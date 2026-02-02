@@ -443,6 +443,33 @@ fun WorkoutsScreen(
         }
     }
 
+    fun onMoveWorkoutUp() {
+        if (selectedWorkouts.size != 1) return
+        val selected = selectedWorkouts.first()
+        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
+        if (index <= 0 || index >= activeWorkouts.size) return
+        val newList = activeWorkouts.toMutableList().apply {
+            val prev = this[index - 1]
+            this[index - 1] = this[index]
+            this[index] = prev
+        }
+        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.scheduleWorkoutSave(context)
+    }
+
+    fun onMoveWorkoutDown() {
+        if (selectedWorkouts.size != 1) return
+        val selected = selectedWorkouts.first()
+        val index = activeWorkouts.indexOfFirst { it.id == selected.id }
+        if (index < 0 || index >= activeWorkouts.size - 1) return
+        val newList = activeWorkouts.toMutableList().apply {
+            val next = this[index + 1]
+            this[index + 1] = this[index]
+            this[index] = next
+        }
+        appViewModel.reorderWorkoutsInPlan(selectedPlanFilter, newList)
+        appViewModel.scheduleWorkoutSave(context)
+    }
 
     val pagerState = rememberPagerState(
         initialPage = selectedTabIndex,
@@ -545,6 +572,8 @@ fun WorkoutsScreen(
                                 )
                             },
                             onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it },
+                            onMoveWorkoutUp = { onMoveWorkoutUp() },
+                            onMoveWorkoutDown = { onMoveWorkoutDown() },
                             isSelectionModeActive = isWorkoutSelectionModeActive
                         )
 

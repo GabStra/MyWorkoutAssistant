@@ -997,6 +997,7 @@ fun MyWorkoutAssistantNavHost(
     val syncWithWatch = {
         scope.launch {
             try {
+                Log.d("DataLayerSync", "Sync with watch started (app backup)")
                 // Check connection before setting syncing state
                 val hasConnection = withContext(Dispatchers.IO) {
                     checkConnection(context)

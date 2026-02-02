@@ -107,23 +107,28 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
         else -> return emptyList()
     }
     val availableTotals = getAvailableTotalsForWarmups(exercise, equipment)
+    // For calibration, we don't have prior exercises context, so pass empty list
+    val priorExercises = emptyList<Exercise>()
     val warmups: List<Pair<Double, Int>> = if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
         WarmupPlanner.buildWarmupSetsForBarbell(
             availableTotals = availableTotals,
             workWeight = workWeightTotal,
             workReps = workReps,
             barbell = equipment,
+            exercise = exercise,
+            priorExercises = priorExercises,
             initialSetup = emptyList(),
-            maxWarmups = 4,
-            context = null
+            maxWarmups = 4
         )
     } else {
         WarmupPlanner.buildWarmupSets(
             availableTotals = availableTotals,
             workWeight = workWeightTotal,
             workReps = workReps,
-            maxWarmups = 4,
-            context = null
+            exercise = exercise,
+            priorExercises = priorExercises,
+            equipment = equipment,
+            maxWarmups = 4
         )
     }
     val exerciseInfo = withContext(dispatchers.io) { exerciseInfoDao.getExerciseInfoById(exercise.id) }
@@ -231,35 +236,20 @@ private suspend fun WorkoutViewModel.createCalibrationSetExecutionState(
     )
 }
 
-private fun WorkoutViewModel.replaceCalibrationStateWithExecutionStates(
-    machine: WorkoutStateMachine,
-    warmupStates: List<WorkoutState>,
-    calibrationSetExecutionState: WorkoutState.Set,
-    statesToInsert: MutableList<WorkoutState>
-): Pair<MutableList<WorkoutState>, Int> {
-    val updatedStates = machine.allStates.toMutableList()
-    val currentIndex = machine.currentIndex
-    updatedStates.removeAt(currentIndex)
-    statesToInsert.clear()
-    statesToInsert.addAll(warmupStates)
-    statesToInsert.add(calibrationSetExecutionState)
-    updatedStates.addAll(currentIndex, statesToInsert)
-    val warmupSetStates = warmupStates.filterIsInstance<WorkoutState.Set>()
-    warmupSetStates.forEach { setStates.addLast(it) }
-    setStates.addLast(calibrationSetExecutionState)
-    return Pair(updatedStates, currentIndex)
-}
+// Removed: replaceCalibrationStateWithExecutionStates - now using insertStatesIntoExercise
 
 private suspend fun WorkoutViewModel.calculateAndAssignPlateChanges(
-    updatedStates: MutableList<WorkoutState>,
+    machine: WorkoutStateMachine,
+    exerciseId: UUID,
     warmupStates: List<WorkoutState>,
     calibrationSetExecutionState: WorkoutState.Set,
     exercise: Exercise,
     equipment: Barbell
-) {
+): WorkoutStateMachine {
     val setsForPlateCalculation = warmupStates.filterIsInstance<WorkoutState.Set>().toMutableList()
     setsForPlateCalculation.add(calibrationSetExecutionState)
-    if (setsForPlateCalculation.isEmpty()) return
+    if (setsForPlateCalculation.isEmpty()) return machine
+    
     val relativeBodyWeight = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
         bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
     } else {
@@ -273,56 +263,141 @@ private suspend fun WorkoutViewModel.calculateAndAssignPlateChanges(
             else -> { }
         }
     }
-    if (weights.isEmpty()) return
+    if (weights.isEmpty()) return machine
+    
     val plateChangeResults = withContext(dispatchers.default) {
         getPlateChangeResults(weights, equipment, emptyList())
     }
     if (plateChangeResults.size != setsForPlateCalculation.size) {
         Log.e("WorkoutViewModel", "Plate change results count (${plateChangeResults.size}) doesn't match sets count (${setsForPlateCalculation.size})")
-        return
+        return machine
     }
-    for ((index, plateChangeResult) in plateChangeResults.withIndex()) {
-        val setState = setsForPlateCalculation[index]
-        val stateIndex = updatedStates.indexOf(setState)
-        if (stateIndex < 0 || stateIndex >= updatedStates.size) continue
-        val state = updatedStates[stateIndex] as? WorkoutState.Set ?: continue
-        if (state.set.id != setState.set.id) continue
-        updatedStates[stateIndex] = state.copy(plateChangeResult = plateChangeResult)
+    
+    // Update plate changes in the sequence
+    val updatedSequence = machine.stateSequence.map { item ->
+        when (item) {
+            is WorkoutStateSequenceItem.Container -> {
+                when (val container = item.container) {
+                    is WorkoutStateContainer.ExerciseState -> {
+                        if (container.exerciseId == exerciseId) {
+                            val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                                if (state is WorkoutState.Set) {
+                                    val setIndex = setsForPlateCalculation.indexOfFirst { calcState -> 
+                                        calcState.set.id == state.set.id 
+                                    }
+                                    if (setIndex >= 0 && setIndex < plateChangeResults.size) {
+                                        state.copy(plateChangeResult = plateChangeResults[setIndex])
+                                    } else {
+                                        state
+                                    }
+                                } else {
+                                    state
+                                }
+                            }.toMutableList()
+                            WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                        } else {
+                            item
+                        }
+                    }
+                    is WorkoutStateContainer.SupersetState -> {
+                        val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                            if (state is WorkoutState.Set && state.exerciseId == exerciseId) {
+                                val setIndex = setsForPlateCalculation.indexOfFirst { it.set.id == state.set.id }
+                                if (setIndex >= 0 && idx < plateChangeResults.size) {
+                                    state.copy(plateChangeResult = plateChangeResults[setIndex])
+                                } else {
+                                    state
+                                }
+                            } else {
+                                state
+                            }
+                        }.toMutableList()
+                        WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                    }
+                }
+            }
+            is WorkoutStateSequenceItem.RestBetweenExercises -> item
+        }
     }
+    
+    return WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, machine.currentIndex)
 }
 
 private fun WorkoutViewModel.updateWorkSetsWithSelectedLoad(
+    machine: WorkoutStateMachine,
     exercise: Exercise,
     selectedWeight: Double,
-    updatedStates: MutableList<WorkoutState>,
-    startIndex: Int
-) {
-    for (i in startIndex until updatedStates.size) {
-        val state = updatedStates[i]
-        if (state !is WorkoutState.Set ||
-            state.exerciseId != exercise.id ||
-            state.isWarmupSet ||
-            state.isCalibrationSet
-        ) continue
-        val loadSelectionSetData = when (val existingSetData = state.currentSetData) {
-            is WeightSetData -> {
-                val newData = existingSetData.copy(actualWeight = selectedWeight)
-                newData.copy(volume = newData.calculateVolume())
+    afterInsertIndex: Int
+): WorkoutStateMachine {
+    val updatedSequence = machine.stateSequence.map { item ->
+        when (item) {
+            is WorkoutStateSequenceItem.Container -> {
+                when (val container = item.container) {
+                    is WorkoutStateContainer.ExerciseState -> {
+                        if (container.exerciseId == exercise.id) {
+                            val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                                if (idx > afterInsertIndex && state is WorkoutState.Set &&
+                                    !state.isWarmupSet && !state.isCalibrationSet) {
+                                    val loadSelectionSetData = when (val existingSetData = state.currentSetData) {
+                                        is WeightSetData -> {
+                                            val newData = existingSetData.copy(actualWeight = selectedWeight)
+                                            newData.copy(volume = newData.calculateVolume())
+                                        }
+                                        is BodyWeightSetData -> {
+                                            val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                                            val newData = existingSetData.copy(
+                                                additionalWeight = selectedWeight,
+                                                relativeBodyWeightInKg = relativeBodyWeight
+                                            )
+                                            newData.copy(volume = newData.calculateVolume())
+                                        }
+                                        else -> existingSetData
+                                    }
+                                    state.currentSetData = loadSelectionSetData
+                                    state.copy(previousSetData = loadSelectionSetData)
+                                } else {
+                                    state
+                                }
+                            }.toMutableList()
+                            WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                        } else {
+                            item
+                        }
+                    }
+                    is WorkoutStateContainer.SupersetState -> {
+                        val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                            if (state is WorkoutState.Set && state.exerciseId == exercise.id &&
+                                idx > afterInsertIndex && !state.isWarmupSet && !state.isCalibrationSet) {
+                                val loadSelectionSetData = when (val existingSetData = state.currentSetData) {
+                                    is WeightSetData -> {
+                                        val newData = existingSetData.copy(actualWeight = selectedWeight)
+                                        newData.copy(volume = newData.calculateVolume())
+                                    }
+                                    is BodyWeightSetData -> {
+                                        val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+                                        val newData = existingSetData.copy(
+                                            additionalWeight = selectedWeight,
+                                            relativeBodyWeightInKg = relativeBodyWeight
+                                        )
+                                        newData.copy(volume = newData.calculateVolume())
+                                    }
+                                    else -> existingSetData
+                                }
+                                state.currentSetData = loadSelectionSetData
+                                state.copy(previousSetData = loadSelectionSetData)
+                            } else {
+                                state
+                            }
+                        }.toMutableList()
+                        WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                    }
+                }
             }
-            is BodyWeightSetData -> {
-                val relativeBodyWeight = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
-                val newData = existingSetData.copy(
-                    additionalWeight = selectedWeight,
-                    relativeBodyWeightInKg = relativeBodyWeight
-                )
-                newData.copy(volume = newData.calculateVolume())
-            }
-            else -> existingSetData
+            is WorkoutStateSequenceItem.RestBetweenExercises -> item
         }
-        state.currentSetData = loadSelectionSetData
-        val newState = state.copy(previousSetData = loadSelectionSetData)
-        updatedStates[i] = newState
     }
+    
+    return WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, machine.currentIndex)
 }
 
 fun WorkoutViewModel.confirmCalibrationLoad() {
@@ -338,25 +413,107 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
         val calibrationSetExecutionState = createCalibrationSetExecutionState(
             exercise, equipment, currentState, updatedSet
         )
+        
         val statesToInsert = mutableListOf<WorkoutState>()
+        statesToInsert.addAll(warmupStates)
+        statesToInsert.add(calibrationSetExecutionState)
 
         withContext(dispatchers.main) {
-            val (updatedStates, newCurrentIndex) = replaceCalibrationStateWithExecutionStates(
-                machine, warmupStates, calibrationSetExecutionState, statesToInsert
-            )
+            // Find the container and index of CalibrationLoadSelection
+            val currentFlatIndex = machine.currentIndex
+            var calibrationContainerIndex = -1
+            var calibrationChildIndex = -1
+            var currentFlatPos = 0
+            
+            for ((seqIdx, item) in machine.stateSequence.withIndex()) {
+                when (item) {
+                    is WorkoutStateSequenceItem.Container -> {
+                        when (val container = item.container) {
+                            is WorkoutStateContainer.ExerciseState -> {
+                                if (container.exerciseId == currentState.exerciseId) {
+                                    for ((childIdx, childState) in container.childStates.withIndex()) {
+                                        if (currentFlatPos == currentFlatIndex && childState is WorkoutState.CalibrationLoadSelection) {
+                                            calibrationContainerIndex = seqIdx
+                                            calibrationChildIndex = childIdx
+                                            break
+                                        }
+                                        currentFlatPos++
+                                    }
+                                } else {
+                                    currentFlatPos += container.childStates.size
+                                }
+                            }
+                            is WorkoutStateContainer.SupersetState -> {
+                                for ((childIdx, childState) in container.childStates.withIndex()) {
+                                    if (currentFlatPos == currentFlatIndex && childState is WorkoutState.CalibrationLoadSelection) {
+                                        calibrationContainerIndex = seqIdx
+                                        calibrationChildIndex = childIdx
+                                        break
+                                    }
+                                    currentFlatPos++
+                                }
+                            }
+                        }
+                    }
+                    is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                        if (currentFlatPos == currentFlatIndex) {
+                            // Shouldn't happen, but handle it
+                        }
+                        currentFlatPos++
+                    }
+                }
+                if (calibrationContainerIndex >= 0) break
+            }
+            
+            // Replace CalibrationLoadSelection with inserted states
+            val updatedSequence = machine.stateSequence.mapIndexed { seqIdx, item ->
+                if (seqIdx == calibrationContainerIndex) {
+                    when (item) {
+                        is WorkoutStateSequenceItem.Container -> {
+                            when (val container = item.container) {
+                                is WorkoutStateContainer.ExerciseState -> {
+                                    val updatedChildStates = container.childStates.toMutableList()
+                                    updatedChildStates.removeAt(calibrationChildIndex)
+                                    updatedChildStates.addAll(calibrationChildIndex, statesToInsert)
+                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                                }
+                                is WorkoutStateContainer.SupersetState -> {
+                                    val updatedChildStates = container.childStates.toMutableList()
+                                    updatedChildStates.removeAt(calibrationChildIndex)
+                                    updatedChildStates.addAll(calibrationChildIndex, statesToInsert)
+                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                                }
+                            }
+                        }
+                        is WorkoutStateSequenceItem.RestBetweenExercises -> item
+                    }
+                } else {
+                    item
+                }
+            }
+            
+            populateNextStateSetsForRest(updatedSequence)
+            var updatedMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex)
+            
             if (equipment is Barbell &&
                 (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
             ) {
-                calculateAndAssignPlateChanges(
-                    updatedStates, warmupStates, calibrationSetExecutionState, exercise, equipment
+                updatedMachine = calculateAndAssignPlateChanges(
+                    updatedMachine, currentState.exerciseId, warmupStates, calibrationSetExecutionState, exercise, equipment
                 )
             }
-            updateWorkSetsWithSelectedLoad(
-                exercise, selectedWeight, updatedStates,
-                machine.currentIndex + statesToInsert.size
+            
+            updatedMachine = updateWorkSetsWithSelectedLoad(
+                updatedMachine, exercise, selectedWeight, calibrationChildIndex + statesToInsert.size
             )
-            populateNextStateSets(updatedStates)
-            stateMachine = WorkoutStateMachine(updatedStates, newCurrentIndex) { LocalDateTime.now() }
+            
+            // Repopulate nextStateSets so Rest states reference Set states that have plateChangeResult
+            // (populateNextStateSetsForRest was called earlier with sequence before plate assignment)
+            populateNextStateSetsForRest(updatedMachine.stateSequence)
+            
+            // Populate setStates and update state machine
+            populateNextStateSets()
+            stateMachine = updatedMachine
             updateStateFlowsFromMachine()
         }
     }

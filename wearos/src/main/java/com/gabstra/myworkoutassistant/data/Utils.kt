@@ -792,8 +792,18 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
     }
 }
 
-suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore: WorkoutHistoryStore, context: android.content.Context? = null) : Boolean {
-    val transactionId = UUID.randomUUID().toString()
+/**
+ * Sends a WorkoutHistoryStore to the phone via the Data Layer.
+ * @param transactionId Optional; if null, one is generated. Caller can pass one to register for SYNC_COMPLETE (markHistorySyncedForTransaction).
+ * @return Pair(success, transactionIdUsed). The transactionId is always returned so the caller can register it for completion tracking.
+ */
+suspend fun sendWorkoutHistoryStore(
+    dataClient: DataClient,
+    workoutHistoryStore: WorkoutHistoryStore,
+    context: android.content.Context? = null,
+    transactionId: String? = null
+): Pair<Boolean, String> {
+    val usedTransactionId = transactionId ?: UUID.randomUUID().toString()
     try {
         // Check if phone is connected before attempting sync
         // This prevents sync attempts when phone is not available
@@ -802,26 +812,26 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                 checkConnection(context)
             }
             if (!hasConnection) {
-                Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $transactionId)")
-                return false
+                Log.d("DataLayerSync", "Skipping workout history sync - phone not connected (transaction: $usedTransactionId)")
+                return Pair(false, usedTransactionId)
             }
         }
         
         // Send sync request and wait for acknowledgment
-        val handshakeSuccess = sendSyncRequest(dataClient, transactionId, context)
+        val handshakeSuccess = sendSyncRequest(dataClient, usedTransactionId, context)
         if (!handshakeSuccess) {
             // Handshake (ACK) failed or timed out, but the phone clearly received the request
             // in our logs, so fall back to best-effort send instead of aborting.
             // This avoids blocking sync when the ACK data item doesn't make it back to the watch.
             Log.w(
                 "DataLayerSync",
-                "Handshake failed (no ACK) for transaction: $transactionId - proceeding with best-effort send"
+                "Handshake failed (no ACK) for transaction: $usedTransactionId - proceeding with best-effort send"
             )
         }
 
         // Register completion and error waiters BEFORE sending data
-        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
-        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(usedTransactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(usedTransactionId)
 
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
@@ -840,15 +850,15 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
     val chunks = compressedData.asList().chunked(chunkSize).map { it.toByteArray() }
     Log.d(
         "WorkoutSync",
-        "SYNC_TRACE event=start side=wear direction=send tx=$transactionId historyId=${workoutHistoryStore.WorkoutHistory.id} isDone=${workoutHistoryStore.WorkoutHistory.isDone} chunks=${chunks.size} bytes=${compressedData.size}"
+        "SYNC_TRACE event=start side=wear direction=send tx=$usedTransactionId historyId=${workoutHistoryStore.WorkoutHistory.id} isDone=${workoutHistoryStore.WorkoutHistory.isDone} chunks=${chunks.size} bytes=${compressedData.size}"
     )
 
-        val startPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_START_PREFIX, transactionId)
+        val startPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_START_PREFIX, usedTransactionId)
         val startRequest = PutDataMapRequest.create(startPath).apply {
             dataMap.putBoolean("isStart", true)
             dataMap.putInt("chunksCount", chunks.size)
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
-            dataMap.putString("transactionId", transactionId)
+            dataMap.putString("transactionId", usedTransactionId)
         }.asPutDataRequest().setUrgent()
 
         dataClient.putDataItem(startRequest)
@@ -858,7 +868,7 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.size - 1
-            val chunkPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX, transactionId, index)
+            val chunkPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX, usedTransactionId, index)
 
             val request = PutDataMapRequest.create(chunkPath).apply {
                 dataMap.putByteArray("chunk", chunk)
@@ -867,12 +877,12 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                     dataMap.putBoolean("isLastChunk", true)
                 }
                 dataMap.putString("timestamp", System.currentTimeMillis().toString())
-                dataMap.putString("transactionId", transactionId)
+                dataMap.putString("transactionId", usedTransactionId)
             }.asPutDataRequest().setUrgent()
 
             Log.d(
                 "WorkoutSync",
-                "SYNC_TRACE event=chunk side=wear direction=send tx=$transactionId index=$index isLast=$isLastChunk isRetry=false"
+                "SYNC_TRACE event=chunk side=wear direction=send tx=$usedTransactionId index=$index isLast=$isLastChunk isRetry=false"
             )
             dataClient.putDataItem(request)
 
@@ -886,7 +896,7 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
 
         // Calculate dynamic timeout based on chunk count
         val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(chunks.size)
-        Log.d("DataLayerSync", "Using dynamic completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $transactionId")
+        Log.d("DataLayerSync", "Using dynamic completion timeout: ${completionTimeout}ms for ${chunks.size} chunks, transaction: $usedTransactionId")
 
         // Wait for either completion, error, or timeout - with retry logic
         var retryAttempt = 0
@@ -910,15 +920,15 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
             
             // Check if completion was already received (select handles this, but we check for logging)
             if (currentCompletionWaiter.isCompleted && result?.first != true) {
-                Log.d("DataLayerSync", "Completion waiter was already completed for workout history transaction: $transactionId")
-                SyncHandshakeManager.cleanup(transactionId)
-                return true
+                Log.d("DataLayerSync", "Completion waiter was already completed for workout history transaction: $usedTransactionId")
+                SyncHandshakeManager.cleanup(usedTransactionId)
+                return Pair(true, usedTransactionId)
             }
             
             when {
                 result == null -> {
                     // Timeout occurred
-                    Log.e("DataLayerSync", "Completion timeout for workout history transaction: $transactionId (attempt $retryAttempt)")
+                    Log.e("DataLayerSync", "Completion timeout for workout history transaction: $usedTransactionId (attempt $retryAttempt)")
                     if (retryAttempt < maxRetries) {
                         // Exponential backoff with jitter for timeout retries
                         val baseDelay = 500L * (1 shl retryAttempt)
@@ -926,34 +936,34 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                         delay(baseDelay + jitter)
                         retryAttempt++
                         // Re-register waiters for retry
-                        currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
-                        currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                        currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(usedTransactionId)
+                        currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(usedTransactionId)
                         continue
                     }
                     Log.d(
                         "WorkoutSync",
-                        "SYNC_TRACE event=complete side=wear direction=recv tx=$transactionId result=timeout"
+                        "SYNC_TRACE event=complete side=wear direction=recv tx=$usedTransactionId result=timeout"
                     )
-                    SyncHandshakeManager.cleanup(transactionId)
-                    return false
+                    SyncHandshakeManager.cleanup(usedTransactionId)
+                    return Pair(false, usedTransactionId)
                 }
                 result.first -> {
                     // Completion received
-                    Log.d("DataLayerSync", "Sync completed successfully for workout history transaction: $transactionId")
+                    Log.d("DataLayerSync", "Sync completed successfully for workout history transaction: $usedTransactionId")
                     Log.d(
                         "WorkoutSync",
-                        "SYNC_TRACE event=complete side=wear direction=recv tx=$transactionId result=success"
+                        "SYNC_TRACE event=complete side=wear direction=recv tx=$usedTransactionId result=success"
                     )
-                    SyncHandshakeManager.cleanup(transactionId)
-                    return true
+                    SyncHandshakeManager.cleanup(usedTransactionId)
+                    return Pair(true, usedTransactionId)
                 }
                 else -> {
                     // Error received
                     val errorMessage = result.second ?: "Unknown error"
-                    Log.e("DataLayerSync", "Sync error for workout history transaction: $transactionId, error: $errorMessage (attempt $retryAttempt)")
+                    Log.e("DataLayerSync", "Sync error for workout history transaction: $usedTransactionId, error: $errorMessage (attempt $retryAttempt)")
                     Log.d(
                         "WorkoutSync",
-                        "SYNC_TRACE event=error side=wear direction=recv tx=$transactionId message=$errorMessage"
+                        "SYNC_TRACE event=error side=wear direction=recv tx=$usedTransactionId message=$errorMessage"
                     )
                     
                     // Check if it's a missing chunks error and we can retry
@@ -961,32 +971,32 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                         val missingIndices = parseMissingChunks(errorMessage)
                         if (missingIndices.isNotEmpty()) {
                             // Check if completion was already received before starting retry
-                            if (SyncHandshakeManager.hasCompletion(transactionId)) {
-                                Log.d("DataLayerSync", "Completion already received before retry for transaction: $transactionId")
-                                SyncHandshakeManager.cleanup(transactionId)
-                                return true
+                            if (SyncHandshakeManager.hasCompletion(usedTransactionId)) {
+                                Log.d("DataLayerSync", "Completion already received before retry for transaction: $usedTransactionId")
+                                SyncHandshakeManager.cleanup(usedTransactionId)
+                                return Pair(true, usedTransactionId)
                             }
                             
                             Log.d("DataLayerSync", "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices")
                             Log.d(
                                 "WorkoutSync",
-                                "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$transactionId missing=$missingIndices"
+                                "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$usedTransactionId missing=$missingIndices"
                             )
                             try {
                                 // Register new waiters for the retry attempt
                                 // registerCompletionWaiter now handles race conditions atomically
-                                currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
-                                currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+                                currentCompletionWaiter = SyncHandshakeManager.registerCompletionWaiter(usedTransactionId)
+                                currentErrorWaiter = SyncHandshakeManager.registerErrorWaiter(usedTransactionId)
                                 
                                 // Check immediately after registration if completion was already received
                                 // This handles the case where completion arrives between error and retry registration
                                 if (currentCompletionWaiter.isCompleted) {
-                                    Log.d("DataLayerSync", "Completion already received when registering retry waiter for transaction: $transactionId")
-                                    SyncHandshakeManager.cleanup(transactionId)
-                                    return true
+                                    Log.d("DataLayerSync", "Completion already received when registering retry waiter for transaction: $usedTransactionId")
+                                    SyncHandshakeManager.cleanup(usedTransactionId)
+                                    return Pair(true, usedTransactionId)
                                 }
                                 
-                                retryMissingChunks(dataClient, transactionId, missingIndices, chunks)
+                                retryMissingChunks(dataClient, usedTransactionId, missingIndices, chunks)
                                 retryAttempt++
                                 // Exponential backoff with jitter: 500ms, 1000ms, 2000ms, 4000ms, 8000ms
                                 val baseDelay = 500L * (1 shl (retryAttempt - 1))
@@ -996,40 +1006,40 @@ suspend fun sendWorkoutHistoryStore(dataClient: DataClient, workoutHistoryStore:
                                 
                                 // Check again before continuing loop (completion might have arrived during retry)
                                 if (currentCompletionWaiter.isCompleted) {
-                                    Log.d("DataLayerSync", "Completion received during retry for transaction: $transactionId")
-                                    SyncHandshakeManager.cleanup(transactionId)
-                                    return true
+                                    Log.d("DataLayerSync", "Completion received during retry for transaction: $usedTransactionId")
+                                    SyncHandshakeManager.cleanup(usedTransactionId)
+                                    return Pair(true, usedTransactionId)
                                 }
                                 
                                 continue
                             } catch (retryException: Exception) {
                                 Log.e("DataLayerSync", "Retry failed: ${retryException.message}", retryException)
-                                SyncHandshakeManager.cleanup(transactionId)
-                                return false
+                                SyncHandshakeManager.cleanup(usedTransactionId)
+                                return Pair(false, usedTransactionId)
                             }
                         }
                     }
                     
                     // Not a retryable error or max retries reached
-                    SyncHandshakeManager.cleanup(transactionId)
-                    Log.e("DataLayerSync", "Sync failed for workout history transaction: $transactionId after $retryAttempt retry attempts: $errorMessage")
-                    return false
+                    SyncHandshakeManager.cleanup(usedTransactionId)
+                    Log.e("DataLayerSync", "Sync failed for workout history transaction: $usedTransactionId after $retryAttempt retry attempts: $errorMessage")
+                    return Pair(false, usedTransactionId)
                 }
             }
         }
         
         // Should not reach here, but handle it anyway
-        SyncHandshakeManager.cleanup(transactionId)
-        return false
+        SyncHandshakeManager.cleanup(usedTransactionId)
+        return Pair(false, usedTransactionId)
     } catch (cancellationException: CancellationException) {
-        SyncHandshakeManager.cleanup(transactionId)
+        SyncHandshakeManager.cleanup(usedTransactionId)
         cancellationException.printStackTrace()
-        return false
+        return Pair(false, usedTransactionId)
     } catch(exception: Exception) {
-        SyncHandshakeManager.cleanup(transactionId)
+        SyncHandshakeManager.cleanup(usedTransactionId)
         Log.e("DataLayerSync", "Error sending workout history store", exception)
         exception.printStackTrace()
-        return false
+        return Pair(false, usedTransactionId)
     }
 }
 
@@ -1038,7 +1048,7 @@ fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Bo
         if (errorLogs.isEmpty()) {
             return true // No logs to send, consider it successful
         }
-        
+        Log.d("DataLayerSync", "Sending ${errorLogs.size} error logs to mobile")
         val gson = GsonBuilder()
             .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
             .create()

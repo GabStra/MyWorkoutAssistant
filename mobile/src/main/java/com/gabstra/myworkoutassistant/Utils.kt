@@ -391,6 +391,7 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
 
 suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
     val transactionId = UUID.randomUUID().toString()
+    Log.d("DataLayerSync", "Starting workout store sync, transactionId=$transactionId")
     try {
         // Send sync request and wait for acknowledgment
         val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
@@ -475,6 +476,7 @@ suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore)
 
 suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup, context: android.content.Context? = null) {
     val transactionId = UUID.randomUUID().toString()
+    Log.d("DataLayerSync", "Starting app backup, transactionId=$transactionId")
     try {
         // Check if watch is connected before attempting sync
         // This prevents sync attempts when watch is not available (e.g., during app uninstall)
@@ -3574,28 +3576,11 @@ fun mergeWorkoutStore(
         }
     }
     
-    // Handle user data: preserve existing values (Option A from plan)
-    // Only update if imported values are non-zero/non-default (Option B)
-    val mergedBirthDateYear = if (imported.birthDateYear > 0 && imported.birthDateYear != existing.birthDateYear) {
-        imported.birthDateYear
-    } else {
-        existing.birthDateYear
-    }
-    
-    val mergedWeightKg = if (imported.weightKg > 0.0 && imported.weightKg != existing.weightKg) {
-        imported.weightKg
-    } else {
-        existing.weightKg
-    }
-    
-    val mergedProgressionPercentageAmount = if (imported.progressionPercentageAmount > 0.0 && imported.progressionPercentageAmount != existing.progressionPercentageAmount) {
-        imported.progressionPercentageAmount
-    } else {
-        existing.progressionPercentageAmount
-    }
-    
-    // Preserve existing polarDeviceId unless imported has a value
-    val mergedPolarDeviceId = imported.polarDeviceId ?: existing.polarDeviceId
+    // User profile data: always keep local values, ignore imported
+    val mergedBirthDateYear = existing.birthDateYear
+    val mergedWeightKg = existing.weightKg
+    val mergedProgressionPercentageAmount = existing.progressionPercentageAmount
+    val mergedPolarDeviceId = existing.polarDeviceId
     
     // Merge workout plans
     val existingPlanIds = existing.workoutPlans.map { it.id }.toSet()
