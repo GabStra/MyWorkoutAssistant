@@ -32,6 +32,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import com.google.android.gms.wearable.NodeClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +51,9 @@ class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appCeh get() = (application as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + appCeh)
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao

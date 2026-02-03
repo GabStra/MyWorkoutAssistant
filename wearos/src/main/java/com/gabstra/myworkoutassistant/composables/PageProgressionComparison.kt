@@ -28,7 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -305,7 +305,7 @@ fun PageProgressionComparison(
     val previousSetStates = remember(exercise.id) {
         mutableStateOf<List<WorkoutState.Set>>(emptyList())
     }
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
     
     // Track loading state - initialize to true when page becomes visible
     // Will be set to false immediately if data already exists

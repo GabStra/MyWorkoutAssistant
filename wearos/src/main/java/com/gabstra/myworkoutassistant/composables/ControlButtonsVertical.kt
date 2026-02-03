@@ -14,7 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,7 +47,7 @@ fun ControlButtonsVertical(
     onCloseClick: () -> Unit,
     content: @Composable () -> Unit
 ){
-    val coroutineScope = rememberCoroutineScope()
+    val coroutineScope = rememberWearCoroutineScope()
 
     BackHandler {
         onCloseClick()

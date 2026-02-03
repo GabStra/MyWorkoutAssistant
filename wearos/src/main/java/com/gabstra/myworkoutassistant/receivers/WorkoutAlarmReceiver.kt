@@ -3,10 +3,12 @@ package com.gabstra.myworkoutassistant.receivers
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,7 +29,8 @@ class WorkoutAlarmReceiver : BroadcastReceiver() {
             return
         }
 
-        val scope = CoroutineScope(Dispatchers.IO)
+        val appCeh = (context.applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
+        val scope = CoroutineScope(Dispatchers.IO + appCeh)
         scope.launch {
 
             val database = AppDatabase.getDatabase(context)

@@ -43,7 +43,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -280,7 +280,7 @@ fun HeartRateCircularChart(
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
     var alarmJob by remember { mutableStateOf<Job?>(null) }
@@ -1045,7 +1045,7 @@ private val previewHeartRateChangeViewModel = HeartRateChangeViewModel()
 
 // Helper function to create HapticsViewModel outside composable context
 private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
-    return HapticsViewModel(HapticsHelper(context))
+    return HapticsViewModel(context, HapticsHelper(context))
 }
 
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)

@@ -9,7 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -52,7 +52,7 @@ fun PageButtons(
     val currentWorkoutState = screenState.workoutState
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
 
     var showGoBackDialog by remember { mutableStateOf(false) }
 

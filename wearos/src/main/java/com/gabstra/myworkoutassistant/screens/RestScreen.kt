@@ -25,7 +25,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,7 +80,7 @@ fun RestScreen(
 ) {
     val set = state.set as RestSet
 
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {

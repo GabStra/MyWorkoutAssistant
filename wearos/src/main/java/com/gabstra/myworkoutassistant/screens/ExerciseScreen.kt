@@ -31,7 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,7 +173,7 @@ fun ExerciseScreen(
         viewModel.closeCustomDialog()
     }
 
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
     var goBackJob by remember { mutableStateOf<Job?>(null) }
 
     fun restartGoBack() {

@@ -6,9 +6,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.net.toUri
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.receivers.WorkoutAlarmReceiver
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -16,7 +18,8 @@ import java.util.Calendar
 
 class WorkoutAlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val appCeh get() = (context.applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
+    private val scope = CoroutineScope(Dispatchers.IO + appCeh)
 
 
     fun getWorkoutSchedulePendingIntent(schedule: WorkoutSchedule, flags : Int) : PendingIntent? {

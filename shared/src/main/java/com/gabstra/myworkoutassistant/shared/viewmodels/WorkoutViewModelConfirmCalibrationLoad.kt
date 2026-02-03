@@ -401,12 +401,12 @@ private fun WorkoutViewModel.updateWorkSetsWithSelectedLoad(
 }
 
 fun WorkoutViewModel.confirmCalibrationLoad() {
-    viewModelScope.launch(dispatchers.io) {
-        val machine = stateMachine ?: return@launch
-        val currentState = machine.currentState as? WorkoutState.CalibrationLoadSelection ?: return@launch
-        val selectedWeight = extractSelectedWeight(currentState) ?: return@launch
-        val updatedSet = updateCalibrationSetWithWeight(currentState, selectedWeight) ?: return@launch
-        val exercise = exercisesById[currentState.exerciseId] ?: return@launch
+    launchIO {
+        val machine = stateMachine ?: return@launchIO
+        val currentState = machine.currentState as? WorkoutState.CalibrationLoadSelection ?: return@launchIO
+        val selectedWeight = extractSelectedWeight(currentState) ?: return@launchIO
+        val updatedSet = updateCalibrationSetWithWeight(currentState, selectedWeight) ?: return@launchIO
+        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
         val equipment = currentState.equipment
 
         val warmupStates = generateWarmupStates(exercise, equipment, currentState, selectedWeight)

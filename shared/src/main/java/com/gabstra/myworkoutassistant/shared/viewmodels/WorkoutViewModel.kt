@@ -68,6 +68,9 @@ import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -76,6 +79,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.EmptyCoroutineContext
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.LocalDate
@@ -112,6 +116,25 @@ open class WorkoutViewModel(
     companion object {
         private const val TAG = "WorkoutViewModel"
     }
+
+    /** Optional handler for unhandled coroutine exceptions (e.g. set by Wear OS to log to file). */
+    protected var coroutineExceptionHandler: CoroutineExceptionHandler? = null
+        set(value) {
+            field = value
+        }
+
+    /** CoroutineContext containing the optional exception handler; use when launching root coroutines. */
+    protected open fun exceptionContext(): CoroutineContext =
+        coroutineExceptionHandler ?: EmptyCoroutineContext
+
+    fun launchMain(block: suspend CoroutineScope.() -> Unit): Job =
+        viewModelScope.launch(exceptionContext() + dispatchers.main, block = block)
+
+    fun launchIO(block: suspend CoroutineScope.() -> Unit): Job =
+        viewModelScope.launch(exceptionContext() + dispatchers.io, block = block)
+
+    fun launchDefault(block: suspend CoroutineScope.() -> Unit): Job =
+        viewModelScope.launch(exceptionContext(), block = block)
 
     private var storeSetDataJob: Job? = null
 
@@ -154,7 +177,7 @@ open class WorkoutViewModel(
     }
 
     fun lightScreenUp() {
-        viewModelScope.launch(dispatchers.main) {
+        launchMain {
             _lightScreenUp.send(Unit)
         }
     }
@@ -201,7 +224,7 @@ open class WorkoutViewModel(
 
     // Timer service for managing workout timers independently of composable lifecycle
     val workoutTimerService = WorkoutTimerService(
-        viewModelScope = viewModelScope,
+        viewModelScope = CoroutineScope(viewModelScope.coroutineContext + exceptionContext()),
         isPaused = { _isPaused.value }
     )
 
@@ -829,7 +852,7 @@ open class WorkoutViewModel(
         workoutTimerService.unregisterAll()
         resetWorkoutStore()
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        viewModelScope.launch(dispatchers.main) {
+        launchMain {
             withContext(dispatchers.io) {
                 workoutHistoryDao.deleteAll()
                 setHistoryDao.deleteAll()
@@ -843,7 +866,7 @@ open class WorkoutViewModel(
 
     protected open fun getWorkoutRecord(workout: Workout) {
         _isCheckingWorkoutRecord.value = true
-        viewModelScope.launch(dispatchers.main) {
+        launchMain {
             withContext(dispatchers.io) {
                 _workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workout.id)
                 if (_workoutRecord != null) {
@@ -866,7 +889,7 @@ open class WorkoutViewModel(
     }
 
     fun upsertWorkoutRecord(exerciseId : UUID,setIndex: UInt) {
-        viewModelScope.launch(dispatchers.io) {
+        launchIO {
             when {
                 _workoutRecord == null && currentWorkoutHistory != null -> {
                     _workoutRecord = WorkoutRecord(
@@ -896,7 +919,7 @@ open class WorkoutViewModel(
     }
 
     fun deleteWorkoutRecord() {
-        viewModelScope.launch(dispatchers.io) {
+        launchIO {
             _workoutRecord?.let {
                 workoutRecordDao.deleteById(it.id)
                 _workoutRecord = null
@@ -1061,7 +1084,7 @@ open class WorkoutViewModel(
     }
 
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
-        viewModelScope.launch(dispatchers.main) {
+        launchMain {
             withContext(dispatchers.io) {
                 _enableWorkoutNotificationFlow.value = null
                 _currentScreenDimmingState.value = false
@@ -1860,7 +1883,7 @@ open class WorkoutViewModel(
             return
         }
 
-        viewModelScope.launch(dispatchers.io) {
+        launchIO {
             _isResuming.value = true
             while (true) {
                 val machineState = stateMachine?.currentState ?: break
@@ -1887,7 +1910,7 @@ open class WorkoutViewModel(
     }
 
     open fun startWorkout() {
-        viewModelScope.launch(dispatchers.main) {
+        launchMain {
             withContext(dispatchers.io) {
                 try {
                     _enableWorkoutNotificationFlow.value = null
@@ -2093,8 +2116,8 @@ open class WorkoutViewModel(
     }
 
     protected fun RefreshAndGoToNextState() {
-        viewModelScope.launch(dispatchers.io) {
-            if (_isRefreshing.value || (_workoutState.value !is WorkoutState.Set && _workoutState.value !is WorkoutState.Rest)) return@launch
+        launchIO {
+            if (_isRefreshing.value || (_workoutState.value !is WorkoutState.Set && _workoutState.value !is WorkoutState.Rest)) return@launchIO
 
             _isRefreshing.value = true
 
@@ -2235,7 +2258,7 @@ open class WorkoutViewModel(
         forceNotSend: Boolean = false,
         onEnd: suspend () -> Unit = {}
     ) {
-        viewModelScope.launch(dispatchers.io) {
+        launchIO {
             storeSetDataJob?.join()
             val duration = Duration.between(startWorkoutTime!!, LocalDateTime.now())
 
@@ -2661,7 +2684,7 @@ open class WorkoutViewModel(
 
     fun storeSetData() {
         val previousJob = storeSetDataJob
-        val newJob = viewModelScope.launch(dispatchers.io) {
+        val newJob = launchIO {
             previousJob?.join()
             storeSetDataInternal()
         }
@@ -3750,7 +3773,7 @@ open class WorkoutViewModel(
     }
 
     fun schedulePlateRecalculation(newWeight: Double) {
-        viewModelScope.launch {
+        launchDefault {
             plateRecalculationDebouncer.schedule {
                 recalculatePlatesForCurrentAndSubsequentSets(newWeight)
             }
@@ -3856,7 +3879,7 @@ open class WorkoutViewModel(
         updateStateFlowsFromMachine()
 
         // Clean up executedSetsHistory: remove all entries that correspond to sets after the target Set
-        viewModelScope.launch(dispatchers.io) {
+        launchIO {
             // Get all setIds that come after the target Set in allStates
             val setIdsToRemove = mutableSetOf<UUID>()
             for (i in targetIndex + 1 until machine.allStates.size) {

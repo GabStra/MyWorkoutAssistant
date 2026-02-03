@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
-import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,16 +23,8 @@ class SensorDataViewModel(
     fun initApplicationContext(context: Context) {
         applicationContext = context.applicationContext
     }
-    
-    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        Log.e("SensorDataViewModel", "Uncaught exception in coroutine", throwable)
-        // Log the exception to file via MyApplication if available
-        try {
-            (applicationContext as? MyApplication)?.logErrorToFile("SensorDataViewModel Coroutine", throwable)
-        } catch (e: Exception) {
-            Log.e("SensorDataViewModel", "Failed to log exception to file", e)
-        }
-    }
+
+    private val appCeh get() = (applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
 
     private val _heartRateAvailable = MutableStateFlow(false)
     val heartRateAvailable: StateFlow<Boolean> = _heartRateAvailable
@@ -50,7 +42,7 @@ class SensorDataViewModel(
     fun startMeasuringHeartRate() {
         stopMeasuringHeartRate()
 
-        heartRateCollectJob = viewModelScope.launch(coroutineExceptionHandler) {
+        heartRateCollectJob = viewModelScope.launch(appCeh) {
             try {
                 sensorDataRepository.heartBeatMeasureFlow()
                     .collect { measureMessage ->

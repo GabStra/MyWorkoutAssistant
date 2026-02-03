@@ -12,9 +12,6 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -37,9 +34,9 @@ class MyApplication : Application() {
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .create()
     
-    // Make this accessible so ViewModels can use it
+    /** Single CoroutineExceptionHandler for the app. Must be attached to each root scope/launch; not global. */
     val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        Log.e("MyApplication", "Uncaught exception in coroutine", throwable)
+        Log.e(TAG, "Uncaught exception in coroutine", throwable)
         logErrorToFile("Coroutine", throwable)
     }
     
@@ -70,34 +67,17 @@ class MyApplication : Application() {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e("MyApplication", "Uncaught exception in thread: ${thread.name}", throwable)
-            
-            // Log stack trace for debugging
+            Log.e(TAG, "Uncaught exception in thread: ${thread.name}", throwable)
             throwable.printStackTrace()
-            
-            // Log error to file
             logErrorToFile(thread.name, throwable)
-            
-            // Attempt graceful recovery - don't crash immediately
-            // In a workout scenario, we want to preserve state if possible
             try {
-                // You could save workout state here if needed
-                // For now, we'll just log and let the default handler run
+                // Optional: save workout state here if needed
             } catch (e: Exception) {
-                Log.e("MyApplication", "Error in exception handler", e)
+                Log.e(TAG, "Error in exception handler", e)
             }
-            
-            // Call the default handler to handle the crash normally
-            // This ensures the app still crashes but we've logged everything
             defaultHandler?.uncaughtException(thread, throwable)
         }
-        
-        // Set up global coroutine exception handler
-        // Note: This won't catch all coroutine exceptions, but it's a good safety net
-        // CoroutineExceptionHandler only works for root coroutines (coroutines without a parent)
-        GlobalScope.launch(coroutineExceptionHandler + Dispatchers.Default) {
-            // This scope is just for the exception handler setup
-        }
+        // CEH must be attached per root scope/launch (ViewModels, services, etc.); there is no process-wide CEH.
     }
     
     fun logErrorToFile(threadName: String, throwable: Throwable) {
@@ -122,7 +102,7 @@ class MyApplication : Application() {
                 writer.write(jsonString)
             }
             
-            Log.d("MyApplication", "Error logged to file: ${errorLogFile.absolutePath}")
+            Log.d(TAG, "Error logged to file: ${errorLogFile.absolutePath}")
             
             // Send broadcast to trigger sync
             try {
@@ -132,14 +112,15 @@ class MyApplication : Application() {
                 }
                 sendBroadcast(intent)
             } catch (e: Exception) {
-                Log.e("MyApplication", "Failed to send error logged broadcast", e)
+                Log.e(TAG, "Failed to send error logged broadcast", e)
             }
         } catch (e: Exception) {
-            Log.e("MyApplication", "Failed to log error to file", e)
+            Log.e(TAG, "Failed to log error to file", e)
         }
     }
     
     companion object {
+        private const val TAG = "MyApplication"
         const val ERROR_LOGGED_ACTION = "com.gabstra.myworkoutassistant.ERROR_LOGGED"
         private val resumedActivities = AtomicInteger(0)
         @Volatile private var isInForeground = false
@@ -157,7 +138,7 @@ class MyApplication : Application() {
                 emptyList()
             }
         } catch (e: Exception) {
-            Log.e("MyApplication", "Failed to read error logs", e)
+            Log.e(TAG, "Failed to read error logs", e)
             emptyList()
         }
     }
@@ -172,7 +153,7 @@ class MyApplication : Application() {
                 errorLogFile.delete()
             }
         } catch (e: Exception) {
-            Log.e("MyApplication", "Failed to clear error logs", e)
+            Log.e(TAG, "Failed to clear error logs", e)
         }
     }
     

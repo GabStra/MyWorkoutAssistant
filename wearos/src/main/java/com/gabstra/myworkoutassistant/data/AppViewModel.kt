@@ -24,7 +24,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import android.util.Log
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -49,6 +48,9 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
+        (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
+            coroutineExceptionHandler = it
+        }
     }
 
     private fun getSyncedWorkoutHistoryIds(context: Context): Set<UUID> {
@@ -78,15 +80,6 @@ open class AppViewModel : WorkoutViewModel() {
         Log.d("AppViewModel", "Marked workout history $historyId as synced for transaction $transactionId")
     }
     
-    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        Log.e("AppViewModel", "Uncaught exception in coroutine", throwable)
-        // Log the exception to file via MyApplication if available
-        try {
-            (applicationContext as? MyApplication)?.logErrorToFile("AppViewModel Coroutine", throwable)
-        } catch (e: Exception) {
-            Log.e("AppViewModel", "Failed to log exception to file", e)
-        }
-    }
     private var dataClient: DataClient? = null
     var phoneNode by mutableStateOf<Node?>(null)
     
@@ -177,7 +170,7 @@ open class AppViewModel : WorkoutViewModel() {
      */
     private fun startIsSyncingToPhoneTimeout() {
         isSyncingToPhoneTimeoutJob?.cancel()
-        isSyncingToPhoneTimeoutJob = viewModelScope.launch {
+        isSyncingToPhoneTimeoutJob = launchDefault {
             delay(10000L) // 10 seconds timeout
             if (_isSyncingToPhone.value) {
                 // Only reset if still syncing (sync didn't complete)
@@ -192,7 +185,7 @@ open class AppViewModel : WorkoutViewModel() {
      */
     private fun startSyncStatusTimeout() {
         syncStatusTimeoutJob?.cancel()
-        syncStatusTimeoutJob = viewModelScope.launch {
+        syncStatusTimeoutJob = launchDefault {
             delay(10000L) // 10 seconds timeout
             if (_syncStatus.value == SyncStatus.Syncing) {
                 // Only reset if still syncing (sync didn't complete)
@@ -257,7 +250,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun sendAll(context: Context) {
-        viewModelScope.launch(coroutineExceptionHandler) {
+        launchMain {
             try {
                 withContext(Dispatchers.IO) {
                     val statuses = mutableListOf<Boolean>()
@@ -345,7 +338,7 @@ open class AppViewModel : WorkoutViewModel() {
      * Call when app is initialized and phone is connected.
      */
     fun sendUnsyncedHistories(context: Context) {
-        viewModelScope.launch(coroutineExceptionHandler) {
+        launchMain {
             try {
                 withContext(Dispatchers.IO) {
                     val client = dataClient ?: return@withContext
@@ -409,7 +402,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     fun sendWorkoutHistoryToPhone(context: Context, onEnd: (Boolean) -> Unit = {}) {
-        viewModelScope.launch(coroutineExceptionHandler + Dispatchers.IO) {
+        launchIO {
             try {
                 // Check connection before setting syncing state
                 val hasConnection = checkConnection(context)
@@ -420,7 +413,7 @@ open class AppViewModel : WorkoutViewModel() {
                         }
                         onEnd(false)
                     }
-                    return@launch
+                    return@launchIO
                 }
                 
                 // Only set syncing state after connection check succeeds
@@ -438,7 +431,7 @@ open class AppViewModel : WorkoutViewModel() {
                         cancelSyncTimeouts()
                         onEnd(false)
                     }
-                    return@launch
+                    return@launchIO
                 }
 
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
@@ -572,7 +565,7 @@ open class AppViewModel : WorkoutViewModel() {
             markPendingReconnect(null)
             return
         }
-        viewModelScope.launch(coroutineExceptionHandler) {
+        launchMain {
             syncDebouncer.flush()
         }
     }
@@ -626,7 +619,7 @@ open class AppViewModel : WorkoutViewModel() {
             "SYNC_TRACE event=sync_scheduled side=wear pending=${_hasPendingWorkoutSync.value}"
         )
         val syncContext = resolveSyncContext(context)
-        viewModelScope.launch(coroutineExceptionHandler) {
+        launchMain {
             Log.d("WorkoutSync", "requestWorkoutHistorySync: Scheduling debounced sync")
             syncDebouncer.schedule {
                 Log.d("WorkoutSync", "requestWorkoutHistorySync: Debounced sync executing now")

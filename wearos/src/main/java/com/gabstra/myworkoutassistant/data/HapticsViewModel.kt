@@ -6,9 +6,11 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.gabstra.myworkoutassistant.MyApplication
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.lang.reflect.Constructor
@@ -93,19 +95,22 @@ class HapticsHelper(context: Context) {
 }
 
 class HapticsViewModel(
+    private val appContext: Context,
     private val haptics: HapticsHelper
 ) : ViewModel() {
+
+    private val appCeh get() = (appContext.applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
 
     fun doHardVibration() = haptics.vibrateHard()
     fun doGentleVibration() = haptics.vibrateGentle()
     fun doHardVibrationWithBeep() = haptics.vibrateHardAndBeep()
-    fun doHardVibrationTwice() = viewModelScope.launch {
+    fun doHardVibrationTwice() = viewModelScope.launch(appCeh) {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
-    fun doHardVibrationTwiceWithBeep() = viewModelScope.launch {
+    fun doHardVibrationTwiceWithBeep() = viewModelScope.launch(appCeh) {
         haptics.vibrateHardAndBeep(); delay(200); haptics.vibrateHardAndBeep()
     }
-    fun doShortImpulse() = viewModelScope.launch {
+    fun doShortImpulse() = viewModelScope.launch(appCeh) {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
 
@@ -116,7 +121,7 @@ class HapticsViewModelFactory(private val appContext: Context) : ViewModelProvid
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HapticsViewModel::class.java)) {
-            return HapticsViewModel(HapticsHelper(appContext)) as T
+            return HapticsViewModel(appContext, HapticsHelper(appContext)) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

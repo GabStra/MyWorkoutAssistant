@@ -193,7 +193,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
     val machine = stateMachine ?: return
     val currentState = machine.currentState as? WorkoutState.CalibrationRIRSelection ?: return
     
-    viewModelScope.launch(dispatchers.io) {
+    launchIO {
         // Store RIR in calibration set's SetData
         storeRIRInCalibrationSetData(currentState, rir)
         
@@ -205,7 +205,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(calibrationWeight, rir, formBreaks)
         
         // Find all remaining work sets in the exercise
-        val exercise = exercisesById[currentState.exerciseId] ?: return@launch
+        val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
         val equipment = currentState.equipment
         val availableWeights = getWeightByEquipment(equipment)
         

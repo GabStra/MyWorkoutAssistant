@@ -16,7 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +72,7 @@ fun WorkoutScreen(
     var showWorkoutInProgressDialog by remember { mutableStateOf(false) }
     var hrStatus by remember { mutableStateOf<HeartRateStatus?>(null) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
     val screenState by viewModel.screenState.collectAsState()
     val workoutState = screenState.workoutState
     val selectedWorkout = screenState.selectedWorkout

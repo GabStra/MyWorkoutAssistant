@@ -6,7 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -20,7 +20,7 @@ fun CustomBackHandler(
     onSinglePress: () -> Unit,
     onDoublePress: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
+    val scope = rememberWearCoroutineScope()
 
     val currentPress by rememberUpdatedState(onPress)
     val currentSingle by rememberUpdatedState(onSinglePress)

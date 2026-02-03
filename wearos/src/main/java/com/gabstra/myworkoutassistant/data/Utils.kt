@@ -19,7 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -150,7 +150,7 @@ fun Modifier.verticalColumnScrollbar(
     // State for scrollbar visibility
     var scrollbarVisible by remember { mutableStateOf(false) }
     var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
-    val coroutineScope = rememberCoroutineScope()
+    val coroutineScope = rememberWearCoroutineScope()
 
     // Animate scrollbar opacity
     val scrollbarAlpha by animateFloatAsState(
@@ -345,7 +345,7 @@ fun Modifier.verticalLazyColumnScrollbar(
     // State for scrollbar visibility
     var scrollbarVisible by remember { mutableStateOf(false) }
     var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
-    val coroutineScope = rememberCoroutineScope()
+    val coroutineScope = rememberWearCoroutineScope()
 
     // Animate scrollbar opacity
     val scrollbarAlpha by animateFloatAsState(
