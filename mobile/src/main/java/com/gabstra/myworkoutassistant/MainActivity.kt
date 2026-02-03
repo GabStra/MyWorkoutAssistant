@@ -196,6 +196,7 @@ class MyReceiver(
             }
         }
     }
+
 }
 
 class MainActivity : ComponentActivity() {

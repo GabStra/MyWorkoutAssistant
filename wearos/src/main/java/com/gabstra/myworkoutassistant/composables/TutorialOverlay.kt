@@ -54,7 +54,7 @@ private fun TutorialStepItem(
             Text(
                 text = description,
                 modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                 color = MediumLighterGray,
                 textAlign = TextAlign.Center
             )

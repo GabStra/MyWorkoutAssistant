@@ -53,7 +53,7 @@ fun ExerciseMetadataStrip(
         surfaceContainerHigh
     ) {
         buildAnnotatedString {
-            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
                 fun pipe() {
                     withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
                         append(" | ")
@@ -142,7 +142,7 @@ fun ExerciseMetadataStrip(
         FadingText(
             text = metadataText,
             modifier = modifier.fillMaxWidth(),
-            style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
+            style = baseStyle.copy(fontWeight = FontWeight.Thin),
             color = MediumLighterGray,
             onClick = {
                 onTap?.invoke()

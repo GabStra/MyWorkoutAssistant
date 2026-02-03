@@ -45,7 +45,6 @@ class MyApplication : Application() {
     
     override fun onCreate() {
         super.onCreate()
-
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 resumedActivities.incrementAndGet()

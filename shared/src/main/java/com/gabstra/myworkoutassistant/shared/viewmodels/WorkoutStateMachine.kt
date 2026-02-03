@@ -274,6 +274,43 @@ data class WorkoutStateMachine(
     }
 
     /**
+     * Returns (containerSeqIndex, childIndex) for the state at the given flat index in allStates.
+     * containerSeqIndex is the index in stateSequence of the Container; childIndex is the index within that container's childStates.
+     * Returns null if flatIndex is out of range or points to a RestBetweenExercises.
+     */
+    fun getContainerAndChildIndex(flatIndex: Int): Pair<Int, Int>? {
+        if (flatIndex < 0 || flatIndex >= allStates.size) return null
+        var currentFlatPos = 0
+        for ((seqIdx, item) in stateSequence.withIndex()) {
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    when (val container = item.container) {
+                        is WorkoutStateContainer.ExerciseState -> {
+                            val size = container.childStates.size
+                            if (currentFlatPos <= flatIndex && flatIndex < currentFlatPos + size) {
+                                return Pair(seqIdx, flatIndex - currentFlatPos)
+                            }
+                            currentFlatPos += size
+                        }
+                        is WorkoutStateContainer.SupersetState -> {
+                            val size = container.childStates.size
+                            if (currentFlatPos <= flatIndex && flatIndex < currentFlatPos + size) {
+                                return Pair(seqIdx, flatIndex - currentFlatPos)
+                            }
+                            currentFlatPos += size
+                        }
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                    if (currentFlatPos == flatIndex) return null
+                    currentFlatPos++
+                }
+            }
+        }
+        return null
+    }
+
+    /**
      * Get the ExerciseState container containing the current state.
      */
     fun getCurrentExerciseContainer(): WorkoutStateContainer.ExerciseState? {

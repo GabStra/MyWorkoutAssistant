@@ -231,7 +231,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun rebuildScreenState() {
-        _screenState.value = WorkoutScreenState(
+        val newState = WorkoutScreenState(
             workoutState = workoutState.value,
             nextWorkoutState = nextWorkoutState.value,
             selectedWorkout = selectedWorkout.value,
@@ -249,6 +249,11 @@ open class AppViewModel : WorkoutViewModel() {
             headerDisplayMode = headerDisplayMode.value,
             hrDisplayMode = hrDisplayMode.value,
         )
+        
+        // Only emit if state actually changed
+        if (_screenState.value != newState) {
+            _screenState.value = newState
+        }
     }
 
     fun sendAll(context: Context) {

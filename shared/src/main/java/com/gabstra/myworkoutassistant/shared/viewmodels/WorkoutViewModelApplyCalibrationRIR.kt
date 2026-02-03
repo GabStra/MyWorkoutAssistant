@@ -229,12 +229,14 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
             
             val machine = stateMachine ?: return@withContext
             val currentIndex = machine.currentIndex
-            
-            // Store calibration Set execution state index before removing CalibrationRIRSelection
-            val (calibrationSetExecutionState, calibrationSetIndex) = findCalibrationSetExecutionState(
-                machine, currentState.exerciseId
-            )
-            
+
+            // Use calibration context for index; fallback to search if context missing (e.g. migration)
+            val calibrationSetIndex = getCalibrationContextValue()?.calibrationSetExecutionStateIndex
+                ?: findCalibrationSetExecutionState(machine, currentState.exerciseId).second
+            val calibrationSetExecutionState = if (calibrationSetIndex >= 0 && calibrationSetIndex < machine.allStates.size) {
+                machine.allStates[calibrationSetIndex] as? WorkoutState.Set
+            } else null
+
             // Store the calibration set with RIR in executedSetsHistory before removing CalibrationRIRSelection
             if (calibrationSetIndex >= 0 && calibrationSetExecutionState != null) {
                 // Temporarily set current state to calibration Set execution to store it
@@ -310,6 +312,9 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                             weights,
                             equipment
                         )
+                        // Repopulate Rest.nextStateSets so the Rest screen shows plate changes for the updated load
+                        stateMachine?.let { m -> populateNextStateSetsForRest(m.stateSequence) }
+                        updateStateFlowsFromMachine()
                     }
                 }
             }

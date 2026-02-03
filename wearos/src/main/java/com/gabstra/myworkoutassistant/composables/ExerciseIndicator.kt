@@ -300,7 +300,7 @@ fun ExerciseIndicator(
                 
                 val trackColor = remember(isCurrent, indicatorColor) {
                     if (isCurrent) {
-                        reduceColorLuminance(indicatorColor)
+                        indicatorColor.copy(alpha = 0.35f)
                     } else {
                         MediumDarkGray
                     }

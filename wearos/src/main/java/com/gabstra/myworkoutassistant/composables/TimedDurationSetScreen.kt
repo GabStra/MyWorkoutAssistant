@@ -93,9 +93,15 @@ fun TimedDurationSetScreen(
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set) { mutableIntStateOf(3) }
     var countdownInitiated by remember(set.id) { mutableStateOf(false) }
+    var hasAutoStartBeenInitiated by remember(set.id) { mutableStateOf(false) }
 
-    val previousSet = state.previousSetData as TimedDurationSetData
-    var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as TimedDurationSetData) }
+    val previousSetStartTimer = remember(state.previousSetData) {
+        (state.previousSetData as? TimedDurationSetData)?.startTimer
+    }
+    var currentSet by remember(set.id) {
+        val setData = state.currentSetData as? TimedDurationSetData
+        mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
+    }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -114,8 +120,11 @@ fun TimedDurationSetScreen(
         }
     }
 
-    LaunchedEffect(currentSet) {
-        state.currentSetData = currentSet
+    LaunchedEffect(currentSet.startTimer) {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
+        if (setData.startTimer != currentSet.startTimer) {
+            state.currentSetData = setData.copy(startTimer = currentSet.startTimer)
+        }
     }
 
     // Sync currentMillis with state.currentSetData.endTimer for UI display
@@ -201,24 +210,15 @@ fun TimedDurationSetScreen(
     val isPaused by viewModel.isPaused
 
     LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
+        // Check if timer has already started (e.g., resuming workout)
         if (state.startTime != null) {
             // Timer has started - ensure it's registered with service
-            val now = LocalDateTime.now()
-            val elapsedMillis = java.time.Duration.between(state.startTime, now).toMillis()
-            val remainingMillis = maxOf(currentSet.startTimer - elapsedMillis.toInt(), 0)
-            
-            if (remainingMillis > 0 && !isPaused) {
+            // Don't check for completion here - let WorkoutTimerService handle it
+            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 // Timer should be running - register if not already registered
-                if (!viewModel.workoutTimerService.isTimerRegistered(set.id)) {
-                    startTimer()
-                }
-            } else if (remainingMillis <= 0) {
-                // Timer already completed
-                state.currentSetData = currentSet.copy(endTimer = 0)
-                viewModel.workoutTimerService.unregisterTimer(set.id)
-                hapticsViewModel.doHardVibrationTwice()
-                onTimerDisabled()
-                onTimerEnd()
+                // This handles Bug 5: Timer Service Not Re-registered on Resume
+                android.util.Log.d("TimedDurationSetScreen", "Re-registering timer on resume: setId=${set.id}, startTime=${state.startTime}")
+                startTimer()
             }
             autoStartJob?.cancel()
             return@LaunchedEffect
@@ -234,7 +234,14 @@ fun TimedDurationSetScreen(
             return@LaunchedEffect
         }
 
+        // Prevent duplicate auto-start initiation
+        if (hasAutoStartBeenInitiated) {
+            return@LaunchedEffect
+        }
+
         if (autoStartJob?.isActive != true) {
+            // Set flag immediately before any async operations to prevent race conditions
+            hasAutoStartBeenInitiated = true
             autoStartJob = scope.launch {
                 delay(500)
                 showCountDownIfEnabled()
@@ -247,7 +254,8 @@ fun TimedDurationSetScreen(
     }
 
     val textComposable = @Composable {
-        val isDifferent = currentSet.startTimer != previousSet.startTimer
+        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
+        val isDifferent = currentSet.startTimer != previousTimer
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -268,7 +276,7 @@ fun TimedDurationSetScreen(
                         },
                         onDoubleClick = {
                             if (isTimerInEditMode) {
-                                val newTimerValue = previousSet.startTimer
+                                val newTimerValue = previousTimer
                                 currentSet = currentSet.copy(startTimer = newTimerValue)
                                 currentMillis = newTimerValue
                                 hapticsViewModel.doHardVibrationTwice()

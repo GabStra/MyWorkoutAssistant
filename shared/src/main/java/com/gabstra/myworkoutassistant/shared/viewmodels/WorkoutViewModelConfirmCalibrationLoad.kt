@@ -419,52 +419,12 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
         statesToInsert.add(calibrationSetExecutionState)
 
         withContext(dispatchers.main) {
-            // Find the container and index of CalibrationLoadSelection
+            // Find the container and child index for the current state (CalibrationLoadSelection)
             val currentFlatIndex = machine.currentIndex
-            var calibrationContainerIndex = -1
-            var calibrationChildIndex = -1
-            var currentFlatPos = 0
-            
-            for ((seqIdx, item) in machine.stateSequence.withIndex()) {
-                when (item) {
-                    is WorkoutStateSequenceItem.Container -> {
-                        when (val container = item.container) {
-                            is WorkoutStateContainer.ExerciseState -> {
-                                if (container.exerciseId == currentState.exerciseId) {
-                                    for ((childIdx, childState) in container.childStates.withIndex()) {
-                                        if (currentFlatPos == currentFlatIndex && childState is WorkoutState.CalibrationLoadSelection) {
-                                            calibrationContainerIndex = seqIdx
-                                            calibrationChildIndex = childIdx
-                                            break
-                                        }
-                                        currentFlatPos++
-                                    }
-                                } else {
-                                    currentFlatPos += container.childStates.size
-                                }
-                            }
-                            is WorkoutStateContainer.SupersetState -> {
-                                for ((childIdx, childState) in container.childStates.withIndex()) {
-                                    if (currentFlatPos == currentFlatIndex && childState is WorkoutState.CalibrationLoadSelection) {
-                                        calibrationContainerIndex = seqIdx
-                                        calibrationChildIndex = childIdx
-                                        break
-                                    }
-                                    currentFlatPos++
-                                }
-                            }
-                        }
-                    }
-                    is WorkoutStateSequenceItem.RestBetweenExercises -> {
-                        if (currentFlatPos == currentFlatIndex) {
-                            // Shouldn't happen, but handle it
-                        }
-                        currentFlatPos++
-                    }
-                }
-                if (calibrationContainerIndex >= 0) break
-            }
-            
+            val position = machine.getContainerAndChildIndex(currentFlatIndex)
+            if (position == null) return@withContext
+            val (calibrationContainerIndex, calibrationChildIndex) = position
+
             // Replace CalibrationLoadSelection with inserted states
             val updatedSequence = machine.stateSequence.mapIndexed { seqIdx, item ->
                 if (seqIdx == calibrationContainerIndex) {

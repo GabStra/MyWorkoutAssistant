@@ -412,7 +412,7 @@ fun PageProgressionComparison(
             val baseStyle = MaterialTheme.typography.bodySmall
             val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle) {
                 buildAnnotatedString {
-                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
+                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
                         fun pipe() {
                             withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
                                 append(" | ")

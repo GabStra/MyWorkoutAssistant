@@ -14,6 +14,31 @@ enum class ProgressionState {
 }
 
 /**
+ * Phase of the calibration flow for an exercise.
+ * Used by [CalibrationContext] so callers can branch without scanning state.
+ */
+enum class CalibrationPhase {
+    /** User is selecting load for the calibration set. */
+    LOAD_SELECTION,
+    /** User is executing the calibration set. */
+    EXECUTING,
+    /** User is entering RIR after completing the calibration set. */
+    RIR_SELECTION
+}
+
+/**
+ * Single source of truth for "we are in calibration" and where the calibration set lives.
+ * Set when entering any calibration state; cleared when calibration is finished or navigated away.
+ */
+data class CalibrationContext(
+    val exerciseId: UUID,
+    val calibrationSetId: UUID,
+    val phase: CalibrationPhase,
+    /** Index in flattened allStates of the WorkoutState.Set with isCalibrationSet == true. Set when entering RIR_SELECTION. */
+    val calibrationSetExecutionStateIndex: Int? = null
+)
+
+/**
  * Containers for organizing workout states by exercise or superset.
  * These are organizational only and NOT states themselves.
  */

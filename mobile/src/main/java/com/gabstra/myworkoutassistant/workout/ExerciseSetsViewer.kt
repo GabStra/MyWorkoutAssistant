@@ -135,11 +135,10 @@ fun SetTableRow(
                 else -> false
             }
             
-            val currentWorkoutState by viewModel.workoutState.collectAsState()
+            val calibrationContext by viewModel.calibrationContext.collectAsState(initial = null)
             val isPendingCalibration = CalibrationHelper.isPendingCalibration(
-                currentWorkoutState,
-                viewModel.allWorkoutStates,
                 setState,
+                calibrationContext,
                 isCalibrationEnabled,
                 isWarmupSet,
                 isCalibrationSet,

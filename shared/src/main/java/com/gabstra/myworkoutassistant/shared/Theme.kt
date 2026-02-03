@@ -12,8 +12,8 @@ val MediumLightGray = Color(120, 120, 120)
 
 val DisabledContentGray = Color(100, 100, 100)
 
-val MediumLighterGray = Color(167, 171, 177, 255)
-val LighterGray = Color(218, 222, 229)
+val MediumLighterGray = Color(185, 185, 185, 255)
+val LighterGray = Color(225, 225, 225, 255)
 
 val Green  = Color(0xFF20ab47)
 val Yellow = Color(0xFFab8b2a)

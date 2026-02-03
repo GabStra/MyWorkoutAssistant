@@ -115,6 +115,21 @@ open class WorkoutViewModel(
 
     private var storeSetDataJob: Job? = null
 
+    /**
+     * Synchronously flush timer state to database.
+     * Should be called on app lifecycle events (onPause/onStop) to ensure timer state is persisted.
+     * This prevents loss of timer progress when app is closed mid-timer.
+     */
+    suspend fun flushTimerState() {
+        withContext(dispatchers.io) {
+            // Wait for any pending storeSetData job to complete
+            storeSetDataJob?.join()
+            // Force save current timer state
+            storeSetDataInternal()
+            Log.d(TAG, "Timer state flushed to database")
+        }
+    }
+
     private val _keepScreenOn = mutableStateOf(false)
     val keepScreenOn: State<Boolean> = _keepScreenOn
 
@@ -325,6 +340,13 @@ open class WorkoutViewModel(
     private val _workoutState =
         MutableStateFlow<WorkoutState>(WorkoutState.Preparing(dataLoaded = false))
     val workoutState = _workoutState.asStateFlow()
+
+    /**
+     * Single source of truth for "we are in calibration" and where the calibration set lives.
+     * Set when current state is CalibrationLoadSelection, Set(isCalibrationSet), or CalibrationRIRSelection; cleared otherwise.
+     */
+    private val _calibrationContext = MutableStateFlow<CalibrationContext?>(null)
+    val calibrationContext = _calibrationContext.asStateFlow()
 
     private val _nextWorkoutState =
         MutableStateFlow<WorkoutState?>(null)
@@ -573,6 +595,7 @@ open class WorkoutViewModel(
 
     /**
      * Updates the state flows from the current state machine.
+     * Also updates [calibrationContext] from the current state so UI and apply logic can use it without scanning.
      */
     internal fun updateStateFlowsFromMachine() {
         val machine = stateMachine
@@ -580,16 +603,61 @@ open class WorkoutViewModel(
             _workoutState.value = machine.currentState
             _nextWorkoutState.value = machine.upcomingNext
             _isHistoryEmpty.value = machine.isHistoryEmpty
+            _calibrationContext.value = calibrationContextFromState(machine)
+        } else {
+            _calibrationContext.value = null
         }
         rebuildScreenState()
     }
 
     /**
+     * Derives calibration context from the current state machine state.
+     * Called from [updateStateFlowsFromMachine]; also used when inserting CalibrationRIRSelection to set execution index.
+     */
+    private fun calibrationContextFromState(machine: WorkoutStateMachine): CalibrationContext? {
+        val state = machine.currentState
+        return when (state) {
+            is WorkoutState.CalibrationLoadSelection -> CalibrationContext(
+                exerciseId = state.exerciseId,
+                calibrationSetId = state.calibrationSet.id,
+                phase = CalibrationPhase.LOAD_SELECTION,
+                calibrationSetExecutionStateIndex = null
+            )
+            is WorkoutState.Set -> if (state.isCalibrationSet) {
+                CalibrationContext(
+                    exerciseId = state.exerciseId,
+                    calibrationSetId = state.set.id,
+                    phase = CalibrationPhase.EXECUTING,
+                    calibrationSetExecutionStateIndex = machine.currentIndex
+                )
+            } else null
+            is WorkoutState.CalibrationRIRSelection -> CalibrationContext(
+                exerciseId = state.exerciseId,
+                calibrationSetId = state.calibrationSet.id,
+                phase = CalibrationPhase.RIR_SELECTION,
+                calibrationSetExecutionStateIndex = machine.currentIndex - 1
+            )
+            else -> null
+        }
+    }
+
+    /**
+     * Clears calibration context. Call when calibration is finished (e.g. after applyCalibrationRIR) or when navigating away.
+     */
+    internal fun clearCalibrationContext() {
+        _calibrationContext.value = null
+    }
+
+    /** Current calibration context value for use in applyCalibrationRIR and other extensions. */
+    internal fun getCalibrationContextValue(): CalibrationContext? = _calibrationContext.value
+
+    /**
      * Rebuilds the WorkoutScreenState from current ViewModel fields.
      * Call this whenever any UI-observable field changes.
+     * Only emits if the new state differs from the current state to prevent unnecessary recompositions.
      */
     protected open fun rebuildScreenState() {
-        _screenState.value = WorkoutScreenState(
+        val newState = WorkoutScreenState(
             workoutState = _workoutState.value,
             nextWorkoutState = _nextWorkoutState.value,
             selectedWorkout = _selectedWorkout.value,
@@ -607,6 +675,11 @@ open class WorkoutViewModel(
             headerDisplayMode = 0, // Default for base WorkoutViewModel, overridden in AppViewModel
             hrDisplayMode = 0, // Default for base WorkoutViewModel, overridden in AppViewModel
         )
+        
+        // Only emit if state actually changed
+        if (_screenState.value != newState) {
+            _screenState.value = newState
+        }
     }
 
     private data class SetKey(val exerciseId: UUID, val setId: UUID)
@@ -1711,27 +1784,65 @@ open class WorkoutViewModel(
                 matchesSetHistory(it, set.id, state.setIndex, state.exerciseId)
             }
             
-            if (setHistory == null) return
-            
-            val setData = setHistory.setData
             val now = LocalDateTime.now()
             
             when {
-                set is TimedDurationSet && setData is TimedDurationSetData -> {
+                set is TimedDurationSet -> {
+                    val setData = if (setHistory != null && setHistory.setData is TimedDurationSetData) {
+                        setHistory.setData as TimedDurationSetData
+                    } else {
+                        // No SetHistory exists - check if timer was running based on current state
+                        // This handles Bug 2: Missing SetHistory Entry for In-Progress Timer
+                        val currentSetData = state.currentSetData as? TimedDurationSetData
+                        if (currentSetData != null && currentSetData.endTimer < currentSetData.startTimer && currentSetData.endTimer > 0) {
+                            Log.d(TAG, "Restoring timer from current state (no SetHistory): endTimer=${currentSetData.endTimer}, startTimer=${currentSetData.startTimer}")
+                            currentSetData
+                        } else {
+                            Log.d(TAG, "No timer state found for TimedDurationSet - timer will start from beginning")
+                            return
+                        }
+                    }
+                    
                     // Only restore if timer was running (endTimer < startTimer and endTimer > 0)
                     // This excludes cases where timer finished (endTimer = 0) or never started (endTimer = startTimer)
                     if (setData.endTimer < setData.startTimer && setData.endTimer > 0) {
                         // Calculate elapsed time: startTimer - endTimer
                         val elapsedMillis = setData.startTimer - setData.endTimer
-                        // Restore startTime so that elapsed time matches
-                        state.startTime = now.minusNanos((elapsedMillis * 1_000_000L).toLong())
+                        
+                        // Validate elapsed time is reasonable (not negative, not exceeding startTimer)
+                        if (elapsedMillis > 0 && elapsedMillis <= setData.startTimer) {
+                            // Restore startTime so that elapsed time matches
+                            state.startTime = now.minusNanos((elapsedMillis * 1_000_000L).toLong())
+                            Log.d(TAG, "Restored TimedDurationSet timer: elapsed=${elapsedMillis}ms, remaining=${setData.endTimer}ms")
+                        } else {
+                            Log.w(TAG, "Invalid elapsed time calculated: ${elapsedMillis}ms for timer with startTimer=${setData.startTimer}ms")
+                        }
+                    } else {
+                        Log.d(TAG, "Timer not running or completed: endTimer=${setData.endTimer}, startTimer=${setData.startTimer}")
                     }
                 }
-                set is EnduranceSet && setData is EnduranceSetData -> {
+                set is EnduranceSet -> {
+                    val setData = if (setHistory != null && setHistory.setData is EnduranceSetData) {
+                        setHistory.setData as EnduranceSetData
+                    } else {
+                        // No SetHistory exists - check if timer was running based on current state
+                        val currentSetData = state.currentSetData as? EnduranceSetData
+                        if (currentSetData != null && currentSetData.endTimer > 0) {
+                            Log.d(TAG, "Restoring timer from current state (no SetHistory): endTimer=${currentSetData.endTimer}")
+                            currentSetData
+                        } else {
+                            Log.d(TAG, "No timer state found for EnduranceSet - timer will start from beginning")
+                            return
+                        }
+                    }
+                    
                     // Only restore if timer was running (endTimer > 0)
-                    if (setData.endTimer > 0) {
+                    if (setData.endTimer > 0 && setData.endTimer <= setData.startTimer) {
                         // Restore startTime so that elapsed time matches endTimer
                         state.startTime = now.minusNanos((setData.endTimer * 1_000_000L).toLong())
+                        Log.d(TAG, "Restored EnduranceSet timer: elapsed=${setData.endTimer}ms")
+                    } else {
+                        Log.d(TAG, "Timer not running or invalid: endTimer=${setData.endTimer}, startTimer=${setData.startTimer}")
                     }
                 }
             }
@@ -2600,6 +2711,18 @@ open class WorkoutViewModel(
             is WorkoutState.Set -> {
                 // Use current time as fallback if startTime is null
                 val startTime = currentState.startTime ?: LocalDateTime.now()
+                
+                // Log timer state for debugging (Bug 1 & 3: Track timer persistence)
+                val setData = currentState.currentSetData
+                if (setData is TimedDurationSetData || setData is EnduranceSetData) {
+                    val timerInfo = when (setData) {
+                        is TimedDurationSetData -> "TimedDurationSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
+                        is EnduranceSetData -> "EnduranceSet: startTimer=${setData.startTimer}ms, endTimer=${setData.endTimer}ms, startTime=$startTime"
+                        else -> ""
+                    }
+                    Log.d(TAG, "Storing timer state: $timerInfo")
+                }
+                
                 SetHistory(
                     id = UUID.randomUUID(),
                     setId = currentState.set.id,
@@ -3344,49 +3467,11 @@ open class WorkoutViewModel(
             
             // Insert CalibrationRIRSelection and Rest after current Set state in the container
             val currentFlatIndex = machine.currentIndex
-            var containerSeqIndex = -1
-            var childIndexInContainer = -1
-            var currentFlatPos = 0
-            
-            for ((seqIdx, item) in machine.stateSequence.withIndex()) {
-                when (item) {
-                    is WorkoutStateSequenceItem.Container -> {
-                        when (val container = item.container) {
-                            is WorkoutStateContainer.ExerciseState -> {
-                                if (container.exerciseId == currentState.exerciseId) {
-                                    for ((childIdx, _) in container.childStates.withIndex()) {
-                                        if (currentFlatPos == currentFlatIndex) {
-                                            containerSeqIndex = seqIdx
-                                            childIndexInContainer = childIdx
-                                            break
-                                        }
-                                        currentFlatPos++
-                                    }
-                                } else {
-                                    currentFlatPos += container.childStates.size
-                                }
-                            }
-                            is WorkoutStateContainer.SupersetState -> {
-                                for ((childIdx, _) in container.childStates.withIndex()) {
-                                    if (currentFlatPos == currentFlatIndex) {
-                                        containerSeqIndex = seqIdx
-                                        childIndexInContainer = childIdx
-                                        break
-                                    }
-                                    currentFlatPos++
-                                }
-                            }
-                        }
-                    }
-                    is WorkoutStateSequenceItem.RestBetweenExercises -> {
-                        currentFlatPos++
-                    }
-                }
-                if (containerSeqIndex >= 0) break
-            }
-            
-            if (containerSeqIndex >= 0) {
-                val updatedSequence = machine.stateSequence.mapIndexed { seqIdx, item ->
+            val position = machine.getContainerAndChildIndex(currentFlatIndex)
+            if (position == null) return
+            val (containerSeqIndex, childIndexInContainer) = position
+
+            val updatedSequence = machine.stateSequence.mapIndexed { seqIdx, item ->
                     if (seqIdx == containerSeqIndex) {
                         when (item) {
                             is WorkoutStateSequenceItem.Container -> {
@@ -3411,13 +3496,12 @@ open class WorkoutViewModel(
                         item
                     }
                 }
-                populateNextStateSetsForRest(updatedSequence)
-                stateMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex + 1)
-                updateStateFlowsFromMachine()
-            }
+            populateNextStateSetsForRest(updatedSequence)
+            stateMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex + 1)
+            updateStateFlowsFromMachine()
         }
     }
-    
+
     fun undo() {
         val machine = stateMachine ?: return
         if (machine.isAtStart) return

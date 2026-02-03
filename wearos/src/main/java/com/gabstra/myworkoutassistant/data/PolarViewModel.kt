@@ -341,7 +341,7 @@ class PolarViewModel : ViewModel() {
             .subscribe(
                 { bpm -> 
                     _hrBpm.value = bpm 
-                    Log.d("MyApp", "HR BPM received: $bpm")
+                    //Log.d("MyApp", "HR BPM received: $bpm")
                 },
                 { e -> 
                     android.util.Log.e("MyApp", "HR stream error: $e")

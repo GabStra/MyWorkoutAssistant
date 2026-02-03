@@ -203,56 +203,63 @@ fun HrStatusBadge(
     hrStatus: HeartRateStatus?,
     modifier: Modifier = Modifier
 ) {
+    // Store last non-null status so badge content never dereferences null during recomposition or exit animation.
+    var lastHrStatus by remember { mutableStateOf<HeartRateStatus?>(null) }
+    LaunchedEffect(hrStatus) {
+        if (hrStatus != null) lastHrStatus = hrStatus
+    }
     AnimatedVisibility(
         visible = hrStatus != null,
         enter = fadeIn(animationSpec = tween(durationMillis = 300)),
         exit = fadeOut(animationSpec = tween(durationMillis = 300))
     ) {
-        val status = hrStatus!!
-        val message = when (status) {
-            HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
-            HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
-            HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
-        }
-        val icon = when (status) {
-            HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
-            HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
-            HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
-        }
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(top = 15.dp),
-            contentAlignment = Alignment.TopCenter
-        ) {
+        val status = lastHrStatus
+        if (status != null) {
+            val message = when (status) {
+                HeartRateStatus.HIGHER_THAN_TARGET -> "HR Above Target"
+                HeartRateStatus.LOWER_THAN_TARGET -> "HR Below Target"
+                HeartRateStatus.OUT_OF_MAX -> "Max HR Exceeded"
+            }
+            val icon = when (status) {
+                HeartRateStatus.HIGHER_THAN_TARGET -> Icons.Filled.ArrowUpward
+                HeartRateStatus.LOWER_THAN_TARGET -> Icons.Filled.ArrowDownward
+                HeartRateStatus.OUT_OF_MAX -> Icons.Filled.Warning
+            }
             Box(
-                modifier = Modifier
-                    .background(
-                        color = MaterialTheme.colorScheme.background,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .border(
-                        BorderStroke(1.dp, Red),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .padding(10.dp)
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(top = 15.dp),
+                contentAlignment = Alignment.TopCenter
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.background,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .border(
+                            BorderStroke(1.dp, Red),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .padding(10.dp)
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = "HR Status",
-                        modifier = Modifier.size(15.dp),
-                        tint = Red
-                    )
-                    Spacer(modifier = Modifier.size(5.dp))
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Red,
-                        textAlign = TextAlign.Center
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = "HR Status",
+                            modifier = Modifier.size(15.dp),
+                            tint = Red
+                        )
+                        Spacer(modifier = Modifier.size(5.dp))
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Red,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
@@ -431,7 +438,7 @@ private fun HeartRateDisplay(
             }
         }
         if(bpm != 0){
-            Spacer(modifier = Modifier.width(2.5.dp))
+            Spacer(modifier = Modifier.width(3.dp))
             // Zone chip with black background, colored border, and colored text
             val chipBorderColor = colorsByZone[currentZone]
 

@@ -236,7 +236,7 @@ fun PageCalibrationRIR(
 
                 Text(
                     text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                     color = MediumLighterGray,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()

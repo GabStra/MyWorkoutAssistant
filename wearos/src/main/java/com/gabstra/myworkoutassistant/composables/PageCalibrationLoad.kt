@@ -276,7 +276,7 @@ fun PageCalibrationLoad(
 
                 Text(
                     text = "Select load for $reps reps at 1-2 RIR",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                     color = MediumLighterGray,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()

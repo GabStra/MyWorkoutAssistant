@@ -185,7 +185,7 @@ fun CustomDialogYesOnLongPress(
                         text = message,
                         textAlign = TextAlign.Center,
                         color = MediumLighterGray,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraLight),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Thin),
                         modifier = Modifier
                             .padding(5.dp)
                             .weight(1f)

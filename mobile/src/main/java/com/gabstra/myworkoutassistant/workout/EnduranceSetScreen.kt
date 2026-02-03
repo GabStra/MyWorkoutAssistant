@@ -89,8 +89,13 @@ fun EnduranceSetScreen (
 
     var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
 
-    val previousSet = state.previousSetData as EnduranceSetData
-    var currentSet by remember(set.id) { mutableStateOf(state.currentSetData as EnduranceSetData) }
+    val previousSetStartTimer = remember(state.previousSetData) {
+        (state.previousSetData as? EnduranceSetData)?.startTimer
+    }
+    var currentSet by remember(set.id) {
+        val setData = state.currentSetData as? EnduranceSetData
+        mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
+    }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
 
@@ -111,8 +116,11 @@ fun EnduranceSetScreen (
         }
     }
 
-    LaunchedEffect(currentSet) {
-        state.currentSetData = currentSet
+    LaunchedEffect(currentSet.startTimer) {
+        val setData = state.currentSetData as? EnduranceSetData ?: return@LaunchedEffect
+        if (setData.startTimer != currentSet.startTimer) {
+            state.currentSetData = setData.copy(startTimer = currentSet.startTimer)
+        }
     }
 
     // Sync currentMillis with state.currentSetData.endTimer for UI display
@@ -160,7 +168,8 @@ fun EnduranceSetScreen (
     }
 
     val textComposable = @Composable {
-        val isDifferent = currentSet.startTimer != previousSet.startTimer
+        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
+        val isDifferent = currentSet.startTimer != previousTimer
 
         Row(
             modifier = Modifier
@@ -184,7 +193,7 @@ fun EnduranceSetScreen (
                         onDoubleClick = {
                             if (isTimerInEditMode) {
                                 currentSet = currentSet.copy(
-                                    startTimer = previousSet.startTimer
+                                    startTimer = previousTimer
                                 )
 
                                 hapticsViewModel.doHardVibrationTwice()
@@ -222,27 +231,13 @@ fun EnduranceSetScreen (
 
     val isPaused by viewModel.isPaused
 
-    LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
-        val startedAt = state.startTime
-        if (startedAt != null) {
-            // Elapsed since start
-            val now = LocalDateTime.now()
-            val elapsedMillis = Duration.between(startedAt, now).toMillis()
-                .toInt().coerceAtLeast(0)
-
-            currentMillis = elapsedMillis.coerceAtMost(currentSet.startTimer)
-            isOverLimit = currentMillis >= currentSet.startTimer && !set.autoStop
-
-            if (currentMillis >= currentSet.startTimer && set.autoStop) {
-                // Timer reached limit with autoStop - complete it
-                state.currentSetData = currentSet.copy(endTimer = currentSet.startTimer)
-                viewModel.workoutTimerService.unregisterTimer(set.id)
-                onTimerDisabled()
-                onTimerEnd()
-                return@LaunchedEffect
-            }
-
+    LaunchedEffect(set.id, set.autoStart, isPaused) {
+        // Check if timer has already started (e.g., resuming workout)
+        if (state.startTime != null) {
+            // Timer has started - ensure it's registered with service
+            // Don't check for completion here - let WorkoutTimerService handle it
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+                // Timer should be running - register if not already registered
                 startTimer()
             }
             return@LaunchedEffect

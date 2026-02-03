@@ -129,7 +129,7 @@ fun PagePlates(
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -143,7 +143,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
+                        style = baseStyle.copy(fontWeight = FontWeight.Thin),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
@@ -154,7 +154,7 @@ fun PagePlates(
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.ExtraLight)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -168,7 +168,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.ExtraLight),
+                        style = baseStyle.copy(fontWeight = FontWeight.Thin),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier

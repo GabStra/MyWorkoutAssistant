@@ -328,7 +328,7 @@ fun WorkoutSelectionScreen(
                                 .animateItem(),
                             text = "Enable Alarms for scheduled workouts",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                             color = MediumLighterGray
                         )
                     }
@@ -372,7 +372,7 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Complete configuration on the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                                 color = MediumLighterGray
                             )
                         } else {
@@ -384,7 +384,7 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Install the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                                 color = MediumLighterGray
                             )
                         }
@@ -425,7 +425,7 @@ fun WorkoutSelectionScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = "No Workouts Available",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraLight),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
                                 color = MediumLighterGray
                             )
                         }

@@ -244,6 +244,15 @@ fun WorkoutScreen(
                 if(!selectedWorkout.usePolarDevice){
                     hrViewModel.stopMeasuringHeartRate()
                 }
+                // Flush timer state to database before app pauses/closes
+                // This ensures timer progress is persisted even if app is killed
+                scope.launch {
+                    try {
+                        viewModel.flushTimerState()
+                    } catch (exception: Exception) {
+                        android.util.Log.e("WorkoutScreen", "Error flushing timer state", exception)
+                    }
+                }
             } catch (exception: Exception) {
                 android.util.Log.e("WorkoutScreen", "Error stopping heart rate measurement", exception)
             }
@@ -487,7 +496,7 @@ fun WorkoutScreen(
         LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
         
         // Sync status badge (non-blocking)
-        SyncStatusBadge(viewModel = viewModel)
+        //SyncStatusBadge(viewModel = viewModel)
         
         // HR target indicators (non-blocking)
         HrTargetGlowEffect(isVisible = hrStatus != null)

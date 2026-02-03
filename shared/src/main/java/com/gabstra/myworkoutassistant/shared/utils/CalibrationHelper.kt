@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
+import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationContext
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 
 object CalibrationHelper {
@@ -64,9 +65,36 @@ object CalibrationHelper {
 
     /**
      * Returns true when the given set is a work set whose weight should be shown as "Pending"
-     * because calibration is not yet complete. This includes: CalibrationLoadSelection or
-     * CalibrationRIRSelection for this exercise, being on the calibration set, or being on a
-     * warmup set that comes before the calibration set for this exercise.
+     * because calibration is not yet complete. Uses [CalibrationContext] when provided so no
+     * scanning of [allWorkoutStates] is needed.
+     *
+     * @param setState The set state for the row being rendered
+     * @param calibrationContext Current calibration context from the ViewModel, or null to use fallback
+     * @param isCalibrationEnabled Whether the exercise requires load calibration
+     * @param isWarmupSet Whether the row's set is a warmup set
+     * @param isCalibrationSet Whether the row's set is the calibration set (by subCategory)
+     * @param isFutureExercise Whether this exercise has not been reached yet in the workout
+     * @return true if work set weight should display "Pending"
+     */
+    fun isPendingCalibration(
+        setState: WorkoutState.Set,
+        calibrationContext: CalibrationContext?,
+        isCalibrationEnabled: Boolean,
+        isWarmupSet: Boolean,
+        isCalibrationSet: Boolean,
+        isFutureExercise: Boolean
+    ): Boolean {
+        if (!isCalibrationEnabled || isWarmupSet || isCalibrationSet || setState.isCalibrationSet) return false
+        if (calibrationContext != null) {
+            return isFutureExercise || calibrationContext.exerciseId == setState.exerciseId
+        }
+        return isFutureExercise
+    }
+
+    /**
+     * Returns true when the given set is a work set whose weight should be shown as "Pending"
+     * because calibration is not yet complete. Scans [allWorkoutStates]; prefer
+     * [isPendingCalibration(setState, calibrationContext, ...)] when context is available.
      *
      * @param currentWorkoutState The current workout state from the state machine
      * @param allWorkoutStates The full ordered list of workout states
