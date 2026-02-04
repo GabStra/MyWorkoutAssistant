@@ -52,15 +52,15 @@ import java.util.UUID
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
-fun RestScreen(
+private fun RestTimerBlock(
+    set: RestSet,
+    state: WorkoutState.Rest,
     viewModel: WorkoutViewModel,
     hapticsViewModel: HapticsViewModel,
-    state: WorkoutState.Rest,
-    hearthRateChart: @Composable () -> Unit,
     onTimerEnd: () -> Unit,
+    skipConfirmAction: androidx.compose.runtime.MutableState<(() -> Unit)?>,
+    restartTimerAction: androidx.compose.runtime.MutableState<(() -> Unit)?>,
 ) {
-    val set = state.set as RestSet
-
     val scope = rememberCoroutineScope()
     var timerJob by remember { mutableStateOf<Job?>(null) }
 
@@ -72,101 +72,28 @@ fun RestScreen(
 
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
-
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
-
     var currentSecondsFreeze by remember { mutableIntStateOf(0) }
     var amountToWaitFreeze by remember { mutableIntStateOf(0) }
-
     var isTimerInEditMode by remember { mutableStateOf(false) }
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var hasBeenStartedOnce by remember { mutableStateOf(false) }
 
-    val indicatorProgress = remember(currentSeconds,amountToWait,currentSecondsFreeze,amountToWaitFreeze,isTimerInEditMode) {
-        if(isTimerInEditMode){
+    val indicatorProgress = remember(currentSeconds, amountToWait, currentSecondsFreeze, amountToWaitFreeze, isTimerInEditMode) {
+        if (isTimerInEditMode) {
             currentSecondsFreeze.toFloat() / amountToWaitFreeze.toFloat()
-        }else{
+        } else {
             currentSeconds.toFloat() / amountToWait.toFloat()
         }
     }
 
-
-    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
-
-    var hasBeenStartedOnce by remember { mutableStateOf(false) }
-    val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
-
-    val exercise = remember(state.nextStateSets.first().exerciseId) {
-        viewModel.exercisesById[state.nextStateSets.first().exerciseId]!!
-    }
-    val equipment = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
-    }
-
-    val showPlatesPage = remember(exercise, equipment) {
-        equipment != null
-                && equipment.type == EquipmentType.BARBELL
-                && equipment.name.contains("barbell", ignoreCase = true)
-                && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
-    }
-
-    val pageTypes = remember(showPlatesPage) {
-        mutableListOf<PageType>().apply {
-            if (showPlatesPage) add(PageType.PLATES)
-            add(PageType.EXERCISES)
-            add(PageType.BUTTONS)
-        }
-    }
-
-    val exercisesPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISES)
-    }
-
-    val exerciseDetailPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.EXERCISES)
-    }
-
-    val platesPageIndex = remember(pageTypes) {
-        pageTypes.indexOf(PageType.PLATES)
-    }
-
-    val pagerState = rememberPagerState(
-        initialPage = exerciseDetailPageIndex,
-        pageCount = {
-            pageTypes.size
-        }
-    )
-
-    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
-
-    val updateInteractionTime = {
-        lastInteractionTime = System.currentTimeMillis()
-    }
-
-
-    LaunchedEffect(currentSetData) {
-        state.currentSetData = currentSetData
-    }
-
-    LaunchedEffect(pagerState.currentPage) {
-        val isOnPlatesPage = pagerState.currentPage == platesPageIndex
-
-        if (isOnPlatesPage) {
-            viewModel.setDimming(false)
-        } else {
-            viewModel.reEvaluateDimmingForCurrentState()
-        }
-
-        if(pagerState.currentPage != exercisesPageIndex){
-            selectedExerciseId = null
-        }
-    }
+    val updateInteractionTime = { lastInteractionTime = System.currentTimeMillis() }
 
     fun onMinusClick() {
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
             amountToWait = amountToWait - 5
             amountToWaitFreeze = amountToWait
-
-            //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer - 5)
             currentSeconds = newTimerValue
             currentSecondsFreeze = newTimerValue
             hapticsViewModel.doGentleVibration()
@@ -178,7 +105,6 @@ fun RestScreen(
         val newTimerValue = currentSeconds + 5
         amountToWait = amountToWait + 5
         amountToWaitFreeze = amountToWait
-        //currentSetData = currentSetData.copy(startTimer = currentSetData.startTimer + 5)
         currentSeconds = newTimerValue
         currentSecondsFreeze = newTimerValue
         hapticsViewModel.doGentleVibration()
@@ -188,35 +114,31 @@ fun RestScreen(
     fun startTimerJob() {
         timerJob?.cancel()
         timerJob = scope.launch {
-            // Calculate the next second boundary
-            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000 // round UP
+            var nextExecutionTime = ((SystemClock.elapsedRealtime() / 1000) + 1) * 1000
             while (currentSeconds > 0) {
                 val waitTime = (nextExecutionTime - SystemClock.elapsedRealtime()).coerceAtLeast(0)
                 delay(waitTime)
-
                 currentSeconds -= 1
-
-                if(currentSeconds == 5){
-                    viewModel.lightScreenUp()
-                }
-
-                currentSetData = currentSetData.copy(
-                    endTimer = currentSeconds
-                )
-
-                nextExecutionTime += 1000 // Schedule next second
+                if (currentSeconds == 5) viewModel.lightScreenUp()
+                currentSetData = currentSetData.copy(endTimer = currentSeconds)
+                nextExecutionTime += 1000
             }
-
-            state.currentSetData = currentSetData.copy(
-                endTimer = 0
-            )
+            state.currentSetData = currentSetData.copy(endTimer = 0)
             hapticsViewModel.doHardVibration()
             onTimerEnd()
         }
+        if (!hasBeenStartedOnce) hasBeenStartedOnce = true
+    }
 
-        if (!hasBeenStartedOnce) {
-            hasBeenStartedOnce = true
-        }
+    skipConfirmAction.value = {
+        state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
+        viewModel.closeCustomDialog()
+        onTimerEnd()
+    }
+    restartTimerAction.value = { startTimerJob() }
+
+    LaunchedEffect(currentSetData) {
+        state.currentSetData = currentSetData
     }
 
     LaunchedEffect(isTimerInEditMode) {
@@ -224,56 +146,47 @@ fun RestScreen(
             if (System.currentTimeMillis() - lastInteractionTime > 2000) {
                 isTimerInEditMode = false
             }
-            delay(1000) // Check every second
+            delay(1000)
         }
     }
 
     LaunchedEffect(set.id) {
         delay(500)
         startTimerJob()
-
         if (state.startTime == null) {
             state.startTime = LocalDateTime.now()
         }
     }
 
     val isPaused by viewModel.isPaused
-
     LaunchedEffect(isPaused) {
-        if (!hasBeenStartedOnce) {
-            return@LaunchedEffect
-        }
-
+        if (!hasBeenStartedOnce) return@LaunchedEffect
         if (isPaused) {
             timerJob?.takeIf { it.isActive }?.cancel()
         } else {
-            if (timerJob?.isActive != true) {
-                startTimerJob()
-            }
+            if (timerJob?.isActive != true) startTimerJob()
         }
     }
 
     @Composable
-    fun textComposable(seconds:Int,modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.bodySmall){
+    fun textComposable(seconds: Int, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.bodySmall) {
         Row(
-            modifier = modifier
-                .fillMaxWidth(),
+            modifier = modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             TimeViewer(
-                modifier = Modifier
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = {
-                            currentSecondsFreeze = currentSeconds
-                            amountToWaitFreeze = amountToWait
-                            isTimerInEditMode = !isTimerInEditMode
-                            updateInteractionTime()
-                            hapticsViewModel.doGentleVibration()
-                        },
-                        onDoubleClick = {}
-                    ),
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        currentSecondsFreeze = currentSeconds
+                        amountToWaitFreeze = amountToWait
+                        isTimerInEditMode = !isTimerInEditMode
+                        updateInteractionTime()
+                        hapticsViewModel.doGentleVibration()
+                    },
+                    onDoubleClick = {}
+                ),
                 seconds = seconds,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -281,73 +194,125 @@ fun RestScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-        .fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
-    ){
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        )
-        {
-            AnimatedContent(
-                modifier = Modifier.fillMaxSize(),
-                targetState = isTimerInEditMode,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                }, label = ""
-            ) { updatedState ->
-                if (updatedState) {
-                    ControlButtonsVertical(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clickable(
-                                interactionSource = null,
-                                indication = null
-                            ) {
-                                updateInteractionTime()
-                            },
-                        onMinusTap = { onMinusClick() },
-                        onMinusLongPress = { onMinusClick() },
-                        onPlusTap = { onPlusClick() },
-                        onPlusLongPress = { onPlusClick() },
-                        content = {
-                            textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.displaySmall.copy(fontWeight = W700))
-                        }
+    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        AnimatedContent(
+            modifier = Modifier.fillMaxSize(),
+            targetState = isTimerInEditMode,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+            },
+            label = ""
+        ) { updatedState ->
+            if (updatedState) {
+                ControlButtonsVertical(
+                    modifier = Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) { updateInteractionTime() },
+                    onMinusTap = { onMinusClick() },
+                    onMinusLongPress = { onMinusClick() },
+                    onPlusTap = { onPlusClick() },
+                    onPlusLongPress = { onPlusClick() },
+                    content = {
+                        textComposable(seconds = currentSecondsFreeze, style = MaterialTheme.typography.displaySmall.copy(fontWeight = W700))
+                    }
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp, alignment = Alignment.CenterVertically)) {
+                    textComposable(
+                        seconds = if (isTimerInEditMode) currentSecondsFreeze else currentSeconds,
+                        style = MaterialTheme.typography.displayLarge.copy(fontWeight = W700)
                     )
-                } else {
-
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp,alignment = Alignment.CenterVertically)) {
-                        textComposable(
-                            seconds = if(isTimerInEditMode) currentSecondsFreeze else currentSeconds,
-                            style = MaterialTheme.typography.displayLarge.copy(fontWeight = W700)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ){
-                            Button(
-                                onClick = {
-                                    hapticsViewModel.doGentleVibration()
-                                    viewModel.openCustomDialog()
-                                    viewModel.lightScreenUp()
-                                },
-                            ) {
-                                Text(
-                                    text = "Skip",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Button(
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                viewModel.openCustomDialog()
+                                viewModel.lightScreenUp()
                             }
+                        ) {
+                            Text(text = "Skip", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
+@Composable
+fun RestScreen(
+    viewModel: WorkoutViewModel,
+    hapticsViewModel: HapticsViewModel,
+    state: WorkoutState.Rest,
+    hearthRateChart: @Composable () -> Unit,
+    onTimerEnd: () -> Unit,
+) {
+    val set = state.set as RestSet
+    val showSkipDialog by viewModel.isCustomDialogOpen.collectAsState()
+
+    val skipConfirmAction = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val restartTimerAction = remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val exerciseIdFromNext = when (val n = state.nextState) {
+        is WorkoutState.Set -> n.exerciseId
+        is WorkoutState.CalibrationLoadSelection -> n.exerciseId
+        is WorkoutState.CalibrationRIRSelection -> n.exerciseId
+        else -> state.exerciseId
+    }
+    val exercise = remember(exerciseIdFromNext, state.exerciseId) {
+        val eid = exerciseIdFromNext ?: state.exerciseId
+        if (eid != null) viewModel.exercisesById[eid]!!
+        else viewModel.exercisesById.values.firstOrNull() ?: throw IllegalStateException("No exercises available")
+    }
+    val equipment = remember(exercise) {
+        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
+    }
+
+    val showPlatesPage = remember(exercise, equipment) {
+        equipment != null
+            && equipment.type == EquipmentType.BARBELL
+            && equipment.name.contains("barbell", ignoreCase = true)
+            && (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+    }
+
+    val pageTypes = remember(showPlatesPage) {
+        mutableListOf<PageType>().apply {
+            if (showPlatesPage) add(PageType.PLATES)
+            add(PageType.EXERCISES)
+            add(PageType.BUTTONS)
+        }
+    }
+
+    val exercisesPageIndex = remember(pageTypes) { pageTypes.indexOf(PageType.EXERCISES) }
+    val exerciseDetailPageIndex = remember(pageTypes) { pageTypes.indexOf(PageType.EXERCISES) }
+    val platesPageIndex = remember(pageTypes) { pageTypes.indexOf(PageType.PLATES) }
+
+    val pagerState = rememberPagerState(initialPage = exerciseDetailPageIndex, pageCount = { pageTypes.size })
+    var selectedExerciseId by remember { mutableStateOf<UUID?>(null) }
+
+    LaunchedEffect(pagerState.currentPage) {
+        val isOnPlatesPage = pagerState.currentPage == platesPageIndex
+        if (isOnPlatesPage) viewModel.setDimming(false)
+        else viewModel.reEvaluateDimmingForCurrentState()
+        if (pagerState.currentPage != exercisesPageIndex) selectedExerciseId = null
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        RestTimerBlock(
+            set = set,
+            state = state,
+            viewModel = viewModel,
+            hapticsViewModel = hapticsViewModel,
+            onTimerEnd = onTimerEnd,
+            skipConfirmAction = skipConfirmAction,
+            restartTimerAction = restartTimerAction,
+        )
 
         CustomHorizontalPager(
             modifier = Modifier
@@ -358,25 +323,41 @@ fun RestScreen(
             val pageType = pageTypes[pageIndex]
 
             when (pageType) {
-                PageType.PLATES -> PagePlates(state.nextStateSets.first(), equipment)
+                PageType.PLATES -> {
+                    val setStateForPlates = (state.nextState as? WorkoutState.Set)
+                        ?: viewModel.getFirstSetStateAfterCurrent()
+                    if (setStateForPlates != null) {
+                        PagePlates(setStateForPlates, equipment)
+                    }
+                }
                 PageType.EXERCISE_DETAIL -> {}
                 PageType.EXERCISES -> {
-                    PageExercises(
-                        state.nextStateSets.first(),
-                        viewModel,
-                        hapticsViewModel,
-                        exercise,
-                        onExerciseSelected = {
-                            selectedExerciseId = it
-                        }
-                    )
+                    val setStateForExercises = (state.nextState as? WorkoutState.Set)
+                        ?: viewModel.getFirstSetStateAfterCurrent()
+                    if (setStateForExercises != null) {
+                        PageExercises(
+                            workoutState = setStateForExercises,
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            currentExercise = exercise,
+                            onExerciseSelected = {
+                                selectedExerciseId = it
+                            }
+                        )
+                    }
                 }
 
-                PageType.BUTTONS ->  PageButtons(
-                    state.nextStateSets.first(),
-                    viewModel,
-                    hapticsViewModel
-                )
+                PageType.BUTTONS -> {
+                    val setStateForButtons = (state.nextState as? WorkoutState.Set)
+                        ?: viewModel.getFirstSetStateAfterCurrent()
+                    if (setStateForButtons != null) {
+                        PageButtons(
+                            setStateForButtons,
+                            viewModel,
+                            hapticsViewModel
+                        )
+                    }
+                }
 
                 PageType.NOTES -> {}
                 PageType.MUSCLES -> {}
@@ -390,22 +371,18 @@ fun RestScreen(
         title = "Skip Rest",
         message = "Do you want to proceed?",
         handleYesClick = {
-            state.currentSetData = currentSetData.copy(
-                endTimer = currentSeconds
-            )
             hapticsViewModel.doGentleVibration()
-            onTimerEnd()
-            viewModel.closeCustomDialog()
+            skipConfirmAction.value?.invoke()
         },
         handleNoClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.closeCustomDialog()
-            startTimerJob()
+            restartTimerAction.value?.invoke()
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = {
             viewModel.closeCustomDialog()
-            startTimerJob()
+            restartTimerAction.value?.invoke()
         },
         holdTimeInMillis = 1000,
         onVisibilityChange = { isVisible ->

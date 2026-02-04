@@ -127,15 +127,7 @@ fun TimedDurationSetScreen(
         }
     }
 
-    // Sync currentMillis with state.currentSetData.endTimer for UI display
-    // The timer service updates state.currentSetData.endTimer, so we read from it
     var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
-    
-    // Update currentMillis when state changes (from timer service or local edits)
-    LaunchedEffect(state.currentSetData) {
-        val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
-        currentMillis = setData.endTimer
-    }
     var showStopDialog by remember { mutableStateOf(false) }
 
 
@@ -144,9 +136,11 @@ fun TimedDurationSetScreen(
         // Prevent multiple simultaneous countdowns
         if (displayStartingDialog || countdownInitiated) return
 
+        // Set guard flags first to prevent race conditions
         countdownInitiated = true
-        countdownValue = 3
         displayStartingDialog = true
+        // Ensure countdownValue is set to 3 after dialog is shown to prevent brief flash
+        countdownValue = 3
         try {
             delay(500)
             hapticsViewModel.doHardVibration()
@@ -209,8 +203,10 @@ fun TimedDurationSetScreen(
 
     val isPaused by viewModel.isPaused
 
-    LaunchedEffect(set.id, set.autoStart, isPaused, state.startTime) {
+    LaunchedEffect(set.id, set.autoStart, isPaused) {
         // Check if timer has already started (e.g., resuming workout)
+        // Note: state.startTime check is inside the effect, not a dependency, to prevent
+        // double-triggering when state.startTime changes from null to a value
         if (state.startTime != null) {
             // Timer has started - ensure it's registered with service
             // Don't check for completion here - let WorkoutTimerService handle it
@@ -253,10 +249,12 @@ fun TimedDurationSetScreen(
         }
     }
 
-    val textComposable = @Composable {
-        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
-        val isDifferent = currentSet.startTimer != previousTimer
-
+    @Composable
+    fun TimedDurationRunningDisplay(initialMillis: Int) {
+        val setData = state.currentSetData as? TimedDurationSetData
+        val displayMillis = setData?.endTimer ?: initialMillis
+        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
+        val isDifferent = displayMillis != previousTimer
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -265,8 +263,36 @@ fun TimedDurationSetScreen(
             TimeViewer(
                 modifier = Modifier
                     .combinedClickable(
-                        onClick = {
+                        onClick = {},
+                        onLongClick = {
+                            if (showStartButton) {
+                                isTimerInEditMode = !isTimerInEditMode
+                                updateInteractionTime()
+                                hapticsViewModel.doGentleVibration()
+                            }
                         },
+                        onDoubleClick = {}
+                    )
+                    .semantics { contentDescription = SetValueSemantics.TimedDurationValueDescription },
+                seconds = displayMillis / 1000,
+                style = itemStyle,
+                color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+            )
+        }
+    }
+
+    val textComposable = @Composable {
+        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
+        val isDifferent = currentSet.startTimer != previousTimer
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TimeViewer(
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = {},
                         onLongClick = {
                             if (showStartButton) {
                                 isTimerInEditMode = !isTimerInEditMode
@@ -283,9 +309,7 @@ fun TimedDurationSetScreen(
                             }
                         }
                     )
-                    .semantics {
-                        contentDescription = SetValueSemantics.TimedDurationValueDescription
-                    },
+                    .semantics { contentDescription = SetValueSemantics.TimedDurationValueDescription },
                 seconds = currentMillis / 1000,
                 style = itemStyle,
                 color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
@@ -305,7 +329,11 @@ fun TimedDurationSetScreen(
                 style = headerStyle,
                 textAlign = TextAlign.Center,
             )
-            textComposable()
+            if (isTimerInEditMode) {
+                textComposable()
+            } else {
+                TimedDurationRunningDisplay(initialMillis = currentSet.startTimer)
+            }
 
             if (showStartButton) {
                 IconButton(
@@ -413,10 +441,6 @@ fun TimedDurationSetScreen(
             message = "Do you want to proceed?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
-                state.currentSetData = currentSet.copy(
-                    endTimer = currentMillis
-                )
-
                 onTimerDisabled()
                 onTimerEnd()
             },

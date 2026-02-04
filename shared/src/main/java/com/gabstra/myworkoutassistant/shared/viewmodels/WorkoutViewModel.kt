@@ -172,8 +172,10 @@ open class WorkoutViewModel(
     }
 
     fun setDimming(shouldDim: Boolean) {
-        _currentScreenDimmingState.value = shouldDim
-        rebuildScreenState()
+        if (_currentScreenDimmingState.value != shouldDim) {
+            _currentScreenDimmingState.value = shouldDim
+            rebuildScreenState()
+        }
     }
 
     fun lightScreenUp() {
@@ -184,13 +186,18 @@ open class WorkoutViewModel(
 
     fun reEvaluateDimmingForCurrentState() {
         val currentState = workoutState.value
-        if (currentState is WorkoutState.Set) {
-            val exercise = exercisesById[currentState.exerciseId]!!
-            _currentScreenDimmingState.value = !exercise.keepScreenOn
-        } else if (currentState is WorkoutState.Rest) {
-            _currentScreenDimmingState.value = true
+        val newDimming = when (currentState) {
+            is WorkoutState.Set -> {
+                val exercise = exercisesById[currentState.exerciseId]!!
+                !exercise.keepScreenOn
+            }
+            is WorkoutState.Rest -> true
+            else -> return
         }
-        rebuildScreenState()
+        if (_currentScreenDimmingState.value != newDimming) {
+            _currentScreenDimmingState.value = newDimming
+            rebuildScreenState()
+        }
     }
 
     var workoutStore by mutableStateOf(
@@ -1173,8 +1180,8 @@ open class WorkoutViewModel(
                 // Find the resumption index using WorkoutRecord (primary) or SetHistory (fallback)
                 val resumptionIndex = findResumptionIndex(filteredStates, executedSetsHistorySnapshot)
                 
-                // Populate nextStateSets for Rest states
-                populateNextStateSetsForRest(updatedSequence)
+                // Populate nextState for Rest states
+                populateNextStateForRest(updatedSequence)
                 
                 // Populate setStates from allWorkoutStates
                 populateNextStateSets()
@@ -1191,6 +1198,15 @@ open class WorkoutViewModel(
     fun getAllExerciseWorkoutStates(exerciseId: UUID): List<WorkoutState.Set> {
         return allWorkoutStates.filterIsInstance<WorkoutState.Set>()
             .filter { it.exerciseId == exerciseId }
+    }
+
+    /**
+     * Returns the ordered list of workout states associated with the exercise (from the exercise's
+     * container in the state machine: ExerciseState.childStates or filtered SupersetState.childStates).
+     * Includes Set, CalibrationLoadSelection, and CalibrationRIRSelection in schedule order.
+     */
+    fun getStatesForExercise(exerciseId: UUID): List<WorkoutState> {
+        return stateMachine?.getStatesForExercise(exerciseId) ?: emptyList()
     }
 
     /**
@@ -1947,8 +1963,8 @@ open class WorkoutViewModel(
                     applyProgressions()
                     val workoutSequence = generateWorkoutStates()
 
-                    // Populate nextStateSets for Rest states
-                    populateNextStateSetsForRest(workoutSequence)
+                    // Populate nextState for Rest states
+                    populateNextStateForRest(workoutSequence)
                     
                     // Initialize state machine (without Completed state - will be added in setWorkoutStart())
                     stateMachine = initializeStateMachine(workoutSequence, 0)
@@ -2154,8 +2170,8 @@ open class WorkoutViewModel(
 
             val workoutSequence = generateWorkoutStates()
             
-            // Populate nextStateSets for Rest states
-            populateNextStateSetsForRest(workoutSequence)
+            // Populate nextState for Rest states
+            populateNextStateForRest(workoutSequence)
 
             // Initialize new state machine starting at the beginning
             var newMachine = initializeStateMachine(workoutSequence, 0)
@@ -2665,7 +2681,7 @@ open class WorkoutViewModel(
 
                 // Update WorkoutStore with the modified workout components if any changes were made
                 if (updatedWorkoutComponents != workoutComponents) {
-                    val finalWorkoutStore = currentWorkoutStore.copy(workouts = currentWorkoutStore.workouts.map {
+                    val finalWorkoutStore = newWorkoutStore.copy(workouts = newWorkoutStore.workouts.map {
                         if (it.id == _selectedWorkout.value.id) {
                             it.copy(workoutComponents = updatedWorkoutComponents)
                         } else {
@@ -2975,10 +2991,6 @@ open class WorkoutViewModel(
     }
 
     /**
-     * Populates the nextStateSets property for all Rest states in the given list.
-     * For each Rest state, looks ahead to find the next Set states until another Rest state is encountered.
-     */
-    /**
      * Populates setStates from allWorkoutStates (extracted from state machine).
      * This maintains the setStates list for backward compatibility.
      */
@@ -2991,10 +3003,10 @@ open class WorkoutViewModel(
     }
 
     /**
-     * Populates nextStateSets for Rest states in a sequence.
-     * Updates Rest states with the sets that come after them.
+     * Populates nextState for all Rest states in the sequence.
+     * For each Rest at index i, sets rest.nextState = allStates.getOrNull(i + 1).
      */
-    internal fun populateNextStateSetsForRest(sequence: List<WorkoutStateSequenceItem>) {
+    internal fun populateNextStateForRest(sequence: List<WorkoutStateSequenceItem>) {
         val allStates = sequence.flatMap { item ->
             when (item) {
                 is WorkoutStateSequenceItem.Container -> {
@@ -3006,29 +3018,23 @@ open class WorkoutViewModel(
                 is WorkoutStateSequenceItem.RestBetweenExercises -> listOf(item.rest)
             }
         }
-        
         for (i in allStates.indices) {
             val currentState = allStates[i]
-            if (currentState !is WorkoutState.Rest) continue
-
-            val nextSets = mutableListOf<WorkoutState.Set>()
-
-            // Look ahead until we find another Rest state or reach the end
-            var j = i + 1
-            while (j < allStates.size) {
-                val nextState = allStates[j]
-                if (nextState is WorkoutState.Rest) {
-                    break
-                }
-                if (nextState is WorkoutState.Set) {
-                    nextSets.add(nextState)
-                }
-                j++
+            if (currentState is WorkoutState.Rest) {
+                currentState.nextState = allStates.getOrNull(i + 1)
             }
-
-            // Update the Rest state with the collected nextSets
-            currentState.nextStateSets = nextSets
         }
+    }
+
+    /**
+     * Returns the first WorkoutState.Set in the flattened state list after the current index.
+     * Used when the next state is not a Set (e.g. CalibrationLoadSelection) but a component needs a Set.
+     */
+    fun getFirstSetStateAfterCurrent(): WorkoutState.Set? {
+        val machine = stateMachine ?: return null
+        val idx = machine.currentIndex
+        val states = machine.allStates
+        return states.drop(idx + 1).firstOrNull { it is WorkoutState.Set } as? WorkoutState.Set
     }
 
     protected fun getPlateChangeResults(
@@ -3201,7 +3207,7 @@ open class WorkoutViewModel(
                     exercise = exercise,
                     priorExercises = priorExercises,
                     initialSetup = emptyList(),
-                    maxWarmups = 4
+                    maxWarmups = 3
                 )
             } else {
                 WarmupPlanner.buildWarmupSets(
@@ -3211,7 +3217,7 @@ open class WorkoutViewModel(
                     exercise = exercise,
                     priorExercises = priorExercises,
                     equipment = equipment,
-                    maxWarmups = 4
+                    maxWarmups = 3
                 )
             }
 
@@ -3373,7 +3379,7 @@ open class WorkoutViewModel(
                             set = restSet,
                             order = index.toUInt(),
                             currentSetDataState = mutableStateOf(initializeSetData(restSet)),
-                            nextStateSets = listOf(setState),
+                            nextState = setState,
                             exerciseId = exercise.id,
                             isIntraSetRest = true
                         )
@@ -3519,7 +3525,7 @@ open class WorkoutViewModel(
                         item
                     }
                 }
-            populateNextStateSetsForRest(updatedSequence)
+            populateNextStateForRest(updatedSequence)
             stateMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex + 1)
             updateStateFlowsFromMachine()
         }
@@ -3530,6 +3536,36 @@ open class WorkoutViewModel(
         if (machine.isAtStart) return
         
         stateMachine = machine.undo()
+        updateStateFlowsFromMachine()
+    }
+
+    /**
+     * Navigates to the previous non-Rest state by searching backwards through allStates.
+     * Skips Rest states (including RestBetweenExercises and intra-set rest).
+     * Useful when going back from CalibrationLoadSelection to skip any Rest states
+     * and go directly to the previous Set or other non-Rest state.
+     */
+    fun goToPreviousNonRestState() {
+        val machine = stateMachine ?: return
+        if (machine.isAtStart) return
+
+        // Search backwards to find first non-Rest state
+        var targetIndex = -1
+        for (i in machine.currentIndex - 1 downTo 0) {
+            val state = machine.allStates[i]
+            if (state !is WorkoutState.Rest) {
+                targetIndex = i
+                break
+            }
+        }
+
+        // If no previous non-Rest state found, return early
+        if (targetIndex < 0) {
+            return
+        }
+
+        // Navigate directly to the target state using state machine
+        stateMachine = WorkoutStateMachine.fromSequence(machine.stateSequence, { LocalDateTime.now() }, targetIndex)
         updateStateFlowsFromMachine()
     }
 
@@ -3836,6 +3872,14 @@ open class WorkoutViewModel(
         updateStateFlowsFromMachine()
     }
 
+    /**
+     * Navigates to the previous Set state, skipping Rest states and calibration states.
+     * 
+     * Handles calibration states correctly:
+     * - When called from CalibrationLoadSelection, finds the previous non-calibration Set state
+     * - Skips calibration sets (isCalibrationSet) to avoid re-entering calibration flow
+     * - Calibration context will be cleared when navigating to a non-calibration Set
+     */
     fun goToPreviousSet() {
         val machine = stateMachine ?: return
         if (machine.isAtStart) return
@@ -3847,26 +3891,30 @@ open class WorkoutViewModel(
             return
         }
 
-        // Get current set.id (works for both Set and Rest states)
+        // Get current set.id (works for Set, Rest, and calibration states)
         val currentSetId = when (currentState) {
             is WorkoutState.Set -> currentState.set.id
             is WorkoutState.Rest -> currentState.set.id
+            is WorkoutState.CalibrationLoadSelection -> currentState.calibrationSet.id
+            is WorkoutState.CalibrationRIRSelection -> currentState.calibrationSet.id
             else -> return
         }
 
         // Search backwards through allStates to find the previous Set state with different set.id
         // Start from currentIndex - 1 (the state before current) and go backwards to 0
+        // Skip calibration states (CalibrationLoadSelection, CalibrationRIRSelection) and Rest states
         var targetIndex = -1
         for (i in machine.currentIndex - 1 downTo 0) {
             val state = machine.allStates[i]
             if (state is WorkoutState.Set) {
                 // Found a Set state - check if it has a different set.id
-                if (state.set.id != currentSetId) {
+                // Also skip calibration sets (isCalibrationSet) to avoid going back to calibration flow
+                if (state.set.id != currentSetId && !state.isCalibrationSet) {
                     targetIndex = i
                     break
                 }
             }
-            // Skip Rest states and continue searching
+            // Skip Rest states and calibration states, continue searching
         }
 
         // If no previous Set state found, return early

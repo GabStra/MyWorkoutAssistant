@@ -1,13 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
@@ -22,16 +17,12 @@ import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 @Composable
 fun ExerciseMetadataStrip(
     modifier: Modifier = Modifier,
-    exerciseLabel: String? = null,
-    supersetExerciseLabel: String? = null,
     supersetExerciseIndex: Int? = null,
     supersetExerciseTotal: Int? = null,
     setLabel: String? = null,
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
     isUnilateral: Boolean = false,
-    equipmentName: String? = null,
-    accessoryNames: String? = null,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     onTap: (() -> Unit)? = null,
 ) {
@@ -40,14 +31,12 @@ fun ExerciseMetadataStrip(
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
 
     val metadataText = remember(
-        exerciseLabel,
-        supersetExerciseLabel,
+        supersetExerciseIndex,
+        supersetExerciseTotal,
         setLabel,
         sideIndicator,
         currentSideIndex,
         isUnilateral,
-        equipmentName,
-        accessoryNames,
         baseStyle,
         primaryColor,
         surfaceContainerHigh
@@ -75,15 +64,8 @@ fun ExerciseMetadataStrip(
                     first = false
                 }
 
-                exerciseLabel?.let {
-                    sep()
-                    append("Ex: ")
-                    append(it)
-                }
-
                 if (supersetExerciseTotal != null && supersetExerciseIndex != null) {
                     sep()
-                    pipe()
                     (0 until supersetExerciseTotal).forEach { i ->
                         if (i > 0) {
                             separator()
@@ -121,18 +103,6 @@ fun ExerciseMetadataStrip(
                 if (isUnilateral) {
                     sep()
                     append("Unilateral")
-                }
-
-                equipmentName?.let {
-                    sep()
-                    append("Eq: ")
-                    append(it)
-                }
-
-                accessoryNames?.takeIf { it.isNotEmpty() }?.let {
-                    sep()
-                    append("Acc: ")
-                    append(it)
                 }
             }
         }

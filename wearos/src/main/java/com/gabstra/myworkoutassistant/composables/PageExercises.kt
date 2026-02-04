@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,32 +10,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.FadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
@@ -45,7 +30,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 @Composable
 fun PageExercises(
     selectedExercise : Exercise,
-    currentStateSet: WorkoutState.Set,
+    workoutState: WorkoutState?,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
@@ -66,10 +51,19 @@ fun PageExercises(
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
 
-    val overrideSetIndex = remember(isSuperset, currentExercise, viewModel.allWorkoutStates.size) {
-        if (isSuperset) {
+    val currentSet = remember(workoutState) {
+        when (workoutState) {
+            is WorkoutState.Set -> workoutState.set
+            is WorkoutState.CalibrationLoadSelection -> workoutState.calibrationSet
+            is WorkoutState.CalibrationRIRSelection -> workoutState.calibrationSet
+            else -> selectedExercise.sets.firstOrNull()
+        }
+    }
+
+    val overrideSetIndex = remember(isSuperset, currentExercise, workoutState, viewModel.allWorkoutStates.size) {
+        if (isSuperset && workoutState is WorkoutState.Set) {
             viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
-                .indexOf(currentStateSet.set.id)
+                .indexOf(workoutState.set.id)
         } else null
     }
 
@@ -94,19 +88,19 @@ fun PageExercises(
             verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            FadingText(
+            ScrollableTextColumn(
                 text = selectedExercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(20.dp)
-                    .padding(horizontal = 22.5.dp),
+                    .padding(horizontal = 22.5.dp)
+                    .clickable {
+                        hapticsViewModel.doGentleVibration()
+                    },
+                maxLines = 2,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.SemiBold
                 ),
-                textAlign = TextAlign.Center,
-                onClick = {
-                    hapticsViewModel.doGentleVibration()
-                }
+                textAlign = TextAlign.Center
             )
 
             val selectedExerciseEquipment = remember(selectedExercise) {
@@ -134,24 +128,21 @@ fun PageExercises(
             ) {
                 // Metadata strip
                 ExerciseMetadataStrip(
-                    exerciseLabel = "${selectedExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
                     supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                    supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
-                    setLabel = if (currentExercise == selectedExercise) {
+                    supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
+                    setLabel = if (currentExercise == selectedExercise && workoutState != null) {
                         viewModel.getSetCounterForExercise(
                             currentExercise.id,
-                            currentStateSet
+                            workoutState
                         )?.let { (current, total) ->
                             if (total > 1) "$current/$total" else null
                         }
                     } else null,
-                    sideIndicator = if (currentExercise == selectedExercise && currentStateSet.intraSetTotal != null) "① ↔ ②" else null,
-                    currentSideIndex = if (currentExercise == selectedExercise) {
-                        currentStateSet.intraSetCounter.takeIf { currentStateSet.intraSetTotal != null }
+                    sideIndicator = if (currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.intraSetTotal != null) "① ↔ ②" else null,
+                    currentSideIndex = if (currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id) {
+                        workoutState.intraSetCounter.takeIf { workoutState.intraSetTotal != null }
                     } else null,
-                    isUnilateral = currentExercise == selectedExercise && currentStateSet.isUnilateral,
-                    equipmentName = selectedExerciseEquipment?.name,
-                    accessoryNames = selectedExerciseAccessories.joinToString(", ") { it.name }.takeIf { selectedExerciseAccessories.isNotEmpty() },
+                    isUnilateral = currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.isUnilateral,
                     textColor = MaterialTheme.colorScheme.onBackground,
                     onTap = {
                         hapticsViewModel.doGentleVibration()
@@ -159,37 +150,40 @@ fun PageExercises(
                 )
             }
 
-            ExerciseSetsViewer(
-                viewModel = viewModel,
-                hapticsViewModel = hapticsViewModel,
-                exercise = selectedExercise,
-                currentSet = currentStateSet.set,
-                customMarkAsDone = when {
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> true
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> false
-                    else -> null
-                },
-                customBorderColor = when {
-                    // Previous exercise: enforce previous set colors for ALL sets
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
-                    // Future exercise: enforce future set colors for ALL sets
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    // Current exercise: use default logic (null = distinguish between previous/current/future sets)
-                    else -> null
-                },
-                customTextColor = when {
-                    // Previous exercise: enforce previous set colors for ALL sets
-                    selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
-                    // Future exercise: enforce future set colors for ALL sets
-                    selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    // Current exercise: use default logic (null = distinguish between previous/current/future sets)
-                    else -> null
-                },
-                overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
-                    overrideSetIndex
-                } else null,
-                isFutureExercise = selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value
-            )
+            if (currentSet != null) {
+                ExerciseSetsViewer(
+                    viewModel = viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    exercise = selectedExercise,
+                    currentSet = currentSet,
+                    customMarkAsDone = when {
+                        selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> true
+                        selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> false
+                        else -> null
+                    },
+                    customBorderColor = when {
+                        // Previous exercise: enforce previous set colors for ALL sets
+                        selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                        // Future exercise: enforce future set colors for ALL sets
+                        selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        // Current exercise: use default logic (null = distinguish between previous/current/future sets)
+                        else -> null
+                    },
+                    customTextColor = when {
+                        // Previous exercise: enforce previous set colors for ALL sets
+                        selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                        // Future exercise: enforce future set colors for ALL sets
+                        selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        // Current exercise: use default logic (null = distinguish between previous/current/future sets)
+                        else -> null
+                    },
+                    overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
+                        overrideSetIndex
+                    } else null,
+                    currentWorkoutStateOverride = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) workoutState else null,
+                    isFutureExercise = selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value
+                )
+            }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {

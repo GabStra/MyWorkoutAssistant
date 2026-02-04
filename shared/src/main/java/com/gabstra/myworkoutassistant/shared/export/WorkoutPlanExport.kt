@@ -285,7 +285,7 @@ private fun appendExerciseDetails(
                             exercise = exercise,
                             priorExercises = priorExercises,
                             initialSetup = emptyList(),
-                            maxWarmups = 4
+                            maxWarmups = 3
                         )
                     } else {
                         WarmupPlanner.buildWarmupSets(
@@ -295,7 +295,7 @@ private fun appendExerciseDetails(
                             exercise = exercise,
                             priorExercises = priorExercises,
                             equipment = equipment,
-                            maxWarmups = 4
+                            maxWarmups = 3
                         )
                     }
                     

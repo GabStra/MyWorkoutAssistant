@@ -154,7 +154,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             order = 0u,
             currentSetDataState = mutableStateOf(RestSetData(90, 90)),
             exerciseId = exerciseId,
-            nextStateSets = listOf(workSet1),
+            nextState = workSet1,
             startTime = null,
             isIntraSetRest = false
         )
@@ -163,7 +163,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             order = 2u,
             currentSetDataState = mutableStateOf(RestSetData(90, 90)),
             exerciseId = exerciseId,
-            nextStateSets = listOf(workSet2),
+            nextState = workSet2,
             startTime = null,
             isIntraSetRest = false
         )

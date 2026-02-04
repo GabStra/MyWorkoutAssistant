@@ -33,7 +33,7 @@ import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.FadingText
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageCalibrationRIR
 import com.gabstra.myworkoutassistant.composables.PageExercises
@@ -51,6 +51,7 @@ fun CalibrationRIRScreen(
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.CalibrationRIRSelection,
     navController: NavController,
+    onBeforeGoHome: (() -> Unit)? = null,
     hearthRateChart: @Composable () -> Unit,
     onRIRConfirmed: (Double, Boolean) -> Unit,
 ) {
@@ -134,12 +135,12 @@ fun CalibrationRIRScreen(
     }
 
     val exerciseTitleComposable: @Composable () -> Unit = {
-        FadingText(
+        ScrollableTextColumn(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(20.dp)
                 .padding(horizontal = 22.5.dp),
+            maxLines = 2,
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -164,7 +165,6 @@ fun CalibrationRIRScreen(
         ) {
             // Metadata strip
             ExerciseMetadataStrip(
-                exerciseLabel = "${currentExerciseOrSupersetIndex.value + 1}/${exerciseOrSupersetIds.size}",
                 supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
                 supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
                 setLabel = viewModel.getSetCounterForExercise(
@@ -176,8 +176,6 @@ fun CalibrationRIRScreen(
                 sideIndicator = null,
                 currentSideIndex = null,
                 isUnilateral = false,
-                equipmentName = equipment?.name,
-                accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
                 textColor = MaterialTheme.colorScheme.onBackground,
                 onTap = {
                     hapticsViewModel.doGentleVibration()
@@ -248,41 +246,17 @@ fun CalibrationRIRScreen(
                                 updatedState = mockSetState,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
-                                navController = navController
+                                navController = navController,
+                                onBeforeGoHome = onBeforeGoHome
                             )
                         }
                     }
 
                     CalibrationPageType.EXERCISES -> {
                         key(pageType, pageIndex) {
-                            // Create a temporary Set state from calibration state for PageExercises
-                            val mockSetState = remember(state) {
-                                WorkoutState.Set(
-                                    exerciseId = state.exerciseId,
-                                    set = state.calibrationSet,
-                                    setIndex = state.setIndex,
-                                    previousSetData = null,
-                                    currentSetDataState = state.currentSetDataState,
-                                    hasNoHistory = true,
-                                    startTime = null,
-                                    skipped = false,
-                                    lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
-                                    upperBoundMaxHRPercent = state.upperBoundMaxHRPercent,
-                                    currentBodyWeight = state.currentBodyWeight,
-                                    plateChangeResult = null,
-                                    streak = 0,
-                                    progressionState = null,
-                                    isWarmupSet = false,
-                                    equipment = state.equipment,
-                                    isUnilateral = false,
-                                    intraSetTotal = null,
-                                    intraSetCounter = 0u,
-                                    isCalibrationSet = true
-                                )
-                            }
                             PageExercises(
                                 selectedExercise = selectedExercise,
-                                currentStateSet = mockSetState,
+                                workoutState = state,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 currentExercise = exercise,

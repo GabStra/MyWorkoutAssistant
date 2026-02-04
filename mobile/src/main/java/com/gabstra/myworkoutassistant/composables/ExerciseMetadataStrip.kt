@@ -20,6 +20,8 @@ fun ExerciseMetadataStrip(
     modifier: Modifier = Modifier,
     exerciseLabel: String? = null,
     supersetExerciseLabel: String? = null,
+    supersetExerciseIndex: Int? = null,
+    supersetExerciseTotal: Int? = null,
     setLabel: String? = null,
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
@@ -30,10 +32,17 @@ fun ExerciseMetadataStrip(
     onTap: (() -> Unit)? = null,
 ) {
     var marqueeEnabled by remember { mutableStateOf(false) }
-    
+
+    val exerciseIndicatorString = remember(supersetExerciseIndex, supersetExerciseTotal) {
+        if (supersetExerciseIndex != null && supersetExerciseTotal != null && supersetExerciseTotal > 0) {
+            (0 until supersetExerciseTotal).map { ('A' + it).toString() }.joinToString(" ↔ ")
+        } else null
+    }
+
     val metadataParts = remember(
         exerciseLabel,
         supersetExerciseLabel,
+        exerciseIndicatorString,
         setLabel,
         sideIndicator,
         isUnilateral,
@@ -41,66 +50,84 @@ fun ExerciseMetadataStrip(
         accessoryNames
     ) {
         buildList {
-            exerciseLabel?.let { add(it) }
-            supersetExerciseLabel?.let { add(it) }
-            setLabel?.let { add(it) }
-            sideIndicator?.let { add(it) }
+            exerciseLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+            supersetExerciseLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+            exerciseIndicatorString?.takeIf { it.isNotBlank() }?.let { add(it) }
+            setLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+            sideIndicator?.takeIf { it.isNotBlank() }?.let { add(it) }
             if (isUnilateral) add("Unilateral")
-            equipmentName?.let { add("Equipment: $it") }
-            accessoryNames?.takeIf { it.isNotEmpty() }?.let { add("Accessory: $it") }
+            equipmentName?.takeIf { it.isNotBlank() }?.let { add("Equipment: $it") }
+            accessoryNames?.takeIf { it.isNotBlank() }?.let { add("Accessory: $it") }
+        }
+    }
+
+    val metadataText = remember(metadataParts) {
+        buildString {
+            metadataParts.forEachIndexed { index, part ->
+                if (index > 0) append(" | ")
+                append(part)
+            }
         }
     }
     
-    val metadataText = remember(metadataParts) {
-        metadataParts.joinToString(" | ")
-    }
-    
     val primaryColor = MaterialTheme.colorScheme.primary
-    
-    // Build annotated string for side indicator highlighting if needed
-    val annotatedText = remember(metadataText, sideIndicator, currentSideIndex, primaryColor, textColor) {
-        if (sideIndicator != null && currentSideIndex != null && sideIndicator.contains("↔") && metadataText.contains(sideIndicator)) {
+
+    val needsHighlighting = (sideIndicator != null && currentSideIndex != null && sideIndicator.contains("↔") && metadataText.contains(sideIndicator)) ||
+        (exerciseIndicatorString != null && supersetExerciseIndex != null && metadataText.contains(exerciseIndicatorString))
+
+    // Build annotated string for side indicator and exercise indicator highlighting
+    val annotatedText = remember(metadataText, sideIndicator, currentSideIndex, exerciseIndicatorString, supersetExerciseIndex, primaryColor, textColor) {
+        if (needsHighlighting) {
             buildAnnotatedString {
                 val parts = metadataText.split(" | ")
                 parts.forEachIndexed { index, part ->
                     if (index > 0) {
                         append(" | ")
                     }
-                    if (part == sideIndicator) {
-                        // Highlight current side in side indicator
-                        val sideParts = part.split(" ↔ ")
-                        if (sideParts.size == 2) {
-                            val (sideA, sideB) = sideParts
-                            withStyle(
-                                style = SpanStyle(
-                                    color = if (currentSideIndex == 1u) {
-                                        primaryColor
-                                    } else {
-                                        textColor
-                                    },
-                                    fontWeight = FontWeight.Bold
-                                )
-                            ) {
-                                append(sideA)
+                    when {
+                        part == sideIndicator -> {
+                            // Highlight current side in side indicator (① ↔ ②)
+                            val sideParts = part.split(" ↔ ")
+                            if (sideParts.size == 2) {
+                                val (sideA, sideB) = sideParts
+                                withStyle(
+                                    style = SpanStyle(
+                                        color = if (currentSideIndex == 1u) primaryColor else textColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                ) {
+                                    append(sideA)
+                                }
+                                append(" ↔ ")
+                                withStyle(
+                                    style = SpanStyle(
+                                        color = if (currentSideIndex == 2u) primaryColor else textColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                ) {
+                                    append(sideB)
+                                }
+                            } else {
+                                append(part)
                             }
-                            append(" ↔ ")
-                            withStyle(
-                                style = SpanStyle(
-                                    color = if (currentSideIndex == 2u) {
-                                        primaryColor
-                                    } else {
-                                        textColor
-                                    },
-                                    fontWeight = FontWeight.Bold
-                                )
-                            ) {
-                                append(sideB)
-                            }
-                        } else {
-                            append(part)
                         }
-                    } else {
-                        append(part)
+                        part == exerciseIndicatorString && supersetExerciseIndex != null -> {
+                            // Highlight current exercise in superset indicator (A ↔ B or A ↔ B ↔ C)
+                            val idx = supersetExerciseIndex
+                            val exerciseParts = part.split(" ↔ ")
+                            exerciseParts.forEachIndexed { i, segment ->
+                                if (i > 0) append(" ↔ ")
+                                withStyle(
+                                    style = SpanStyle(
+                                        color = if (i == idx) primaryColor else textColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                ) {
+                                    append(segment)
+                                }
+                            }
+                        }
+                        else -> append(part)
                     }
                 }
             }

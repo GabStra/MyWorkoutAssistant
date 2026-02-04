@@ -82,6 +82,7 @@ import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
@@ -883,11 +884,10 @@ fun WorkoutHistoryScreen(
                                                                     )
                                                                 }
                                                             }
-                                                            Text(
-                                                                modifier = Modifier
-                                                                    .weight(1f)
-                                                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                                            ScrollableTextColumn(
                                                                 text = exercise.name,
+                                                                modifier = Modifier.weight(1f),
+                                                                maxLines = 2,
                                                                 style = MaterialTheme.typography.bodyLarge,
                                                                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                             )
@@ -923,11 +923,10 @@ fun WorkoutHistoryScreen(
                                                         )
                                                     }
                                                 }
-                                                Text(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .basicMarquee(iterations = Int.MAX_VALUE),
+                                                ScrollableTextColumn(
                                                     text = exercise.name,
+                                                    modifier = Modifier.weight(1f),
+                                                    maxLines = 2,
                                                     style = MaterialTheme.typography.bodyLarge,
                                                     color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                                                 )

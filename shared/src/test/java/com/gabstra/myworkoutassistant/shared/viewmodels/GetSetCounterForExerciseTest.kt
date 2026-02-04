@@ -96,7 +96,7 @@ class GetSetCounterForExerciseTest {
             order = 0u,
             currentSetDataState = mutableStateOf(RestSetData(90, 90)),
             exerciseId = null,
-            nextStateSets = emptyList(),
+            nextState = null,
             startTime = null,
             isIntraSetRest = false
         )

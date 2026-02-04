@@ -125,7 +125,7 @@ sealed class WorkoutState {
         val order: UInt,
         val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
         val exerciseId: UUID? = null,
-        var nextStateSets: List<WorkoutState.Set> = emptyList(),
+        var nextState: WorkoutState? = null,
         var startTime : LocalDateTime? = null,
         val isIntraSetRest : Boolean = false
     ) : WorkoutState() {

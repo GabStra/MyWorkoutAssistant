@@ -120,11 +120,10 @@ fun SupersetRenderer(
                                 color = textColor,
                                 modifier = Modifier.padding(end = 8.dp)
                             )
-                            Text(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                            ScrollableTextColumn(
                                 text = exercise.name,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = textColor,
                             )

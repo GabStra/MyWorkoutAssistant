@@ -87,14 +87,18 @@ class PlateCalculator {
                             parent[i][j] = k
                         } else if (cost == dp[i][j]) {
                             val oldParent = parent[i][j]
-                            val newReuse  = reuseScore(comboPrev, comboCurrent)
-                            val oldReuse  = if (oldParent != -1) reuseScore(allCombos[i - 1][oldParent], comboCurrent) else -1
+                            val newReuse = reuseScore(comboPrev, comboCurrent)
+                            val oldReuse = if (oldParent != -1) reuseScore(
+                                allCombos[i - 1][oldParent],
+                                comboCurrent
+                            ) else -1
 
                             if (newReuse > oldReuse) {
                                 parent[i][j] = k
                             } else if (newReuse == oldReuse) {
                                 // Fallback: fewer plates in the previous state (your existing rule)
-                                val oldBestPrevSize = if (oldParent != -1) allCombos[i - 1][oldParent].size else Int.MAX_VALUE
+                                val oldBestPrevSize =
+                                    if (oldParent != -1) allCombos[i - 1][oldParent].size else Int.MAX_VALUE
                                 if (comboPrev.size < oldBestPrevSize) parent[i][j] = k
                             }
                         }
@@ -147,7 +151,7 @@ class PlateCalculator {
             for (s in steps) {
                 when (s.action) {
                     Action.REMOVE -> removed[s.weight] = (removed[s.weight] ?: 0) + 1
-                    Action.ADD    -> added[s.weight]   = (added[s.weight]   ?: 0) + 1
+                    Action.ADD -> added[s.weight] = (added[s.weight] ?: 0) + 1
                 }
             }
             var score = 0
@@ -169,7 +173,11 @@ class PlateCalculator {
             val resultsSet = mutableSetOf<List<Double>>()
             val uniqueWeights = plateCounts.keys.sortedDescending()
 
-            fun backtrack(comboIndex: Int, platesForOneSide: MutableList<Double>, currentTotalWeight: Double) {
+            fun backtrack(
+                comboIndex: Int,
+                platesForOneSide: MutableList<Double>,
+                currentTotalWeight: Double
+            ) {
 
                 if (abs(currentTotalWeight - targetTotalWeight) < 1e-9) {
                     resultsSet.add(platesForOneSide.sortedDescending())
@@ -227,7 +235,11 @@ class PlateCalculator {
             return generatePhysicalSteps(a, b).size.toDouble()
         }
 
-        private fun getTotalWeight(platesOnOneSide: List<Double>, barWeight: Double, sides: UInt): Double {
+        private fun getTotalWeight(
+            platesOnOneSide: List<Double>,
+            barWeight: Double,
+            sides: UInt
+        ): Double {
             val totalPlateWeight = platesOnOneSide.sumOf { it * sides.toDouble() }
             return barWeight + totalPlateWeight
         }
@@ -301,8 +313,10 @@ class PlateCalculator {
             val byTotalKey = linkedMapOf<String, Pair<Double, List<List<Double>>>>()
             for (t in achievableTotals) {
                 val needPlateTotal = (t - barWeight).coerceAtLeast(0.0)
-                val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
-                if (combos.isNotEmpty()) byTotalKey[keyOf(t)] = t to combos.sortedBy { it.size } // prefer fewer plates within a total
+                val combos =
+                    generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
+                if (combos.isNotEmpty()) byTotalKey[keyOf(t)] =
+                    t to combos.sortedBy { it.size } // prefer fewer plates within a total
             }
             require(byTotalKey.isNotEmpty()) { "No achievable total has a valid combo with the given inventory." }
             require(desiredTotals.size <= byTotalKey.size) {
@@ -320,6 +334,7 @@ class PlateCalculator {
             }
 
             data class Score(val err: Double, val plc: Int, val chg: Int) // err → plc → chg
+
             fun better(a: Score, b: Score, eps: Double = 1e-9): Boolean = when {
                 a.err < b.err - eps -> true
                 a.err > b.err + eps -> false
@@ -344,7 +359,9 @@ class PlateCalculator {
             ) {
                 if (i == desiredTotals.size) {
                     val sc = Score(accErr, accPlc, accChg)
-                    if (better(sc, best)) { best = sc; bestPick = pick.copyOf() }
+                    if (better(sc, best)) {
+                        best = sc; bestPick = pick.copyOf()
+                    }
                     return
                 }
 
@@ -364,7 +381,9 @@ class PlateCalculator {
                     for (c in cand.combos.asSequence().drop(1)) {
                         val plc2 = c.size
                         val chg2 = generatePhysicalSteps(prev, c).size
-                        if (plc2 < plc || (plc2 == plc && chg2 < chg)) { combo = c; plc = plc2; chg = chg2 }
+                        if (plc2 < plc || (plc2 == plc && chg2 < chg)) {
+                            combo = c; plc = plc2; chg = chg2
+                        }
                     }
 
                     val newErr = accErr + kotlin.math.abs(cand.total - want)
@@ -403,8 +422,10 @@ class PlateCalculator {
                 if (curTotal > targetTotalPlateWeight + 1e-9 || idx >= weights.size) return
 
                 val w = weights[idx]
-                val maxPairs = plateCountsPerSide.getValue(w)     // PER-SIDE count == number of pairs available
-                val pairTotal = sides * w                         // total contribution (both sides) of one pair
+                val maxPairs =
+                    plateCountsPerSide.getValue(w)     // PER-SIDE count == number of pairs available
+                val pairTotal =
+                    sides * w                         // total contribution (both sides) of one pair
 
                 // skip this weight
                 backtrack(idx + 1, oneSide, curTotal)
@@ -448,58 +469,31 @@ class PlateCalculator {
             sidesOnBarbell: UInt = 2u,
             additionalWorkWeights: List<Double> = emptyList()
         ): List<Double> {
-            // Validate inputs
             require(workWeight > 0) { "workWeight must be positive" }
             require(weightPercentages.isNotEmpty()) { "weightPercentages cannot be empty" }
-            require(weightPercentages.all { it <= 1.0 + 1e-9 }) { "All percentages must be <= 1.0" }
+            require(weightPercentages.all { it <= 1.0 + 1e-9 && it >= 0.0 - 1e-9 }) { "All percentages must be in [0, 1]" }
             require(barbell.availablePlates.isNotEmpty()) { "Barbell must have available plates" }
-            require(toleranceBandPercent >= 0 && toleranceBandPercent <= 1) { "toleranceBandPercent must be between 0 and 1" }
+            require(toleranceBandPercent in 0.0..1.0) { "toleranceBandPercent must be between 0 and 1" }
             require(additionalWorkWeights.all { it > 0 }) { "All additionalWorkWeights must be positive" }
 
-            // Calculate target weights
-            val targetWeights = weightPercentages.map { workWeight * it }
+            // Desired warmup totals (same "total weight" convention you already use)
+            val desiredTargets: List<Double> = weightPercentages.map { workWeight * it }
 
-            // Get achievable weights
+            // Achievable totals (bar included)
             val achievableTotals = barbell.getWeightsCombinations().sorted()
+            require(achievableTotals.isNotEmpty()) { "No achievable totals returned by barbell.getWeightsCombinations()" }
 
-            // Build candidate lists: for each target, find achievable weights within tolerance band
-            val perSideCounts = barbell.availablePlates.map { it.weight }.groupingBy { it }.eachCount()
-            val candidateLists = targetWeights.map { target ->
-                val lowerBound = target * (1 - toleranceBandPercent)
-                val upperBound = target * (1 + toleranceBandPercent)
-                val candidates = achievableTotals.filter { it >= lowerBound && it <= upperBound }
-                
-                // Generate plate combinations for each candidate
-                candidates.mapNotNull { candidate ->
-                    val needPlateTotal = (candidate - barbell.barWeight).coerceAtLeast(0.0)
-                    val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
-                    if (combos.isNotEmpty()) {
-                        Candidate(candidate, combos.sortedBy { it.size })
-                    } else {
-                        null
-                    }
-                }
-            }
+            // Plate inventory interpreted as "per-side counts" (i.e., number of pairs available)
+            val perSideCounts =
+                barbell.availablePlates.map { it.weight }.groupingBy { it }.eachCount()
 
-            // Handle edge case: if no candidates found for a target, use closest achievable weight
-            val finalCandidateLists = candidateLists.mapIndexed { index, candidates ->
-                if (candidates.isEmpty()) {
-                    val target = targetWeights[index]
-                    val closest = achievableTotals.minByOrNull { abs(it - target) }
-                        ?: throw IllegalArgumentException("No achievable weight found for target ${target}")
-                    val needPlateTotal = (closest - barbell.barWeight).coerceAtLeast(0.0)
-                    val combos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotal, sidesOnBarbell)
-                    listOf(Candidate(closest, combos.sortedBy { it.size }))
-                } else {
-                    candidates
-                }
-            }
-
-            // Work-weight combos: include cost from last warmup to work weight (and through additional work weights) in total cost
+            // Work weight combos (must exist)
             val needPlateTotalWork = (workWeight - barbell.barWeight).coerceAtLeast(0.0)
-            val workWeightCombos = generateValidCombosPerSideCounts(perSideCounts, needPlateTotalWork, sidesOnBarbell)
+            val workWeightCombos =
+                generateValidCombosPerSideCounts(perSideCounts, needPlateTotalWork, sidesOnBarbell)
+            require(workWeightCombos.isNotEmpty()) { "No achievable combo for workWeight $workWeight" }
 
-            // Additional work weights: build combo list for each
+            // Additional work weights combos (each must exist)
             val additionalWorkWeightCombos = additionalWorkWeights.map { w ->
                 val need = (w - barbell.barWeight).coerceAtLeast(0.0)
                 val combos = generateValidCombosPerSideCounts(perSideCounts, need, sidesOnBarbell)
@@ -507,214 +501,275 @@ class PlateCalculator {
                 combos
             }
 
-            // Phase 1: Try add-only optimization
-            val phase1Result = optimizePhase(
-                candidateLists = finalCandidateLists,
+            // Build warmup options per step: (total, combo) nodes
+            val perStepOptions = buildWarmupOptions(
+                desiredTargets = desiredTargets,
+                achievableTotals = achievableTotals,
+                barWeight = barbell.barWeight,
+                perSideCounts = perSideCounts,
+                toleranceBandPercent = toleranceBandPercent,
+                sidesOnBarbell = sidesOnBarbell
+            )
+
+            // Phase 1: enforce add-only between warmups AND add-only into the first work set
+            val phase1 = optimizeWarmupChainDP(
+                perStepOptions = perStepOptions,
                 initialPlates = initialPlates,
                 workWeightCombos = workWeightCombos,
                 additionalWorkWeightCombos = additionalWorkWeightCombos,
-                addOnly = true
+                addOnlyWarmups = true
             )
 
-            if (phase1Result != null) {
-                return phase1Result.map { it.candidate.total }
-            }
+            if (phase1 != null) return phase1.map { it.total }
 
-            // Phase 2: Fallback to add-and-remove optimization
-            val phase2Result = optimizePhase(
-                candidateLists = finalCandidateLists,
+            // Phase 2: allow add+remove (still globally minimal plate-change steps)
+            val phase2 = optimizeWarmupChainDP(
+                perStepOptions = perStepOptions,
                 initialPlates = initialPlates,
                 workWeightCombos = workWeightCombos,
                 additionalWorkWeightCombos = additionalWorkWeightCombos,
-                addOnly = false
+                addOnlyWarmups = false
             )
 
-            return phase2Result?.map { it.candidate.total }
+            return phase2?.map { it.total }
                 ?: throw IllegalStateException("Failed to find a solution in both phases")
         }
 
-        /**
-         * Helper data class to hold candidate weight and its plate combinations
-         */
-        private data class Candidate(
-            val total: Double,
-            val combos: List<List<Double>>
+        private const val MAX_CANDIDATES_PER_STEP = 24
+        private const val MAX_COMBOS_PER_CANDIDATE = 12
+        private const val INF = 1_000_000_000
+
+        private data class Option(
+            val total: Double,        // bar included
+            val combo: List<Double>,  // one-side stack
+            val deviation: Double     // |total - desiredTarget|
         )
 
-        /**
-         * Helper data class to hold a solution pick
-         */
-        private data class SolutionPick(
-            val candidate: Candidate,
-            val combo: List<Double>
-        )
-
-        /**
-         * Helper function to check if a plate transition only adds plates (no removals)
-         */
-        private fun isAddOnlyTransition(from: List<Double>, to: List<Double>): Boolean {
-            val steps = generatePhysicalSteps(from, to)
-            return steps.all { it.action == Action.ADD }
-        }
-
-        /**
-         * Score for multi-objective optimization: deviation, plate count, changes
-         */
-        private data class OptimizationScore(
+        private data class Score(
+            val changes: Int,
             val deviation: Double,
-            val totalPlates: Int,
-            val totalChanges: Int
+            val plates: Int
         ) {
-            fun isBetterThan(other: OptimizationScore, eps: Double = 1e-9): Boolean = when {
+            fun betterThan(other: Score, eps: Double = 1e-9): Boolean = when {
+                changes < other.changes -> true
+                changes > other.changes -> false
                 deviation < other.deviation - eps -> true
                 deviation > other.deviation + eps -> false
-                totalPlates < other.totalPlates -> true
-                totalPlates > other.totalPlates -> false
-                totalChanges < other.totalChanges -> true
-                totalChanges > other.totalChanges -> false
+                plates < other.plates -> true
+                plates > other.plates -> false
                 else -> false
             }
         }
 
+        private fun buildWarmupOptions(
+            desiredTargets: List<Double>,
+            achievableTotals: List<Double>,
+            barWeight: Double,
+            perSideCounts: Map<Double, Int>,
+            toleranceBandPercent: Double,
+            sidesOnBarbell: UInt
+        ): List<List<Option>> {
+            fun closestAchievable(target: Double): Double =
+                achievableTotals.minByOrNull { kotlin.math.abs(it - target) }
+                    ?: throw IllegalStateException("achievableTotals is empty")
+
+            return desiredTargets.map { target ->
+                val lower = target * (1.0 - toleranceBandPercent)
+                val upper = target * (1.0 + toleranceBandPercent)
+
+                val inBand = achievableTotals
+                    .asSequence()
+                    .filter { it >= lower - 1e-9 && it <= upper + 1e-9 }
+                    .sortedBy { kotlin.math.abs(it - target) }
+                    .take(MAX_CANDIDATES_PER_STEP)
+                    .toList()
+
+                val candidateTotals =
+                    if (inBand.isNotEmpty()) inBand else listOf(closestAchievable(target))
+
+                candidateTotals.flatMap { total ->
+                    val needPlateTotal = (total - barWeight).coerceAtLeast(0.0)
+                    val combos = generateValidCombosPerSideCounts(
+                        perSideCounts,
+                        needPlateTotal,
+                        sidesOnBarbell
+                    )
+                        .sortedBy { it.size }
+                        .take(MAX_COMBOS_PER_CANDIDATE)
+
+                    combos.map { combo ->
+                        Option(
+                            total = total,
+                            combo = combo,
+                            deviation = kotlin.math.abs(total - target)
+                        )
+                    }
+                }.distinctBy { opt ->
+                    // Dedup identical (total + combo) nodes
+                    buildString {
+                        append("%.6f".format(opt.total))
+                        append("|")
+                        opt.combo.forEach { append("%.6f".format(it)).append(",") }
+                    }
+                }
+            }
+        }
+
+        private fun optimizeWarmupChainDP(
+            perStepOptions: List<List<Option>>,
+            initialPlates: List<Double>,
+            workWeightCombos: List<List<Double>>,
+            additionalWorkWeightCombos: List<List<List<Double>>>,
+            addOnlyWarmups: Boolean
+        ): List<Option>? {
+            if (perStepOptions.isEmpty()) return emptyList()
+
+            val n = perStepOptions.size
+            val dp = Array(n) {
+                Array(perStepOptions[it].size) {
+                    Score(
+                        INF,
+                        Double.POSITIVE_INFINITY,
+                        Int.MAX_VALUE
+                    )
+                }
+            }
+            val parent = Array(n) { IntArray(perStepOptions[it].size) { -1 } }
+
+            // init step 0
+            for (j in perStepOptions[0].indices) {
+                val opt = perStepOptions[0][j]
+                val steps = generatePhysicalSteps(initialPlates, opt.combo)
+                if (addOnlyWarmups && steps.any { it.action == Action.REMOVE }) continue
+
+                dp[0][j] = Score(
+                    changes = steps.size,
+                    deviation = opt.deviation,
+                    plates = opt.combo.size
+                )
+            }
+
+            // transitions
+            for (i in 1 until n) {
+                for (j in perStepOptions[i].indices) {
+                    val cur = perStepOptions[i][j]
+                    var best = Score(INF, Double.POSITIVE_INFINITY, Int.MAX_VALUE)
+                    var bestParent = -1
+
+                    for (k in perStepOptions[i - 1].indices) {
+                        val prevScore = dp[i - 1][k]
+                        if (prevScore.changes >= INF) continue
+
+                        val prev = perStepOptions[i - 1][k]
+
+                        if (addOnlyWarmups && cur.total < prev.total - 1e-9) continue
+
+                        val trans = generatePhysicalSteps(prev.combo, cur.combo)
+                        if (addOnlyWarmups && trans.any { it.action == Action.REMOVE }) continue
+
+                        val cand = Score(
+                            changes = prevScore.changes + trans.size,
+                            deviation = prevScore.deviation + cur.deviation,
+                            plates = prevScore.plates + cur.combo.size
+                        )
+
+                        if (cand.betterThan(best)) {
+                            best = cand
+                            bestParent = k
+                        }
+                    }
+
+                    dp[i][j] = best
+                    parent[i][j] = bestParent
+                }
+            }
+
+            // finalize: add minimal cost from last warmup combo into work chain
+            var bestEndScore = Score(INF, Double.POSITIVE_INFINITY, Int.MAX_VALUE)
+            var bestEndIdx = -1
+
+            for (j in perStepOptions[n - 1].indices) {
+                val s = dp[n - 1][j]
+                if (s.changes >= INF) continue
+
+                val last = perStepOptions[n - 1][j]
+                val workChainCost = minCostThroughWorkChain(
+                    previousPlates = last.combo,
+                    workWeightCombos = workWeightCombos,
+                    additionalWorkWeightCombos = additionalWorkWeightCombos,
+                    requireAddOnlyToWork = addOnlyWarmups // enforce add-only into first work set in phase 1
+                )
+                if (workChainCost >= INF) continue
+
+                val total = Score(
+                    changes = s.changes + workChainCost,
+                    deviation = s.deviation,
+                    plates = s.plates
+                )
+
+                if (total.betterThan(bestEndScore)) {
+                    bestEndScore = total
+                    bestEndIdx = j
+                }
+            }
+
+            if (bestEndIdx == -1) return null
+
+            // reconstruct
+            val out = ArrayList<Option>(n)
+            var idx = bestEndIdx
+            for (i in (n - 1) downTo 0) {
+                out.add(perStepOptions[i][idx])
+                idx = parent[i][idx]
+                if (i > 0 && idx == -1) return null
+            }
+            out.reverse()
+            return out
+        }
+
         /**
-         * Minimum total plate-change cost through the work chain: previousPlates → workWeightCombos → additionalWorkWeightCombos[0] → ...
+         * Minimum total plate-change cost through the work chain:
+         * lastWarmupCombo -> workWeightCombo -> additionalWorkWeightCombo[0] -> ...
+         * If requireAddOnlyToWork = true, the transition into workWeight must be ADD-only.
          */
         private fun minCostThroughWorkChain(
             previousPlates: List<Double>,
             workWeightCombos: List<List<Double>>,
-            additionalWorkWeightCombos: List<List<List<Double>>>
-        ): Int {
-            val chainComboLists = listOf(workWeightCombos) + additionalWorkWeightCombos
-            if (chainComboLists.isEmpty()) return 0
-            // dp[i][j] = min cost to reach combo j at position i
-            var prevCosts = workWeightCombos.map { generatePhysicalSteps(previousPlates, it).size }
-            for (i in 1 until chainComboLists.size) {
-                val currentCombos = chainComboLists[i]
-                val prevCombos = chainComboLists[i - 1]
-                prevCosts = currentCombos.map { currentCombo ->
-                    prevCombos.indices.minOfOrNull { j ->
-                        prevCosts[j] + generatePhysicalSteps(prevCombos[j], currentCombo).size
-                    } ?: Int.MAX_VALUE
-                }
-            }
-            return prevCosts.minOrNull() ?: 0
-        }
-
-        /**
-         * Optimization phase: either add-only or add-and-remove.
-         * Includes plate cost from last warmup through work weight(s) (and optional additional work weights) in total cost.
-         */
-        private fun optimizePhase(
-            candidateLists: List<List<Candidate>>,
-            initialPlates: List<Double>,
-            workWeightCombos: List<List<Double>>,
             additionalWorkWeightCombos: List<List<List<Double>>>,
-            addOnly: Boolean
-        ): List<SolutionPick>? {
-            val targetWeights = candidateLists.map { it.firstOrNull()?.total ?: 0.0 }
-            
-            var bestScore = OptimizationScore(Double.POSITIVE_INFINITY, Int.MAX_VALUE, Int.MAX_VALUE)
-            var bestSolution: List<SolutionPick>? = null
+            requireAddOnlyToWork: Boolean
+        ): Int {
+            if (workWeightCombos.isEmpty()) return 0
 
-            fun search(
-                index: Int,
-                previousPlates: List<Double>,
-                previousWeight: Double,
-                accumulatedScore: OptimizationScore,
-                currentSolution: MutableList<SolutionPick>
-            ) {
-                if (index == candidateLists.size) {
-                    val changeThroughWorkChain = minCostThroughWorkChain(
-                        previousPlates,
-                        workWeightCombos,
-                        additionalWorkWeightCombos
-                    )
-                    val adjustedScore = OptimizationScore(
-                        deviation = accumulatedScore.deviation,
-                        totalPlates = accumulatedScore.totalPlates,
-                        totalChanges = accumulatedScore.totalChanges + changeThroughWorkChain
-                    )
-                    if (adjustedScore.isBetterThan(bestScore)) {
-                        bestScore = adjustedScore
-                        bestSolution = currentSolution.toList()
-                    }
-                    return
-                }
-
-                // Branch and bound pruning
-                if (accumulatedScore.deviation > bestScore.deviation) return
-                if (abs(accumulatedScore.deviation - bestScore.deviation) < 1e-9) {
-                    if (accumulatedScore.totalPlates > bestScore.totalPlates) return
-                    if (accumulatedScore.totalPlates == bestScore.totalPlates &&
-                        accumulatedScore.totalChanges > bestScore.totalChanges) return
-                }
-
-                val target = targetWeights[index]
-                for (candidate in candidateLists[index]) {
-                    // Add-only constraint: weight must be >= previous weight
-                    if (addOnly && candidate.total < previousWeight - 1e-9) continue
-
-                    // Find best combo for this candidate
-                    var bestCombo = candidate.combos[0]
-                    var bestComboPlates = bestCombo.size
-                    var bestComboChanges = generatePhysicalSteps(previousPlates, bestCombo).size
-
-                    // Check add-only constraint for combo
-                    if (addOnly && !isAddOnlyTransition(previousPlates, bestCombo)) {
-                        // Try other combos
-                        var foundValidCombo = false
-                        for (combo in candidate.combos.drop(1)) {
-                            val comboPlates = combo.size
-                            val comboChanges = generatePhysicalSteps(previousPlates, combo).size
-                            if (isAddOnlyTransition(previousPlates, combo)) {
-                                if (comboPlates < bestComboPlates ||
-                                    (comboPlates == bestComboPlates && comboChanges < bestComboChanges)) {
-                                    bestCombo = combo
-                                    bestComboPlates = comboPlates
-                                    bestComboChanges = comboChanges
-                                    foundValidCombo = true
-                                }
-                            }
-                        }
-                        if (!foundValidCombo) continue // Skip this candidate if no add-only combo found
-                    } else {
-                        // Try other combos to find better one
-                        for (combo in candidate.combos.drop(1)) {
-                            val comboPlates = combo.size
-                            val comboChanges = generatePhysicalSteps(previousPlates, combo).size
-                            if (!addOnly || isAddOnlyTransition(previousPlates, combo)) {
-                                if (comboPlates < bestComboPlates ||
-                                    (comboPlates == bestComboPlates && comboChanges < bestComboChanges)) {
-                                    bestCombo = combo
-                                    bestComboPlates = comboPlates
-                                    bestComboChanges = comboChanges
-                                }
-                            }
-                        }
-                    }
-
-                    val deviation = abs(candidate.total - target)
-                    val newScore = OptimizationScore(
-                        deviation = accumulatedScore.deviation + deviation,
-                        totalPlates = accumulatedScore.totalPlates + bestComboPlates,
-                        totalChanges = accumulatedScore.totalChanges + bestComboChanges
-                    )
-
-                    currentSolution.add(SolutionPick(candidate, bestCombo))
-                    search(
-                        index + 1,
-                        bestCombo,
-                        candidate.total,
-                        newScore,
-                        currentSolution
-                    )
-                    currentSolution.removeAt(currentSolution.lastIndex)
-                }
+            // dp for position 0 (workWeight)
+            var prevCosts = IntArray(workWeightCombos.size) { j ->
+                val steps = generatePhysicalSteps(previousPlates, workWeightCombos[j])
+                if (requireAddOnlyToWork && steps.any { it.action == Action.REMOVE }) INF else steps.size
             }
 
-            search(0, initialPlates, 0.0, OptimizationScore(0.0, 0, 0), mutableListOf())
-            return bestSolution
-        }
+            var prevCombos = workWeightCombos
 
+            // positions 1.. = additional work weights
+            for (pos in additionalWorkWeightCombos.indices) {
+                val curCombos = additionalWorkWeightCombos[pos]
+                val curCosts = IntArray(curCombos.size) { INF }
+
+                for (cj in curCombos.indices) {
+                    var best = INF
+                    for (pj in prevCombos.indices) {
+                        val base = prevCosts[pj]
+                        if (base >= INF) continue
+                        val trans = generatePhysicalSteps(prevCombos[pj], curCombos[cj]).size
+                        val cand = base + trans
+                        if (cand < best) best = cand
+                    }
+                    curCosts[cj] = best
+                }
+
+                prevCosts = curCosts
+                prevCombos = curCombos
+            }
+
+            return prevCosts.minOrNull() ?: INF
+        }
     }
 }

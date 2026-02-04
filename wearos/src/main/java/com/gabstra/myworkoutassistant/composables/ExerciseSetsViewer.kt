@@ -49,6 +49,21 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
+/**
+ * Display model for one row in the exercise set viewer. Each row corresponds to one state
+ * from the exercise's container in the workout state machine.
+ */
+sealed class ExerciseSetDisplayRow {
+    data class SetRow(val state: WorkoutState.Set) : ExerciseSetDisplayRow()
+    data class CalibrationLoadSelectRow(val state: WorkoutState.CalibrationLoadSelection) : ExerciseSetDisplayRow()
+    data class CalibrationRIRRow(val state: WorkoutState.CalibrationRIRSelection) : ExerciseSetDisplayRow()
+
+    fun workoutState(): WorkoutState = when (this) {
+        is SetRow -> state
+        is CalibrationLoadSelectRow -> state
+        is CalibrationRIRRow -> state
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -119,7 +134,7 @@ fun SetTableRow(
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
                         isCalibrationSet -> "$weightText (Cal)"
-                        isPendingCalibration -> "Pending"
+                        isPendingCalibration -> "TBD"
                         else -> weightText
                     }
                     val weightColor = weightTextColor
@@ -151,7 +166,7 @@ fun SetTableRow(
                     }
                     val weightText = when {
                         isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
-                        isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
+                        isPendingCalibration -> "TBD"
                         else -> baseWeightText
                     }
 
@@ -227,6 +242,28 @@ fun SetTableRow(
 }
 
 @Composable
+private fun CenteredLabelRow(
+    modifier: Modifier,
+    text: String,
+    textColor: Color,
+) {
+    val itemStyle = MaterialTheme.typography.numeralSmall
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(1.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        ScalableFadingText(
+            text = text,
+            style = itemStyle,
+            textAlign = TextAlign.Center,
+            color = textColor
+        )
+    }
+}
+
+@Composable
 fun ExerciseSetsViewer(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
@@ -238,14 +275,28 @@ fun ExerciseSetsViewer(
     customBackgroundColor: Color? = null,
     customTextColor: Color? = null,
     overrideSetIndex: Int? = null,
+    currentWorkoutStateOverride: WorkoutState? = null,
     isFutureExercise: Boolean = false,
 ){
-    val exerciseSetStates = viewModel.getAllExerciseWorkoutStates(exercise.id)
-        .filter { it.set !is RestSet }
-        .filterNot { it.shouldIgnoreCalibration() }
-        .distinctBy { it.set.id }
-    val exerciseSetIds = exerciseSetStates.map { it.set.id }
-    val setIndex = overrideSetIndex ?: exerciseSetIds.indexOf(currentSet.id)
+    val exerciseStates = viewModel.getStatesForExercise(exercise.id)
+        .filter { it !is WorkoutState.Rest }
+    val displayRows: List<ExerciseSetDisplayRow> = exerciseStates.map { state ->
+        when (state) {
+            is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
+            is WorkoutState.CalibrationLoadSelection -> ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
+            is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
+            else -> null
+        }
+    }.filterNotNull()
+
+    val currentWorkoutState by viewModel.workoutState.collectAsState()
+    val stateToMatch = currentWorkoutStateOverride ?: currentWorkoutState
+    val setIndex = overrideSetIndex
+        ?: displayRows.indexOfFirst { it.workoutState() === stateToMatch }.takeIf { it >= 0 }
+        ?: displayRows.indexOfFirst { row ->
+            (row as? ExerciseSetDisplayRow.SetRow)?.state?.set?.id == currentSet.id
+        }.takeIf { it >= 0 }
+        ?: 0
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
@@ -261,7 +312,7 @@ fun ExerciseSetsViewer(
 
     // Scroll to current set when it changes
     LaunchedEffect(setIndex, exercise.id) {
-        if (setIndex != -1 && setIndex < exerciseSetStates.size) {
+        if (setIndex in displayRows.indices) {
             val scrollPosition = with(density) { (setIndex * itemHeightDp.toPx()).toInt() }
             scrollState.animateScrollTo(scrollPosition)
         } else {
@@ -271,31 +322,31 @@ fun ExerciseSetsViewer(
 
     @Composable
     fun MeasuredSetTableRow(
-        setStateForThisRow:  WorkoutState.Set,
+        displayRow: ExerciseSetDisplayRow,
         rowIndex: Int,
         isFutureExerciseParam: Boolean = isFutureExercise,
     ) {
-        val isWarmupSetRow = when(val set = setStateForThisRow.set) {
-            is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-            is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+        val isWarmupSetRow = when (displayRow) {
+            is ExerciseSetDisplayRow.SetRow -> when (val set = displayRow.state.set) {
+                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                else -> false
+            }
             else -> false
         }
 
-        // When custom colors are provided, enforce them for ALL sets (previous, current, future)
-        // This is used when viewing previous or future exercises
-        // When null, use default logic that distinguishes between previous/current/future sets within the exercise
         val borderColor = customBorderColor ?: when {
-            rowIndex == setIndex -> Orange // Current set: orange border
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground border
+            rowIndex == setIndex -> Orange
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
             else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
-        val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background // All sets: black background
+        val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background
 
         val textColor = customTextColor ?: when {
-            rowIndex == setIndex -> Orange // Current set: orange text
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground // Previous set: onBackground text
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
+            rowIndex == setIndex -> Orange
+            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
         Row(
@@ -312,7 +363,6 @@ fun ExerciseSetsViewer(
                 .padding(bottom = 2.5.dp)
                 .then(
                     if (isWarmupSetRow) {
-                        // Warmup sets: use dashed border
                         Modifier.dashedBorder(
                             strokeWidth = 1.dp,
                             color = borderColor,
@@ -321,28 +371,42 @@ fun ExerciseSetsViewer(
                             offInterval = 4.dp
                         )
                     } else {
-                        // Normal sets: use solid border
                         Modifier.border(BorderStroke(1.dp, borderColor), shape)
                     }
                 )
                 .background(backgroundColor, shape)
 
-            SetTableRow(
-                modifier = rowModifier,
-                hapticsViewModel = hapticsViewModel,
-                viewModel = viewModel,
-                setState = setStateForThisRow,
-                index = rowIndex,
-                isCurrentSet = rowIndex == setIndex,
-                markAsDone = false,
-                textColor = textColor,
-                isFutureExercise = isFutureExerciseParam
-            )
+            when (displayRow) {
+                is ExerciseSetDisplayRow.SetRow -> SetTableRow(
+                    modifier = rowModifier,
+                    hapticsViewModel = hapticsViewModel,
+                    viewModel = viewModel,
+                    setState = displayRow.state,
+                    index = rowIndex,
+                    isCurrentSet = rowIndex == setIndex,
+                    markAsDone = false,
+                    textColor = textColor,
+                    isFutureExercise = isFutureExerciseParam
+                )
+                is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
+                    modifier = rowModifier,
+                    text = "Select Load",
+                    textColor = textColor
+                )
+                is ExerciseSetDisplayRow.CalibrationRIRRow -> CenteredLabelRow(
+                    modifier = rowModifier,
+                    text = "Set RIR",
+                    textColor = textColor
+                )
+            }
         }
     }
 
     val prototypeItem = @Composable {
-        MeasuredSetTableRow(setStateForThisRow = exerciseSetStates[0], rowIndex = 0)
+        val firstRow = displayRows.firstOrNull()
+        if (firstRow != null) {
+            MeasuredSetTableRow(displayRow = firstRow, rowIndex = 0)
+        }
     }
 
     Column(
@@ -382,8 +446,8 @@ fun ExerciseSetsViewer(
                         .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState)
                 ) {
-                    exerciseSetStates.forEachIndexed { index, setState ->
-                        MeasuredSetTableRow(setState, index)
+                    displayRows.forEachIndexed { index, displayRow ->
+                        MeasuredSetTableRow(displayRow, index)
                     }
                 }
             }
@@ -415,8 +479,8 @@ fun ExerciseSetsViewer(
                         .verticalColumnScrollbar(scrollState = scrollState)
                         .verticalScroll(scrollState)
                 ) {
-                    exerciseSetStates.forEachIndexed { index, setState ->
-                        MeasuredSetTableRow(setState, index)
+                    displayRows.forEachIndexed { index, displayRow ->
+                        MeasuredSetTableRow(displayRow, index)
                     }
                 }
             }

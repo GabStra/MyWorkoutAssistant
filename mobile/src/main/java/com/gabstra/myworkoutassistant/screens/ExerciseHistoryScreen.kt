@@ -64,6 +64,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -445,12 +446,11 @@ fun ExerciseHistoryScreen(
                     actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
+                    ScrollableTextColumn(
                         text = exercise.name,
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 2,
+                        textAlign = TextAlign.Center
                     )
                 },
                 navigationIcon = {

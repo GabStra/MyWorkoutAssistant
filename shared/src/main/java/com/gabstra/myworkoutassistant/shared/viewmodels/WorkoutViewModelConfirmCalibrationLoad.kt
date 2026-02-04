@@ -118,7 +118,7 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
             exercise = exercise,
             priorExercises = priorExercises,
             initialSetup = emptyList(),
-            maxWarmups = 4
+            maxWarmups = 3
         )
     } else {
         WarmupPlanner.buildWarmupSets(
@@ -128,7 +128,7 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
             exercise = exercise,
             priorExercises = priorExercises,
             equipment = equipment,
-            maxWarmups = 4
+            maxWarmups = 3
         )
     }
     val exerciseInfo = withContext(dispatchers.io) { exerciseInfoDao.getExerciseInfoById(exercise.id) }
@@ -452,7 +452,7 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
                 }
             }
             
-            populateNextStateSetsForRest(updatedSequence)
+            populateNextStateForRest(updatedSequence)
             var updatedMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex)
             
             if (equipment is Barbell &&
@@ -467,9 +467,9 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
                 updatedMachine, exercise, selectedWeight, calibrationChildIndex + statesToInsert.size
             )
             
-            // Repopulate nextStateSets so Rest states reference Set states that have plateChangeResult
-            // (populateNextStateSetsForRest was called earlier with sequence before plate assignment)
-            populateNextStateSetsForRest(updatedMachine.stateSequence)
+            // Repopulate nextState for Rest states so they reference states that have plateChangeResult
+            // (populateNextStateForRest was called earlier with sequence before plate assignment)
+            populateNextStateForRest(updatedMachine.stateSequence)
             
             // Populate setStates and update state machine
             populateNextStateSets()

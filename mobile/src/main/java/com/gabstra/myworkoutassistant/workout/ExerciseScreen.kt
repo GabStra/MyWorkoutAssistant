@@ -35,7 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.FadingText
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -123,10 +123,13 @@ fun ExerciseScreen(
     )
 
     LaunchedEffect(state.set.id) {
-        // Navigate to the exercise detail page
-        pagerState.scrollToPage(exerciseDetailPageIndex)
+        if (pagerState.currentPage != exerciseDetailPageIndex) {
+            pagerState.scrollToPage(exerciseDetailPageIndex)
+        }
         allowHorizontalScrolling = true
-        viewModel.closeCustomDialog()
+        if (showNextDialog) {
+            viewModel.closeCustomDialog()
+        }
     }
 
     val scope = rememberCoroutineScope()
@@ -181,14 +184,14 @@ fun ExerciseScreen(
     }
 
     AnimatedContent(
-        targetState = state,
+        targetState = state.exerciseId to state.set.id,
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
         }, label = ""
-    ) { updatedState ->
+    ) { _ ->
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                FadingText(
+                ScrollableTextColumn(
                     text = exercise.name,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -202,8 +205,8 @@ fun ExerciseScreen(
                                 providedOnLongClick.invoke()
                             }
                         ),
+                    maxLines = 2,
                     style = MaterialTheme.typography.titleLarge,
-                    marqueeEnabled = marqueeEnabled,
                     textAlign = TextAlign.Center
                 )
             }
@@ -221,31 +224,31 @@ fun ExerciseScreen(
                     }
                 },
             pagerState = pagerState,
-            userScrollEnabled = allowHorizontalScrolling,
+            userScrollEnabled = (pagerState.currentPage == exerciseDetailPageIndex) && allowHorizontalScrolling,
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
             when (pageType) {
-                PageType.PLATES -> PagePlates(updatedState, equipment)
+                PageType.PLATES -> PagePlates(state, equipment)
                 PageType.EXERCISE_DETAIL -> ExerciseDetail(
                     modifier = Modifier.fillMaxSize(),
-                    updatedState = updatedState,
+                    updatedState = state,
                     viewModel = viewModel,
                     onEditModeDisabled = { allowHorizontalScrolling = true },
                     onEditModeEnabled = { allowHorizontalScrolling = false },
                     onTimerDisabled = { },
                     onTimerEnabled = { },
                     extraInfo = { _ ->
-                        val isWarmupSet = remember(updatedState.set) {
-                            when(val set = updatedState.set) {
+                        val isWarmupSet = remember(state.set) {
+                            when(val set = state.set) {
                                 is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                                 else -> false
                             }
                         }
                         
-                        val isCalibrationSet = remember(updatedState.isCalibrationSet) {
-                            updatedState.isCalibrationSet
+                        val isCalibrationSet = remember(state.isCalibrationSet) {
+                            state.isCalibrationSet
                         }
                         
                         val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
@@ -257,9 +260,9 @@ fun ExerciseScreen(
                             supersetExercises?.indexOf(exercise)
                         }
                         
-                        val sideIndicator = remember(updatedState.intraSetTotal) {
-                            if (updatedState.intraSetTotal != null) {
-                                "A ↔ B"
+                        val sideIndicator = remember(state.intraSetTotal) {
+                            if (state.intraSetTotal != null) {
+                                "① ↔ ②"
                             } else null
                         }
                         
@@ -280,13 +283,13 @@ fun ExerciseScreen(
                                 } else null,
                                 setLabel = viewModel.getSetCounterForExercise(
                                     state.exerciseId,
-                                    updatedState
+                                    state
                                 )?.let { (current, total) ->
                                     if (total > 1) "Set: $current/$total" else null
                                 },
                                 sideIndicator = sideIndicator,
-                                currentSideIndex = updatedState.intraSetCounter.takeIf { updatedState.intraSetTotal != null },
-                                isUnilateral = updatedState.isUnilateral,
+                                currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
+                                isUnilateral = state.isUnilateral,
                                 equipmentName = equipment?.name,
                                 accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
                                 textColor = MaterialTheme.colorScheme.onBackground,
@@ -335,27 +338,28 @@ fun ExerciseScreen(
 
                 PageType.MUSCLES -> PageMuscles(exercise = exercise)
 
-                PageType.EXERCISES ->PageExercises(
-                            updatedState,
-                            viewModel, hapticsViewModel,
-                            exercise,
+                PageType.EXERCISES -> PageExercises(
+                            workoutState = state,
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            currentExercise = exercise,
                             onExerciseSelected = {
                                 selectedExerciseId = it
                             })
 
                 PageType.NOTES -> {} // PageNotes(exercise.notes)
-                PageType.BUTTONS -> PageButtons(updatedState, viewModel, hapticsViewModel)
+                PageType.BUTTONS -> PageButtons(state, viewModel, hapticsViewModel)
             }
         }
 
         CustomDialogYesOnLongPress(
             show = showNextDialog,
-            title = if (updatedState.intraSetTotal != null && updatedState.intraSetCounter < updatedState.intraSetTotal!!) "Switch side" else "Complete Set",
+            title = if (state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!!) "Switch side" else "Complete Set",
             message = "Do you want to proceed?",
             handleYesClick = {
 
-                if (updatedState.intraSetTotal != null) {
-                    updatedState.intraSetCounter++
+                if (state.intraSetTotal != null) {
+                    state.intraSetCounter++
                 }
 
                 hapticsViewModel.doGentleVibration()
@@ -392,7 +396,7 @@ fun ExerciseScreen(
         ) {
             ExerciseIndicator(
                 viewModel,
-                updatedState,
+                state,
                 selectedExerciseId
             )
 

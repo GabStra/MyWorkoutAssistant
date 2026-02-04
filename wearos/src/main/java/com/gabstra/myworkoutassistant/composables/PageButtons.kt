@@ -45,7 +45,8 @@ fun PageButtons(
     updatedState: WorkoutState.Set,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
-    navController: NavController
+    navController: NavController,
+    onBeforeGoHome: (() -> Unit)? = null
 ) {
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
     val screenState by viewModel.screenState.collectAsState()
@@ -101,16 +102,21 @@ fun PageButtons(
                     text = "Back",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        // Check if in calibration flow (CalibrationRIRSelection or Set with isCalibrationSet)
+                        // Handle go back for calibration flow:
+                        // CalibrationRIRSelection → Set(isCalibrationSet) → CalibrationLoadSelection → previous non-Rest state
+                        // Use undo() for CalibrationRIRSelection and Set(isCalibrationSet) to maintain proper state sequence
+                        // Use goToPreviousNonRestState() for CalibrationLoadSelection to skip Rest states
                         when (currentWorkoutState) {
                             is WorkoutState.CalibrationRIRSelection -> {
                                 // Go back one step to calibration Set execution
+                                // undo() will move to Set(isCalibrationSet=true), calibration context updates to EXECUTING
                                 viewModel.undo()
                                 viewModel.lightScreenUp()
                             }
                             is WorkoutState.Set -> {
                                 if (currentWorkoutState.isCalibrationSet) {
                                     // Go back one step to CalibrationLoadSelection
+                                    // undo() will move to CalibrationLoadSelection, calibration context updates to LOAD_SELECTION
                                     viewModel.undo()
                                     viewModel.lightScreenUp()
                                 } else {
@@ -119,8 +125,10 @@ fun PageButtons(
                                 }
                             }
                             is WorkoutState.CalibrationLoadSelection -> {
-                                // Show dialog (same as non-calibration sets)
-                                showGoBackDialog = true
+                                // Go back to previous non-Rest state (skipping Rest states)
+                                // This will typically be a Set from the previous exercise
+                                viewModel.goToPreviousNonRestState()
+                                viewModel.lightScreenUp()
                             }
                             else -> {
                                 // Show dialog for other states
@@ -209,7 +217,7 @@ fun PageButtons(
                     text = "Go Home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
-                        
+                        onBeforeGoHome?.invoke()
                         // Save workout record (updatedState is already WorkoutState.Set)
                         viewModel.upsertWorkoutRecord(updatedState.exerciseId, updatedState.setIndex)
                         

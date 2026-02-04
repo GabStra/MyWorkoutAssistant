@@ -123,17 +123,7 @@ fun EnduranceSetScreen (
         }
     }
 
-    // Sync currentMillis with state.currentSetData.endTimer for UI display
-    // The timer service updates state.currentSetData.endTimer, so we read from it
     var currentMillis by remember(set.id) { mutableIntStateOf(0) }
-    
-    // Update currentMillis when state changes (from timer service or local edits)
-    LaunchedEffect(state.currentSetData) {
-        val setData = state.currentSetData as? EnduranceSetData ?: return@LaunchedEffect
-        currentMillis = setData.endTimer
-        // Update isOverLimit based on current timer value
-        isOverLimit = currentMillis >= setData.startTimer && !set.autoStop
-    }
     var showStopDialog by remember { mutableStateOf(false) }
 
     suspend fun showCountDownIfEnabled(){
@@ -167,42 +157,65 @@ fun EnduranceSetScreen (
         updateInteractionTime()
     }
 
+    @Composable
+    fun EnduranceRunningDisplay(initialMillis: Int) {
+        val setData = state.currentSetData as? EnduranceSetData
+        val displayMillis = setData?.endTimer ?: initialMillis
+        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
+        val isDifferent = displayMillis != previousTimer
+        val overLimit = setData != null && displayMillis >= setData.startTimer && !set.autoStop
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TimeViewer(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (showStartButton) {
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    },
+                    onDoubleClick = {}
+                ),
+                seconds = displayMillis / 1000,
+                style = itemStyle,
+                color = if (overLimit) MaterialTheme.colorScheme.secondary else if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+
     val textComposable = @Composable {
         val previousTimer = previousSetStartTimer ?: currentSet.startTimer
         val isDifferent = currentSet.startTimer != previousTimer
-
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
-        ){
+        ) {
             TimeViewer(
-                modifier = Modifier
-                    .combinedClickable(
-                        onClick = {
-                        },
-                        onLongClick = {
-                            if (showStartButton) {
-                                isTimerInEditMode = !isTimerInEditMode
-                                updateInteractionTime()
-                                hapticsViewModel.doGentleVibration()
-                            }
-                        },
-                        onDoubleClick = {
-                            if (isTimerInEditMode) {
-                                currentSet = currentSet.copy(
-                                    startTimer = previousTimer
-                                )
-
-                                hapticsViewModel.doHardVibrationTwice()
-                            }
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (showStartButton) {
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            hapticsViewModel.doGentleVibration()
                         }
-                    ),
-                seconds = (if(isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
+                    },
+                    onDoubleClick = {
+                        if (isTimerInEditMode) {
+                            currentSet = currentSet.copy(startTimer = previousTimer)
+                            hapticsViewModel.doHardVibrationTwice()
+                        }
+                    }
+                ),
+                seconds = (if (isTimerInEditMode) currentSet.startTimer else currentMillis) / 1000,
                 style = itemStyle,
-                color = if(isOverLimit) MaterialTheme.colorScheme.secondary else if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                color = if (isOverLimit) MaterialTheme.colorScheme.secondary else if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
             )
         }
     }
@@ -276,7 +289,11 @@ fun EnduranceSetScreen (
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                     )
-                    textComposable()
+                    if (isTimerInEditMode) {
+                        textComposable()
+                    } else {
+                        EnduranceRunningDisplay(initialMillis = 0)
+                    }
                 }
                 if (showStartButton) {
                     IconButton(
@@ -369,10 +386,6 @@ fun EnduranceSetScreen (
             message = "Do you want to stop this exercise?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
-                state.currentSetData = currentSet.copy(
-                    endTimer = currentMillis
-                )
-
                 onTimerDisabled()
                 onTimerEnd()
                 showStopDialog = false

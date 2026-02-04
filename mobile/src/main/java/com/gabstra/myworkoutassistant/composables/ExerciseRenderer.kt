@@ -20,7 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.FadingText
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -50,11 +50,12 @@ fun ExerciseRenderer(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ){
-            FadingText(
+            ScrollableTextColumn(
                 text = exercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp),
+                maxLines = 2,
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                 textAlign = TextAlign.Center
@@ -69,11 +70,12 @@ fun ExerciseRenderer(
                 if (customTitle != null) {
                     customTitle(m)
                 } else {
-                    FadingText(
+                    ScrollableTextColumn(
                         text = exercise.name,
                         modifier = m
                             .fillMaxWidth()
                             .padding(horizontal = 10.dp),
+                        maxLines = 2,
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                         textAlign = TextAlign.Center

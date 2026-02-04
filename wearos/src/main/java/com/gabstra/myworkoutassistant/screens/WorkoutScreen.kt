@@ -82,6 +82,21 @@ fun WorkoutScreen(
     val isRefreshing = screenState.isRefreshing
     val isSyncingToPhone by viewModel.isSyncingToPhone
 
+    val onBeforeGoHome = remember(selectedWorkout) {
+        {
+            try {
+                if (selectedWorkout != null && selectedWorkout.usePolarDevice) {
+                    polarViewModel.disconnectFromDevice()
+                } else {
+                    hrViewModel.stopMeasuringHeartRate()
+                }
+            } catch (exception: Exception) {
+                android.util.Log.e("WorkoutScreen", "Error stopping sensors on Go Home", exception)
+            }
+            Unit
+        }
+    }
+
     val triggerMobileNotification = screenState.enableWorkoutNotificationFlow
 
     LaunchedEffect(triggerMobileNotification){
@@ -343,6 +358,7 @@ fun WorkoutScreen(
                             hapticsViewModel = hapticsViewModel,
                             state = state,
                             navController = navController,
+                            onBeforeGoHome = onBeforeGoHome,
                             hearthRateChart = {
                                 heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
                             },
@@ -371,6 +387,7 @@ fun WorkoutScreen(
                             hapticsViewModel = hapticsViewModel,
                             state = state,
                             navController = navController,
+                            onBeforeGoHome = onBeforeGoHome,
                             hearthRateChart = {
                                 heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
                             },
@@ -419,6 +436,7 @@ fun WorkoutScreen(
                                         heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
                                     },
                                     navController = navController,
+                                    onBeforeGoHome = onBeforeGoHome,
                                 )
                             }
                         }
@@ -457,6 +475,7 @@ fun WorkoutScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 state = state,
+                                onBeforeGoHome = onBeforeGoHome,
                                 hearthRateChart = { heartRateChartComposable() },
                                 onTimerEnd = {
                                     try {

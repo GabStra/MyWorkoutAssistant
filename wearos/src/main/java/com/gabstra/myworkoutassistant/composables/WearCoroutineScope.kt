@@ -2,11 +2,12 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.staticCompositionLocalOf
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
@@ -22,15 +23,21 @@ val LocalWearCoroutineExceptionHandler = staticCompositionLocalOf<CoroutineExcep
  * leaves) and includes [LocalWearCoroutineExceptionHandler] when set, so unhandled exceptions
  * in launched coroutines are logged to file on Wear OS.
  *
- * Use this instead of [androidx.compose.runtime.rememberCoroutineScope] in Wear composables
- * so UI-launched coroutines are covered by the app's single CEH.
+ * The scope uses the composition's [CoroutineContext] (including [MonotonicFrameClock]) so
+ * frame-based APIs like [androidx.compose.foundation.pager.PagerState.animateScrollToPage]
+ * work correctly.
+ *
+ * Use this instead of [rememberCoroutineScope] in Wear composables so UI-launched coroutines
+ * are covered by the app's single CEH.
  */
 @Composable
 fun rememberWearCoroutineScope(): CoroutineScope {
     val ceh = LocalWearCoroutineExceptionHandler.current
-    val scope = remember {
+    val compositionScope = rememberCoroutineScope()
+    val scope = remember(compositionScope, ceh) {
+        val baseContext = compositionScope.coroutineContext.minusKey(Job)
         CoroutineScope(
-            SupervisorJob() + Dispatchers.Main.immediate + (ceh ?: CoroutineExceptionHandler { _, _ -> })
+            SupervisorJob() + baseContext + (ceh ?: CoroutineExceptionHandler { _, _ -> })
         )
     }
     DisposableEffect(Unit) {

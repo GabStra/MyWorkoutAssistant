@@ -3,8 +3,11 @@ package com.gabstra.myworkoutassistant.composables
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,6 +37,11 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
@@ -56,6 +64,71 @@ import kotlin.math.sqrt
 private fun Double.compact(): String {
     val s = String.format("%.2f", this).replace(',', '.')
     return s.trimEnd('0').trimEnd('.')
+}
+
+/**
+ * Computes the rightmost X (in px) that plate labels will use when laid out with the same
+ * geometry and collision logic as [BarbellVisualization]. Used to set content width so
+ * horizontal scroll is only enabled when labels actually overflow the viewport.
+ */
+private fun computeRequiredLabelRightEdgePx(
+    plateData: List<PlateData>,
+    viewportWidthPx: Float,
+    sleeveLength: Float,
+    extraLogicalOffset: Float,
+    maxLogicalThickness: Float?,
+    currentTotalThickness: Float,
+    density: Density,
+    labelTextSizePx: Float
+): Float {
+    if (plateData.isEmpty()) return viewportWidthPx
+    val shaftLength = with(density) { 20.dp.toPx() }
+    val stopperWidth = with(density) { 5.dp.toPx() }
+    val spacing = with(density) { 0.dp.toPx() }
+    val paddingEnd = with(density) { 0.dp.toPx() }
+    val sleeveX = shaftLength + spacing + stopperWidth + spacing
+    val sleeveWidth = viewportWidthPx - sleeveX - paddingEnd
+    val baseThickness = (maxLogicalThickness ?: currentTotalThickness).coerceAtLeast(0f)
+    val logicalUsedLength = if (baseThickness > 0f) {
+        val desired = baseThickness + extraLogicalOffset
+        if (sleeveLength > 0f) desired.coerceAtMost(sleeveLength) else desired
+    } else {
+        if (sleeveLength > 0f) sleeveLength else sleeveWidth
+    }.coerceAtLeast(1f)
+    val scaleFactor = sleeveWidth / logicalUsedLength
+    val labelCollisionPadding = with(density) { 6.dp.toPx() }
+    val minPlateWidthPx = with(density) { 4.dp.toPx() }
+    val maxPlateWeight = plateData.maxOfOrNull { it.weight } ?: 25.0
+    val textPaint = android.graphics.Paint().apply {
+        textSize = labelTextSizePx
+        isAntiAlias = true
+    }
+    var topRowRightX = sleeveX - labelCollisionPadding
+    var bottomRowRightX = sleeveX - labelCollisionPadding
+    var currentX = sleeveX
+    val unboundedMaxLabelCenterX = 1e6f
+    plateData.forEachIndexed { plateIndex, plateInfo ->
+        val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
+        val plateWidth = scaledThickness.coerceAtLeast(minPlateWidthPx).coerceAtMost(sleeveX + sleeveWidth - currentX)
+        val plateCenterX = currentX + plateWidth / 2f
+        val weightText = plateInfo.weight.compact()
+        val labelWidth = textPaint.measureText(weightText)
+        val minLabelCenterX = sleeveX + (labelWidth / 2f)
+        val maxLabelCenterX = unboundedMaxLabelCenterX
+        val isTop = plateIndex % 2 == 0
+        val rowRightX = if (isTop) topRowRightX else bottomRowRightX
+        val desiredCenterX = plateCenterX.coerceIn(minLabelCenterX, maxLabelCenterX)
+        val desiredLeft = desiredCenterX - (labelWidth / 2f)
+        val adjustedCenterX = if (desiredLeft > rowRightX + labelCollisionPadding) {
+            desiredCenterX
+        } else {
+            (rowRightX + labelCollisionPadding + (labelWidth / 2f)).coerceAtMost(maxLabelCenterX)
+        }
+        val adjustedRight = adjustedCenterX + (labelWidth / 2f)
+        if (isTop) topRowRightX = adjustedRight else bottomRowRightX = adjustedRight
+        currentX += plateWidth
+    }
+    return maxOf(topRowRightX, bottomRowRightX)
 }
 
 @SuppressLint("DefaultLocale")
@@ -411,23 +484,66 @@ fun PagePlates(
                 }
             }
 
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp)
             ) {
-                BarbellVisualization(
-                    plates = animatedPlates,
-                    barbell = equipment,
-                    activePlateInfo = activePlateInfo,
-                    shuffledPlates = shuffledPlates,
-                    addStepIndex = addStepIndex,
+                val viewportWidth = maxWidth
+                val density = LocalDensity.current
+                val viewportWidthPx = with(density) { viewportWidth.toPx() }
+                val labelTextSizePx = with(density) { MaterialTheme.typography.bodySmall.fontSize.toPx() }
+                val labelRightPaddingPx = with(density) { 4.dp.toPx() }
+                val platesForDrawing = remember(animatedPlates, platesBeforeCurrentStep, activePlateInfo) {
+                    if (activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
+                        platesBeforeCurrentStep.sortedDescending()
+                    } else {
+                        animatedPlates.sortedDescending()
+                    }
+                }
+                val plateDataForWidth = remember(platesForDrawing, equipment.availablePlates) {
+                    platesForDrawing.map { weight ->
+                        val plate = equipment.availablePlates.find { it.weight == weight }
+                        PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
+                    }
+                }
+                val sleeveLength = equipment.sleeveLength.toFloat()
+                val currentTotalThickness = plateDataForWidth.sumOf { it.thickness }.toFloat()
+                val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
+                val requiredLabelRightPx = computeRequiredLabelRightEdgePx(
+                    plateData = plateDataForWidth,
+                    viewportWidthPx = viewportWidthPx,
+                    sleeveLength = sleeveLength,
+                    extraLogicalOffset = extraLogicalOffset,
                     maxLogicalThickness = maxLogicalThickness,
-                    platesBeforeCurrentStep = platesBeforeCurrentStep,
-                    currentStepIndex = currentStepIndex,
-                    totalSteps = steps.size,
-                    modifier = Modifier.fillMaxSize()
+                    currentTotalThickness = currentTotalThickness,
+                    density = density,
+                    labelTextSizePx = labelTextSizePx
                 )
+                val contentWidthPx = maxOf(viewportWidthPx, requiredLabelRightPx + labelRightPaddingPx)
+                val contentWidth = with(density) { contentWidthPx.toDp() }
+                val scrollState = rememberScrollState()
+                Box(
+                    modifier = Modifier
+                        .horizontalScroll(scrollState)
+                        .width(contentWidth)
+                        .fillMaxHeight()
+                ) {
+                    BarbellVisualization(
+                        plates = animatedPlates,
+                        barbell = equipment,
+                        activePlateInfo = activePlateInfo,
+                        shuffledPlates = shuffledPlates,
+                        addStepIndex = addStepIndex,
+                        maxLogicalThickness = maxLogicalThickness,
+                        platesBeforeCurrentStep = platesBeforeCurrentStep,
+                        previousPlates = plateChangeResult.previousPlates.sortedDescending(),
+                        currentStepIndex = currentStepIndex,
+                        totalSteps = steps.size,
+                        viewportWidth = viewportWidth,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
     }
@@ -442,8 +558,10 @@ private fun BarbellVisualization(
     addStepIndex: Map<Pair<Double, Int>, Int> = emptyMap(), // Step index when each shuffled plate is re-added
     maxLogicalThickness: Float? = null,
     platesBeforeCurrentStep: List<Double>? = null, // Plates state before current step (for REMOVE highlighting)
+    previousPlates: List<Double>? = null, // Initial previous plate configuration (for unchanged plate coloring)
     currentStepIndex: Int = -1, // Current step index (-1 idle, steps.size for final state)
     totalSteps: Int = 0, // Total number of steps
+    viewportWidth: Dp? = null, // When set, bar and plates use this width; labels use full canvas (content) width
     modifier: Modifier = Modifier
 ) {
 
@@ -524,13 +642,21 @@ private fun BarbellVisualization(
 
     // Shuffled plates (in both remove and add lists): green once re-added (currentStepIndex >= addStepIndex).
     // Red while being removed is handled by activePlateInfo / highlightedPlateIndices.
+    // Calculate instance indices based on platesForDrawing to match how they were calculated when building
+    // the shuffled set. platesForDrawing already has the correct state (includes plate being removed during
+    // REMOVE actions, includes plate being added during ADD actions).
     val shuffledReAddedPlateIndices = remember(platesForDrawing, shuffledPlates, addStepIndex, currentStepIndex, isFinalState) {
         if (isFinalState) {
             emptySet<Int>()
         } else {
             platesForDrawing.mapIndexedNotNull { index, plateWeight ->
+                // Calculate instance index the same way as when building shuffled plates
+                // For ADD actions, instanceIdx = countBefore (number of plates of this weight before adding)
+                // This equals the count of plates of this weight up to and including this plate minus 1 (0-indexed)
                 val instanceIdx = platesForDrawing.subList(0, index + 1).count { it == plateWeight } - 1
                 val key = Pair(plateWeight, instanceIdx)
+                
+                // Check if this plate is shuffled and has been re-added
                 if (shuffledPlates.contains(key) && currentStepIndex >= (addStepIndex[key] ?: -1)) {
                     index
                 } else {
@@ -575,7 +701,9 @@ private fun BarbellVisualization(
         val paddingEnd = 0.dp.toPx()
 
         val sleeveX = shaftLength + spacing + stopperWidth + spacing
-        val sleeveWidth = canvasWidth - sleeveX - paddingEnd
+        // When viewportWidth is set (scrollable layout), bar and plates use viewport width; labels use full canvas width.
+        val viewportWidthPx = viewportWidth?.toPx()
+        val sleeveWidth = (viewportWidthPx ?: canvasWidth) - sleeveX - paddingEnd
         // Dynamically scale the logical sleeve length so plates use more of the visible width.
         // We base this on the maximum total thickness encountered across all configurations in
         // the animation (if provided), plus a small offset, but never exceed the physical sleeve
@@ -742,7 +870,8 @@ private fun BarbellVisualization(
             val weightText = plateInfo.weight.compact()
             val labelWidth = textPaint.measureText(weightText)
             val minLabelCenterX = sleeveX + (labelWidth / 2f)
-            val maxLabelCenterX = (sleeveX + sleeveWidth) - (labelWidth / 2f)
+            val labelRightPaddingPx = 4.dp.toPx()
+            val maxLabelCenterX = canvasWidth - (labelWidth / 2f) - labelRightPaddingPx
 
             val preferredIsTop = plateIndex % 2 == 0
             val isTop = preferredIsTop

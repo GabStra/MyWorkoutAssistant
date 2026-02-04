@@ -80,6 +80,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -341,12 +342,11 @@ fun ExerciseDetailScreen(
                         actionIconContentColor = MaterialTheme.colorScheme.onBackground
                     ),
                     title = {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE),
-                            textAlign = TextAlign.Center,
-                            text = exercise.name
+                        ScrollableTextColumn(
+                            text = exercise.name,
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 2,
+                            textAlign = TextAlign.Center
                         )
                     },
                     navigationIcon = {

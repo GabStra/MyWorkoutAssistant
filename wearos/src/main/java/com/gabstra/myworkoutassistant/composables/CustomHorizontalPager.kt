@@ -2,17 +2,24 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
@@ -23,15 +30,17 @@ import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.LocalReduceMotion
 import androidx.wear.compose.foundation.pager.HorizontalPager
+import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.PagerState
 import androidx.wear.compose.material3.HorizontalPageIndicator
-import androidx.wear.compose.material3.HorizontalPagerScaffold
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
 
@@ -94,21 +103,8 @@ fun CustomAnimatedPage(
     val isReduceMotionEnabled = LocalReduceMotion.current
     val isRtlEnabled = LocalLayoutDirection.current == LayoutDirection.Rtl
     val orientation = remember(pagerState) { pagerState.layoutInfo.orientation }
-    val configuration = LocalConfiguration.current
-    val screenDp = if (orientation == Orientation.Horizontal)
-        configuration.screenWidthDp
-    else
-        configuration.screenHeightDp
 
-    val numberOfIntervals = remember(orientation, screenDp) { screenDp / 2 }
-
-    val currentPageOffsetFraction by
-    remember(pagerState, numberOfIntervals) {
-        derivedStateOf {
-            (pagerState.currentPageOffsetFraction * numberOfIntervals).toInt() /
-                    numberOfIntervals.toFloat()
-        }
-    }
+    val currentPageOffsetFraction = pagerState.currentPageOffsetFraction
 
     val graphicsLayerModifier =
         if (isReduceMotionEnabled) Modifier
@@ -118,17 +114,22 @@ fun CustomAnimatedPage(
                 val offsetFraction = currentPageOffsetFraction
                 val isSwipingRightToLeft = direction * offsetFraction > 0
                 val isSwipingLeftToRight = direction * offsetFraction < 0
+                val isSwipingDownToUp = direction * offsetFraction > 0
+                val isSwipingUpToDown = direction * offsetFraction < 0
                 val isCurrentPage: Boolean = pageIndex == pagerState.currentPage
                 val shouldAnchorRight =
                     (isSwipingRightToLeft && isCurrentPage) ||
                             (isSwipingLeftToRight && !isCurrentPage)
+                val shouldAnchorBottom =
+                    (isSwipingDownToUp && isCurrentPage) ||
+                            (isSwipingUpToDown && !isCurrentPage)
                 val pivotFractionX = if (shouldAnchorRight) 1f else 0f
+                val pivotFractionY = if (shouldAnchorBottom) 1f else 0f
                 transformOrigin =
                     if (pagerState.layoutInfo.orientation == Orientation.Horizontal) {
                         TransformOrigin(pivotFractionX, 0.5f)
                     } else {
-                        // Flip X and Y for vertical pager
-                        TransformOrigin(0.5f, pivotFractionX)
+                        TransformOrigin(0.5f, pivotFractionY)
                     }
                 val pageTransitionFraction =
                     getPageTransitionFraction(isCurrentPage, offsetFraction)
@@ -160,6 +161,9 @@ fun CustomAnimatedPage(
     }
 }
 
+private const val PAGER_INDICATOR_HIDE_DELAY_MS = 2500L
+private const val PAGER_INDICATOR_FADE_DURATION_MS = 250
+
 @OptIn(ExperimentalWearFoundationApi::class)
 @Composable
 fun CustomHorizontalPager(
@@ -168,23 +172,59 @@ fun CustomHorizontalPager(
     userScrollEnabled: Boolean = true,
     content: @Composable (Int) -> Unit
 ) {
-    HorizontalPagerScaffold(
-        modifier = modifier,
-        pagerState = pagerState,
-        pageIndicator = {
-            HorizontalPageIndicator(
-                pagerState = pagerState,
-                unselectedColor = MediumDarkGray
-            )
+    var indicatorVisible by remember { mutableStateOf(true) }
+    var hideTimeoutJob by remember { mutableStateOf<Job?>(null) }
+    val scope = rememberWearCoroutineScope()
+    val indicatorAlpha by animateFloatAsState(
+        targetValue = if (indicatorVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = PAGER_INDICATOR_FADE_DURATION_MS),
+        label = "pager_indicator"
+    )
+
+    LaunchedEffect(pagerState.currentPage) {
+        indicatorVisible = true
+        hideTimeoutJob?.cancel()
+        hideTimeoutJob = scope.launch {
+            delay(PAGER_INDICATOR_HIDE_DELAY_MS)
+            indicatorVisible = false
         }
-    ) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize().padding(bottom = 20.dp).clip(RectangleShape),
-            userScrollEnabled = userScrollEnabled,
-        ) { page ->
-            CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {
-                content(page)
+    }
+
+    Box(modifier = modifier) {
+        // Skip pager when there's only a single page
+        if (pagerState.pageCount == 1) {
+            content(0)
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize().clip(RectangleShape),
+                flingBehavior = PagerDefaults.snapFlingBehavior(state = pagerState),
+                userScrollEnabled = userScrollEnabled,
+            ) { page ->
+                CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {
+                    content(page)
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .graphicsLayer { alpha = indicatorAlpha }
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            indicatorVisible = true
+                            hideTimeoutJob?.cancel()
+                            hideTimeoutJob = scope.launch {
+                                delay(PAGER_INDICATOR_HIDE_DELAY_MS)
+                                indicatorVisible = false
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                HorizontalPageIndicator(
+                    pagerState = pagerState,
+                    unselectedColor = MediumDarkGray
+                )
             }
         }
     }

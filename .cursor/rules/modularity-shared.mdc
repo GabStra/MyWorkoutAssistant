@@ -1,0 +1,35 @@
+---
+description: Encourages modularity, reuse, and placement of platform-agnostic code in shared module
+alwaysApply: true
+---
+
+# Modularity and Shared Module
+
+## Shared module purpose
+
+The `shared` module is the library for platform-agnostic code. Use it for anything usable by both `mobile` and `wearos` without UI or device-specific dependencies.
+
+**Belongs in `shared`:**
+- Domain models (Equipment, SetData, WorkoutComponent)
+- Utilities (PlateCalculator, WarmupPlanner, CalibrationHelper)
+- ViewModels and business logic
+- Stores, adapters, type converters
+
+**Stays in `mobile` / `wearos`:**
+- UI composables, screens, navigation
+- Platform-specific APIs (sensors, haptics, BLE)
+
+## Placement heuristic
+
+- "Could this run in a unit test without Android UI or device sensors?" → likely `shared`
+- "Does it touch Compose UI, navigation, or platform APIs?" → platform module
+
+## DRY and reuse
+
+- Prefer small, focused units; extract reusable functions and classes
+- Do not duplicate logic across mobile and wearos — extract to `shared` instead
+- When adding code used by both platforms, put it in `shared` first
+
+**Good:** Extract plate calculation logic to `shared/utils/PlateCalculator.kt` and reuse in both apps.
+
+**Bad:** Copy-pasting the same calculation into `mobile` and `wearos`.

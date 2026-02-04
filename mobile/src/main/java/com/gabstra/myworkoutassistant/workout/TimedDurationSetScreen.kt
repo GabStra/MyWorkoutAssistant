@@ -120,15 +120,8 @@ fun TimedDurationSetScreen(
         }
     }
 
-    // Sync currentMillis with state.currentSetData.endTimer for UI display
-    // The timer service updates state.currentSetData.endTimer, so we read from it
+    // Local display value for edit mode only; running timer reads from state in TimedDurationRunningDisplay
     var currentMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
-    
-    // Update currentMillis when state changes (from timer service or local edits)
-    LaunchedEffect(state.currentSetData) {
-        val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
-        currentMillis = setData.endTimer
-    }
     var showStopDialog by remember { mutableStateOf(false) }
 
     suspend fun showCountDownIfEnabled(){
@@ -215,41 +208,71 @@ fun TimedDurationSetScreen(
         }
     }
 
-    val textComposable = @Composable {
-        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
-        val isDifferent = currentSet.startTimer != previousTimer
-
+    @Composable
+    fun TimedDurationRunningDisplay(
+        initialMillis: Int,
+        onLongClick: () -> Unit,
+        onDoubleClick: () -> Unit,
+    ) {
+        val setData = state.currentSetData as? TimedDurationSetData
+        val displayMillis = setData?.endTimer ?: initialMillis
+        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
+        val isDifferent = displayMillis != previousTimer
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             TimeViewer(
-                modifier = Modifier
-                    .combinedClickable(
-                        onClick = {
-                        },
-                        onLongClick = {
-                            if (showStartButton) {
-                                isTimerInEditMode = !isTimerInEditMode
-                                updateInteractionTime()
-                                hapticsViewModel.doGentleVibration()
-                            }
-                        },
-                        onDoubleClick = {
-                            if (isTimerInEditMode) {
-                                val newTimerValue = previousTimer
-                                currentSet = currentSet.copy(startTimer = newTimerValue)
-                                currentMillis = newTimerValue
-                                hapticsViewModel.doHardVibrationTwice()
-                            }
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (showStartButton) {
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            hapticsViewModel.doGentleVibration()
                         }
-                    ),
+                        onLongClick()
+                    },
+                    onDoubleClick = onDoubleClick
+                ),
+                seconds = displayMillis / 1000,
+                style = itemStyle,
+                color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+            )
+        }
+    }
+
+    val textComposable = @Composable {
+        val previousTimer = previousSetStartTimer ?: currentSet.startTimer
+        val isDifferent = currentSet.startTimer != previousTimer
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TimeViewer(
+                modifier = Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (showStartButton) {
+                            isTimerInEditMode = !isTimerInEditMode
+                            updateInteractionTime()
+                            hapticsViewModel.doGentleVibration()
+                        }
+                    },
+                    onDoubleClick = {
+                        if (isTimerInEditMode) {
+                            val newTimerValue = previousTimer
+                            currentSet = currentSet.copy(startTimer = newTimerValue)
+                            currentMillis = newTimerValue
+                            hapticsViewModel.doHardVibrationTwice()
+                        }
+                    }
+                ),
                 seconds = currentMillis / 1000,
                 style = itemStyle,
-                color =  if(isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
             )
         }
     }
@@ -273,7 +296,15 @@ fun TimedDurationSetScreen(
                         style = headerStyle,
                         textAlign = TextAlign.Center,
                     )
-                    textComposable()
+                    if (isTimerInEditMode) {
+                        textComposable()
+                    } else {
+                        TimedDurationRunningDisplay(
+                            initialMillis = currentSet.startTimer,
+                            onLongClick = {},
+                            onDoubleClick = {}
+                        )
+                    }
                 }
                 if (showStartButton) {
                     IconButton(
@@ -368,10 +399,6 @@ fun TimedDurationSetScreen(
             message = "Do you want to stop this exercise?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
-                state.currentSetData = currentSet.copy(
-                    endTimer = currentMillis
-                )
-
                 onTimerDisabled()
                 onTimerEnd()
                 showStopDialog = false

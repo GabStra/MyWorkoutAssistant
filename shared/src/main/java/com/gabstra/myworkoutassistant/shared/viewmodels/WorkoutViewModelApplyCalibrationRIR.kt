@@ -160,10 +160,11 @@ private fun WorkoutViewModel.updateWorkSetStatesInList(
         if (state is WorkoutState.Set && state.exerciseId == currentState.exerciseId) {
             val updatedSet = setUpdates[state.set.id]
             if (updatedSet != null && !state.isCalibrationSet) {
-                // Work set: directly mutate set and currentSetData, leave previousSetData unchanged
+                // Work set: update set and currentSetData to adjusted load; set previousSetData to same so UI shows neutral color
+                val newSetData = updateWorkSetStateData(state, updatedSet)
                 state.set = updatedSet
-                state.currentSetData = updateWorkSetStateData(state, updatedSet)
-                // Do NOT touch previousSetData - leave it as load-selection weight
+                state.currentSetData = newSetData
+                states[i] = state.copy(previousSetData = newSetData)
             } else if (state.isCalibrationSet) {
                 // Calibration set: update previousSetData to match currentSetData
                 val updatedPreviousSetData = updateCalibrationSetPreviousData(state)
@@ -312,8 +313,8 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                             weights,
                             equipment
                         )
-                        // Repopulate Rest.nextStateSets so the Rest screen shows plate changes for the updated load
-                        stateMachine?.let { m -> populateNextStateSetsForRest(m.stateSequence) }
+                        // Repopulate Rest.nextState so the Rest screen shows plate changes for the updated load
+                        stateMachine?.let { m -> populateNextStateForRest(m.stateSequence) }
                         updateStateFlowsFromMachine()
                     }
                 }

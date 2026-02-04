@@ -27,7 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.FadingText
+import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -39,7 +39,7 @@ import java.util.UUID
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PageExercises(
-    currentStateSet: WorkoutState.Set,
+    workoutState: WorkoutState?,
     viewModel: WorkoutViewModel,
     hapticsViewModel: HapticsViewModel,
     currentExercise: Exercise,
@@ -66,10 +66,21 @@ fun PageExercises(
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
 
-    val overrideSetIndex = remember(isSuperset, currentExercise, viewModel.allWorkoutStates.size) {
-        if (isSuperset) {
+    val currentSet = remember(workoutState, selectedExercise) {
+        when (workoutState) {
+            is WorkoutState.Set -> workoutState.set
+            is WorkoutState.CalibrationLoadSelection -> workoutState.calibrationSet
+            is WorkoutState.CalibrationRIRSelection -> workoutState.calibrationSet
+            else -> selectedExercise.sets.firstOrNull()
+        }
+    }
+
+    val setState = workoutState as? WorkoutState.Set
+
+    val overrideSetIndex = remember(isSuperset, currentExercise, workoutState, viewModel.allWorkoutStates.size) {
+        if (isSuperset && setState != null) {
             viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
-                .indexOf(currentStateSet.set.id)
+                .indexOf(setState.set.id)
         } else null
     }
 
@@ -113,16 +124,17 @@ fun PageExercises(
                 verticalArrangement = Arrangement.spacedBy(5.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                FadingText(
+                ScrollableTextColumn(
                     text = selectedExercise.name,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            marqueeEnabled = !marqueeEnabled
+                            hapticsViewModel.doGentleVibration()
+                        },
+                    maxLines = 2,
                     style = MaterialTheme.typography.titleLarge,
-                    marqueeEnabled = marqueeEnabled,
-                    textAlign = TextAlign.Center,
-                    onClick = {
-                        marqueeEnabled = !marqueeEnabled
-                        hapticsViewModel.doGentleVibration()
-                    }
+                    textAlign = TextAlign.Center
                 )
 
                 val selectedExerciseEquipment = remember(selectedExercise) {
@@ -134,16 +146,16 @@ fun PageExercises(
                     }
                 }
                 
-                val isWarmupSet = remember(currentStateSet.set, selectedExercise, currentExercise) {
-                    currentExercise == selectedExercise && when(val set = currentStateSet.set) {
+                val isWarmupSet = remember(currentSet, selectedExercise, currentExercise) {
+                    currentExercise == selectedExercise && currentSet != null && when(val set = currentSet) {
                         is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                         is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
                         else -> false
                     }
                 }
                 
-                val isCalibrationSet = remember(currentStateSet.isCalibrationSet, selectedExercise, currentExercise) {
-                    currentExercise == selectedExercise && currentStateSet.isCalibrationSet
+                val isCalibrationSet = remember(setState, selectedExercise, currentExercise) {
+                    currentExercise == selectedExercise && (setState?.isCalibrationSet == true)
                 }
                 
                 val supersetExercises = remember(selectedExerciseOrSupersetId, isSuperset) {
@@ -155,9 +167,10 @@ fun PageExercises(
                     supersetExercises?.indexOf(selectedExercise)
                 }
                 
-                val sideIndicator = remember(currentStateSet.intraSetTotal, selectedExercise, currentExercise) {
-                    if (currentExercise == selectedExercise && currentStateSet.intraSetTotal != null) {
-                        "A ↔ B"
+                val setBelongsToSelected = setState?.exerciseId == selectedExercise.id
+                val sideIndicator = remember(setState, selectedExercise, currentExercise, setBelongsToSelected) {
+                    if (currentExercise == selectedExercise && setBelongsToSelected && setState?.intraSetTotal != null) {
+                        "① ↔ ②"
                     } else null
                 }
                 
@@ -206,12 +219,14 @@ fun PageExercises(
                         supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
                             "Exercise: ${supersetIndex + 1}/${supersetExercises!!.size}"
                         } else null,
+                        supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
+                        supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
                         setLabel = null, // Not showing set info in PageExercises
                         sideIndicator = sideIndicator,
-                        currentSideIndex = if (currentExercise == selectedExercise) {
-                            currentStateSet.intraSetCounter.takeIf { currentStateSet.intraSetTotal != null }
+                        currentSideIndex = if (currentExercise == selectedExercise && setBelongsToSelected) {
+                            setState?.intraSetCounter?.takeIf { setState?.intraSetTotal != null }
                         } else null,
-                        isUnilateral = currentExercise == selectedExercise && currentStateSet.isUnilateral,
+                        isUnilateral = currentExercise == selectedExercise && setBelongsToSelected && (setState?.isUnilateral == true),
                         equipmentName = selectedExerciseEquipment?.name,
                         accessoryNames = selectedExerciseAccessories.joinToString(", ") { it.name }.takeIf { selectedExerciseAccessories.isNotEmpty() },
                         textColor = MaterialTheme.colorScheme.onBackground,
@@ -221,33 +236,35 @@ fun PageExercises(
                     )
                 }
 
-                ExerciseSetsViewer(
-                    modifier = Modifier
-                        .fillMaxSize().padding(horizontal = 10.dp),
-                    viewModel = viewModel,
-                    hapticsViewModel = hapticsViewModel,
-                    exercise = selectedExercise,
-                    currentSet = currentStateSet.set,
-                    customMarkAsDone = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
-                        else -> null
-                    },
-                    customBorderColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> null
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> null
-                        else -> null
-                    },
-                    customTextColor = when {
-                        selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
-                        selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
-                        else -> null
-                    },
-                    overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
-                        overrideSetIndex
-                    } else null,
-                    isFutureExercise = selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex
-                )
+                if (currentSet != null) {
+                    ExerciseSetsViewer(
+                        modifier = Modifier
+                            .fillMaxSize().padding(horizontal = 10.dp),
+                        viewModel = viewModel,
+                        hapticsViewModel = hapticsViewModel,
+                        exercise = selectedExercise,
+                        currentSet = currentSet,
+                        customMarkAsDone = when {
+                            selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> true
+                            selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> false
+                            else -> null
+                        },
+                        customBorderColor = when {
+                            selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> null
+                            selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> null
+                            else -> null
+                        },
+                        customTextColor = when {
+                            selectedExerciseOrSupersetIndex < currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
+                            selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex -> MaterialTheme.colorScheme.onBackground
+                            else -> null
+                        },
+                        overrideSetIndex = if (selectedExerciseOrSupersetIndex == currentExerciseOrSupersetIndex) {
+                            overrideSetIndex
+                        } else null,
+                        isFutureExercise = selectedExerciseOrSupersetIndex > currentExerciseOrSupersetIndex
+                    )
+                }
             }
         }
 
