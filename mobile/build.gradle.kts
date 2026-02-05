@@ -110,11 +110,11 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.6")
+    implementation("androidx.navigation:navigation-compose:2.9.7")
 
     // AndroidX core
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.2")
+    implementation("androidx.activity:activity-compose:1.12.3")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
@@ -137,8 +137,8 @@ dependencies {
 
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")
-    implementation("com.patrykandpatrick.vico:compose:2.4.1")
-    implementation("com.kizitonwose.calendar:compose:2.9.0")
+    implementation("com.patrykandpatrick.vico:compose:2.4.3")
+    implementation("com.kizitonwose.calendar:compose:2.10.0")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")

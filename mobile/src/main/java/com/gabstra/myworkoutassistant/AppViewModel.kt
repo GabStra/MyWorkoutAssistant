@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -131,7 +132,18 @@ private data class AppState(
 class AppViewModel(
     application: Application
 ) : AndroidViewModel(application) {
+    companion object {
+        private const val TAG = "AppViewModel"
+        private const val DEBUG_TAG = "WorkoutHistDebug"
+    }
     private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
+
+    override fun onCleared() {
+        super.onCleared()
+        // #region agent log
+        Log.d(DEBUG_TAG, "AppViewModel.onCleared ViewModelId=${System.identityHashCode(this)} viewModelScope cancelled")
+        // #endregion
+    }
 
     private val _state = MutableStateFlow(AppState())
     private val _isInitialDataLoaded = MutableStateFlow(false)
@@ -333,20 +345,40 @@ class AppViewModel(
     val workoutByIdForHistories: StateFlow<Map<UUID, Workout>?> = _workoutByIdForHistories.asStateFlow()
 
     fun loadWorkoutHistories(enabledWorkouts: List<Workout>) {
+        // #region agent log
+        Log.d(DEBUG_TAG, "loadWorkoutHistories entry H1 enabledCount=${enabledWorkouts.size}")
+        // #endregion
         refreshWorkoutHistories(enabledWorkouts)
     }
 
     private fun refreshWorkoutHistories(enabledWorkouts: List<Workout>) {
+        val viewModelId = System.identityHashCode(this)
         viewModelScope.launch {
-            val grouped = withContext(Dispatchers.IO) {
-                val dao = AppDatabase.getDatabase(getApplication<Application>()).workoutHistoryDao()
-                val all = dao.getAllWorkoutHistories()
-                val filtered = all.filter { h -> enabledWorkouts.any { it.id == h.workoutId } }
-                filtered.groupBy { it.date }
+            // #region agent log
+            Log.d(DEBUG_TAG, "refreshWorkoutHistories job started ViewModelId=$viewModelId")
+            // #endregion
+            try {
+                val grouped = withContext(Dispatchers.IO) {
+                    val dao = AppDatabase.getDatabase(getApplication<Application>()).workoutHistoryDao()
+                    val all = dao.getAllWorkoutHistories()
+                    val filtered = all.filter { h -> enabledWorkouts.any { it.id == h.workoutId } }
+                    val groupedMap = filtered.groupBy { it.date }
+                // #region agent log
+                Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} enabledCount=${enabledWorkouts.size} groupedSize=${groupedMap.size}")
+                // #endregion
+                    groupedMap
+                }
+                val byId = enabledWorkouts.associateBy { it.id }
+                _groupedWorkoutHistories.value = grouped
+                _workoutByIdForHistories.value = byId
+                // #region agent log
+                Log.d(DEBUG_TAG, "refreshWorkoutHistories set groupedSize=${grouped.size}")
+                // #endregion
+            } catch (e: Exception) {
+                // #region agent log
+                Log.e(DEBUG_TAG, "refreshWorkoutHistories error ViewModelId=$viewModelId (ViewModel cleared = Activity destroyed; look for MainActivity.finish log for stack trace)", e)
+                // #endregion
             }
-            val byId = enabledWorkouts.associateBy { it.id }
-            _groupedWorkoutHistories.value = grouped
-            _workoutByIdForHistories.value = byId
         }
     }
 

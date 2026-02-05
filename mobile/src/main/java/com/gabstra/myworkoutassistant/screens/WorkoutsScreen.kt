@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -89,10 +90,12 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import android.util.Log
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 
+private const val TAG = "WorkoutHistDebug"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -346,10 +349,18 @@ fun WorkoutsScreen(
     }
 
     LaunchedEffect(enabledWorkouts.map { it.id }.toSet(), selectedPlanFilter) {
-        appViewModel.loadWorkoutHistories(enabledWorkouts)
+        // #region agent log
+        Log.d(TAG, "LaunchedEffect H3 effect run enabledCount=${enabledWorkouts.size} planFilter=$selectedPlanFilter")
+        // #endregion
+        if (enabledWorkouts.isNotEmpty()) {
+            appViewModel.loadWorkoutHistories(enabledWorkouts)
+        }
     }
 
     LaunchedEffect(groupedWorkoutsHistories) {
+        // #region agent log
+        Log.d(TAG, "observeGrouped H4 isNull=${groupedWorkoutsHistories == null} groupedSize=${groupedWorkoutsHistories?.size ?: -1}")
+        // #endregion
         if (groupedWorkoutsHistories != null) {
             isLoading = false
             calculateObjectiveProgress(LocalDate.now())

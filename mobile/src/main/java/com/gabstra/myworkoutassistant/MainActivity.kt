@@ -15,6 +15,7 @@ import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -101,8 +102,6 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.exportEquipmentToDownloads
-import com.gabstra.myworkoutassistant.exportWorkoutPlanToMarkdown
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
@@ -110,19 +109,17 @@ import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import com.gabstra.myworkoutassistant.checkConnection
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -290,9 +287,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun finish() {
+        // #region agent log
+        val stack = Log.getStackTraceString(Throwable())
+        Log.w("WorkoutHistDebug", "MainActivity.finish ActivityId=${System.identityHashCode(this)} isFinishing=$isFinishing --- CAUSE (stack trace):")
+        Log.w("WorkoutHistDebug", stack.take(2000))
+        // #endregion
+        super.finish()
+    }
+
     override fun onDestroy() {
+        // #region agent log
+        Log.d("WorkoutHistDebug", "MainActivity.onDestroy ActivityId=${System.identityHashCode(this)} isFinishing=$isFinishing")
+        // #endregion
         super.onDestroy()
-        db.close()
         if (::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)
         }
@@ -300,6 +308,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // #region agent log
+        val intentAction = intent?.action ?: "null"
+        val intentComponent = intent?.component?.shortClassName ?: "null"
+        Log.d("WorkoutHistDebug", "MainActivity.onCreate ActivityId=${System.identityHashCode(this)} intent.action=$intentAction intent.component=$intentComponent")
+        // #endregion
 
         appViewModel = ViewModelProvider(this, ViewModelProvider.AndroidViewModelFactory.getInstance(application))[AppViewModel::class.java]
         workoutViewModel = ViewModelProvider(this)[WorkoutViewModel::class.java]
@@ -312,6 +325,17 @@ class MainActivity : ComponentActivity() {
         myReceiver = MyReceiver(appViewModel, workoutViewModel, workoutStoreRepository, this)
         val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
         registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
+
+        // Consume back until Compose BackHandler is registered (prevents finish() when a back
+        // is delivered to this Activity before first composition, e.g. after reopening from launcher).
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    // Consumed; Compose BackHandler will handle back once it is registered.
+                }
+            }
+        )
 
         // Clean up duplicate backup files once at app startup (after storage access check)
         requestBackupCleanup()
@@ -531,12 +555,27 @@ fun MyWorkoutAssistantNavHost(
     }
 
     val scope = rememberCoroutineScope()
+    val firstBackHandlerRegistrationTime = remember { System.currentTimeMillis() }
 
     BackHandler(enabled = true) {
+        // #region agent log
+        Log.d("WorkoutHistDebug", "BackHandler invoked ActivityId=${(context as? android.app.Activity)?.let { System.identityHashCode(it) } ?: -1}")
+        // #endregion
         scope.launch {
             appViewModel.flushWorkoutSave(context)
             val canGoBack = appViewModel.goBack()
+            // #region agent log
+            Log.d("WorkoutHistDebug", "BackHandler canGoBack=$canGoBack")
+            // #endregion
             if (!canGoBack) {
+                val ageMs = System.currentTimeMillis() - firstBackHandlerRegistrationTime
+                if (ageMs < 1500) {
+                    // Activity just opened; likely a stale back delivered before user interaction.
+                    // Consume without finishing to avoid closing the app immediately after reopen.
+                    Log.d("WorkoutHistDebug", "BackHandler: not finishing, activity just opened (ageMs=$ageMs)")
+                    return@launch
+                }
+                Log.d("WorkoutHistDebug", "BackHandler calling finish()")
                 (context as? ComponentActivity)?.finish()
             }
         }

@@ -11,7 +11,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
-import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
 @SuppressLint("DefaultLocale")
@@ -44,7 +43,7 @@ fun TimeViewer(
         }
     }*/
 
-    val colonColor = if (showDots) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.surfaceContainerHigh
+    val colonColor = color
 
     val annotatedText = remember(showDots, hours, minutes, remainingSeconds, color, colonColor, style) {
         buildAnnotatedString {

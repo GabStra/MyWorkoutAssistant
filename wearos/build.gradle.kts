@@ -88,9 +88,9 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.wear.compose:compose-material-core:1.6.0-alpha07")
-    implementation("androidx.navigation:navigation-compose:2.9.6")
-    implementation("androidx.compose.ui:ui-graphics:1.10.0")
+    implementation("androidx.wear.compose:compose-material-core:1.6.0-alpha09")
+    implementation("androidx.navigation:navigation-compose:2.9.7")
+    implementation("androidx.compose.ui:ui-graphics:1.10.2")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -109,14 +109,14 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.0-alpha07")
-    implementation("androidx.wear.compose:compose-navigation:1.6.0-alpha07")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-alpha07")
-    implementation("androidx.wear.compose:compose-foundation:1.6.0-alpha07")
+    implementation("androidx.wear.compose:compose-material3:1.6.0-alpha09")
+    implementation("androidx.wear.compose:compose-navigation:1.6.0-alpha09")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-alpha09")
+    implementation("androidx.wear.compose:compose-foundation:1.6.0-alpha09")
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.2")
+    implementation("androidx.activity:activity-compose:1.12.3")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
@@ -146,14 +146,14 @@ dependencies {
     // Misc
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("dev.shreyaspatil:capturable:3.0.1")
-    implementation("com.airbnb.android:lottie-compose:6.3.0")
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Test
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.21.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-    testImplementation("io.mockk:mockk:1.14.7")
+    testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
-    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.google.truth:truth:1.4.5")
     // Instrumented / E2E Android tests
     androidTestImplementation("androidx.test:runner:1.7.0")
