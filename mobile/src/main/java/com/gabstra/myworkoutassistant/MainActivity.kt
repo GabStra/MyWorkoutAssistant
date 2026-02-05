@@ -110,6 +110,7 @@ import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -117,6 +118,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -223,6 +225,9 @@ class MainActivity : ComponentActivity() {
 
     private var backupCleanupAttempted = false
 
+    /** Scope for restore operations; not tied to lifecycle so restore can complete even if activity is recreated (e.g. rotation). */
+    internal val restoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val readStoragePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -296,8 +301,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        appViewModel = ViewModelProvider(this)[AppViewModel::class.java]
+        appViewModel = ViewModelProvider(this, ViewModelProvider.AndroidViewModelFactory.getInstance(application))[AppViewModel::class.java]
         workoutViewModel = ViewModelProvider(this)[WorkoutViewModel::class.java]
+        appViewModel.triggerUpdate()
         hapticsViewModel = ViewModelProvider(
             this,
             HapticsViewModelFactory(applicationContext)
@@ -456,8 +462,9 @@ fun MyWorkoutAssistantNavHost(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Initialize DAOs only once, not on every recomposition
+    // Load workout store once and initialize DAOs only once, not on every recomposition
     LaunchedEffect(Unit) {
+        appViewModel.loadWorkoutStore()
         workoutViewModel.initExerciseHistoryDao(context)
         workoutViewModel.initWorkoutHistoryDao(context)
         workoutViewModel.initWorkoutScheduleDao(context)
@@ -498,42 +505,28 @@ fun MyWorkoutAssistantNavHost(
     val updateMobileFlow = appViewModel.updateMobileFlow
     val updateMobileSignal by updateMobileFlow.collectAsState()
 
+    val initialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState(initial = false)
+
     LaunchedEffect(updateMobileSignal) {
         if (updateMobileSignal != null) {
             workoutViewModel.updateWorkoutStore(appViewModel.workoutStore)
         }
     }
 
-    LaunchedEffect(Unit) {
-        try {
-            val migratedWorkoutStore = withContext(Dispatchers.IO) {
-                val workoutStore = workoutStoreRepository.getWorkoutStore()
-                migrateWorkoutStoreSetIdsIfNeeded(workoutStore, db, workoutStoreRepository)
-            }
-            appViewModel.updateWorkoutStore(migratedWorkoutStore)
-            workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
-
-            // Check for incomplete workouts
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-
-            if (!isWorkoutInProgress) {
-                try {
-                    val incompleteWorkouts = workoutViewModel.getIncompleteWorkouts()
-                    if (incompleteWorkouts.isNotEmpty()) {
-                        appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
-                    }
-                } catch (exception: Exception) {
+    // Sync WorkoutViewModel when initial load has completed, then run incomplete workouts check
+    LaunchedEffect(initialDataLoaded) {
+        if (!initialDataLoaded) return@LaunchedEffect
+        workoutViewModel.updateWorkoutStore(appViewModel.workoutStore)
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
+        if (!isWorkoutInProgress) {
+            try {
+                val incompleteWorkouts = workoutViewModel.getIncompleteWorkouts()
+                if (incompleteWorkouts.isNotEmpty()) {
+                    appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
                 }
+            } catch (exception: Exception) {
             }
-
-            // Mark initial data as loaded after all startup operations complete
-            appViewModel.setInitialDataLoaded(true)
-        } catch (ex: Exception) {
-            Toast.makeText(context, "Error during startup, please check logs", Toast.LENGTH_SHORT)
-                .show()
-            // Still mark as loaded even on error so app can show error states
-            appViewModel.setInitialDataLoaded(true)
         }
     }
 
@@ -699,9 +692,10 @@ fun MyWorkoutAssistantNavHost(
         workoutRecordDao: WorkoutRecordDao,
         healthConnectClient: HealthConnectClient
     ) {
-        try {
+        withContext(Dispatchers.IO + NonCancellable) {
+            try {
 
-            val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
+                val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
                 workout.isActive || (!workout.isActive && (appBackup.WorkoutHistories
                     ?: emptyList()).any { it.workoutId == workout.id })
             }
@@ -713,6 +707,7 @@ fun MyWorkoutAssistantNavHost(
             val deleteAndInsertJob = coroutineScope {
                 async {
                     try {
+                        val BATCH_SIZE = 80
                         var allWorkoutHistories = workoutHistoryDao.getAllWorkoutHistories()
 
                         try {
@@ -721,11 +716,13 @@ fun MyWorkoutAssistantNavHost(
                                 healthConnectClient
                             )
                         } catch (e: Exception) {
-                            Toast.makeText(
-                                context,
-                                "Failed to delete workout histories from HealthConnect",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Failed to delete workout histories from HealthConnect",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
 
                         workoutHistoryDao.deleteAll()
@@ -741,14 +738,18 @@ fun MyWorkoutAssistantNavHost(
                                 allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId }
                             }
 
-                        workoutHistoryDao.insertAll(*validWorkoutHistories.toTypedArray())
+                        validWorkoutHistories.chunked(BATCH_SIZE).forEach { chunk ->
+                            workoutHistoryDao.insertAll(*chunk.toTypedArray())
+                        }
 
                         val validSetHistories =
                             (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
                                 validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                             }
 
-                        setHistoryDao.insertAll(*validSetHistories.toTypedArray())
+                        validSetHistories.chunked(BATCH_SIZE).forEach { chunk ->
+                            setHistoryDao.insertAll(*chunk.toTypedArray())
+                        }
 
                         val allExercises = allowedWorkouts.flatMap { workout ->
                             workout.workoutComponents.filterIsInstance<Exercise>() + workout.workoutComponents.filterIsInstance<Superset>()
@@ -758,18 +759,24 @@ fun MyWorkoutAssistantNavHost(
                         val validExerciseInfos = (appBackup.ExerciseInfos
                             ?: emptyList()).filter { allExercises.any { exercise -> exercise.id == it.id } }
 
-                        exerciseInfoDao.insertAll(*validExerciseInfos.toTypedArray())
+                        validExerciseInfos.chunked(BATCH_SIZE).forEach { chunk ->
+                            exerciseInfoDao.insertAll(*chunk.toTypedArray())
+                        }
 
                         val validWorkoutSchedules = (appBackup.WorkoutSchedules
                             ?: emptyList()).filter { allowedWorkouts.any { workout -> workout.globalId == it.workoutId } }
 
-                        workoutScheduleDao.insertAll(*validWorkoutSchedules.toTypedArray())
+                        validWorkoutSchedules.chunked(BATCH_SIZE).forEach { chunk ->
+                            workoutScheduleDao.insertAll(*chunk.toTypedArray())
+                        }
 
                         if (appBackup.WorkoutRecords != null) {
                             val validWorkoutRecords =
                                 appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
 
-                            workoutRecordDao.insertAll(*validWorkoutRecords.toTypedArray())
+                            validWorkoutRecords.chunked(BATCH_SIZE).forEach { chunk ->
+                                workoutRecordDao.insertAll(*chunk.toTypedArray())
+                            }
                         }
 
                         val validExerciseSessionProgressions =
@@ -778,15 +785,16 @@ fun MyWorkoutAssistantNavHost(
                                 validWorkoutHistories.any { it.id == progression.workoutHistoryId }
                             }
 
-                        if (validExerciseSessionProgressions.isNotEmpty()) {
-                            db.exerciseSessionProgressionDao()
-                                .insertAll(*validExerciseSessionProgressions.toTypedArray())
+                        validExerciseSessionProgressions.chunked(BATCH_SIZE).forEach { chunk ->
+                            db.exerciseSessionProgressionDao().insertAll(*chunk.toTypedArray())
                         }
 
                         // Restore error logs if present in backup
                         val errorLogs = appBackup.ErrorLogs
                         if (errorLogs != null && errorLogs.isNotEmpty()) {
-                            db.errorLogDao().insertAll(*errorLogs.toTypedArray())
+                            errorLogs.chunked(BATCH_SIZE).forEach { chunk ->
+                                db.errorLogDao().insertAll(*chunk.toTypedArray())
+                            }
                         }
                         true
                     } catch (e: Exception) {
@@ -805,7 +813,7 @@ fun MyWorkoutAssistantNavHost(
             } catch (e: CancellationException) {
                 // Job was cancelled (e.g., activity destroyed) - this is expected
                 Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
-                return
+                return@withContext
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error awaiting restore job: ${e.javaClass.simpleName}. " +
                         "Message: ${e.message}, " +
@@ -836,49 +844,58 @@ fun MyWorkoutAssistantNavHost(
                         workoutStoreRepository
                     )
 
-                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
-                    workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
-
                     workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
-                    appViewModel.triggerUpdate()
 
-                    // Show the success toast after all operations are complete
-                    Toast.makeText(
-                        context,
-                        "Data restored from backup",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    withContext(Dispatchers.Main) {
+                        appViewModel.updateWorkoutStore(migratedWorkoutStore)
+                        workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+                        appViewModel.triggerUpdate()
+
+                        // Show the success toast after all operations are complete
+                        Toast.makeText(
+                            context,
+                            "Data restored from backup",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
                             "Message: ${e.message}, " +
                             "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
                             "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } else {
+                withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
+                        "Failed to restore workout history from backup",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            } catch (e: CancellationException) {
+                // Job was cancelled (e.g., activity destroyed) - this is expected
+                Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error during restore: ${e.javaClass.simpleName}. " +
+                        "Message: ${e.message}, " +
+                        "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
+                        "Stack trace:\n${Log.getStackTraceString(e)}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
                         Toast.LENGTH_LONG
                     ).show()
                 }
-            } else {
-                Toast.makeText(
-                    context,
-                    "Failed to restore workout history from backup",
-                    Toast.LENGTH_SHORT
-                ).show()
             }
-        } catch (e: CancellationException) {
-            // Job was cancelled (e.g., activity destroyed) - this is expected
-            Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error during restore: ${e.javaClass.simpleName}. " +
-                    "Message: ${e.message}, " +
-                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
-                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
-            Toast.makeText(
-                context,
-                "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
-                Toast.LENGTH_LONG
-            ).show()
         }
     }
 
@@ -922,9 +939,9 @@ fun MyWorkoutAssistantNavHost(
                             throw e
                         }
 
-                        // Use lifecycleScope instead of composition scope to prevent cancellation
-                        // when user navigates away during restore
-                        lifecycleOwner.lifecycleScope.launch {
+                        // Use restoreScope so restore completes even if activity is destroyed/recreated (e.g. rotation)
+                        val scope = (context as? MainActivity)?.restoreScope ?: lifecycleOwner.lifecycleScope
+                        scope.launch {
                             restoreFromAppBackup(
                                 appBackup = appBackup,
                                 context = context,
@@ -1353,6 +1370,11 @@ fun MyWorkoutAssistantNavHost(
                                 scope.launch {
                                     try {
                                         appViewModel.updateWorkoutStore(newWorkoutStore)
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1379,7 +1401,6 @@ fun MyWorkoutAssistantNavHost(
                                             ).show()
                                             return@launch
                                         }
-
                                         // Use the same restore logic as file import
                                         restoreFromAppBackup(
                                             appBackup = appBackup,
@@ -1493,6 +1514,11 @@ fun MyWorkoutAssistantNavHost(
                                         withContext(Dispatchers.IO) {
                                             workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                         }
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1581,6 +1607,11 @@ fun MyWorkoutAssistantNavHost(
                                             workoutScheduleDao.deleteAllByWorkoutId(selectedWorkout.globalId)
                                             workoutScheduleDao.insertAll(*schedules.toTypedArray())
                                         }
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1765,6 +1796,11 @@ fun MyWorkoutAssistantNavHost(
                                             newExercise,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1832,6 +1868,11 @@ fun MyWorkoutAssistantNavHost(
                                             updatedWorkout,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1898,6 +1939,11 @@ fun MyWorkoutAssistantNavHost(
                                             updatedExercise,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -1957,6 +2003,11 @@ fun MyWorkoutAssistantNavHost(
                                             updatedSuperset,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -2013,6 +2064,11 @@ fun MyWorkoutAssistantNavHost(
                                             parentExercise,
                                             updatedSet,
                                             hasHistory
+                                        )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
                                         )
                                         appViewModel.flushWorkoutSave(
                                             context,
@@ -2094,6 +2150,11 @@ fun MyWorkoutAssistantNavHost(
                                             updatedExercise,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -2150,6 +2211,11 @@ fun MyWorkoutAssistantNavHost(
                                             screenData.selectedRestSet,
                                             updatedSet,
                                             hasHistory
+                                        )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
                                         )
                                         appViewModel.flushWorkoutSave(
                                             context,
@@ -2222,6 +2288,11 @@ fun MyWorkoutAssistantNavHost(
                                             updatedWorkout,
                                             hasHistory
                                         )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
+                                        )
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
@@ -2280,6 +2351,11 @@ fun MyWorkoutAssistantNavHost(
                                             screenData.selectedRest,
                                             newRest,
                                             hasHistory
+                                        )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
                                         )
                                         appViewModel.flushWorkoutSave(
                                             context,
@@ -2363,6 +2439,11 @@ fun MyWorkoutAssistantNavHost(
                                                 updatedExercise,
                                                 hasHistory
                                             )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
                                             appViewModel.flushWorkoutSave(
                                                 context,
                                                 workoutStoreRepository,
@@ -2445,6 +2526,11 @@ fun MyWorkoutAssistantNavHost(
                                                 updatedWorkout,
                                                 hasHistory
                                             )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
                                             appViewModel.flushWorkoutSave(
                                                 context,
                                                 workoutStoreRepository,
@@ -2509,6 +2595,11 @@ fun MyWorkoutAssistantNavHost(
                                             screenData.selectedSet,
                                             updatedSet,
                                             hasHistory
+                                        )
+                                        appViewModel.scheduleWorkoutSave(
+                                            context,
+                                            workoutStoreRepository,
+                                            db
                                         )
                                         appViewModel.flushWorkoutSave(
                                             context,

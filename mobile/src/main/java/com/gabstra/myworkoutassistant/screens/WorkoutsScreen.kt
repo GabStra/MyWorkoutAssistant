@@ -221,12 +221,8 @@ fun WorkoutsScreen(
         mutableStateOf<LocalDate>(LocalDate.now())
     }
 
-    var groupedWorkoutsHistories by remember {
-        mutableStateOf<Map<LocalDate, List<WorkoutHistory>>?>(
-            null
-        )
-    }
-    var workoutById by remember { mutableStateOf<Map<UUID, Workout>?>(null) }
+    val groupedWorkoutsHistories by appViewModel.groupedWorkoutHistories.collectAsState(initial = null)
+    val workoutById by appViewModel.workoutByIdForHistories.collectAsState(initial = null)
 
     var weeklyWorkoutsByActualTarget by remember {
         mutableStateOf<Map<Workout, Pair<Int, Int>>?>(
@@ -234,10 +230,15 @@ fun WorkoutsScreen(
         )
     }
 
-    var selectedCalendarWorkouts by remember {
-        mutableStateOf<List<Pair<WorkoutHistory, Workout>>?>(
-            null
-        )
+    val selectedCalendarWorkouts = remember(groupedWorkoutsHistories, selectedDay, workoutById) {
+        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
+        val byId = workoutById
+        if (byId == null) null
+        else try {
+            workoutHistories?.map { wh -> Pair(wh, byId[wh.workoutId]!!) } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     var isCardExpanded by remember {
@@ -344,27 +345,15 @@ fun WorkoutsScreen(
             if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
 
-    LaunchedEffect(enabledWorkouts, updateMessage, selectedPlanFilter) {
-        isLoading = true
-        groupedWorkoutsHistories =
-            workoutHistoryDao.getAllWorkoutHistories().filter { workoutHistory ->
-                enabledWorkouts.any { it.id == workoutHistory.workoutId }
-            }.groupBy { it.date }
-        workoutById = enabledWorkouts.associateBy { it.id }
+    LaunchedEffect(enabledWorkouts.map { it.id }.toSet(), selectedPlanFilter) {
+        appViewModel.loadWorkoutHistories(enabledWorkouts)
+    }
 
-        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
-
-        selectedCalendarWorkouts = try {
-            workoutHistories?.map { workoutHistory ->
-                Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
-            } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
+    LaunchedEffect(groupedWorkoutsHistories) {
+        if (groupedWorkoutsHistories != null) {
+            isLoading = false
+            calculateObjectiveProgress(LocalDate.now())
         }
-
-        calculateObjectiveProgress(LocalDate.now())
-        delay(500)
-        isLoading = false
     }
 
     LaunchedEffect(selectedDate, selectedPlanFilter) {
@@ -380,25 +369,12 @@ fun WorkoutsScreen(
         scope.launch(Dispatchers.Main) {
             if (groupedWorkoutsHistories == null || workoutById == null) return@launch
             isLoading = true
-
             selectedDay = day.date
-            val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
-
-            selectedCalendarWorkouts = try {
-                workoutHistories?.map { workoutHistory ->
-                    Pair(workoutHistory, workoutById?.get(workoutHistory.workoutId)!!)
-                } ?: emptyList()
-            } catch (e: Exception) {
-                emptyList()
-            }
-
             if (day.position != DayPosition.MonthDate) {
                 calendarState.scrollToMonth(selectedDay.yearMonth)
                 selectedDate = day
                 return@launch
             }
-
-
             selectedDate = day
         }
     }
@@ -571,7 +547,7 @@ fun WorkoutsScreen(
                                     enabled
                                 )
                             },
-                            onGroupedWorkoutsHistoriesChange = { groupedWorkoutsHistories = it },
+                            onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(enabledWorkouts) },
                             onMoveWorkoutUp = { onMoveWorkoutUp() },
                             onMoveWorkoutDown = { onMoveWorkoutDown() },
                             isSelectionModeActive = isWorkoutSelectionModeActive

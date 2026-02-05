@@ -194,7 +194,7 @@ private fun RestTimerBlock(
         }
     }
 
-    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+    Row(modifier = Modifier.fillMaxWidth()) {
         AnimatedContent(
             modifier = Modifier.fillMaxSize(),
             targetState = isTimerInEditMode,

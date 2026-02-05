@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -28,6 +29,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+
+private const val TAG = "GenericSelectableList"
 
 fun findNewIndex(
     newCenterY: Float,
@@ -69,7 +72,7 @@ fun <T, K> GenericSelectableList(
     selectedItems: List<T>,
     isSelectionModeActive: Boolean,
     onItemClick: (T) -> Unit,
-    itemContent: @Composable (T) -> Unit,
+    itemContent: @Composable (item: T, onItemClick: () -> Unit, onItemLongClick: () -> Unit) -> Unit,
     onEnableSelection: () -> Unit,
     onDisableSelection: () -> Unit,
     onSelectionChange: (List<T>) -> Unit,
@@ -155,7 +158,7 @@ fun <T, K> GenericSelectableList(
                                                     .fillMaxWidth()
                                                     .padding(5.dp)
                                             ) {
-                                                itemContent(itemToDisplay)
+                                                itemContent(itemToDisplay, { }, { })
                                             }
                                         }
                                     }
@@ -246,31 +249,33 @@ fun <T, K> GenericSelectableList(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = {
-                                    if (isSelectionModeActive) {
-                                        val newSelection = toggleSelectionById(selectedItems, item, keySelector)
-                                        onSelectionChange(newSelection)
-                                    } else {
-                                        onItemClick(item)
-                                    }
-                                },
-                                onLongClick = {
-                                    if (!isSelectionModeActive) {
-                                        onEnableSelection()
-                                        onSelectionChange(selectedItems + item)
-                                    } else {
-                                        onDisableSelection()
-                                        onSelectionChange(emptyList())
-                                    }
-                                }
-                            )
+
                             .conditionalPointerInput(item, index, offsetY)
                             .graphicsLayer {
                                 translationY = offsetY.floatValue
                             }
                     ) {
-                        itemContent(item)
+                        itemContent(
+                            item,
+                            {
+                                if (isSelectionModeActive) {
+                                    val newSelection = toggleSelectionById(selectedItems, item, keySelector)
+                                    onSelectionChange(newSelection)
+                                } else {
+                                    Log.d(TAG, "click detected, invoking onItemClick for item")
+                                    onItemClick(item)
+                                }
+                            },
+                            {
+                                if (!isSelectionModeActive) {
+                                    onEnableSelection()
+                                    onSelectionChange(selectedItems + item)
+                                } else {
+                                    onDisableSelection()
+                                    onSelectionChange(emptyList())
+                                }
+                            }
+                        )
                     }
                 }
             }

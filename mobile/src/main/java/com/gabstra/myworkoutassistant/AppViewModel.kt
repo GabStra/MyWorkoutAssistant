@@ -1,21 +1,24 @@
 package com.gabstra.myworkoutassistant
 
+import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
+import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -33,8 +36,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.UUID
 
@@ -122,8 +128,36 @@ private data class AppState(
     val selectedWorkoutPlanId: UUID? = null
 )
 
-class AppViewModel() : ViewModel() {
+class AppViewModel(
+    application: Application
+) : AndroidViewModel(application) {
     private var screenDataStack = mutableListOf<ScreenData>(ScreenData.Workouts(0))
+
+    private val _state = MutableStateFlow(AppState())
+    private val _isInitialDataLoaded = MutableStateFlow(false)
+    private var _userAge = mutableIntStateOf(0)
+
+    /**
+     * Load workout store from disk asynchronously. Call once from the UI (e.g. NavHost).
+     * When complete, [isInitialDataLoaded] becomes true.
+     */
+    fun loadWorkoutStore() {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val repo = WorkoutStoreRepository(app.filesDir)
+                val db = AppDatabase.getDatabase(app)
+                val migrated = withContext(Dispatchers.IO) {
+                    val store = repo.getWorkoutStore()
+                    migrateWorkoutStoreSetIdsIfNeeded(store, db, repo)
+                }
+                setWorkoutStoreState(migrated, triggerSend = false)
+                _isInitialDataLoaded.value = true
+            } catch (e: Exception) {
+                _isInitialDataLoaded.value = true
+            }
+        }
+    }
 
     // Convert currentScreenData to a MutableState
     var currentScreenData: ScreenData by mutableStateOf(screenDataStack.lastOrNull() ?: ScreenData.Workouts(0))
@@ -132,10 +166,7 @@ class AppViewModel() : ViewModel() {
     // Debouncer for workout saves
     private val saveDebouncer = WorkoutSaveDebouncer(viewModelScope, debounceDelayMs = 5000L)
 
-    private var _userAge = mutableIntStateOf(0)
     val userAge: State<Int> = _userAge
-
-    private val _state = MutableStateFlow(AppState())
 
     val workoutStoreFlow: StateFlow<WorkoutStore> = _state
         .map { it.workoutStore }
@@ -225,7 +256,6 @@ class AppViewModel() : ViewModel() {
         _updateMobileFlow.value = System.currentTimeMillis().toString()
     }
 
-    private val _isInitialDataLoaded = MutableStateFlow(false)
     val isInitialDataLoaded: StateFlow<Boolean> = _isInitialDataLoaded.asStateFlow()
 
     fun setInitialDataLoaded(loaded: Boolean) {
@@ -295,6 +325,30 @@ class AppViewModel() : ViewModel() {
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = _state.value.selectedWorkoutPlanId
     )
+
+    private val _groupedWorkoutHistories = MutableStateFlow<Map<LocalDate, List<WorkoutHistory>>?>(null)
+    val groupedWorkoutHistories: StateFlow<Map<LocalDate, List<WorkoutHistory>>?> = _groupedWorkoutHistories.asStateFlow()
+
+    private val _workoutByIdForHistories = MutableStateFlow<Map<UUID, Workout>?>(null)
+    val workoutByIdForHistories: StateFlow<Map<UUID, Workout>?> = _workoutByIdForHistories.asStateFlow()
+
+    fun loadWorkoutHistories(enabledWorkouts: List<Workout>) {
+        refreshWorkoutHistories(enabledWorkouts)
+    }
+
+    private fun refreshWorkoutHistories(enabledWorkouts: List<Workout>) {
+        viewModelScope.launch {
+            val grouped = withContext(Dispatchers.IO) {
+                val dao = AppDatabase.getDatabase(getApplication<Application>()).workoutHistoryDao()
+                val all = dao.getAllWorkoutHistories()
+                val filtered = all.filter { h -> enabledWorkouts.any { it.id == h.workoutId } }
+                filtered.groupBy { it.date }
+            }
+            val byId = enabledWorkouts.associateBy { it.id }
+            _groupedWorkoutHistories.value = grouped
+            _workoutByIdForHistories.value = byId
+        }
+    }
 
     fun getEquipmentById(equipmentId: UUID): WeightLoadedEquipment? {
         return (equipments + generic).find { it.id == equipmentId }
@@ -894,6 +948,10 @@ class AppViewModel() : ViewModel() {
     ) {
         viewModelScope.launch {
             saveDebouncer.schedule {
+                // Never persist empty store before initial load completed (prevents overwriting file when Activity/ViewModel recreated and load not yet applied)
+                if (workoutStore.workouts.isEmpty() && !_isInitialDataLoaded.value) {
+                    return@schedule
+                }
                 saveWorkoutStoreWithBackup(context, workoutStore, workoutStoreRepository, db)
             }
         }
@@ -908,6 +966,10 @@ class AppViewModel() : ViewModel() {
     fun scheduleWorkoutSave(context: Context) {
         viewModelScope.launch {
             saveDebouncer.schedule {
+                // Never persist empty store before initial load completed (prevents overwriting file when Activity/ViewModel recreated and load not yet applied)
+                if (workoutStore.workouts.isEmpty() && !_isInitialDataLoaded.value) {
+                    return@schedule
+                }
                 saveWorkoutStoreWithBackupFromContext(context, workoutStore)
             }
         }

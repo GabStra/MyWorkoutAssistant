@@ -55,33 +55,26 @@ fun HealthConnectHandler(
     }
 
     if (appViewModel.checkedHealthPermission && !appViewModel.hasHealthPermissions) {
-        StyledCard(
-            modifier =  Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp)
-            .padding(horizontal = 15.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(15.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        contentColor = MaterialTheme.colorScheme.background,
-                        disabledContentColor = DisabledContentGray
-                    ),
-                    onClick = {
-                        try {
-                            permissionLauncher.launch(requiredPermissions.toTypedArray())
-                        } catch (e: Exception) {
-                            Log.e("MainActivity", "Error launching permission launcher", e)
-                        }
-                    }) {
-                    Text("Grant Health Connect Permissions", color = MaterialTheme.colorScheme.onPrimary)
-                }
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    contentColor = MaterialTheme.colorScheme.background,
+                    disabledContentColor = DisabledContentGray
+                ),
+                onClick = {
+                    try {
+                        permissionLauncher.launch(requiredPermissions.toTypedArray())
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error launching permission launcher", e)
+                    }
+                }) {
+                Text("Grant Health Connect Permissions", color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }

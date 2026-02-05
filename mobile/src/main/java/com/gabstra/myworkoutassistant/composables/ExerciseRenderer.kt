@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,8 +20,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -37,6 +36,7 @@ fun ExerciseRenderer(
     modifier: Modifier = Modifier,
     showRest:Boolean,
     appViewModel: AppViewModel,
+    titleModifier: Modifier = Modifier,
     customTitle: (@Composable (Modifier) -> Unit)? = null
 ){
     var sets = exercise.sets
@@ -46,39 +46,39 @@ fun ExerciseRenderer(
 
     if(sets.isEmpty()){
         Row(
-            modifier = Modifier.padding(15.dp),
+            modifier = modifier.then(titleModifier).padding(15.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ){
-            ScrollableTextColumn(
+            Text(
                 text = exercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
-                maxLines = 2,
+                    .padding(horizontal = 10.dp)
+                    .basicMarquee(iterations = Int.MAX_VALUE),
+                maxLines = 1,
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                textAlign = TextAlign.Center
             )
         }
     }else{
         ExpandableContainer(
             isOpen = false,
-            modifier = modifier,
+            modifier = modifier.fillMaxWidth(),
             isExpandable = true,
+            titleModifier = titleModifier,
             title = { m ->
                 if (customTitle != null) {
                     customTitle(m)
                 } else {
-                    ScrollableTextColumn(
+                    Text(
                         text = exercise.name,
                         modifier = m
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp),
-                        maxLines = 2,
+                            .padding(horizontal = 10.dp)
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        maxLines = 1,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                        textAlign = TextAlign.Center
+                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
                     )
                 }
             },

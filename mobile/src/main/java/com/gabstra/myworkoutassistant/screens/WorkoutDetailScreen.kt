@@ -2,10 +2,12 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -46,7 +48,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,26 +86,27 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -170,22 +172,26 @@ fun WorkoutComponentRenderer(
     workout: Workout,
     workoutComponent: WorkoutComponent,
     showRest: Boolean,
-    appViewModel: AppViewModel
+    appViewModel: AppViewModel,
+    modifier: Modifier = Modifier,
+    titleModifier: Modifier = Modifier
 ) {
     when (workoutComponent) {
         is Exercise -> {
             StyledCard(enabled = workoutComponent.enabled) {
                 ExerciseRenderer(
+                    modifier = modifier,
                     exercise = workoutComponent,
                     showRest = showRest,
-                    appViewModel = appViewModel
+                    appViewModel = appViewModel,
+                    titleModifier = titleModifier
                 )
             }
         }
 
         is Rest -> {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = modifier.fillMaxWidth().then(titleModifier),
                 shape = RectangleShape,
                 color = if (workoutComponent.enabled) {
                     MaterialTheme.colorScheme.surfaceVariant
@@ -203,7 +209,7 @@ fun WorkoutComponentRenderer(
                     val restColor = if (workoutComponent.enabled) {
                         MaterialTheme.colorScheme.onBackground
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        DisabledContentGray
                     }
                     Text(
                         text = "REST ${formatTime(workoutComponent.timeInSeconds)}",
@@ -220,9 +226,10 @@ fun WorkoutComponentRenderer(
 
             SupersetRenderer(
                 superset = superSet,
+                modifier = modifier,
                 showRest = showRest,
                 appViewModel = appViewModel,
-                workoutId = workout.id,
+                titleModifier = titleModifier,
                 onExerciseClick = { exerciseId ->
                     appViewModel.setScreenData(
                         ScreenData.ExerciseDetail(
@@ -235,6 +242,8 @@ fun WorkoutComponentRenderer(
         }
     }
 }
+
+private const val TAG = "WorkoutDetailScreen"
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -1276,6 +1285,7 @@ fun WorkoutDetailScreen(
                             selectedItems = selectedWorkoutComponents,
                             isSelectionModeActive,
                             onItemClick = {
+                                Log.d(TAG, "onItemClick: component=${it::class.simpleName} id=${it.id}")
                                 when (it) {
                                     is Exercise -> {
                                         appViewModel.setScreenData(
@@ -1321,7 +1331,7 @@ fun WorkoutDetailScreen(
                                     workout.copy(workoutComponents = adjustedComponents)
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
-                            itemContent = { it ->
+                            itemContent = { it, onItemClick, onItemLongClick ->
                                 val bringIntoViewRequester = remember { BringIntoViewRequester() }
                                 LaunchedEffect(pendingComponentBringIntoViewId == it.id) {
                                     if (pendingComponentBringIntoViewId == it.id) {
@@ -1339,13 +1349,17 @@ fun WorkoutDetailScreen(
                                             workout = workout,
                                             workoutComponent = it,
                                             showRest = showRest,
-                                            appViewModel = appViewModel
+                                            appViewModel = appViewModel,
+                                            titleModifier = Modifier.combinedClickable(
+                                                onClick = onItemClick,
+                                                onLongClick = onItemLongClick
+                                            )
                                         )
                                         // Show "Add rest" button when:
                                         // - Current component is not a Rest
                                         // - Not the last component in the actual workout components list
                                         // - Next component in actual workout components list is not a Rest
-                                        if (showRest && it !is Rest) {
+                                        if (showRest && !isSelectionModeActive && it !is Rest) {
                                             val currentIndex = workout.workoutComponents.indexOfFirst { component -> component.id == it.id }
                                             val isNotLast = currentIndex >= 0 && currentIndex < workout.workoutComponents.size - 1
                                             val nextComponent = if (isNotLast && currentIndex + 1 < workout.workoutComponents.size) {
@@ -1360,18 +1374,14 @@ fun WorkoutDetailScreen(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Button(
+                                                    FormPrimaryOutlinedButton(
+                                                        text = "Add Rest",
                                                         onClick = {
                                                             appViewModel.setScreenData(
                                                                 ScreenData.InsertRestAfter(workout.id, it.id)
                                                             )
-                                                        },
-                                                        colors = ButtonDefaults.buttonColors(
-                                                            contentColor = MaterialTheme.colorScheme.background
-                                                        )
-                                                    ) {
-                                                        Text("Add Rest")
-                                                    }
+                                                        }
+                                                    )
                                                 }
                                             }
                                         }

@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -20,7 +21,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.RoundedCornerShape
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -51,7 +51,7 @@ fun SupersetRenderer(
     modifier: Modifier = Modifier,
     showRest: Boolean,
     appViewModel: AppViewModel,
-    workoutId: java.util.UUID? = null,
+    titleModifier: Modifier = Modifier,
     onExerciseClick: ((java.util.UUID) -> Unit)? = null
 ) {
     // Generate execution order matching WorkoutViewModel.generateWorkoutStates() logic
@@ -73,6 +73,7 @@ fun SupersetRenderer(
             .fillMaxWidth()
             .border(1.dp, borderColor),
         isExpandable = true,
+        titleModifier = titleModifier,
         title = { m ->
             Text(
                 modifier = m

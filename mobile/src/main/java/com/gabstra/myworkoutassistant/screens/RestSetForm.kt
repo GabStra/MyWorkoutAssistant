@@ -14,8 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,16 +33,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
 import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
-import com.gabstra.myworkoutassistant.Spacing
 import java.util.UUID
 
 
@@ -84,7 +81,7 @@ fun RestSetForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
-                        text = if (restSet == null) "Insert Rest" else "Save",
+                        text = if (restSet == null) "Insert Rest" else "Edit Rest",
                     )
                 },
                 navigationIcon = {

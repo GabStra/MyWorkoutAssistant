@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutsListTab(
     workouts: List<Workout>,
@@ -93,8 +96,17 @@ fun WorkoutsListTab(
                     onSelectionChange(newSelection)
                 },
                 onOrderChange = { },
-                itemContent = { workout ->
-                    StyledCard {
+                itemContent = { workout, onItemClick, onItemLongClick ->
+                    StyledCard(modifier = Modifier
+                                .combinedClickable(
+                                    onClick = {
+                                        onItemClick()
+                                    },
+                                    onLongClick = {
+                                        onItemLongClick()
+                                    }
+                                )
+                    ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()

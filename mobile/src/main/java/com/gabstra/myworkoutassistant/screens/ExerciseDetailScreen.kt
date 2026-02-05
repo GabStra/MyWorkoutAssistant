@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -76,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -108,7 +112,12 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Composable
-fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) {
+fun ComponentRenderer(
+    set: Set,
+    appViewModel: AppViewModel,
+    exercise: Exercise,
+    modifier: Modifier = Modifier
+) {
     // Observe equipmentsFlow to fix race condition - recompose when equipments are loaded
     val equipments by appViewModel.equipmentsFlow.collectAsState()
 
@@ -117,7 +126,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) 
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
             val isCalibrationEnabled = exercise.requiresLoadCalibration
 
-            StyledCard(enabled = exercise.enabled) {
+            StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Column(
                     modifier = Modifier.padding(15.dp)
                 ) {
@@ -163,7 +172,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) 
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
             val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
 
-            StyledCard(enabled = exercise.enabled) {
+            StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Column(
                     modifier = Modifier.padding(15.dp)
                 ) {
@@ -204,7 +213,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) 
         }
 
         is EnduranceSet -> {
-            StyledCard(enabled = exercise.enabled) {
+            StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -223,7 +232,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) 
         }
 
         is TimedDurationSet -> {
-            StyledCard(enabled = exercise.enabled) {
+            StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Row(
                     modifier = Modifier.padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -244,7 +253,7 @@ fun ComponentRenderer(set: Set, appViewModel: AppViewModel, exercise: Exercise) 
 
         is RestSet -> {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = modifier.fillMaxWidth(),
                 shape = RectangleShape,
                 color = if (exercise.enabled) {
                     MaterialTheme.colorScheme.surfaceVariant
@@ -923,7 +932,7 @@ fun ExerciseDetailScreen(
                                 updateExerciseWithHistory(updatedExercise)
                             },
                             isDragDisabled = true,
-                            itemContent = { it ->
+                            itemContent = { it, onItemClick, onItemLongClick ->
                                 val bringIntoViewRequester = remember { BringIntoViewRequester() }
                                 LaunchedEffect(pendingSetBringIntoViewId == it.id) {
                                     if (pendingSetBringIntoViewId == it.id) {
@@ -935,12 +944,23 @@ fun ExerciseDetailScreen(
                                     modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
                                 ) {
                                     Column {
-                                        ComponentRenderer(it, appViewModel, exercise)
+                                        ComponentRenderer(
+                                            it,
+                                            appViewModel,
+                                            exercise,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .combinedClickable(
+                                                    onClick = onItemClick,
+                                                    onLongClick = onItemLongClick
+                                                )
+                                        )
                                         // Show "Add rest" button when:
                                         // - Current item is not a RestSet
                                         // - Not the last item in the actual sets list
                                         // - Next item in actual sets list is not a RestSet
-                                        if (showRest && it !is RestSet) {
+                                        if (showRest && !isSelectionModeActive && it !is RestSet) {
                                             val currentIndex =
                                                 sets.indexOfFirst { set -> set.id == it.id }
                                             val isNotLast =
@@ -955,7 +975,8 @@ fun ExerciseDetailScreen(
                                                 isNotLast && nextItem != null && nextItem !is RestSet
 
                                             if (shouldShowButton) {
-                                                Button(
+                                                FormPrimaryOutlinedButton(
+                                                    text = "Add Rest",
                                                     onClick = {
                                                         appViewModel.setScreenData(
                                                             ScreenData.InsertRestSetAfter(
@@ -965,13 +986,8 @@ fun ExerciseDetailScreen(
                                                             )
                                                         )
                                                     },
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        contentColor = MaterialTheme.colorScheme.background
-                                                    )
-                                                ) {
-                                                    Text("Add rest")
-                                                }
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
                                             }
                                         }
                                     }
