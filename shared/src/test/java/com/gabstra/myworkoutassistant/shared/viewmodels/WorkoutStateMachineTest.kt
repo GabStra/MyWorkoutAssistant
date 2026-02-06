@@ -280,7 +280,10 @@ class WorkoutStateMachineTest {
     @Test(expected = IllegalArgumentException::class)
     fun testInvalidCurrentIndexThrows() {
         val set1 = createSetState(exerciseId1, setId1, 0u)
-        val container = WorkoutStateContainer.ExerciseState(exerciseId1, mutableListOf(set1))
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(ExerciseChildItem.Normal(set1))
+        )
         val sequence = listOf(WorkoutStateSequenceItem.Container(container))
         WorkoutStateMachine.fromSequence(sequence, startIndex = 5) // Index out of bounds
     }
@@ -296,11 +299,11 @@ class WorkoutStateMachineTest {
 
         val exercise1Container = WorkoutStateContainer.ExerciseState(
             exerciseId1,
-            mutableListOf(set1, rest1, set2)
+            mutableListOf(set1, rest1, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val exercise2Container = WorkoutStateContainer.ExerciseState(
             exerciseId2,
-            mutableListOf(set3, completed)
+            mutableListOf(set3, completed).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(
             WorkoutStateSequenceItem.Container(exercise1Container),
@@ -324,11 +327,11 @@ class WorkoutStateMachineTest {
 
         val exercise1Container = WorkoutStateContainer.ExerciseState(
             exerciseId1,
-            mutableListOf(set1, set2)
+            mutableListOf(set1, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val exercise2Container = WorkoutStateContainer.ExerciseState(
             exerciseId2,
-            mutableListOf(set3)
+            mutableListOf(set3).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(
             WorkoutStateSequenceItem.Container(exercise1Container),
@@ -338,16 +341,16 @@ class WorkoutStateMachineTest {
 
         var machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1) // At set2
 
-        // Insert new states after set1 (index 0)
+        // Insert new states after set1 (flat index 0 within exercise container)
         val newSet1 = createSetState(exerciseId1, UUID.randomUUID(), 2u)
         val newSet2 = createSetState(exerciseId1, UUID.randomUUID(), 3u)
-        machine = machine.insertStatesIntoExercise(exerciseId1, listOf(newSet1, newSet2), afterChildIndex = 0)
+        machine = machine.insertStatesIntoExercise(exerciseId1, listOf(newSet1, newSet2), afterFlatIndexInContainer = 0)
 
         // Verify insertion
         val exerciseContainer = machine.getCurrentExerciseContainer()
         assertNotNull(exerciseContainer)
         assertEquals(exerciseId1, exerciseContainer!!.exerciseId)
-        assertEquals(listOf(set1, newSet1, newSet2, set2), exerciseContainer.childStates)
+        assertEquals(listOf(set1, newSet1, newSet2, set2), exerciseContainer.flattenChildItems())
 
         // Verify allStates is updated
         assertEquals(listOf(set1, newSet1, newSet2, set2, restBetween, set3), machine.allStates)
@@ -362,11 +365,11 @@ class WorkoutStateMachineTest {
 
         val exercise1Container = WorkoutStateContainer.ExerciseState(
             exerciseId1,
-            mutableListOf(set1, set2)
+            mutableListOf(set1, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val exercise2Container = WorkoutStateContainer.ExerciseState(
             exerciseId2,
-            mutableListOf(set3)
+            mutableListOf(set3).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(
             WorkoutStateSequenceItem.Container(exercise1Container),
@@ -394,11 +397,11 @@ class WorkoutStateMachineTest {
 
         val exercise1Container = WorkoutStateContainer.ExerciseState(
             exerciseId1,
-            mutableListOf(set1, set2)
+            mutableListOf(set1, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val exercise2Container = WorkoutStateContainer.ExerciseState(
             exerciseId2,
-            mutableListOf(set3)
+            mutableListOf(set3).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(
             WorkoutStateSequenceItem.Container(exercise1Container),

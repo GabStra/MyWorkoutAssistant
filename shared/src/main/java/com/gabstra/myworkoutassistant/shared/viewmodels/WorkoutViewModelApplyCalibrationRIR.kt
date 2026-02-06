@@ -246,28 +246,36 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                 storeSetData()
             }
             
-            // Remove CalibrationRIRSelection state from sequence
+            // Remove CalibrationRIRSelection from sequence (from CalibrationExecutionBlock for ExerciseState)
             val updatedSequence = machine.stateSequence.map { item ->
                 when (item) {
                     is WorkoutStateSequenceItem.Container -> {
                         when (val container = item.container) {
                             is WorkoutStateContainer.ExerciseState -> {
                                 if (container.exerciseId == currentState.exerciseId) {
-                                    val updatedChildStates = container.childStates.filterNot { 
-                                        it is WorkoutState.CalibrationRIRSelection 
+                                    val updatedChildItems = container.childItems.map { childItem ->
+                                        when (childItem) {
+                                            is ExerciseChildItem.Normal -> childItem
+                                            is ExerciseChildItem.CalibrationExecutionBlock -> {
+                                                val newList = childItem.childStates
+                                                    .filterNot { it is WorkoutState.CalibrationRIRSelection }
+                                                    .toMutableList()
+                                                updateWorkSetStatesInList(newList, currentState, setUpdates)
+                                                ExerciseChildItem.CalibrationExecutionBlock(newList)
+                                            }
+                                            is ExerciseChildItem.LoadSelectionBlock -> childItem
+                                            is ExerciseChildItem.UnilateralSetBlock -> childItem
+                                        }
                                     }.toMutableList()
-                                    // Update work set states
-                                    updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
-                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                                    WorkoutStateSequenceItem.Container(container.copy(childItems = updatedChildItems))
                                 } else {
                                     item
                                 }
                             }
                             is WorkoutStateContainer.SupersetState -> {
-                                val updatedChildStates = container.childStates.filterNot { 
-                                    it is WorkoutState.CalibrationRIRSelection 
-                                }.toMutableList()
-                                // Update work set states
+                                val updatedChildStates = container.childStates
+                                    .filterNot { it is WorkoutState.CalibrationRIRSelection }
+                                    .toMutableList()
                                 updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
                                 WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
                             }

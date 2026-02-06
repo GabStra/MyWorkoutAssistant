@@ -170,7 +170,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
 
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(rest1, workSet1, rest2, workSet2)
+            mutableListOf(rest1, workSet1, rest2, workSet2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(WorkoutStateSequenceItem.Container(container))
         val machine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, 0)

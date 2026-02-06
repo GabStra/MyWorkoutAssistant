@@ -146,7 +146,7 @@ class GetSetCounterForExerciseTest {
         val set2 = createSetState(exerciseId, setId2, 1u)
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, set2)
+            mutableListOf(set1, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),
@@ -166,7 +166,7 @@ class GetSetCounterForExerciseTest {
         val set4 = createSetState(exerciseId, UUID.randomUUID(), 3u)
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, set2, calibrationLoad, set4)
+            mutableListOf(set1, set2, calibrationLoad, set4).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),
@@ -185,7 +185,7 @@ class GetSetCounterForExerciseTest {
         val calibrationRIR = createCalibrationRIRState()
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, calibrationSet, calibrationRIR)
+            mutableListOf(set1, calibrationSet, calibrationRIR).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),
@@ -204,7 +204,7 @@ class GetSetCounterForExerciseTest {
         val set2 = createSetState(exerciseId, setId2, 1u)
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, rest, set2)
+            mutableListOf(set1, rest, set2).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),
@@ -223,7 +223,10 @@ class GetSetCounterForExerciseTest {
         val set2Right = createSetState(exerciseId, setId2, 1u)
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, set2Left, rest, set2Right)
+            mutableListOf(
+                ExerciseChildItem.Normal(set1),
+                ExerciseChildItem.UnilateralSetBlock(mutableListOf(set2Left, rest, set2Right))
+            )
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),
@@ -250,7 +253,7 @@ class GetSetCounterForExerciseTest {
         val set4 = createSetState(exerciseId, UUID.randomUUID(), 3u)
         val container = WorkoutStateContainer.ExerciseState(
             exerciseId,
-            mutableListOf(set1, calibrationLoad, set4)
+            mutableListOf(set1, calibrationLoad, set4).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val machine = WorkoutStateMachine.fromSequence(
             listOf(WorkoutStateSequenceItem.Container(container)),

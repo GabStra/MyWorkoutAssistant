@@ -57,3 +57,7 @@ PRODUCTION_RELEASE_PLAN.md
 .cursor/plans/move_init_to_load_and_remove_factory.plan.md
 .cursor/plans/secondary_button_primary_color.plan.md
 WORKOUT_HISTORY_MISSING_RESEARCH.md
+.cursor/plans/async_operations_clone_mutable_data.plan.md
+.cursor/plans/calibration_containers_architecture.plan.md
+.cursor/plans/calibration_flag_propagation_wear_to_phone.plan.md
+.cursor/plans/unilateral_sets_aggregation.plan.md

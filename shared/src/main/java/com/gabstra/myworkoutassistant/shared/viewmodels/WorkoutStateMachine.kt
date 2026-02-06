@@ -4,6 +4,23 @@ import java.time.LocalDateTime
 import java.util.UUID
 
 /**
+ * Position of a state in the sequence: which container and where inside it.
+ * For [WorkoutStateContainer.ExerciseState] this includes which [ExerciseChildItem] and index within it (for block mutation).
+ */
+sealed class ContainerPosition {
+    data class Exercise(
+        val containerSeqIndex: Int,
+        val childItemIndex: Int,
+        val indexWithinChildItem: Int
+    ) : ContainerPosition()
+
+    data class Superset(
+        val containerSeqIndex: Int,
+        val childIndex: Int
+    ) : ContainerPosition()
+}
+
+/**
  * Pure Kotlin state machine that encapsulates workout state queue/history logic.
  * Manages progression through workout states (Set, Rest, Completed) with support
  * for next, undo, and skip operations.
@@ -31,7 +48,7 @@ data class WorkoutStateMachine(
                 when (item) {
                     is WorkoutStateSequenceItem.Container -> {
                         when (val container = item.container) {
-                            is WorkoutStateContainer.ExerciseState -> addAll(container.childStates)
+                            is WorkoutStateContainer.ExerciseState -> addAll(container.flattenChildItems())
                             is WorkoutStateContainer.SupersetState -> addAll(container.childStates)
                         }
                     }
@@ -71,11 +88,11 @@ data class WorkoutStateMachine(
             require(states.isNotEmpty()) { "States list cannot be empty" }
             require(startIndex >= 0) { "startIndex must be >= 0" }
             require(startIndex < states.size) { "startIndex must be < states.size" }
-            // Create a dummy exercise container for backward compatibility
+            // Create a dummy exercise container for backward compatibility (each state as Normal)
             val dummyExerciseId = UUID.randomUUID()
             val container = WorkoutStateContainer.ExerciseState(
                 exerciseId = dummyExerciseId,
-                childStates = states.toMutableList()
+                childItems = states.map { ExerciseChildItem.Normal(it) }.toMutableList()
             )
             val sequence = listOf(WorkoutStateSequenceItem.Container(container))
             return WorkoutStateMachine(sequence, currentIndex = startIndex, timeProvider)
@@ -212,13 +229,13 @@ data class WorkoutStateMachine(
     }
 
     /**
-     * Insert states into an ExerciseState container's childStates.
+     * Insert states into an ExerciseState container (into the flattened position).
      * Returns a new WorkoutStateMachine with the inserted states.
      */
     fun insertStatesIntoExercise(
         exerciseId: UUID,
         states: List<WorkoutState>,
-        afterChildIndex: Int?
+        afterFlatIndexInContainer: Int?
     ): WorkoutStateMachine {
         val updatedSequence = stateSequence.map { item ->
             when (item) {
@@ -226,29 +243,32 @@ data class WorkoutStateMachine(
                     when (val container = item.container) {
                         is WorkoutStateContainer.ExerciseState -> {
                             if (container.exerciseId == exerciseId) {
-                                val updatedChildStates = container.childStates.toMutableList()
-                                val insertIndex = if (afterChildIndex != null) {
-                                    (afterChildIndex + 1).coerceIn(0, updatedChildStates.size)
+                                val flatSize = container.flattenChildItems().size
+                                val insertAt = if (afterFlatIndexInContainer != null) {
+                                    (afterFlatIndexInContainer + 1).coerceIn(0, flatSize)
                                 } else {
-                                    updatedChildStates.size
+                                    flatSize
                                 }
-                                updatedChildStates.addAll(insertIndex, states)
+                                val updatedChildItems = insertIntoExerciseChildItems(
+                                    container.childItems,
+                                    insertAt,
+                                    states
+                                )
                                 WorkoutStateSequenceItem.Container(
-                                    container.copy(childStates = updatedChildStates)
+                                    container.copy(childItems = updatedChildItems)
                                 )
                             } else {
                                 item
                             }
                         }
                         is WorkoutStateContainer.SupersetState -> {
-                            // Check if any exercise in the superset matches
                             val updatedChildStates = container.childStates.toMutableList()
                             var found = false
                             for (i in updatedChildStates.indices.reversed()) {
                                 val state = updatedChildStates[i]
                                 if (state is WorkoutState.Set && state.exerciseId == exerciseId) {
-                                    val insertIndex = if (afterChildIndex != null) {
-                                        (i + afterChildIndex + 1).coerceIn(0, updatedChildStates.size)
+                                    val insertIndex = if (afterFlatIndexInContainer != null) {
+                                        (i + afterFlatIndexInContainer + 1).coerceIn(0, updatedChildStates.size)
                                     } else {
                                         i + 1
                                     }
@@ -273,12 +293,60 @@ data class WorkoutStateMachine(
         return WorkoutStateMachine(updatedSequence, currentIndex, timeProvider)
     }
 
+    private fun insertIntoExerciseChildItems(
+        childItems: MutableList<ExerciseChildItem>,
+        insertAtFlatIndex: Int,
+        states: List<WorkoutState>
+    ): MutableList<ExerciseChildItem> {
+        var flatPos = 0
+        val result = childItems.toMutableList()
+        // insertAtFlatIndex is where the first new state should go; find the segment containing (insertAtFlatIndex - 1) so we insert after it
+        val afterIndex = (insertAtFlatIndex - 1).coerceAtLeast(0)
+        for (i in result.indices) {
+            val elem = result[i]
+            val size = when (elem) {
+                is ExerciseChildItem.Normal -> 1
+                is ExerciseChildItem.CalibrationExecutionBlock -> elem.childStates.size
+                is ExerciseChildItem.LoadSelectionBlock -> elem.childStates.size
+                is ExerciseChildItem.UnilateralSetBlock -> elem.childStates.size
+            }
+            if (flatPos + size > afterIndex) {
+                val localIndex = insertAtFlatIndex - flatPos
+                when (elem) {
+                    is ExerciseChildItem.Normal -> {
+                        val newNormals = states.map { ExerciseChildItem.Normal(it) }
+                        result.addAll(i + 1, newNormals)
+                    }
+                    is ExerciseChildItem.CalibrationExecutionBlock -> {
+                        result[i] = ExerciseChildItem.CalibrationExecutionBlock(
+                            (elem.childStates.toMutableList().apply { addAll(localIndex, states) })
+                        )
+                    }
+                    is ExerciseChildItem.LoadSelectionBlock -> {
+                        result[i] = ExerciseChildItem.LoadSelectionBlock(
+                            (elem.childStates.toMutableList().apply { addAll(localIndex, states) })
+                        )
+                    }
+                    is ExerciseChildItem.UnilateralSetBlock -> {
+                        result[i] = ExerciseChildItem.UnilateralSetBlock(
+                            (elem.childStates.toMutableList().apply { addAll(localIndex, states) })
+                        )
+                    }
+                }
+                return result
+            }
+            flatPos += size
+        }
+        result.addAll(states.map { ExerciseChildItem.Normal(it) })
+        return result
+    }
+
     /**
-     * Returns (containerSeqIndex, childIndex) for the state at the given flat index in allStates.
-     * containerSeqIndex is the index in stateSequence of the Container; childIndex is the index within that container's childStates.
+     * Returns the container position for the state at the given flat index in allStates.
+     * For ExerciseState returns [ContainerPosition.Exercise] with childItemIndex and indexWithinChildItem for block mutation.
      * Returns null if flatIndex is out of range or points to a RestBetweenExercises.
      */
-    fun getContainerAndChildIndex(flatIndex: Int): Pair<Int, Int>? {
+    fun getContainerAndChildIndex(flatIndex: Int): ContainerPosition? {
         if (flatIndex < 0 || flatIndex >= allStates.size) return null
         var currentFlatPos = 0
         for ((seqIdx, item) in stateSequence.withIndex()) {
@@ -286,16 +354,20 @@ data class WorkoutStateMachine(
                 is WorkoutStateSequenceItem.Container -> {
                     when (val container = item.container) {
                         is WorkoutStateContainer.ExerciseState -> {
-                            val size = container.childStates.size
-                            if (currentFlatPos <= flatIndex && flatIndex < currentFlatPos + size) {
-                                return Pair(seqIdx, flatIndex - currentFlatPos)
+                            val flatSize = container.flattenChildItems().size
+                            if (currentFlatPos <= flatIndex && flatIndex < currentFlatPos + flatSize) {
+                                val flatIndexInContainer = flatIndex - currentFlatPos
+                                val (childItemIndex, indexWithinChildItem) =
+                                    getExerciseChildItemAndIndex(container, flatIndexInContainer)
+                                    ?: return null
+                                return ContainerPosition.Exercise(seqIdx, childItemIndex, indexWithinChildItem)
                             }
-                            currentFlatPos += size
+                            currentFlatPos += flatSize
                         }
                         is WorkoutStateContainer.SupersetState -> {
                             val size = container.childStates.size
                             if (currentFlatPos <= flatIndex && flatIndex < currentFlatPos + size) {
-                                return Pair(seqIdx, flatIndex - currentFlatPos)
+                                return ContainerPosition.Superset(seqIdx, flatIndex - currentFlatPos)
                             }
                             currentFlatPos += size
                         }
@@ -306,6 +378,30 @@ data class WorkoutStateMachine(
                     currentFlatPos++
                 }
             }
+        }
+        return null
+    }
+
+    /**
+     * For an ExerciseState and a flat index within it, returns (childItemIndex, indexWithinChildItem).
+     */
+    private fun getExerciseChildItemAndIndex(
+        container: WorkoutStateContainer.ExerciseState,
+        flatIndexInContainer: Int
+    ): Pair<Int, Int>? {
+        var flatPos = 0
+        for (i in container.childItems.indices) {
+            val elem = container.childItems[i]
+            val size = when (elem) {
+                is ExerciseChildItem.Normal -> 1
+                is ExerciseChildItem.CalibrationExecutionBlock -> elem.childStates.size
+                is ExerciseChildItem.LoadSelectionBlock -> elem.childStates.size
+                is ExerciseChildItem.UnilateralSetBlock -> elem.childStates.size
+            }
+            if (flatIndexInContainer < flatPos + size) {
+                return Pair(i, flatIndexInContainer - flatPos)
+            }
+            flatPos += size
         }
         return null
     }
@@ -327,7 +423,7 @@ data class WorkoutStateMachine(
     }
 
     /**
-     * Get all states for a specific exercise from its container.
+     * Get all states for a specific exercise from its container (flattened order).
      */
     fun getStatesForExercise(exerciseId: UUID): List<WorkoutState> {
         return stateSequence.flatMap { item ->
@@ -336,7 +432,7 @@ data class WorkoutStateMachine(
                     when (val container = item.container) {
                         is WorkoutStateContainer.ExerciseState -> {
                             if (container.exerciseId == exerciseId) {
-                                container.childStates
+                                container.flattenChildItems()
                             } else {
                                 emptyList()
                             }
@@ -362,25 +458,26 @@ data class WorkoutStateMachine(
      * Helper to find the container containing a specific state.
      */
     private fun findContainerForState(targetState: WorkoutState): WorkoutStateContainer? {
+        val targetIndex = allStates.indexOf(targetState)
+        if (targetIndex < 0) return null
         var currentFlatIndex = 0
         for (item in stateSequence) {
             when (item) {
                 is WorkoutStateSequenceItem.Container -> {
                     val container = item.container
-                    val childStates = when (container) {
-                        is WorkoutStateContainer.ExerciseState -> container.childStates
-                        is WorkoutStateContainer.SupersetState -> container.childStates
+                    val size = when (container) {
+                        is WorkoutStateContainer.ExerciseState -> container.flattenChildItems().size
+                        is WorkoutStateContainer.SupersetState -> container.childStates.size
                     }
-                    val endIndex = currentFlatIndex + childStates.size
-                    if (currentFlatIndex <= allStates.indexOf(targetState) && 
-                        allStates.indexOf(targetState) < endIndex) {
+                    val endIndex = currentFlatIndex + size
+                    if (targetIndex < endIndex) {
                         return container
                     }
                     currentFlatIndex = endIndex
                 }
                 is WorkoutStateSequenceItem.RestBetweenExercises -> {
                     if (targetState == item.rest) {
-                        return null // Rest between exercises is not in a container
+                        return null
                     }
                     currentFlatIndex++
                 }
@@ -395,18 +492,52 @@ data class WorkoutStateMachine(
     private fun rebuildSequenceWithUpdatedStates(updatedStates: List<WorkoutState>): List<WorkoutStateSequenceItem> {
         val result = mutableListOf<WorkoutStateSequenceItem>()
         var stateIndex = 0
-        
+
         for (item in stateSequence) {
             when (item) {
                 is WorkoutStateSequenceItem.Container -> {
                     when (val container = item.container) {
                         is WorkoutStateContainer.ExerciseState -> {
-                            val childCount = container.childStates.size
-                            val updatedChildStates = updatedStates.subList(stateIndex, stateIndex + childCount).toMutableList()
+                            val updatedChildItems = mutableListOf<ExerciseChildItem>()
+                            for (childItem in container.childItems) {
+                                when (childItem) {
+                                    is ExerciseChildItem.Normal -> {
+                                        updatedChildItems.add(
+                                            ExerciseChildItem.Normal(updatedStates[stateIndex++])
+                                        )
+                                    }
+                                    is ExerciseChildItem.CalibrationExecutionBlock -> {
+                                        val n = childItem.childStates.size
+                                        updatedChildItems.add(
+                                            ExerciseChildItem.CalibrationExecutionBlock(
+                                                updatedStates.subList(stateIndex, stateIndex + n).toMutableList()
+                                            )
+                                        )
+                                        stateIndex += n
+                                    }
+                                    is ExerciseChildItem.LoadSelectionBlock -> {
+                                        val n = childItem.childStates.size
+                                        updatedChildItems.add(
+                                            ExerciseChildItem.LoadSelectionBlock(
+                                                updatedStates.subList(stateIndex, stateIndex + n).toMutableList()
+                                            )
+                                        )
+                                        stateIndex += n
+                                    }
+                                    is ExerciseChildItem.UnilateralSetBlock -> {
+                                        val n = childItem.childStates.size
+                                        updatedChildItems.add(
+                                            ExerciseChildItem.UnilateralSetBlock(
+                                                updatedStates.subList(stateIndex, stateIndex + n).toMutableList()
+                                            )
+                                        )
+                                        stateIndex += n
+                                    }
+                                }
+                            }
                             result.add(WorkoutStateSequenceItem.Container(
-                                container.copy(childStates = updatedChildStates)
+                                container.copy(childItems = updatedChildItems)
                             ))
-                            stateIndex += childCount
                         }
                         is WorkoutStateContainer.SupersetState -> {
                             val childCount = container.childStates.size

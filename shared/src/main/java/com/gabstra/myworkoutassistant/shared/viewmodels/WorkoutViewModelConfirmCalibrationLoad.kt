@@ -280,21 +280,19 @@ private suspend fun WorkoutViewModel.calculateAndAssignPlateChanges(
                 when (val container = item.container) {
                     is WorkoutStateContainer.ExerciseState -> {
                         if (container.exerciseId == exerciseId) {
-                            val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                            val flatStates = container.flattenChildItems()
+                            val updatedFlat = flatStates.map { state ->
                                 if (state is WorkoutState.Set) {
-                                    val setIndex = setsForPlateCalculation.indexOfFirst { calcState -> 
-                                        calcState.set.id == state.set.id 
+                                    val setIndex = setsForPlateCalculation.indexOfFirst { calcState ->
+                                        calcState.set.id == state.set.id
                                     }
                                     if (setIndex >= 0 && setIndex < plateChangeResults.size) {
                                         state.copy(plateChangeResult = plateChangeResults[setIndex])
-                                    } else {
-                                        state
-                                    }
-                                } else {
-                                    state
-                                }
-                            }.toMutableList()
-                            WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                                    } else state
+                                } else state
+                            }
+                            val updatedChildItems = rebuildExerciseChildItemsFromFlat(container.childItems, updatedFlat)
+                            WorkoutStateSequenceItem.Container(container.copy(childItems = updatedChildItems))
                         } else {
                             item
                         }
@@ -305,12 +303,8 @@ private suspend fun WorkoutViewModel.calculateAndAssignPlateChanges(
                                 val setIndex = setsForPlateCalculation.indexOfFirst { it.set.id == state.set.id }
                                 if (setIndex >= 0 && idx < plateChangeResults.size) {
                                     state.copy(plateChangeResult = plateChangeResults[setIndex])
-                                } else {
-                                    state
-                                }
-                            } else {
-                                state
-                            }
+                                } else state
+                            } else state
                         }.toMutableList()
                         WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
                     }
@@ -335,7 +329,8 @@ private fun WorkoutViewModel.updateWorkSetsWithSelectedLoad(
                 when (val container = item.container) {
                     is WorkoutStateContainer.ExerciseState -> {
                         if (container.exerciseId == exercise.id) {
-                            val updatedChildStates = container.childStates.mapIndexed { idx, state ->
+                            val flatStates = container.flattenChildItems()
+                            val updatedFlat = flatStates.mapIndexed { idx, state ->
                                 if (idx > afterInsertIndex && state is WorkoutState.Set &&
                                     !state.isWarmupSet && !state.isCalibrationSet) {
                                     val loadSelectionSetData = when (val existingSetData = state.currentSetData) {
@@ -358,8 +353,9 @@ private fun WorkoutViewModel.updateWorkSetsWithSelectedLoad(
                                 } else {
                                     state
                                 }
-                            }.toMutableList()
-                            WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                            }
+                            val updatedChildItems = rebuildExerciseChildItemsFromFlat(container.childItems, updatedFlat)
+                            WorkoutStateSequenceItem.Container(container.copy(childItems = updatedChildItems))
                         } else {
                             item
                         }
@@ -419,42 +415,82 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
         statesToInsert.add(calibrationSetExecutionState)
 
         withContext(dispatchers.main) {
-            // Find the container and child index for the current state (CalibrationLoadSelection)
             val currentFlatIndex = machine.currentIndex
             val position = machine.getContainerAndChildIndex(currentFlatIndex)
             if (position == null) return@withContext
-            val (calibrationContainerIndex, calibrationChildIndex) = position
 
-            // Replace CalibrationLoadSelection with inserted states
-            val updatedSequence = machine.stateSequence.mapIndexed { seqIdx, item ->
-                if (seqIdx == calibrationContainerIndex) {
-                    when (item) {
-                        is WorkoutStateSequenceItem.Container -> {
-                            when (val container = item.container) {
-                                is WorkoutStateContainer.ExerciseState -> {
-                                    val updatedChildStates = container.childStates.toMutableList()
-                                    updatedChildStates.removeAt(calibrationChildIndex)
-                                    updatedChildStates.addAll(calibrationChildIndex, statesToInsert)
-                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+            // Replace CalibrationLoadSelection with inserted states (inside LoadSelectionBlock or flat list for Superset)
+            val updatedSequence = when (position) {
+                is ContainerPosition.Exercise -> {
+                    machine.stateSequence.mapIndexed { seqIdx, seqItem ->
+                        if (seqIdx != position.containerSeqIndex || seqItem !is WorkoutStateSequenceItem.Container) {
+                            seqItem
+                        } else {
+                            val container = seqItem.container
+                            if (container is WorkoutStateContainer.ExerciseState) {
+                                val childItem = container.childItems.getOrNull(position.childItemIndex)
+                                if (childItem is ExerciseChildItem.LoadSelectionBlock) {
+                                    val newList = childItem.childStates.toMutableList()
+                                    newList.removeAt(position.indexWithinChildItem)
+                                    newList.addAll(position.indexWithinChildItem, statesToInsert)
+                                    val newChildItems = container.childItems.toMutableList()
+                                    newChildItems[position.childItemIndex] =
+                                        ExerciseChildItem.LoadSelectionBlock(newList)
+                                    WorkoutStateSequenceItem.Container(
+                                        container.copy(childItems = newChildItems)
+                                    )
+                                } else {
+                                    seqItem
                                 }
-                                is WorkoutStateContainer.SupersetState -> {
-                                    val updatedChildStates = container.childStates.toMutableList()
-                                    updatedChildStates.removeAt(calibrationChildIndex)
-                                    updatedChildStates.addAll(calibrationChildIndex, statesToInsert)
-                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
-                                }
+                            } else {
+                                seqItem
                             }
                         }
-                        is WorkoutStateSequenceItem.RestBetweenExercises -> item
                     }
-                } else {
-                    item
+                }
+                is ContainerPosition.Superset -> {
+                    machine.stateSequence.mapIndexed { seqIdx, item ->
+                        if (seqIdx != position.containerSeqIndex || item !is WorkoutStateSequenceItem.Container) {
+                            item
+                        } else {
+                            val container = item.container
+                            if (container is WorkoutStateContainer.SupersetState) {
+                                val updatedChildStates = container.childStates.toMutableList()
+                                updatedChildStates.removeAt(position.childIndex)
+                                updatedChildStates.addAll(position.childIndex, statesToInsert)
+                                WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
+                            } else {
+                                item
+                            }
+                        }
+                    }
                 }
             }
             
             populateNextStateForRest(updatedSequence)
             var updatedMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, currentFlatIndex)
-            
+
+            val afterInsertIndex = when (position) {
+                is ContainerPosition.Exercise -> {
+                    val seqItem = machine.stateSequence[position.containerSeqIndex]
+                    if (seqItem is WorkoutStateSequenceItem.Container && seqItem.container is WorkoutStateContainer.ExerciseState) {
+                        val container = seqItem.container
+                        val flatInContainer = container.childItems.take(position.childItemIndex).sumOf { child ->
+                            when (child) {
+                                is ExerciseChildItem.Normal -> 1
+                                is ExerciseChildItem.CalibrationExecutionBlock -> child.childStates.size
+                                is ExerciseChildItem.LoadSelectionBlock -> child.childStates.size
+                                is ExerciseChildItem.UnilateralSetBlock -> child.childStates.size
+                            }
+                        } + position.indexWithinChildItem
+                        flatInContainer + statesToInsert.size
+                    } else {
+                        currentFlatIndex + statesToInsert.size
+                    }
+                }
+                is ContainerPosition.Superset -> position.childIndex + statesToInsert.size
+            }
+
             if (equipment is Barbell &&
                 (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
             ) {
@@ -462,9 +498,9 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
                     updatedMachine, currentState.exerciseId, warmupStates, calibrationSetExecutionState, exercise, equipment
                 )
             }
-            
+
             updatedMachine = updateWorkSetsWithSelectedLoad(
-                updatedMachine, exercise, selectedWeight, calibrationChildIndex + statesToInsert.size
+                updatedMachine, exercise, selectedWeight, afterInsertIndex
             )
             
             // Repopulate nextState for Rest states so they reference states that have plateChangeResult

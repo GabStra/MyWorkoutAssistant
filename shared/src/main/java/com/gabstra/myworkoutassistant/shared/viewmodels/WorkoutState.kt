@@ -39,15 +39,53 @@ data class CalibrationContext(
 )
 
 /**
+ * Item under [WorkoutStateContainer.ExerciseState]: either a single state or a calibration block.
+ * Only [ExerciseState] uses these; [SupersetState] keeps a flat list of [WorkoutState].
+ */
+sealed class ExerciseChildItem {
+    /** A single workout state (Set, Rest, Completed, etc.) — not inside a calibration block. */
+    data class Normal(val state: WorkoutState) : ExerciseChildItem()
+
+    /**
+     * Calibration execution + RIR block. Allowed children: [WorkoutState.Set] with [WorkoutState.Set.isCalibrationSet],
+     * [WorkoutState.CalibrationRIRSelection], and [WorkoutState.Rest].
+     */
+    data class CalibrationExecutionBlock(val childStates: MutableList<WorkoutState>) : ExerciseChildItem()
+
+    /**
+     * Load selection block. Allowed children: [WorkoutState.CalibrationLoadSelection], optional warm-up
+     * [WorkoutState.Set], and [WorkoutState.Rest].
+     */
+    data class LoadSelectionBlock(val childStates: MutableList<WorkoutState>) : ExerciseChildItem()
+
+    /**
+     * Unilateral set block: same logical set executed twice (left/right), with optional rest in the middle.
+     * childStates = [left Set, optional Rest, right Set] (2 or 3 elements). Both Set states share the same set.id.
+     */
+    data class UnilateralSetBlock(val childStates: MutableList<WorkoutState>) : ExerciseChildItem()
+}
+
+/**
  * Containers for organizing workout states by exercise or superset.
  * These are organizational only and NOT states themselves.
  */
 sealed class WorkoutStateContainer {
     data class ExerciseState(
         val exerciseId: UUID,
-        val childStates: MutableList<WorkoutState>
-    ) : WorkoutStateContainer()
-    
+        /** Each item is [ExerciseChildItem.Normal], a calibration/load block, or [ExerciseChildItem.UnilateralSetBlock]. Flatten for linear navigation. */
+        val childItems: MutableList<ExerciseChildItem>
+    ) : WorkoutStateContainer() {
+        /** Flattened list of all states in order (for navigation and allStates). */
+        fun flattenChildItems(): List<WorkoutState> = childItems.flatMap { item ->
+            when (item) {
+                is ExerciseChildItem.Normal -> listOf(item.state)
+                is ExerciseChildItem.CalibrationExecutionBlock -> item.childStates
+                is ExerciseChildItem.LoadSelectionBlock -> item.childStates
+                is ExerciseChildItem.UnilateralSetBlock -> item.childStates
+            }
+        }
+    }
+
     data class SupersetState(
         val supersetId: UUID,
         val childStates: MutableList<WorkoutState>
