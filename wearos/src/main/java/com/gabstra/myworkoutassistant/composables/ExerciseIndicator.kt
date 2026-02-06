@@ -47,8 +47,8 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.LinkedList
 import java.util.UUID
@@ -808,3 +808,4 @@ private fun SupersetBadge(
         }
     }
 }
+

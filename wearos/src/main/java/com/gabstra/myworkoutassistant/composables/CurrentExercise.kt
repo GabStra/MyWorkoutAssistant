@@ -6,7 +6,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
 @Composable
 fun CurrentExercise(

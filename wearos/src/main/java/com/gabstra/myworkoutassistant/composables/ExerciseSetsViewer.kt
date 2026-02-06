@@ -46,7 +46,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 /**
@@ -499,3 +499,4 @@ private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
     // With new state types, calibration sets are only shown when isCalibrationSet == true (execution state)
     return isCalibrationSet && !this.isCalibrationSet
 }
+

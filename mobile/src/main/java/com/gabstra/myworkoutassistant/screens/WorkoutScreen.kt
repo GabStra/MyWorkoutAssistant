@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.workout.ExerciseScreen
@@ -295,4 +295,5 @@ fun WorkoutScreen(
         )
     }
 }
+
 

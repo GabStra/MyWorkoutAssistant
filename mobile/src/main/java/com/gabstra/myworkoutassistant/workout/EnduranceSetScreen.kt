@@ -39,9 +39,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutTimerService
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -409,4 +409,5 @@ fun EnduranceSetScreen (
         CountDownDialog(displayStartingDialog,countdownValue)
     }
 }
+
 

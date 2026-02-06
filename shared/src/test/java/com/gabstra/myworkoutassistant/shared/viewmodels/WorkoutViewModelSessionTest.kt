@@ -1,4 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
+import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
 import android.content.Context
 import androidx.lifecycle.viewModelScope
@@ -1934,24 +1939,24 @@ class WorkoutViewModelSessionTest {
         
         // Test scenario 1: On first side (no sets completed)
         val firstSide = unilateralSets[0]
-        @Suppress("UNCHECKED_CAST")
-        val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
-        workoutStateFlow.value = firstSide
+        val machine = viewModel.stateMachine!!
+        val unilateralIndices = machine.allStates.mapIndexedNotNull { index, state ->
+            if (state is WorkoutState.Set && state.set.id == unilateralSetId) index else null
+        }
+        assertTrue("Unilateral set must appear twice in state machine", unilateralIndices.size >= 2)
+        val firstSideIndex = unilateralIndices[0]
+        viewModel.stateMachine = machine.withCurrentIndex(firstSideIndex)
+        viewModel.updateStateFlowsFromMachine()
         
         val completedBeforeFirstSide = viewModel.getAllExerciseCompletedSetsBefore(firstSide)
         val completedCount = completedBeforeFirstSide.count { it.exerciseId == testExerciseId }
         assertEquals("On first side, should have 0 completed sets", 0, completedCount)
         
         // Test scenario 2: After completing first side (on second side)
-        // Add first side to history
-        val workoutStateHistoryField = WorkoutViewModel::class.java.getDeclaredField("workoutStateHistory")
-        workoutStateHistoryField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val workoutStateHistory = workoutStateHistoryField.get(viewModel) as MutableList<WorkoutState>
-        workoutStateHistory.add(firstSide)
-        
         val secondSide = unilateralSets[1]
-        workoutStateFlow.value = secondSide
+        val secondSideIndex = unilateralIndices[1]
+        viewModel.stateMachine = machine.withCurrentIndex(secondSideIndex)
+        viewModel.updateStateFlowsFromMachine()
         
         val completedBeforeSecondSide = viewModel.getAllExerciseCompletedSetsBefore(secondSide)
         val completedCountSecondSide = completedBeforeSecondSide.count { it.exerciseId == testExerciseId }
@@ -1966,4 +1971,5 @@ class WorkoutViewModelSessionTest {
         assertEquals("Total unique sets should be 1 for unilateral exercise", 1, totalUnique)
     }
 }
+
 

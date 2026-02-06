@@ -7,7 +7,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -763,4 +763,5 @@ object PlateauDetectionHelper {
         return result
     }
 }
+
 

@@ -838,9 +838,9 @@ class PlateauDetectionHelperTest {
         val workoutHistory8 = createWorkoutHistory(date = baseDate.plusDays(7))
 
         val progressionStates = mapOf(
-            workoutHistory5.id to com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState.DELOAD,
-            workoutHistory6.id to com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState.DELOAD,
-            workoutHistory7.id to com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState.DELOAD
+            workoutHistory5.id to com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState.DELOAD,
+            workoutHistory6.id to com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState.DELOAD,
+            workoutHistory7.id to com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState.DELOAD
         )
 
         // First 4 sessions show improvement, then 3 deload sessions, then 1 regular session
@@ -1308,4 +1308,5 @@ class PlateauDetectionHelperTest {
         assertTrue("Session 2 should show improvement (new weight bin)", sessionImproved[1])
     }
 }
+
 

@@ -1,4 +1,11 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
+import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceOps
 
 import androidx.compose.runtime.mutableStateOf
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -11,7 +18,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.LocalDateTime
 import java.util.UUID
 
 class WorkoutStateMachineTest {
@@ -64,9 +70,8 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, completed)
+        val states = listOf(set1, rest1, set2)
         val machine = WorkoutStateMachine.fromStates(states)
 
         assertEquals(set1, machine.currentState)
@@ -75,7 +80,7 @@ class WorkoutStateMachineTest {
         assertTrue(machine.isHistoryEmpty)
         assertEquals(rest1, machine.upcomingNext)
         assertEquals(emptyList<WorkoutState>(), machine.history)
-        assertEquals(listOf(rest1, set2, completed), machine.nextStates)
+        assertEquals(listOf(rest1, set2), machine.nextStates)
     }
 
     @Test
@@ -83,9 +88,8 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, completed)
+        val states = listOf(set1, rest1, set2)
         var machine = WorkoutStateMachine.fromStates(states)
 
         // Advance to rest
@@ -100,30 +104,19 @@ class WorkoutStateMachineTest {
         machine = machine.next()
         assertEquals(set2, machine.currentState)
         assertEquals(listOf(set1, rest1), machine.history)
-        assertEquals(completed, machine.upcomingNext)
-
-        // Advance to completed
-        machine = machine.next()
-        assertEquals(completed, machine.currentState)
-        assertEquals(listOf(set1, rest1, set2), machine.history)
         assertNull(machine.upcomingNext)
         assertTrue(machine.isCompleted)
-
-        // Verify endWorkoutTime is set
-        assertNotNull((machine.currentState as WorkoutState.Completed).endWorkoutTime)
     }
 
     @Test
-    fun testNextOnCompletedDoesNothing() {
+    fun testNextAtLastStateDoesNothing() {
         val set1 = createSetState(exerciseId1, setId1, 0u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
-        val states = listOf(set1, completed)
+        val states = listOf(set1)
 
         var machine = WorkoutStateMachine.fromStates(states)
-        machine = machine.next() // Move to completed
         val beforeNext = machine.currentState
 
-        machine = machine.next() // Try to advance from completed
+        machine = machine.next() // Try to advance from last state
         assertEquals(beforeNext, machine.currentState)
         assertTrue(machine.isCompleted)
     }
@@ -133,9 +126,8 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, completed)
+        val states = listOf(set1, rest1, set2)
         var machine = WorkoutStateMachine.fromStates(states)
 
         // Advance to set2
@@ -180,9 +172,8 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId2, setId2, 0u) // Different exercise
         val rest2 = createRestState(UUID.randomUUID())
         val set3 = createSetState(exerciseId2, setId3, 1u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, rest2, set3, completed)
+        val states = listOf(set1, rest1, set2, rest2, set3)
         val machine = WorkoutStateMachine.fromStates(states)
 
         // Skip until we find a Set with different exerciseId
@@ -195,20 +186,18 @@ class WorkoutStateMachineTest {
     }
 
     @Test
-    fun testSkipUntilCompleted() {
+    fun testSkipUntilReturnsLastStateWhenNoMatch() {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
-
-        val states = listOf(set1, rest1, completed)
+        val states = listOf(set1, rest1)
         val machine = WorkoutStateMachine.fromStates(states)
 
-        // Skip until predicate that never matches (except Completed)
+        // Skip until predicate that never matches
         val newMachine = machine.skipUntil { state ->
             state is WorkoutState.Set && (state as WorkoutState.Set).exerciseId == UUID.randomUUID()
         }
 
-        assertEquals(completed, newMachine.currentState)
+        assertEquals(rest1, newMachine.currentState)
         assertTrue(newMachine.isCompleted)
     }
 
@@ -219,9 +208,8 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
         val rest2 = createRestState(UUID.randomUUID())
         val set3 = createSetState(exerciseId1, setId1, 2u) // Same setId as set1 (unilateral)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, rest2, set3, completed)
+        val states = listOf(set1, rest1, set2, rest2, set3)
         val machine = WorkoutStateMachine.fromStates(states)
 
         // Reposition to setId2 (should find set2)
@@ -252,24 +240,23 @@ class WorkoutStateMachineTest {
         val set1 = createSetState(exerciseId1, setId1, 0u)
         val rest1 = createRestState(restSetId1)
         val set2 = createSetState(exerciseId1, setId2, 1u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
-        val states = listOf(set1, rest1, set2, completed)
+        val states = listOf(set1, rest1, set2)
         var machine = WorkoutStateMachine.fromStates(states)
 
         // At start
         assertEquals(emptyList<WorkoutState>(), machine.history)
-        assertEquals(listOf(rest1, set2, completed), machine.nextStates)
+        assertEquals(listOf(rest1, set2), machine.nextStates)
 
         // After one next
         machine = machine.next()
         assertEquals(listOf(set1), machine.history)
-        assertEquals(listOf(set2, completed), machine.nextStates)
+        assertEquals(listOf(set2), machine.nextStates)
 
         // After two nexts
         machine = machine.next()
         assertEquals(listOf(set1, rest1), machine.history)
-        assertEquals(listOf(completed), machine.nextStates)
+        assertEquals(emptyList<WorkoutState>(), machine.nextStates)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -288,6 +275,28 @@ class WorkoutStateMachineTest {
         WorkoutStateMachine.fromSequence(sequence, startIndex = 5) // Index out of bounds
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun testPreparingStateInsideContainerThrows() {
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(
+                ExerciseChildItem.Normal(WorkoutState.Preparing(dataLoaded = true))
+            )
+        )
+        WorkoutStateMachine.fromSequence(listOf(WorkoutStateSequenceItem.Container(container)))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun testCompletedStateInsideContainerThrows() {
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId1,
+            mutableListOf(
+                ExerciseChildItem.Normal(WorkoutState.Completed(startWorkoutTime = java.time.LocalDateTime.now()))
+            )
+        )
+        WorkoutStateMachine.fromSequence(listOf(WorkoutStateSequenceItem.Container(container)))
+    }
+
     @Test
     fun testHierarchicalStructure() {
         val set1 = createSetState(exerciseId1, setId1, 0u)
@@ -295,7 +304,6 @@ class WorkoutStateMachineTest {
         val set2 = createSetState(exerciseId1, setId2, 1u)
         val restBetween = createRestState(UUID.randomUUID())
         val set3 = createSetState(exerciseId2, setId3, 0u)
-        val completed = WorkoutState.Completed(LocalDateTime.now())
 
         val exercise1Container = WorkoutStateContainer.ExerciseState(
             exerciseId1,
@@ -303,7 +311,7 @@ class WorkoutStateMachineTest {
         )
         val exercise2Container = WorkoutStateContainer.ExerciseState(
             exerciseId2,
-            mutableListOf(set3, completed).map { ExerciseChildItem.Normal(it) }.toMutableList()
+            mutableListOf(set3).map { ExerciseChildItem.Normal(it) }.toMutableList()
         )
         val sequence = listOf(
             WorkoutStateSequenceItem.Container(exercise1Container),
@@ -314,7 +322,7 @@ class WorkoutStateMachineTest {
         val machine = WorkoutStateMachine.fromSequence(sequence)
 
         // Verify allStates flattens correctly
-        assertEquals(listOf(set1, rest1, set2, restBetween, set3, completed), machine.allStates)
+        assertEquals(listOf(set1, rest1, set2, restBetween, set3), machine.allStates)
         assertEquals(set1, machine.currentState)
     }
 
@@ -350,7 +358,10 @@ class WorkoutStateMachineTest {
         val exerciseContainer = machine.getCurrentExerciseContainer()
         assertNotNull(exerciseContainer)
         assertEquals(exerciseId1, exerciseContainer!!.exerciseId)
-        assertEquals(listOf(set1, newSet1, newSet2, set2), exerciseContainer.flattenChildItems())
+        assertEquals(
+            listOf(set1, newSet1, newSet2, set2),
+            WorkoutStateSequenceOps.flattenExerciseContainer(exerciseContainer)
+        )
 
         // Verify allStates is updated
         assertEquals(listOf(set1, newSet1, newSet2, set2, restBetween, set3), machine.allStates)
@@ -415,6 +426,46 @@ class WorkoutStateMachineTest {
 
         val exercise2States = machine.getStatesForExercise(exerciseId2)
         assertEquals(listOf(set3), exercise2States)
+    }
+
+    @Test
+    fun testFindPreviousNonRestIndex() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val rest1 = createRestState(restSetId1)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+
+        val machine = WorkoutStateMachine.fromStates(listOf(set1, rest1, set2), startIndex = 2)
+        val previousNonRestIndex = machine.findPreviousNonRestIndex()
+
+        assertEquals(0, previousNonRestIndex)
+    }
+
+    @Test
+    fun testFindPreviousSetIndexSkipsCalibrationSet() {
+        val workSet = createSetState(exerciseId1, setId1, 0u)
+        val calibrationSet = createSetState(exerciseId1, UUID.randomUUID(), 1u).copy(isCalibrationSet = true)
+        val currentSet = createSetState(exerciseId1, setId2, 2u)
+
+        val machine = WorkoutStateMachine.fromStates(
+            listOf(workSet, calibrationSet, currentSet),
+            startIndex = 2
+        )
+
+        val previousSetIndex = machine.findPreviousSetIndex(excludedSetId = currentSet.set.id)
+
+        assertEquals(0, previousSetIndex)
+    }
+
+    @Test
+    fun testPopulateRestNextStateSetsNextState() {
+        val set1 = createSetState(exerciseId1, setId1, 0u)
+        val rest1 = createRestState(restSetId1)
+        val set2 = createSetState(exerciseId1, setId2, 1u)
+        val machine = WorkoutStateMachine.fromStates(listOf(set1, rest1, set2))
+
+        WorkoutStateEditor.populateRestNextState(machine)
+
+        assertEquals(set2, rest1.nextState)
     }
 }
 

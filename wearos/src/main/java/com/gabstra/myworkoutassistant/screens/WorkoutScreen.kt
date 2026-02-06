@@ -47,9 +47,9 @@ import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.shared.viewmodels.applyCalibrationRIR
-import com.gabstra.myworkoutassistant.shared.viewmodels.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
+import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 
@@ -522,3 +522,4 @@ fun WorkoutScreen(
         HrStatusBadge(hrStatus = hrStatus)
     }
 }
+

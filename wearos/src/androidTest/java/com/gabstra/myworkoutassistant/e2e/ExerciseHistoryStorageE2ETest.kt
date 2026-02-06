@@ -36,7 +36,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -2138,3 +2138,4 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         }
     }
 }
+

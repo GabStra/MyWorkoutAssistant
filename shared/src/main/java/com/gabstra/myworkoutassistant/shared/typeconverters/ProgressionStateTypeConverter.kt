@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.typeconverters
 
 import androidx.room.TypeConverter
-import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 
 class ProgressionStateTypeConverter {
     @TypeConverter
@@ -14,4 +14,5 @@ class ProgressionStateTypeConverter {
         return ProgressionState.valueOf(value)
     }
 }
+
 

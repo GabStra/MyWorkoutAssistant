@@ -16,8 +16,8 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutScreenState
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -226,6 +226,7 @@ open class AppViewModel : WorkoutViewModel() {
     override fun rebuildScreenState() {
         val newState = WorkoutScreenState(
             workoutState = workoutState.value,
+            sessionPhase = sessionPhase.value,
             nextWorkoutState = nextWorkoutState.value,
             selectedWorkout = selectedWorkout.value,
             isPaused = isPaused.value,
@@ -776,3 +777,4 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 }
+

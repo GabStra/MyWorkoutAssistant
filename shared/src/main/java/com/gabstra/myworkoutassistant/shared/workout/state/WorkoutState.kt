@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant.shared.viewmodels
+package com.gabstra.myworkoutassistant.shared.workout.state
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +43,7 @@ data class CalibrationContext(
  * Only [ExerciseState] uses these; [SupersetState] keeps a flat list of [WorkoutState].
  */
 sealed class ExerciseChildItem {
-    /** A single workout state (Set, Rest, Completed, etc.) — not inside a calibration block. */
+    /** A single workout state (Set, Rest, calibration state, etc.) — not inside a calibration block. */
     data class Normal(val state: WorkoutState) : ExerciseChildItem()
 
     /**
@@ -74,17 +74,7 @@ sealed class WorkoutStateContainer {
         val exerciseId: UUID,
         /** Each item is [ExerciseChildItem.Normal], a calibration/load block, or [ExerciseChildItem.UnilateralSetBlock]. Flatten for linear navigation. */
         val childItems: MutableList<ExerciseChildItem>
-    ) : WorkoutStateContainer() {
-        /** Flattened list of all states in order (for navigation and allStates). */
-        fun flattenChildItems(): List<WorkoutState> = childItems.flatMap { item ->
-            when (item) {
-                is ExerciseChildItem.Normal -> listOf(item.state)
-                is ExerciseChildItem.CalibrationExecutionBlock -> item.childStates
-                is ExerciseChildItem.LoadSelectionBlock -> item.childStates
-                is ExerciseChildItem.UnilateralSetBlock -> item.childStates
-            }
-        }
-    }
+    ) : WorkoutStateContainer()
 
     data class SupersetState(
         val supersetId: UUID,
@@ -175,3 +165,4 @@ sealed class WorkoutState {
         var endWorkoutTime: LocalDateTime by mutableStateOf(LocalDateTime.now())
     }
 }
+

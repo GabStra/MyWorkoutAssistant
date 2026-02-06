@@ -1,7 +1,8 @@
-package com.gabstra.myworkoutassistant.shared.viewmodels
+package com.gabstra.myworkoutassistant.shared.workout.timer
 
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -191,3 +192,4 @@ class WorkoutTimerService(
         }
     }
 }
+

@@ -1,4 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
+import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
 import android.content.Context
 import androidx.compose.runtime.mutableStateOf
@@ -206,3 +211,4 @@ class ApplyCalibrationRIRPlateRecalculationTest {
         }
     }
 }
+

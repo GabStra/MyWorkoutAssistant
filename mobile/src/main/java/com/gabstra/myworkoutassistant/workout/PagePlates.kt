@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 @SuppressLint("DefaultLocale")
@@ -144,4 +144,5 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
         }
     }
 }
+
 

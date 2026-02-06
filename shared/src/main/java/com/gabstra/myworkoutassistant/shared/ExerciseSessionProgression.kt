@@ -6,7 +6,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
-import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import java.util.UUID
 
 @Entity(
@@ -35,4 +35,5 @@ data class ExerciseSessionProgression(
     val executedVolume: Double,
     val version: UInt = 0u
 )
+
 

@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant.shared.viewmodels
+package com.gabstra.myworkoutassistant.shared.workout.plates
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -77,3 +77,4 @@ class PlateRecalculationDebouncer(
         }
     }
 }
+

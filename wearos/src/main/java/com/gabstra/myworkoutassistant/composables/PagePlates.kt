@@ -57,7 +57,7 @@ import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
@@ -942,3 +942,4 @@ private data class PlateData(
     val weight: Double,
     val thickness: Double
 )
+

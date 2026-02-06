@@ -44,8 +44,8 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutTimerService
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -473,3 +473,4 @@ fun TimedDurationSetScreen(
         )
     }
 }
+

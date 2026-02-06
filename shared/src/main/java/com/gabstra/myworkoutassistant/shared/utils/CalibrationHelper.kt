@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import com.gabstra.myworkoutassistant.shared.viewmodels.CalibrationContext
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.CalibrationContext
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
 object CalibrationHelper {
     /**
@@ -147,3 +147,4 @@ object CalibrationHelper {
             (hasCalibrationRIRSelection || isOnCalibrationSet || isOnWarmupBeforeCalibration || hasCalibrationLoadSelection || isFutureExercise)
     }
 }
+

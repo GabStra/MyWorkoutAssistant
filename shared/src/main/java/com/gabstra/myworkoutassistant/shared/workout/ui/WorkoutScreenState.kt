@@ -1,6 +1,7 @@
-package com.gabstra.myworkoutassistant.shared.viewmodels
+package com.gabstra.myworkoutassistant.shared.workout.ui
 
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.time.LocalDateTime
 
 /**
@@ -10,6 +11,7 @@ import java.time.LocalDateTime
  */
 data class WorkoutScreenState(
     val workoutState: WorkoutState,
+    val sessionPhase: WorkoutSessionPhase,
     val nextWorkoutState: WorkoutState?,
     val selectedWorkout: Workout,
     val isPaused: Boolean,
@@ -34,6 +36,7 @@ data class WorkoutScreenState(
         fun initial(): WorkoutScreenState {
             return WorkoutScreenState(
                 workoutState = WorkoutState.Preparing(dataLoaded = false),
+                sessionPhase = WorkoutSessionPhase.PREPARING,
                 nextWorkoutState = null,
                 selectedWorkout = Workout(
                     id = java.util.UUID.randomUUID(),
@@ -64,4 +67,5 @@ data class WorkoutScreenState(
         }
     }
 }
+
 

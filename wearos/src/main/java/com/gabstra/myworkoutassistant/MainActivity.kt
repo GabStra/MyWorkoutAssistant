@@ -76,7 +76,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -761,3 +761,4 @@ fun WearApp(
         }
     }
 }
+

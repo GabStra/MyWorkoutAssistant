@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant.shared.viewmodels
+package com.gabstra.myworkoutassistant.shared.workout.calibration
 
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -12,10 +12,17 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
 import java.util.UUID
 
 /**
@@ -139,9 +146,11 @@ private fun WorkoutViewModel.findCalibrationSetExecutionState(
     machine: WorkoutStateMachine,
     exerciseId: UUID
 ): Pair<WorkoutState.Set?, Int> {
-    val calibrationSetExecutionState = machine.allStates.find { 
-        it is WorkoutState.Set && (it as WorkoutState.Set).isCalibrationSet && (it as WorkoutState.Set).exerciseId == exerciseId
-    } as? WorkoutState.Set
+    val calibrationSetExecutionState = machine.allStates
+        .filterIsInstance<WorkoutState.Set>()
+        .firstOrNull {
+            it.isCalibrationSet && WorkoutStateQueries.stateExerciseId(it) == exerciseId
+        }
     val calibrationSetIndex = if (calibrationSetExecutionState != null) {
         machine.allStates.indexOf(calibrationSetExecutionState)
     } else {
@@ -157,8 +166,8 @@ private fun WorkoutViewModel.updateWorkSetStatesInList(
 ) {
     for (i in states.indices) {
         val state = states[i]
-        if (state is WorkoutState.Set && state.exerciseId == currentState.exerciseId) {
-            val updatedSet = setUpdates[state.set.id]
+        if (state is WorkoutState.Set && WorkoutStateQueries.stateExerciseId(state) == currentState.exerciseId) {
+            val updatedSet = setUpdates[WorkoutStateQueries.stateSetId(state)]
             if (updatedSet != null && !state.isCalibrationSet) {
                 // Work set: update set and currentSetData to adjusted load; set previousSetData to same so UI shows neutral color
                 val newSetData = updateWorkSetStateData(state, updatedSet)
@@ -241,56 +250,57 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
             // Store the calibration set with RIR in executedSetsHistory before removing CalibrationRIRSelection
             if (calibrationSetIndex >= 0 && calibrationSetExecutionState != null) {
                 // Temporarily set current state to calibration Set execution to store it
-                val tempMachine = WorkoutStateMachine.fromSequence(machine.stateSequence, { LocalDateTime.now() }, calibrationSetIndex)
+                val tempMachine = machine.withCurrentIndex(calibrationSetIndex)
                 stateMachine = tempMachine
                 storeSetData()
             }
             
             // Remove CalibrationRIRSelection from sequence (from CalibrationExecutionBlock for ExerciseState)
-            val updatedSequence = machine.stateSequence.map { item ->
-                when (item) {
-                    is WorkoutStateSequenceItem.Container -> {
-                        when (val container = item.container) {
-                            is WorkoutStateContainer.ExerciseState -> {
-                                if (container.exerciseId == currentState.exerciseId) {
-                                    val updatedChildItems = container.childItems.map { childItem ->
-                                        when (childItem) {
-                                            is ExerciseChildItem.Normal -> childItem
-                                            is ExerciseChildItem.CalibrationExecutionBlock -> {
-                                                val newList = childItem.childStates
-                                                    .filterNot { it is WorkoutState.CalibrationRIRSelection }
-                                                    .toMutableList()
-                                                updateWorkSetStatesInList(newList, currentState, setUpdates)
-                                                ExerciseChildItem.CalibrationExecutionBlock(newList)
+            val updatedMachine = machine.editSequence(transform = { sequence ->
+                sequence.map { item ->
+                    when (item) {
+                        is WorkoutStateSequenceItem.Container -> {
+                            when (val container = item.container) {
+                                is WorkoutStateContainer.ExerciseState -> {
+                                    if (container.exerciseId == currentState.exerciseId) {
+                                        val updatedChildItems = container.childItems.map { childItem ->
+                                            when (childItem) {
+                                                is ExerciseChildItem.Normal -> childItem
+                                                is ExerciseChildItem.CalibrationExecutionBlock -> {
+                                                    val newList = childItem.childStates
+                                                        .filterNot { it is WorkoutState.CalibrationRIRSelection }
+                                                        .toMutableList()
+                                                    updateWorkSetStatesInList(newList, currentState, setUpdates)
+                                                    ExerciseChildItem.CalibrationExecutionBlock(newList)
+                                                }
+                                                is ExerciseChildItem.LoadSelectionBlock -> childItem
+                                                is ExerciseChildItem.UnilateralSetBlock -> childItem
                                             }
-                                            is ExerciseChildItem.LoadSelectionBlock -> childItem
-                                            is ExerciseChildItem.UnilateralSetBlock -> childItem
-                                        }
-                                    }.toMutableList()
-                                    WorkoutStateSequenceItem.Container(container.copy(childItems = updatedChildItems))
-                                } else {
-                                    item
+                                        }.toMutableList()
+                                        WorkoutStateSequenceItem.Container(container.copy(childItems = updatedChildItems))
+                                    } else {
+                                        item
+                                    }
+                                }
+                                is WorkoutStateContainer.SupersetState -> {
+                                    val updatedChildStates = container.childStates
+                                        .filterNot { it is WorkoutState.CalibrationRIRSelection }
+                                        .toMutableList()
+                                    updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
+                                    WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
                                 }
                             }
-                            is WorkoutStateContainer.SupersetState -> {
-                                val updatedChildStates = container.childStates
-                                    .filterNot { it is WorkoutState.CalibrationRIRSelection }
-                                    .toMutableList()
-                                updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
-                                WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
-                            }
                         }
+                        is WorkoutStateSequenceItem.RestBetweenExercises -> item
                     }
-                    is WorkoutStateSequenceItem.RestBetweenExercises -> item
                 }
-            }
+            })
             
             // Adjust current index if we removed CalibrationRIRSelection
             // If we were at CalibrationRIRSelection, move to next state after calibration Set execution
-            val tempMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, 0)
-            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, tempMachine.allStates)
+            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, updatedMachine.allStates)
             
-            stateMachine = WorkoutStateMachine.fromSequence(updatedSequence, { LocalDateTime.now() }, newCurrentIndex)
+            stateMachine = updatedMachine.withCurrentIndex(newCurrentIndex)
             populateNextStateSets()
             updateStateFlowsFromMachine()
             
@@ -301,9 +311,11 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                 val machine = stateMachine ?: return@withContext
                 val allStates = machine.allStates
                 if (firstWorkSetStateIndex < allStates.size) {
-                    val remainingStates = allStates.subList(firstWorkSetStateIndex, allStates.size)
-                        .filterIsInstance<WorkoutState.Set>()
-                        .filter { it.exerciseId == currentState.exerciseId }
+                    val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+                        machine = machine,
+                        fromIndexInclusive = firstWorkSetStateIndex,
+                        exerciseId = currentState.exerciseId
+                    )
                     val weights = remainingStates.map { state ->
                         when (val set = state.set) {
                             is WeightSet -> set.weight
@@ -322,7 +334,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                             equipment
                         )
                         // Repopulate Rest.nextState so the Rest screen shows plate changes for the updated load
-                        stateMachine?.let { m -> populateNextStateForRest(m.stateSequence) }
+                        stateMachine?.let { m -> populateNextStateForRest(m) }
                         updateStateFlowsFromMachine()
                     }
                 }
@@ -330,3 +342,4 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         }
     }
 }
+
