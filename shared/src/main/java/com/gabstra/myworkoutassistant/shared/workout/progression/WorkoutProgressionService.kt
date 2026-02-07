@@ -93,7 +93,12 @@ class WorkoutProgressionService(
         }
 
         val validExercises = exercises
-            .filter { it.enabled && it.enableProgression && !it.doNotStoreHistory }
+            .filter {
+                it.enabled &&
+                    it.enableProgression &&
+                    !it.requiresLoadCalibration &&
+                    !it.doNotStoreHistory
+            }
             .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
 
         validExercises.forEach { exercise ->

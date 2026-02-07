@@ -130,7 +130,8 @@ sealed class WorkoutState {
         val lowerBoundMaxHRPercent: Float? = null,
         val upperBoundMaxHRPercent: Float? = null,
         val currentBodyWeight: Double,
-        val isUnilateral: Boolean = false
+        val isUnilateral: Boolean = false,
+        val isLoadConfirmed: Boolean = false
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // Observable set data
     }

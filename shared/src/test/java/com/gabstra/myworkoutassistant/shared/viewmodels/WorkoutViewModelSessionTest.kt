@@ -1159,6 +1159,55 @@ class WorkoutViewModelSessionTest {
         assertTrue("Progression should not exist when progression disabled", progression == null)
     }
 
+    @Test
+    fun testRequiresCalibration_disablesProgressionEvenIfEnabled() = runTest(testDispatcher) {
+        val previousSetId1 = UUID.randomUUID()
+        val previousSetId2 = UUID.randomUUID()
+        val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 95.0, 10)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 95.0, 8)
+
+        createExerciseInfo(
+            exerciseId = testExerciseId,
+            lastSuccessfulSession = listOf(previousSet1, previousSet2),
+            successfulSessionCounter = 1u,
+            sessionFailedCounter = 0u
+        )
+
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
+                RestSet(UUID.randomUUID(), 90),
+                createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
+            )
+        ).copy(
+            enableProgression = true,
+            requiresLoadCalibration = true
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        executeWorkoutWithSets { setState ->
+            val currentSetData = setState.currentSetData
+            if (currentSetData is WeightSetData) {
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                setState.currentSetData = currentSetData.copy(
+                    actualReps = currentSetData.actualReps + 1,
+                    actualWeight = achievableWeight,
+                    volume = achievableWeight * (currentSetData.actualReps + 1)
+                )
+            }
+        }
+
+        val progressions = database.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
+        val progression = progressions.firstOrNull { it.exerciseId == testExerciseId }
+        assertTrue("Progression should not exist when calibration is required", progression == null)
+    }
+
     // Test 12: No Progression State - Failure
     @Test
     fun testNoProgressionState_failure() = runTest(testDispatcher) {

@@ -73,6 +73,7 @@ import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
 import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
+import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.BackupFileType
@@ -1053,144 +1054,9 @@ fun MyWorkoutAssistantNavHost(
 
     val syncWithWatch = {
         scope.launch {
-            try {
-                Log.d("DataLayerSync", "Sync with watch started (app backup)")
-                // Check connection before setting syncing state
-                val hasConnection = withContext(Dispatchers.IO) {
-                    checkConnection(context)
-                }
-                if (!hasConnection) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Watch not connected", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                
-                // Only set syncing state after connection check succeeds
-                withContext(Dispatchers.Main) {
-                    isSyncing = true
-                }
-                withContext(Dispatchers.IO) {
-                    val workoutHistories = workoutHistoryDao.getAllWorkoutHistories()
-
-                    val allowedWorkouts = appViewModel.workoutStore.workouts.filter { workout ->
-                        workout.isActive || (!workout.isActive && workoutHistories.any { it.workoutId == workout.id })
-                    }
-
-                    val adjustedWorkouts = allowedWorkouts.map { workout ->
-                        val adjustedWorkoutComponents =
-                            workout.workoutComponents.map { workoutComponent ->
-                                when (workoutComponent) {
-                                    is Exercise -> workoutComponent.copy(
-                                        sets = ensureRestSeparatedBySets(workoutComponent.sets),
-                                        requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds
-                                            ?: emptyList()
-                                    )
-
-                                    is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                                        exercise.copy(
-                                            sets = ensureRestSeparatedBySets(exercise.sets),
-                                            requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
-                                                ?: emptyList()
-                                        )
-                                    })
-
-                                    is Rest -> workoutComponent
-                                }
-                            }
-
-                        workout.copy(
-                            workoutComponents = ensureRestSeparatedByExercises(
-                                adjustedWorkoutComponents
-                            )
-                        )
-                    }
-
-                    val workoutRecords = workoutRecordDao.getAll()
-
-                    // Filter workout histories by allowed workouts and done status
-                    val filteredWorkoutHistories = workoutHistories
-                        .filter { workoutHistory -> allowedWorkouts.any { workout -> workout.id == workoutHistory.workoutId } && (workoutHistory.isDone || workoutRecords.any { it.workoutHistoryId == workoutHistory.id }) }
-
-                    // Collect all exercises from allowed workouts (including exercises from Supersets)
-                    val allExercises = allowedWorkouts.flatMap { workout ->
-                        workout.workoutComponents.filterIsInstance<Exercise>() +
-                                workout.workoutComponents.filterIsInstance<Superset>()
-                                    .flatMap { it.exercises }
-                    }.distinctBy { it.id }
-
-                    // For each exercise, get set histories and extract workout history IDs
-                    // Group by exercise and keep the most recent 15 workout histories per exercise
-                    val workoutHistoryIdsByExercise = allExercises.mapNotNull { exercise ->
-                        val setHistoriesForExercise =
-                            setHistoryDao.getSetHistoriesByExerciseId(exercise.id)
-                        val workoutHistoryIds = setHistoriesForExercise
-                            .mapNotNull { it.workoutHistoryId }
-                            .distinct()
-
-                        if (workoutHistoryIds.isEmpty()) null
-                        else exercise.id to workoutHistoryIds
-                    }.toMap()
-
-                    // Get workout histories for each exercise and keep the most recent 15 per exercise
-                    val workoutHistoriesByExerciseId =
-                        workoutHistoryIdsByExercise.mapValues { (_, workoutHistoryIds) ->
-                            filteredWorkoutHistories
-                                .filter { it.id in workoutHistoryIds }
-                                .sortedByDescending { it.startTime }
-                                .take(15)
-                                .map { it.id }
-                        }
-
-                    // Union all workout history IDs across exercises
-                    val requiredWorkoutHistoryIds =
-                        workoutHistoriesByExerciseId.values.flatten().toSet()
-
-                    // Filter to only include required workout histories
-                    val validWorkoutHistories = filteredWorkoutHistories
-                        .filter { it.id in requiredWorkoutHistoryIds }
-
-                    val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
-                        validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
-                    }
-
-                    val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
-                    val workoutSchedules = workoutScheduleDao.getAllSchedules()
-
-                    val exerciseSessionProgressions =
-                        db.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
-                            .filter { progression ->
-                                validWorkoutHistories.any { it.id == progression.workoutHistoryId }
-                            }
-
-                    val errorLogDao = db.errorLogDao()
-                    val errorLogs = errorLogDao.getAllErrorLogs().first()
-
-                    val appBackup = AppBackup(
-                        appViewModel.workoutStore.copy(workouts = adjustedWorkouts),
-                        validWorkoutHistories,
-                        setHistories,
-                        exerciseInfos,
-                        workoutSchedules,
-                        workoutRecords,
-                        exerciseSessionProgressions,
-                        errorLogs.takeIf { it.isNotEmpty() })
-                    try {
-                        MainActivity.syncMutex.withLock {
-                            sendAppBackup(dataClient, appBackup, context)
-                        }
-                        // Success toast will be shown when completion message is received
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Sync failed", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-            } finally {
-                withContext(Dispatchers.Main) {
-                    isSyncing = false
-                }
-            }
+            MobileSyncToWatchWorker.enqueue(context)
+            isSyncing = true
+            Toast.makeText(context, "Sync scheduled", Toast.LENGTH_SHORT).show()
         }
     }
 

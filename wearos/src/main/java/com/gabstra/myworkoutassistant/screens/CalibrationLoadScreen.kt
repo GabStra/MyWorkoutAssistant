@@ -32,8 +32,8 @@ import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
-import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageCalibrationLoad
 import com.gabstra.myworkoutassistant.composables.PageExercises
@@ -139,12 +139,11 @@ fun CalibrationLoadScreen(
     }
 
     val exerciseTitleComposable: @Composable () -> Unit = {
-        ScrollableTextColumn(
+        ExerciseNameText(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.5.dp),
-            maxLines = 2,
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),

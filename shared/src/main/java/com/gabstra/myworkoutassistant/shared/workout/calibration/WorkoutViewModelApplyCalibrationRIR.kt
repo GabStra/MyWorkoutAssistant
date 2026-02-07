@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.workout.calibration
 
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -199,6 +201,36 @@ private fun WorkoutViewModel.calculateNewCurrentIndex(
     }
 }
 
+private fun WorkoutViewModel.createPostCalibrationRestState(
+    calibrationSetState: WorkoutState.Set
+): WorkoutState.Rest {
+    val restSet = RestSet(UUID.randomUUID(), 60)
+    return WorkoutState.Rest(
+        set = restSet,
+        order = calibrationSetState.setIndex + 1u,
+        currentSetDataState = mutableStateOf(initializeSetData(restSet)),
+        exerciseId = calibrationSetState.exerciseId
+    )
+}
+
+private fun WorkoutViewModel.ensurePostCalibrationRestState(
+    states: MutableList<WorkoutState>,
+    exerciseId: UUID
+) {
+    val calibrationSetIndex = states.indexOfFirst {
+        it is WorkoutState.Set &&
+            it.isCalibrationSet &&
+            WorkoutStateQueries.stateExerciseId(it) == exerciseId
+    }
+    if (calibrationSetIndex < 0) return
+
+    val nextState = states.getOrNull(calibrationSetIndex + 1)
+    if (nextState is WorkoutState.Rest) return
+
+    val calibrationSetState = states[calibrationSetIndex] as? WorkoutState.Set ?: return
+    states.add(calibrationSetIndex + 1, createPostCalibrationRestState(calibrationSetState))
+}
+
 fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = false) {
     val machine = stateMachine ?: return
     val currentState = machine.currentState as? WorkoutState.CalibrationRIRSelection ?: return
@@ -271,6 +303,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                                                         .filterNot { it is WorkoutState.CalibrationRIRSelection }
                                                         .toMutableList()
                                                     updateWorkSetStatesInList(newList, currentState, setUpdates)
+                                                    ensurePostCalibrationRestState(newList, currentState.exerciseId)
                                                     ExerciseChildItem.CalibrationExecutionBlock(newList)
                                                 }
                                                 is ExerciseChildItem.LoadSelectionBlock -> childItem
@@ -287,6 +320,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                                         .filterNot { it is WorkoutState.CalibrationRIRSelection }
                                         .toMutableList()
                                     updateWorkSetStatesInList(updatedChildStates, currentState, setUpdates)
+                                    ensurePostCalibrationRestState(updatedChildStates, currentState.exerciseId)
                                     WorkoutStateSequenceItem.Container(container.copy(childStates = updatedChildStates))
                                 }
                             }

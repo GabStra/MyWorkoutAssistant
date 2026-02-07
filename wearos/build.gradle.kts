@@ -118,6 +118,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.12.3")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.5")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")

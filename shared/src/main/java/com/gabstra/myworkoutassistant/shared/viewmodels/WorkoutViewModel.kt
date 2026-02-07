@@ -546,7 +546,7 @@ open class WorkoutViewModel(
         val state = machine.currentState
         val stateExerciseId = WorkoutStateQueries.stateExerciseId(state)
         val stateSetId = WorkoutStateQueries.stateSetId(state)
-        return when (state) {
+        val directContext = when (state) {
             is WorkoutState.CalibrationLoadSelection -> CalibrationContext(
                 exerciseId = stateExerciseId ?: return null,
                 calibrationSetId = stateSetId ?: return null,
@@ -566,6 +566,36 @@ open class WorkoutViewModel(
                 calibrationSetId = stateSetId ?: return null,
                 phase = CalibrationPhase.RIR_SELECTION,
                 calibrationSetExecutionStateIndex = machine.currentIndex - 1
+            )
+            else -> null
+        }
+        if (directContext != null) return directContext
+
+        val position = machine.getContainerAndChildIndex(machine.currentIndex) as? ContainerPosition.Exercise
+            ?: return null
+        val container = machine.getCurrentExerciseContainer() ?: return null
+        val currentChildItem = container.childItems.getOrNull(position.childItemIndex) ?: return null
+
+        val calibrationExecutionIndex = machine.allStates.indexOfFirst {
+            it is WorkoutState.Set &&
+                it.isCalibrationSet &&
+                WorkoutStateQueries.stateExerciseId(it) == container.exerciseId
+        }.takeIf { it >= 0 }
+
+        val calibrationSetId = machine.allStates
+            .filterIsInstance<WorkoutState.Set>()
+            .firstOrNull {
+                it.isCalibrationSet && WorkoutStateQueries.stateExerciseId(it) == container.exerciseId
+            }?.set?.id ?: stateSetId
+
+        if (calibrationSetId == null) return null
+
+        return when (currentChildItem) {
+            is ExerciseChildItem.LoadSelectionBlock -> CalibrationContext(
+                exerciseId = container.exerciseId,
+                calibrationSetId = calibrationSetId,
+                phase = CalibrationPhase.LOAD_SELECTION,
+                calibrationSetExecutionStateIndex = calibrationExecutionIndex
             )
             else -> null
         }
@@ -1099,7 +1129,11 @@ open class WorkoutViewModel(
     private suspend fun preProcessExercises() {
         val exercises =
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
-        val validExercises = exercises.filter { exercise ->  !exercise.doNotStoreHistory && exercise.enableProgression }
+        val validExercises = exercises.filter { exercise ->
+            !exercise.doNotStoreHistory &&
+                exercise.enableProgression &&
+                !exercise.requiresLoadCalibration
+        }
         val latestSetHistoryByKey = latestSetHistoryMap.entries.associate { (key, value) ->
             (key.exerciseId to key.setId) to value
         }
@@ -1127,6 +1161,7 @@ open class WorkoutViewModel(
         val validExercises = exercises.filter { exercise ->
             exercise.enabled &&
                 exercise.enableProgression &&
+                !exercise.requiresLoadCalibration &&
                 !exercise.doNotStoreHistory &&
                 exerciseProgressionByExerciseId.containsKey(exercise.id)
         }
@@ -1683,7 +1718,6 @@ open class WorkoutViewModel(
                 (exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))
         val loadBlockStates = mutableListOf<WorkoutState>()
         val calibrationExecBlockStates = mutableListOf<WorkoutState>()
-        var seenCalibration = false
 
         val progressionData =
             if (exerciseProgressionByExerciseId.containsKey(exercise.id)) exerciseProgressionByExerciseId[exercise.id] else null
@@ -1749,7 +1783,8 @@ open class WorkoutViewModel(
                 val isWarmupSet = workoutSetStateFactory.isWarmupSet(set)
                 val isCalibrationSet = workoutSetStateFactory.isCalibrationSet(set)
                 
-                // For calibration sets: add CalibrationLoadSelection to LoadSelectionBlock and Set(calibration) to CalibrationExecutionBlock
+                // For calibration sets: add CalibrationLoadSelection only.
+                // Calibration execution state is inserted after load confirmation (and after generated warmups).
                 if (isCalibrationSet && hasCalibration) {
                     loadBlockStates.add(
                         workoutSetStateFactory.buildCalibrationLoadSelectionState(
@@ -1763,25 +1798,6 @@ open class WorkoutViewModel(
                             getEquipmentById = ::getEquipmentById
                         )
                     )
-                    calibrationExecBlockStates.add(
-                        workoutSetStateFactory.buildWorkoutSetState(
-                            exercise = exercise,
-                            set = set,
-                            setIndex = index,
-                            previousSetData = previousSetData,
-                            currentSetData = currentSetData,
-                            historySet = historySet,
-                            plateChangeResult = plateChangeResult,
-                            exerciseInfo = exerciseInfo,
-                            progressionState = progressionState,
-                            isWarmupSet = false,
-                            bodyWeightKg = bodyWeight.value,
-                            isUnilateral = isUnilateralExercise,
-                            isCalibrationSet = true,
-                            getEquipmentById = ::getEquipmentById
-                        )
-                    )
-                    seenCalibration = true
                 } else if (isCalibrationSet) {
                     // Calibration set but no hasCalibration (shouldn't happen) – treat as normal
                     val setState = workoutSetStateFactory.buildWorkoutSetState(

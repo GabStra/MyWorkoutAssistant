@@ -2996,7 +2996,8 @@ suspend fun backfillExerciseSessionProgressions(
             workout.workoutComponents?.forEach { component ->
                 when (component) {
                     is Exercise -> {
-                        if (component.enableProgression && 
+                        if (component.enableProgression &&
+                            !component.requiresLoadCalibration &&
                             (component.exerciseType == ExerciseType.WEIGHT || 
                              component.exerciseType == ExerciseType.BODY_WEIGHT)) {
                             exercises.add(component)
@@ -3004,7 +3005,8 @@ suspend fun backfillExerciseSessionProgressions(
                     }
                     is Superset -> {
                         component.exercises?.forEach { exercise ->
-                            if (exercise.enableProgression && 
+                            if (exercise.enableProgression &&
+                                !exercise.requiresLoadCalibration &&
                                 (exercise.exerciseType == ExerciseType.WEIGHT || 
                                  exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
                                 exercises.add(exercise)

@@ -135,14 +135,16 @@ fun SetTableRow(
                 else -> false
             }
             
-            val calibrationContext by viewModel.calibrationContext.collectAsState(initial = null)
-            val isPendingCalibration = CalibrationHelper.isPendingCalibration(
-                setState,
-                calibrationContext,
-                isCalibrationEnabled,
-                isWarmupSet,
-                isCalibrationSet,
-                isFutureExercise
+            val hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+                allWorkoutStates = viewModel.allWorkoutStates,
+                exerciseId = setState.exerciseId
+            )
+            val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
+                setState = setState,
+                isCalibrationEnabled = isCalibrationEnabled,
+                isWarmupSet = isWarmupSet,
+                isCalibrationSetBySubCategory = isCalibrationSet,
+                hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
             )
             
             if(isWarmupSet){

@@ -42,9 +42,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -76,7 +73,7 @@ fun SetTableRow(
     isCurrentSet: Boolean,
     markAsDone: Boolean,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
-    isFutureExercise: Boolean = false,
+    hasUnconfirmedLoadSelectionForExercise: Boolean = false,
 ){
     val itemStyle = MaterialTheme.typography.numeralSmall
 
@@ -84,26 +81,19 @@ fun SetTableRow(
     val exercise = viewModel.exercisesById[setState.exerciseId]
     val isCalibrationEnabled = exercise?.requiresLoadCalibration ?: false
 
-    val isWarmupSet = when(val set = setState.set) {
-        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-        else -> false
-    }
-    
-    val isCalibrationSet = when(val set = setState.set) {
-        is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
-        is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
-        else -> false
-    }
-    
-    val calibrationContext by viewModel.calibrationContext.collectAsState(initial = null)
-    val isPendingCalibration = CalibrationHelper.isPendingCalibration(
+    val isWarmupSet = CalibrationHelper.isWarmupSet(setState.set)
+    val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
+    val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState,
-        calibrationContext,
         isCalibrationEnabled,
         isWarmupSet,
         isCalibrationSet,
-        isFutureExercise
+        hasUnconfirmedLoadSelectionForExercise
+    )
+    val shouldHideCalibrationExecutionWeight = CalibrationHelper.shouldHideCalibrationExecutionWeight(
+        setState = setState,
+        isCalibrationSetBySubCategory = isCalibrationSet,
+        hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
     )
 
     Box(
@@ -133,7 +123,8 @@ fun SetTableRow(
 
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
-                        isCalibrationSet -> "$weightText (Cal)"
+                        shouldHideCalibrationExecutionWeight -> "TBD"
+                        isCalibrationSet && setState.isCalibrationSet -> "$weightText (Cal)"
                         isPendingCalibration -> "TBD"
                         else -> weightText
                     }
@@ -164,7 +155,8 @@ fun SetTableRow(
                     }else {
                         "BW"
                     }
-                    val weightText = when {
+                    val displayWeightText = when {
+                        shouldHideCalibrationExecutionWeight -> "TBD"
                         isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
                         isPendingCalibration -> "TBD"
                         else -> baseWeightText
@@ -185,7 +177,7 @@ fun SetTableRow(
 
                     ScalableFadingText(
                         modifier = Modifier.weight(2f),
-                        text = weightText,
+                        text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
                         color = weightColor
@@ -276,20 +268,25 @@ fun ExerciseSetsViewer(
     customTextColor: Color? = null,
     overrideSetIndex: Int? = null,
     currentWorkoutStateOverride: WorkoutState? = null,
-    isFutureExercise: Boolean = false,
 ){
     val exerciseStates = viewModel.getStatesForExercise(exercise.id)
         .filter { it !is WorkoutState.Rest }
     val displayRows: List<ExerciseSetDisplayRow> = exerciseStates.map { state ->
         when (state) {
             is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
-            is WorkoutState.CalibrationLoadSelection -> ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
+            is WorkoutState.CalibrationLoadSelection ->
+                if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
             is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
             else -> null
         }
     }.filterNotNull()
 
     val currentWorkoutState by viewModel.workoutState.collectAsState()
+    val hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+        allWorkoutStates = viewModel.allWorkoutStates,
+        exerciseId = exercise.id
+    )
+
     val stateToMatch = currentWorkoutStateOverride ?: currentWorkoutState
     val setIndex = overrideSetIndex
         ?: displayRows.indexOfFirst { it.workoutState() === stateToMatch }.takeIf { it >= 0 }
@@ -324,14 +321,9 @@ fun ExerciseSetsViewer(
     fun MeasuredSetTableRow(
         displayRow: ExerciseSetDisplayRow,
         rowIndex: Int,
-        isFutureExerciseParam: Boolean = isFutureExercise,
     ) {
         val isWarmupSetRow = when (displayRow) {
-            is ExerciseSetDisplayRow.SetRow -> when (val set = displayRow.state.set) {
-                is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                else -> false
-            }
+            is ExerciseSetDisplayRow.SetRow -> CalibrationHelper.isWarmupSet(displayRow.state.set)
             else -> false
         }
 
@@ -386,7 +378,7 @@ fun ExerciseSetsViewer(
                     isCurrentSet = rowIndex == setIndex,
                     markAsDone = false,
                     textColor = textColor,
-                    isFutureExercise = isFutureExerciseParam
+                    hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
                 )
                 is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
                     modifier = rowModifier,
@@ -487,16 +479,3 @@ fun ExerciseSetsViewer(
         }
     }
 }
-
-private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
-    val isCalibrationSet = when (val workoutSet = set) {
-        is BodyWeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
-        is WeightSet -> workoutSet.subCategory == SetSubCategory.CalibrationSet
-        else -> false
-    }
-
-    // Ignore calibration set if it's not in execution state (i.e., if we're in LoadSelection or RIRSelection states)
-    // With new state types, calibration sets are only shown when isCalibrationSet == true (execution state)
-    return isCalibrationSet && !this.isCalibrationSet
-}
-

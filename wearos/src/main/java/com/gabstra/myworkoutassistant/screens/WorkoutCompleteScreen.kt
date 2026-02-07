@@ -38,17 +38,14 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
-
-private const val TAG = "WorkoutCompleteScreen"
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -68,7 +65,6 @@ fun WorkoutCompleteScreen(
     val countDownTimer = remember { mutableIntStateOf(30) }
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
-    var syncComplete by remember { mutableStateOf(false) }
     var completionSyncInitiated by remember { mutableStateOf(false) }
 
     val headerStyle = MaterialTheme.typography.bodySmall
@@ -123,113 +119,16 @@ fun WorkoutCompleteScreen(
                 )
                 viewModel.flushWorkoutSync()
             }
-        }
-
-        // Wait for sync to start and complete
-        // First, wait for sync status to become Syncing (with timeout)
-        val syncStarted = withTimeoutOrNull(5_000) {
-            viewModel.syncStatus
-                .first { it == AppViewModel.SyncStatus.Syncing }
-        }
-        
-        if (syncStarted != null) {
-            // Sync started, now wait for it to complete (Success or Failure)
-            val completedStatus = withTimeoutOrNull(30_000) {
-                viewModel.syncStatus
-                    .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
-            }
-            // Only mark as complete if we got a confirmed completion status
-            if (completedStatus != null) {
-                syncComplete = true
-            } else {
-                // Sync started but didn't complete within timeout
-                // Check current status - if it's Success/Failure, we're done
-                // Otherwise, sync may have timed out or failed silently
-                val finalStatus = viewModel.syncStatus.value
-                if (finalStatus == AppViewModel.SyncStatus.Success || finalStatus == AppViewModel.SyncStatus.Failure) {
-                    syncComplete = true
-                } else {
-                    // Sync started but didn't complete - wait a bit more and check again
-                    delay(1_000)
-                    val checkStatus = viewModel.syncStatus.value
-                    if (checkStatus == AppViewModel.SyncStatus.Success || checkStatus == AppViewModel.SyncStatus.Failure) {
-                        syncComplete = true
-                    } else {
-                        // Sync didn't complete, but proceed anyway to avoid blocking UI indefinitely
-                        android.util.Log.w(
-                            TAG,
-                            "Sync started but did not complete within timeout. Current status: $checkStatus"
-                        )
-                        syncComplete = true
-                    }
-                }
-            }
-        } else {
-            // Sync didn't start within timeout - check if it's already done or won't happen
-            val currentStatus = viewModel.syncStatus.value
-            when (currentStatus) {
-                AppViewModel.SyncStatus.Success, AppViewModel.SyncStatus.Failure -> {
-                    // Sync already completed (from a previous sync or completed very quickly)
-                    syncComplete = true
-                }
-                AppViewModel.SyncStatus.Idle -> {
-                    // Check if there's a pending sync that might start
-                    if (viewModel.hasPendingWorkoutSync.value) {
-                        // Wait a bit more for pending sync to start
-                        val pendingSyncStatus = withTimeoutOrNull(3_000) {
-                            while (viewModel.hasPendingWorkoutSync.value &&
-                                viewModel.syncStatus.value == AppViewModel.SyncStatus.Idle
-                            ) {
-                                delay(200)
-                            }
-                            viewModel.syncStatus.value
-                        }
-                        
-                        if (pendingSyncStatus == AppViewModel.SyncStatus.Syncing) {
-                            // Pending sync started, wait for completion
-                            val completedStatus = withTimeoutOrNull(30_000) {
-                                viewModel.syncStatus
-                                    .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
-                            }
-                            if (completedStatus != null) {
-                                syncComplete = true
-                            } else {
-                                // Check final status
-                                val finalStatus = viewModel.syncStatus.value
-                                syncComplete = (finalStatus == AppViewModel.SyncStatus.Success || finalStatus == AppViewModel.SyncStatus.Failure)
-                            }
-                        } else if (pendingSyncStatus == AppViewModel.SyncStatus.Success || pendingSyncStatus == AppViewModel.SyncStatus.Failure) {
-                            // Sync completed very quickly
-                            syncComplete = true
-                        } else {
-                            // No sync will happen (no connection, etc.) - proceed
-                            syncComplete = true
-                        }
-                    } else {
-                        // No sync pending and status is Idle - no sync will happen, proceed
-                        syncComplete = true
-                    }
-                }
-                AppViewModel.SyncStatus.Syncing -> {
-                    // Sync is in progress (started between checks), wait for completion
-                    val completedStatus = withTimeoutOrNull(30_000) {
-                        viewModel.syncStatus
-                            .first { it == AppViewModel.SyncStatus.Success || it == AppViewModel.SyncStatus.Failure }
-                    }
-                    syncComplete = (completedStatus != null || 
-                        viewModel.syncStatus.value == AppViewModel.SyncStatus.Success ||
-                        viewModel.syncStatus.value == AppViewModel.SyncStatus.Failure)
-                }
-            }
+            WorkoutHistorySyncWorker.enqueue(context)
         }
 
         // Clean up the workout record on the watch after final sync attempt.
         viewModel.deleteWorkoutRecord()
     }
 
-    // Start countdown when both progression is calculated and sync is complete
-    LaunchedEffect(progressionDataCalculated, syncComplete) {
-        if (progressionDataCalculated && syncComplete && progressionIsEmpty != null) {
+    // Start countdown when progression data is ready; sync runs independently in background.
+    LaunchedEffect(progressionDataCalculated, progressionIsEmpty) {
+        if (progressionDataCalculated && progressionIsEmpty != null) {
             // Set timer duration: 5 seconds if empty/null, 30 seconds if has data
             val timerDuration = if (progressionIsEmpty == true) 5 else 30
             countDownTimer.intValue = timerDuration
@@ -269,14 +168,12 @@ fun WorkoutCompleteScreen(
                 }
             }
         )
-        if (syncComplete) {
-            Text(
-                modifier = Modifier.padding(top = 2.5.dp),
-                text = "Closing in: ${countDownTimer.intValue}",
-                style = headerStyle,
-                textAlign = TextAlign.Center,
-            )
-        }
+        Text(
+            modifier = Modifier.padding(top = 2.5.dp),
+            text = "Closing in: ${countDownTimer.intValue}",
+            style = headerStyle,
+            textAlign = TextAlign.Center,
+        )
     }
 
     CustomDialogYesOnLongPress(
@@ -317,4 +214,3 @@ fun WorkoutCompleteScreen(
         }
     )
 }
-

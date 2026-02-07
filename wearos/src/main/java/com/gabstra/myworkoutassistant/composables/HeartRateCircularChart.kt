@@ -43,23 +43,16 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -80,7 +73,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
-import com.gabstra.myworkoutassistant.data.round
+import com.gabstra.myworkoutassistant.data.truncate
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -93,8 +86,6 @@ import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
-import dev.shreyaspatil.capturable.capturable
-import dev.shreyaspatil.capturable.controller.rememberCaptureController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -472,7 +463,6 @@ private fun HeartRateDisplay(
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TargetRangeArc(
     modifier: Modifier = Modifier,
@@ -483,177 +473,149 @@ private fun TargetRangeArc(
     borderWidth: Dp,
     innerBorderWidth: Dp,
 ) {
-    val controller1 = rememberCaptureController()
-    val controller2 = rememberCaptureController()
+    val backgroundColor = MaterialTheme.colorScheme.background
 
-    var mask1: ImageBitmap? by remember { mutableStateOf(null) }
-    var mask2: ImageBitmap? by remember { mutableStateOf(null) }
+    fun annularArcPath(
+        center: Offset,
+        outerRadius: Float,
+        innerRadius: Float,
+        start: Float,
+        end: Float,
+        roundCaps: Boolean = true
+    ): Path {
+        val sweep = end - start
+        if (outerRadius <= 0f || innerRadius <= 0f || innerRadius >= outerRadius || sweep == 0f) {
+            return Path()
+        }
 
-    var isLayoutReady1 by remember { mutableStateOf(false) }
-    var isLayoutReady2 by remember { mutableStateOf(false) }
-
-    var shouldCaptureMask1 by remember { mutableStateOf(true) }
-    var shouldCaptureMask2 by remember { mutableStateOf(true) }
-
-    val nudgeAmount = 2.dp
-
-    fun dpToDegrees(gap: Dp, diameter: Dp): Float =
-        (gap.value / (PI * diameter.value).toFloat()) * 360f
-
-    BoxWithConstraints(
-        modifier = modifier
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                mask1?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
-                        }
-                    }
-                }
-            }
-    ) {
-        val diameter = min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth + 3.dp, diameter)
-
-        val nudgeDeg = dpToDegrees(nudgeAmount, diameter)
-        val s = startAngle - nudgeDeg
-        val e = endAngle + nudgeDeg
-
-        CircularProgressIndicator(
-            progress = { 1f },
-            modifier = Modifier.fillMaxSize(),
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = MaterialTheme.colorScheme.background,
-                trackColor = Color.Transparent
-            ),
-            strokeWidth = strokeWidth,
-            startAngle = s - extraDeg,
-            endAngle = e + extraDeg
+        val outerRect = Rect(
+            center.x - outerRadius,
+            center.y - outerRadius,
+            center.x + outerRadius,
+            center.y + outerRadius
+        )
+        val innerRect = Rect(
+            center.x - innerRadius,
+            center.y - innerRadius,
+            center.x + innerRadius,
+            center.y + innerRadius
         )
 
-        if (shouldCaptureMask1) {
-            Box(
-                Modifier
-                    .capturable(controller1)
-                    .fillMaxSize()
-                    .padding(borderWidth)
-                    .onGloballyPositioned {
-                        isLayoutReady1 = true
-                    }
-            ) {
-                CircularProgressIndicator(
-                    progress = { 1f },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = Color.White,
-                        trackColor = Color.Transparent
-                    ),
-                    strokeWidth = strokeWidth - borderWidth * 2,
-                    startAngle = startAngle,
-                    endAngle = endAngle
+        val centerlineRadius = (outerRadius + innerRadius) / 2f
+        val capRadius = (outerRadius - innerRadius) / 2f
+
+        val ring = Path().apply {
+            fillType = androidx.compose.ui.graphics.PathFillType.NonZero
+            arcTo(outerRect, start, sweep, false)
+            arcTo(innerRect, start + sweep, -sweep, false)
+            close()
+        }
+
+        if (!roundCaps) return ring
+        if (capRadius <= 0f) return ring
+
+
+        fun endpointCapPath(angleDeg: Float): Path {
+            val angleRad = Math.toRadians(angleDeg.toDouble())
+            val capCenter = Offset(
+                x = center.x + (kotlin.math.cos(angleRad) * centerlineRadius).toFloat(),
+                y = center.y + (kotlin.math.sin(angleRad) * centerlineRadius).toFloat()
+            )
+
+            return Path().apply {
+                addOval(
+                    Rect(
+                        capCenter.x - capRadius,
+                        capCenter.y - capRadius,
+                        capCenter.x + capRadius,
+                        capCenter.y + capRadius
+                    )
                 )
             }
-
-            // Kick off capture after layout is ready and first frame is rendered
-            LaunchedEffect(isLayoutReady1) {
-                if (isLayoutReady1 && shouldCaptureMask1) {
-                    delay(20)
-                    mask1 = controller1.captureAsync().await()
-                    shouldCaptureMask1 = false
-                }
-            }
         }
+
+        val startCap = endpointCapPath(start)
+        val endCap = endpointCapPath(start + sweep)
+        return Path.combine(
+            PathOperation.Union,
+            Path.combine(PathOperation.Union, ring, startCap),
+            endCap
+        )
     }
 
-    BoxWithConstraints(
-        modifier = modifier
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                mask1?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
-                        }
-                    }
-                }
-                mask2?.let { mask ->
-                    // Check if the ImageBitmap has valid dimensions before drawing
-                    if (mask.width > 0 && mask.height > 0) {
-                        try {
-                            drawImage(mask, blendMode = BlendMode.DstOut)
-                        } catch (e: Exception) {
-                            // Silently handle drawing failures (e.g., in preview mode)
-                        }
-                    }
-                }
-            }
-    ) {
-        val diameter = min(maxWidth, maxHeight)
-        val extraDeg = dpToDegrees(borderWidth + 1.dp, diameter)
+    Canvas(modifier = modifier) {
+        val diameterPx = size.minDimension
+        if (diameterPx <= 0f) return@Canvas
 
-        val nudgeDeg = dpToDegrees(nudgeAmount, diameter)
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val outerRadius = diameterPx / 2f
+
+        val strokePx = strokeWidth.toPx()
+        val borderPx = borderWidth.toPx()
+        val innerBorderPx = innerBorderWidth.toPx()
+        val nudgePx = 0.dp.toPx()
+
+        if (strokePx <= 0f || borderPx < 0f || innerBorderPx < 0f) return@Canvas
+
+        fun pxToDegrees(gapPx: Float): Float = (gapPx / (PI.toFloat() * diameterPx)) * 360f
+
+        val nudgeDeg = pxToDegrees(nudgePx)
         val s = startAngle - nudgeDeg
         val e = endAngle + nudgeDeg
 
-        CircularProgressIndicator(
-            progress = { 1f },
-            modifier = Modifier.fillMaxSize(),
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = color,
-                trackColor = Color.Transparent
-            ),
-            strokeWidth = strokeWidth,
-            startAngle = s - extraDeg,
-            endAngle = e + extraDeg
+        val outerExtraDeg = pxToDegrees(  2.dp.toPx())
+        val innerMaskExtraDeg = pxToDegrees(innerBorderPx)
+
+        val outerExpanded = annularArcPath(
+            center = center,
+            outerRadius = outerRadius,
+            innerRadius = outerRadius - strokePx,
+            start = s + pxToDegrees(innerBorderPx) - outerExtraDeg,
+            end = e - pxToDegrees(innerBorderPx) + outerExtraDeg,
+            roundCaps = true
         )
 
-        if (shouldCaptureMask2) {
-            BoxWithConstraints(
-                Modifier
-                    .capturable(controller2)
-                    .fillMaxSize()
-                    .padding(borderWidth - innerBorderWidth)
-                    .onGloballyPositioned {
-                        isLayoutReady2 = true
-                    }
-            ) {
+        val middleOuter = outerRadius - borderPx
+        val middleStroke = strokePx - borderPx * 2f
+        val middle = annularArcPath(
+            center = center,
+            outerRadius = middleOuter,
+            innerRadius = middleOuter - middleStroke,
+            start = startAngle + innerMaskExtraDeg,
+            end = endAngle - innerMaskExtraDeg,
+            roundCaps = true
+        )
 
-                val newDiameter = min(maxWidth, maxHeight)
+        val outerBorder = Path.combine(PathOperation.Difference, outerExpanded, middle)
 
-                val newStrokeWidth = strokeWidth - borderWidth * 2 + innerBorderWidth * 2
-                val newExtraDeg = dpToDegrees(innerBorderWidth, newDiameter)
+        val colorExpanded = annularArcPath(
+            center = center,
+            outerRadius = outerRadius,
+            innerRadius = outerRadius - strokePx,
+            start = s + pxToDegrees(innerBorderPx),
+            end = e - pxToDegrees(innerBorderPx),
+            roundCaps = true
+        )
 
-                CircularProgressIndicator(
-                    progress = { 1f },
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.colors(
-                        indicatorColor = Color.White,
-                        trackColor = Color.Transparent
-                    ),
-                    strokeWidth = newStrokeWidth,
-                    startAngle = s - newExtraDeg,
-                    endAngle = e + newExtraDeg
-                )
-            }
+        val innerInset = borderPx - innerBorderPx
+        val innerMaskOuter = outerRadius - innerInset
+        val innerMaskStroke = strokePx - borderPx * 2f + innerBorderPx * 2f
+        val innerMask = annularArcPath(
+            center = center,
+            outerRadius = innerMaskOuter,
+            innerRadius = innerMaskOuter - innerMaskStroke,
+            start = s + pxToDegrees(innerBorderPx),
+            end = e - pxToDegrees(innerBorderPx),
+            roundCaps = true
+        )
 
-            // Kick off capture after layout is ready and first frame is rendered
-            LaunchedEffect(isLayoutReady2) {
-                if (isLayoutReady2 && shouldCaptureMask2) {
-                    delay(20)
-                    mask2 = controller2.captureAsync().await()
-                    shouldCaptureMask2 = false
-                }
-            }
-        }
+        val colorWithoutMiddle = Path.combine(PathOperation.Difference, colorExpanded, middle)
+        val finalColor = Path.combine(PathOperation.Difference, colorWithoutMiddle, innerMask)
+
+        //drawPath(path = outerExpanded, color = Color.Magenta)
+        drawPath(path = outerBorder, color = backgroundColor)
+        drawPath(path = finalColor, color = color)
+        //drawPath(path = middle, color = Color.Magenta)
     }
 }
 
@@ -784,7 +746,7 @@ fun extractCurrentHrRotationAngle(
         val endAngle = startAngle + segmentArcAngle
         val (lowerBound, upperBound) = zoneRanges[index + 1]
 
-        if (mhrPercentage.round(1) in lowerBound..upperBound) {
+        if (mhrPercentage.truncate(1) in lowerBound.truncate(1)..upperBound.truncate(1)) {
             val percentageInZone = if (upperBound > lowerBound) {
                 ((mhrPercentage- lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
             } else 0f
@@ -924,19 +886,25 @@ private fun HeartRateView(
         }
 
         if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
-            val inBounds = remember(mhrPercentage) {
-                mhrPercentage.round(1) in (lowerBoundMaxHRPercent ?: 0f)..(upperBoundMaxHRPercent ?: 0f)
+            val inBounds = remember(
+                mhrPercentage,
+                lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent
+            ) {
+                val truncatedLowerBound = lowerBoundMaxHRPercent!!.truncate(1)
+                val truncatedUpperBound = upperBoundMaxHRPercent!!.truncate(1)
+                mhrPercentage.truncate(1) in truncatedLowerBound..truncatedUpperBound
             }
 
             TargetRangeArc(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(4.dp),
+                    .padding(3.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
                 color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.35f),
-                strokeWidth = 16.dp,
-                borderWidth = 5.dp,
+                strokeWidth = 18.dp,
+                borderWidth = 6.dp,
                 innerBorderWidth = 4.dp
             )
         }
@@ -1062,10 +1030,10 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(62f, 30),
+            hr = getHeartRateFromPercentage(67.5f, 30),
             age = 30,
-            lowerBoundMaxHRPercent = null, //60f,
-            upperBoundMaxHRPercent = null  // 70f
+            lowerBoundMaxHRPercent = 65f,
+            upperBoundMaxHRPercent = 75f
         )
     }
 }

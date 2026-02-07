@@ -1301,6 +1301,18 @@ fun Float.round(decimals: Int): Float {
     return kotlin.math.round(this * multiplier) / multiplier
 }
 
+fun Double.truncate(decimals: Int): Double {
+    var multiplier = 1.0
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.truncate(this * multiplier) / multiplier
+}
+
+fun Float.truncate(decimals: Int): Float {
+    var multiplier = 1.0f
+    repeat(decimals) { multiplier *= 10 }
+    return kotlin.math.truncate((this * multiplier).toDouble()).toFloat() / multiplier
+}
+
 fun getValueInRange(startAngle: Float, endAngle: Float, percentage: Float): Float {
     return startAngle + (endAngle - startAngle) * percentage
 }

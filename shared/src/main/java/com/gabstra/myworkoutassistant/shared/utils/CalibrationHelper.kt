@@ -1,9 +1,25 @@
 package com.gabstra.myworkoutassistant.shared.utils
 
-import com.gabstra.myworkoutassistant.shared.workout.state.CalibrationContext
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import java.util.UUID
 
 object CalibrationHelper {
+    fun isWarmupSet(set: Set): Boolean = when (set) {
+        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+        else -> false
+    }
+
+    fun isCalibrationSetBySubCategory(set: Set): Boolean = when (set) {
+        is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+        is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
+        else -> false
+    }
+
     /**
      * Calculates the weight adjustment multiplier based on calibration set RIR.
      * 
@@ -63,88 +79,35 @@ object CalibrationHelper {
         return calibrationWeight * multiplier
     }
 
-    /**
-     * Returns true when the given set is a work set whose weight should be shown as "Pending"
-     * because calibration is not yet complete. Uses [CalibrationContext] when provided so no
-     * scanning of [allWorkoutStates] is needed.
-     *
-     * @param setState The set state for the row being rendered
-     * @param calibrationContext Current calibration context from the ViewModel, or null to use fallback
-     * @param isCalibrationEnabled Whether the exercise requires load calibration
-     * @param isWarmupSet Whether the row's set is a warmup set
-     * @param isCalibrationSet Whether the row's set is the calibration set (by subCategory)
-     * @param isFutureExercise Whether this exercise has not been reached yet in the workout
-     * @return true if work set weight should display "Pending"
-     */
-    fun isPendingCalibration(
-        setState: WorkoutState.Set,
-        calibrationContext: CalibrationContext?,
-        isCalibrationEnabled: Boolean,
-        isWarmupSet: Boolean,
-        isCalibrationSet: Boolean,
-        isFutureExercise: Boolean
-    ): Boolean {
-        if (!isCalibrationEnabled || isWarmupSet || isCalibrationSet || setState.isCalibrationSet) return false
-        if (calibrationContext != null) {
-            return isFutureExercise || calibrationContext.exerciseId == setState.exerciseId
-        }
-        return isFutureExercise
-    }
-
-    /**
-     * Returns true when the given set is a work set whose weight should be shown as "Pending"
-     * because calibration is not yet complete. Scans [allWorkoutStates]; prefer
-     * [isPendingCalibration(setState, calibrationContext, ...)] when context is available.
-     *
-     * @param currentWorkoutState The current workout state from the state machine
-     * @param allWorkoutStates The full ordered list of workout states
-     * @param setState The set state for the row being rendered
-     * @param isCalibrationEnabled Whether the exercise requires load calibration
-     * @param isWarmupSet Whether the row's set is a warmup set
-     * @param isCalibrationSet Whether the row's set is the calibration set (by subCategory)
-     * @param isFutureExercise Whether this exercise has not been reached yet in the workout
-     * @return true if work set weight should display "Pending"
-     */
-    fun isPendingCalibration(
-        currentWorkoutState: WorkoutState,
-        allWorkoutStates: List<WorkoutState>,
+    fun shouldShowPendingCalibrationForWorkSet(
         setState: WorkoutState.Set,
         isCalibrationEnabled: Boolean,
         isWarmupSet: Boolean,
-        isCalibrationSet: Boolean,
-        isFutureExercise: Boolean
+        isCalibrationSetBySubCategory: Boolean,
+        hasUnconfirmedLoadSelectionForExercise: Boolean = false
     ): Boolean {
-        val hasCalibrationRIRSelection = (currentWorkoutState is WorkoutState.CalibrationRIRSelection &&
-            (currentWorkoutState as WorkoutState.CalibrationRIRSelection).exerciseId == setState.exerciseId) ||
-            allWorkoutStates.any { state ->
-                state is WorkoutState.CalibrationRIRSelection && state.exerciseId == setState.exerciseId
-            }
-        val hasCalibrationLoadSelection = (currentWorkoutState is WorkoutState.CalibrationLoadSelection &&
-            (currentWorkoutState as WorkoutState.CalibrationLoadSelection).exerciseId == setState.exerciseId) ||
-            allWorkoutStates.any { state ->
-                state is WorkoutState.CalibrationLoadSelection && state.exerciseId == setState.exerciseId
-            }
-        val isOnCalibrationSet = currentWorkoutState is WorkoutState.Set &&
-            (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
-            (currentWorkoutState as WorkoutState.Set).isCalibrationSet
-        val calibrationIndex = allWorkoutStates.indexOfFirst { state ->
-            state is WorkoutState.Set &&
-                (state as WorkoutState.Set).exerciseId == setState.exerciseId &&
-                (state as WorkoutState.Set).isCalibrationSet
-        }
-        val currentIndex = allWorkoutStates.indexOf(currentWorkoutState)
-        val isOnWarmupBeforeCalibration = currentWorkoutState is WorkoutState.Set &&
-            (currentWorkoutState as WorkoutState.Set).exerciseId == setState.exerciseId &&
-            (currentWorkoutState as WorkoutState.Set).isWarmupSet &&
-            calibrationIndex >= 0 &&
-            currentIndex >= 0 &&
-            currentIndex <= calibrationIndex
-
         return isCalibrationEnabled &&
             !isWarmupSet &&
-            !isCalibrationSet &&
+            !isCalibrationSetBySubCategory &&
             !setState.isCalibrationSet &&
-            (hasCalibrationRIRSelection || isOnCalibrationSet || isOnWarmupBeforeCalibration || hasCalibrationLoadSelection || isFutureExercise)
+            hasUnconfirmedLoadSelectionForExercise
+    }
+
+    fun shouldHideCalibrationExecutionWeight(
+        setState: WorkoutState.Set,
+        isCalibrationSetBySubCategory: Boolean,
+        hasUnconfirmedLoadSelectionForExercise: Boolean = false
+    ): Boolean = isCalibrationSetBySubCategory &&
+        setState.isCalibrationSet &&
+        hasUnconfirmedLoadSelectionForExercise
+
+    fun hasUnconfirmedLoadSelectionForExercise(
+        allWorkoutStates: List<WorkoutState>,
+        exerciseId: UUID
+    ): Boolean = allWorkoutStates.any { state ->
+        state is WorkoutState.CalibrationLoadSelection &&
+            state.exerciseId == exerciseId &&
+            !state.isLoadConfirmed
     }
 }
 

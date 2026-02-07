@@ -88,7 +88,7 @@ fun PageExercises(
             verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            ScrollableTextColumn(
+            ExerciseNameText(
                 text = selectedExercise.name,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -96,7 +96,6 @@ fun PageExercises(
                     .clickable {
                         hapticsViewModel.doGentleVibration()
                     },
-                maxLines = 2,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.SemiBold
                 ),
@@ -180,8 +179,7 @@ fun PageExercises(
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
                         overrideSetIndex
                     } else null,
-                    currentWorkoutStateOverride = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) workoutState else null,
-                    isFutureExercise = selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value
+                    currentWorkoutStateOverride = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) workoutState else null
                 )
             }
         }

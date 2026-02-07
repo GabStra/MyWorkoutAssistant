@@ -21,11 +21,20 @@
 
 ## Build and Compilation
 
-- After making any code changes, ALWAYS run a build to verify compilation:
+- Run a build when changes can affect app binaries or compilation outputs, including:
+  - Kotlin/Java source files
+  - Android resources (`res/`), manifests, or Gradle build scripts
+  - Dependency/version/configuration changes
+  - Generated code inputs (e.g., Room entities/DAOs, KSP-related sources)
+- A build is NOT required for non-runtime/non-compilation changes only, such as:
+  - Documentation (`*.md`), comments-only edits, or planning notes
+  - Pure formatting/text changes that do not alter code/resource semantics
+- Build commands when required:
   - For Android projects: `./gradlew build` or `./gradlew assembleDebug`
   - For specific modules: `./gradlew :module:build`
 - If compilation errors are found, fix them immediately before proceeding with other tasks or reporting completion.
 - Do not leave code in a broken or uncompilable state. All code changes must result in a successfully compiling project.
 - Check for both Kotlin and Java compilation errors, as well as resource and manifest errors.
 - If build errors persist after attempts to fix them, clearly report the specific errors and their locations to the user rather than leaving the code in a broken state.
+- If Gradle fails with `gradle-*.zip.lck (Access is denied)`, rerun the same Gradle command with escalated permissions so wrapper lock access is available.
 - Use `read_lints` tool to check for linter errors after code changes and address any issues found.

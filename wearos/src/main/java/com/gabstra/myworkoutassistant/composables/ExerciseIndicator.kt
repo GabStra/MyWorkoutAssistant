@@ -157,35 +157,44 @@ fun ExerciseIndicator(
     }
 
     // Calculate indicator progress
-    val indicatorProgressByExerciseId by derivedStateOf {
-        exerciseIds.associateWith { id ->
-            val completed = completedSetsBeforeCurrent(id)
-            val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
+    val indicatorProgressByExerciseId by remember(
+        exerciseIds,
+        selectedExerciseId,
+        currentExerciseId,
+        currentPositionIndex,
+        currentStateSet,
+        currentStateSetDataState
+    ) {
+        derivedStateOf {
+            exerciseIds.associateWith { id ->
+                val completed = completedSetsBeforeCurrent(id)
+                val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
 
-            val timerSet: WorkoutState.Set? = when {
-                selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
-                else -> null
-            }
+                val timerSet: WorkoutState.Set? = when {
+                    selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
+                    else -> null
+                }
 
-            val currentExerciseTimerProgress: Float? = when {
-                id == currentExerciseId && total == 1 && currentStateSet != null && (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) && currentStateSetDataState != null -> {
-                    when (val d = currentStateSetDataState.value) {
+                val currentExerciseTimerProgress: Float? = when {
+                    id == currentExerciseId && total == 1 && currentStateSet != null && (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) && currentStateSetDataState != null -> {
+                        when (val d = currentStateSetDataState.value) {
+                            is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
+                            is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
+                            else -> null
+                        }
+                    }
+                    else -> null
+                }
+
+                when {
+                    currentExerciseTimerProgress != null -> currentExerciseTimerProgress
+                    timerSet != null -> when (val d = timerSet.currentSetDataState.value) {
                         is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
                         is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
-                        else -> null
+                        else -> completed.toFloat() / total.toFloat()
                     }
-                }
-                else -> null
-            }
-
-            when {
-                currentExerciseTimerProgress != null -> currentExerciseTimerProgress
-                timerSet != null -> when (val d = timerSet.currentSetDataState.value) {
-                    is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
-                    is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
                     else -> completed.toFloat() / total.toFloat()
                 }
-                else -> completed.toFloat() / total.toFloat()
             }
         }
     }

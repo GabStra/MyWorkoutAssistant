@@ -972,7 +972,7 @@ fun ExerciseForm(
                             equipmentId = selectedEquipmentId.value,
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
-                            enableProgression = enableProgression.value,
+                            enableProgression = enableProgression.value && !requiresLoadCalibration.value,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {
@@ -1002,5 +1002,4 @@ fun ExerciseForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
-
 

@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.CustomVerticalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
@@ -59,7 +60,6 @@ import com.gabstra.myworkoutassistant.composables.PageNotes
 import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.PageTitledLines
-import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -282,10 +282,11 @@ fun ExerciseScreen(
         transitionSpec = {
             fadeIn(animationSpec = tween(250)) togetherWith fadeOut(animationSpec = tween(250))
         }, label = ""
-    ) { _ ->
+    ) { targetState ->
+        key(targetState) {
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
-                ScrollableTextColumn(
+                ExerciseNameText(
                     text = exercise.name,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -298,7 +299,6 @@ fun ExerciseScreen(
                                 providedOnLongClick.invoke()
                             }
                         ),
-                    maxLines = 2,
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.SemiBold
                     ),
@@ -468,6 +468,7 @@ fun ExerciseScreen(
             }
         }
 
+    }
     }
 
     DisposableEffect(Unit) {
@@ -665,4 +666,3 @@ private fun ExerciseDetailPage(
         }
     }
 }
-
