@@ -124,7 +124,7 @@ fun SetTableRow(
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
                         shouldHideCalibrationExecutionWeight -> "TBD"
-                        isCalibrationSet && setState.isCalibrationSet -> "$weightText (Cal)"
+                        isCalibrationSet && setState.isCalibrationSet -> weightText
                         isPendingCalibration -> "TBD"
                         else -> weightText
                     }
@@ -157,7 +157,7 @@ fun SetTableRow(
                     }
                     val displayWeightText = when {
                         shouldHideCalibrationExecutionWeight -> "TBD"
-                        isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
                         isPendingCalibration -> "TBD"
                         else -> baseWeightText
                     }
@@ -326,8 +326,22 @@ fun ExerciseSetsViewer(
             is ExerciseSetDisplayRow.SetRow -> CalibrationHelper.isWarmupSet(displayRow.state.set)
             else -> false
         }
+        val isCalibrationExecutionRow = (displayRow as? ExerciseSetDisplayRow.SetRow)
+            ?.state
+            ?.isCalibrationSet == true
+        val shouldUseCalibrationExecutionColors =
+            isCalibrationExecutionRow &&
+                customBorderColor == null &&
+                customTextColor == null
+        val calibrationExecutionColor = if (rowIndex < setIndex) {
+            Green
+        } else {
+            Green.copy(alpha = 0.35f)
+        }
 
-        val borderColor = customBorderColor ?: when {
+        val borderColor = when {
+            shouldUseCalibrationExecutionColors -> calibrationExecutionColor
+            customBorderColor != null -> customBorderColor
             rowIndex == setIndex -> Orange
             rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
             else -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -335,7 +349,9 @@ fun ExerciseSetsViewer(
 
         val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background
 
-        val textColor = customTextColor ?: when {
+        val textColor = when {
+            shouldUseCalibrationExecutionColors -> calibrationExecutionColor
+            customTextColor != null -> customTextColor
             rowIndex == setIndex -> Orange
             rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
             else -> MaterialTheme.colorScheme.surfaceContainerHigh

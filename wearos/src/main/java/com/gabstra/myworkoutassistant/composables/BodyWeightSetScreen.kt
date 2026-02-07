@@ -112,6 +112,9 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = state.equipment
+    val shouldLockCalibrationEdits = remember(state.isCalibrationSet, isCalibrationSet, equipment) {
+        state.isCalibrationSet && isCalibrationSet && equipment != null
+    }
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
     var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
@@ -185,6 +188,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onMinusClick(){
+        if (shouldLockCalibrationEdits) return
         updateInteractionTime()
         if (isRepsInEditMode && currentSetData.actualReps>1){
             val newRep = currentSetData.actualReps - 1
@@ -225,6 +229,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onPlusClick(){
+        if (shouldLockCalibrationEdits) return
         updateInteractionTime()
         if (isRepsInEditMode){
             val newRep = currentSetData.actualReps + 1
@@ -269,6 +274,7 @@ fun BodyWeightSetScreen(
         val repsText = "${currentSetData.actualReps}"
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
+            if (shouldLockCalibrationEdits) return
             isRepsInEditMode = !isRepsInEditMode
             updateInteractionTime()
             isWeightInEditMode = false
@@ -286,6 +292,7 @@ fun BodyWeightSetScreen(
                         toggleRepsEditMode()
                     },
                     onDoubleClick = {
+                        if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isRepsInEditMode) {
                             val newSetData = currentSetData.copy(
                                 actualReps = previousSetData.actualReps,
@@ -343,6 +350,7 @@ fun BodyWeightSetScreen(
         }
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
+            if (shouldLockCalibrationEdits) return
             isWeightInEditMode = !isWeightInEditMode
             updateInteractionTime()
             isRepsInEditMode = false
@@ -360,6 +368,7 @@ fun BodyWeightSetScreen(
                         toggleWeightEditMode()
                     },
                     onDoubleClick = {
+                        if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
                             val newSetData = currentSetData.copy(
                                 additionalWeight = previousSetData.additionalWeight,

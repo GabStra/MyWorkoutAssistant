@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -159,7 +160,7 @@ fun SetTableRow(
                     val weightSetData = (setState.currentSetData as WeightSetData)
                     val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
                     val displayWeightText = when {
-                        isCalibrationSet -> "$weightText (Cal)"
+                        isCalibrationSet -> weightText
                         isPendingCalibration -> "$weightText (Pending)"
                         else -> weightText
                     }
@@ -188,7 +189,7 @@ fun SetTableRow(
                         "-"
                     }
                     val weightText = when {
-                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Cal)"
+                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
                         isPendingCalibration && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> "$baseWeightText (Pending)"
                         else -> baseWeightText
                     }
@@ -305,23 +306,43 @@ fun ExerciseSetsViewer(
         rowIndex: Int,
         isFutureExerciseParam: Boolean = isFutureExercise,
     ) {
+        val isDone = customMarkAsDone ?: (rowIndex < setIndex)
+        val shouldUseCalibrationExecutionColors =
+            setStateForThisRow.isCalibrationSet &&
+                customBorderColor == null &&
+                customTextColor == null &&
+                customColor == null
+        val calibrationExecutionColor = if (isDone) {
+            Green
+        } else {
+            Green.copy(alpha = 0.35f)
+        }
         val backgroundColor = if(rowIndex == setIndex)
             MaterialTheme.colorScheme.primary
         else
             MaterialTheme.colorScheme.surfaceVariant
 
-        val borderColor = customBorderColor ?: customColor ?: null
-
-        val textColor = customTextColor ?: customColor ?: when {
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-            rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
-            else -> MaterialTheme.colorScheme.onBackground
+        val borderColor = when {
+            shouldUseCalibrationExecutionColors -> calibrationExecutionColor
+            else -> customBorderColor ?: customColor ?: null
         }
 
-        val weightTextColor = customTextColor ?: customColor ?: when {
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-            rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
-            else -> MaterialTheme.colorScheme.onBackground
+        val textColor = when {
+            shouldUseCalibrationExecutionColors -> calibrationExecutionColor
+            else -> customTextColor ?: customColor ?: when {
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                else -> MaterialTheme.colorScheme.onBackground
+            }
+        }
+
+        val weightTextColor = when {
+            shouldUseCalibrationExecutionColors -> calibrationExecutionColor
+            else -> customTextColor ?: customColor ?: when {
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex == setIndex -> MaterialTheme.colorScheme.onPrimary
+                else -> MaterialTheme.colorScheme.onBackground
+            }
         }
 
         Row(
@@ -348,7 +369,7 @@ fun ExerciseSetsViewer(
                 setState = setStateForThisRow,
                 index = rowIndex, // This 'index' prop for SetTableRow might refer to its position in the overall exercise
                 isCurrentSet = rowIndex == setIndex, // setIndex from ExerciseSetsViewer's scope
-                markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
+                markAsDone = isDone,
                 color = textColor,
                 weightTextColor = weightTextColor,
                 isFutureExercise = isFutureExerciseParam

@@ -27,6 +27,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Dispatchers
@@ -53,7 +55,14 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
+    val isCalibrationSet = remember(state.set) {
+        (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.CalibrationSet
+    }
+
     val equipment = state.equipment
+    val shouldLockCalibrationEdits = remember(state.isCalibrationSet, isCalibrationSet, equipment) {
+        state.isCalibrationSet && isCalibrationSet && equipment != null
+    }
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 
     var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
@@ -126,6 +135,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onMinusClick(){
+        if (shouldLockCalibrationEdits) return
         updateInteractionTime()
         if (isRepsInEditMode && currentSetData.actualReps>1){
             val newRep = currentSetData.actualReps - 1
@@ -166,6 +176,7 @@ fun BodyWeightSetScreen(
     }
 
     fun onPlusClick(){
+        if (shouldLockCalibrationEdits) return
         updateInteractionTime()
         if (isRepsInEditMode){
             val newRep = currentSetData.actualReps + 1
@@ -213,6 +224,7 @@ fun BodyWeightSetScreen(
                     onClick = {},
                     onLongClick = {
                         if (forceStopEditMode) return@combinedClickable
+                        if (shouldLockCalibrationEdits) return@combinedClickable
 
                         isRepsInEditMode = !isRepsInEditMode
                         updateInteractionTime()
@@ -221,6 +233,7 @@ fun BodyWeightSetScreen(
                         hapticsViewModel.doGentleVibration()
                     },
                     onDoubleClick = {
+                        if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isRepsInEditMode) {
                             val newSetData = currentSetData.copy(
                                 actualReps = previousSetData.actualReps,
@@ -261,6 +274,7 @@ fun BodyWeightSetScreen(
                     onClick = {},
                     onLongClick = {
                         if (forceStopEditMode) return@combinedClickable
+                        if (shouldLockCalibrationEdits) return@combinedClickable
 
                         isWeightInEditMode = !isWeightInEditMode
                         updateInteractionTime()
@@ -269,6 +283,7 @@ fun BodyWeightSetScreen(
                         hapticsViewModel.doGentleVibration()
                     },
                     onDoubleClick = {
+                        if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
                             val newSetData = currentSetData.copy(
                                 additionalWeight = previousSetData.additionalWeight,
