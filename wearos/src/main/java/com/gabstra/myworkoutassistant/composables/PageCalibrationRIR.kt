@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +28,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -236,7 +236,7 @@ fun PageCalibrationRIR(
 
                 Text(
                     text = "0 = Form Breaks",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                     color = MediumLighterGray,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
@@ -267,4 +267,3 @@ fun PageCalibrationRIR(
         }
     )
 }
-

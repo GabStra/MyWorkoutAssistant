@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,7 +23,6 @@ import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 /** A section with a title and a list of lines (e.g. "Equipment" / ["Barbell"] or "Accessories" / ["Bench", "Rings"]). */
 data class TitledLinesSection(val title: String, val lines: List<String>)
@@ -45,7 +45,7 @@ private fun TitledLinesSectionItem(
             Text(
                 text = line,
                 modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                 color = MediumLighterGray,
                 textAlign = TextAlign.Center
             )

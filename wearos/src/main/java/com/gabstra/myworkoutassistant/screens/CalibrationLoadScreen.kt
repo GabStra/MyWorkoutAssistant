@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -33,7 +31,6 @@ import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
-import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageCalibrationLoad
 import com.gabstra.myworkoutassistant.composables.PageExercises
@@ -65,28 +62,10 @@ fun CalibrationLoadScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val equipment = remember(exercise) {
-        exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
-    }
-
-    val accessoryEquipments = remember(exercise) {
-        (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
-            viewModel.getAccessoryEquipmentById(id)
-        }
-    }
-
     val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
             .distinct()
-    }
-    val exerciseOrSupersetId =
-        remember(state.exerciseId) { if (viewModel.supersetIdByExerciseId.containsKey(state.exerciseId)) viewModel.supersetIdByExerciseId[state.exerciseId] else state.exerciseId }
-    val currentExerciseOrSupersetIndex = remember(exerciseOrSupersetId, exerciseOrSupersetIds) {
-        derivedStateOf { exerciseOrSupersetIds.indexOf(exerciseOrSupersetId) }
-    }
-    val isSuperset = remember(exerciseOrSupersetId) {
-        viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
 
     var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
@@ -94,8 +73,8 @@ fun CalibrationLoadScreen(
     val pageTypes = remember {
         mutableListOf<CalibrationPageType>().apply {
             add(CalibrationPageType.BUTTONS)
-            add(CalibrationPageType.EXERCISES)
             add(CalibrationPageType.CALIBRATION_LOAD)
+            add(CalibrationPageType.EXERCISES)
         }
     }
 
@@ -245,42 +224,7 @@ fun CalibrationLoadScreen(
                                 hapticsViewModel = hapticsViewModel,
                                 state = state,
                                 onWeightSelected = onWeightSelected,
-                                exerciseTitleComposable = exerciseTitleComposable,
-                                extraInfo = { _ ->
-                                    val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
-                                        if (isSuperset) {
-                                            viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
-                                        } else null
-                                    }
-                                    val supersetIndex = remember(supersetExercises, exercise) {
-                                        supersetExercises?.indexOf(exercise)
-                                    }
-
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        // Metadata strip
-                                        ExerciseMetadataStrip(
-                                            supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                                            supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
-                                            setLabel = viewModel.getSetCounterForExercise(
-                                                exercise.id,
-                                                state
-                                            )?.let { (current, total) ->
-                                                if (total > 1) "$current/$total" else null
-                                            },
-                                            sideIndicator = null,
-                                            currentSideIndex = null,
-                                            isUnilateral = false,
-                                            textColor = MaterialTheme.colorScheme.onBackground,
-                                            onTap = {
-                                                hapticsViewModel.doGentleVibration()
-                                            }
-                                        )
-                                    }
-                                }
+                                exerciseTitleComposable = exerciseTitleComposable
                             )
                         }
                     }
@@ -314,4 +258,3 @@ fun CalibrationLoadScreen(
         }
     }
 }
-

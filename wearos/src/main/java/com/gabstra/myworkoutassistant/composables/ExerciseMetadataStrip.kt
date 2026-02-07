@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -12,7 +13,6 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 @Composable
 fun ExerciseMetadataStrip(
@@ -29,6 +29,7 @@ fun ExerciseMetadataStrip(
     val baseStyle = MaterialTheme.typography.bodySmall
     val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
+    val secondaryTextColor = MediumLighterGray
 
     val metadataText = remember(
         supersetExerciseIndex,
@@ -39,12 +40,13 @@ fun ExerciseMetadataStrip(
         isUnilateral,
         baseStyle,
         primaryColor,
-        surfaceContainerHigh
+        surfaceContainerHigh,
+        secondaryTextColor
     ) {
         buildAnnotatedString {
-            withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
+            withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
                 fun pipe() {
-                    withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
+                    withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Normal)) {
                         append(" | ")
                     }
                 }
@@ -112,8 +114,8 @@ fun ExerciseMetadataStrip(
         FadingText(
             text = metadataText,
             modifier = modifier.fillMaxWidth(),
-            style = baseStyle.copy(fontWeight = FontWeight.Thin),
-            color = MediumLighterGray,
+            style = baseStyle.copy(fontWeight = FontWeight.Normal),
+            color = secondaryTextColor,
             onClick = {
                 onTap?.invoke()
             },

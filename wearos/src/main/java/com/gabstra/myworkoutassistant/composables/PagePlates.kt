@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -49,7 +50,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -202,7 +202,7 @@ fun PagePlates(
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Normal)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -216,7 +216,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.Thin),
+                        style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
@@ -227,7 +227,7 @@ fun PagePlates(
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Normal)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -241,7 +241,7 @@ fun PagePlates(
 
                     FadingText(
                         text = topLine,
-                        style = baseStyle.copy(fontWeight = FontWeight.Thin),
+                        style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
@@ -942,4 +942,3 @@ private data class PlateData(
     val weight: Double,
     val thickness: Double
 )
-

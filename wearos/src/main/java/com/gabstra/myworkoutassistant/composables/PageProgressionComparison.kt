@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,7 +51,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.LighterGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -410,11 +410,12 @@ fun PageProgressionComparison(
         // Set number indicator (combined with Repeat and Plateau Detected if applicable)
         if (maxSets > 0) {
             val baseStyle = MaterialTheme.typography.bodySmall
-            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle) {
+            val secondaryTextColor = MediumLighterGray
+            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle, secondaryTextColor) {
                 buildAnnotatedString {
-                    withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Thin)) {
+                    withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
                         fun pipe() {
-                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Thin)) {
+                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Normal)) {
                                 append(" | ")
                             }
                         }
@@ -759,5 +760,3 @@ fun PageProgressionComparison(
     }
 
 }
-
-

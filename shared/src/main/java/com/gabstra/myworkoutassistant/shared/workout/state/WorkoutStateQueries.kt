@@ -83,15 +83,14 @@ internal object WorkoutStateQueries {
     }
 
     /**
-     * Logical workout sets only: includes Set + calibration states, excludes Rest.
+     * Logical workout sets for counters: includes all Set states (including calibration execution sets),
+     * excludes Rest and calibration selection states.
      */
     fun orderedUniqueLogicalSetIds(states: List<WorkoutState>): List<UUID> {
         val orderedSetIds = mutableListOf<UUID>()
         for (state in states) {
             val setId = when (state) {
                 is WorkoutState.Set -> state.set.id
-                is WorkoutState.CalibrationLoadSelection -> state.calibrationSet.id
-                is WorkoutState.CalibrationRIRSelection -> state.calibrationSet.id
                 else -> null
             } ?: continue
             if (setId !in orderedSetIds) {

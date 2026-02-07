@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -263,7 +264,8 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
 
         val updatedMachine = viewModel.stateMachine
         assertTrue("State machine should be available", updatedMachine != null)
-        val statesAfterConfirm = viewModel.getStatesForExercise(exerciseId)
+        val allStatesAfterConfirm = viewModel.getStatesForExercise(exerciseId)
+        val statesAfterConfirm = allStatesAfterConfirm
             .filter { it !is WorkoutState.Rest }
 
         val firstState = statesAfterConfirm.firstOrNull() as? WorkoutState.CalibrationLoadSelection
@@ -290,6 +292,50 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             assertTrue(
                 "Calibration execution should be after generated warmups",
                 calibrationExecutionIndex > warmupIndices.max()
+            )
+
+            val calibrationExecutionIndexInAllStates = allStatesAfterConfirm.indexOfFirst {
+                it is WorkoutState.Set && it.isCalibrationSet
+            }
+            val lastWarmupIndexInAllStates = allStatesAfterConfirm.indexOfLast {
+                it is WorkoutState.Set && it.isWarmupSet
+            }
+            assertTrue(
+                "Calibration execution and warmup states should both exist",
+                calibrationExecutionIndexInAllStates > 0 && lastWarmupIndexInAllStates >= 0
+            )
+            val stateAfterLastWarmup = allStatesAfterConfirm.getOrNull(lastWarmupIndexInAllStates + 1)
+            assertTrue(
+                "Rest should exist between the last generated warmup and calibration execution set",
+                stateAfterLastWarmup is WorkoutState.Rest
+            )
+            assertTrue(
+                "Calibration execution should come immediately after that rest",
+                calibrationExecutionIndexInAllStates == lastWarmupIndexInAllStates + 2
+            )
+
+            val expectedRestSeconds = allStatesAfterConfirm
+                .windowed(size = 3, step = 1, partialWindows = false)
+                .firstOrNull { window ->
+                    val first = window[0]
+                    val middle = window[1]
+                    val third = window[2]
+                    first is WorkoutState.Set &&
+                        first.isWarmupSet &&
+                        middle is WorkoutState.Rest &&
+                        third is WorkoutState.Set &&
+                        third.isWarmupSet
+                }
+                ?.let { (it[1] as WorkoutState.Rest).set as? RestSet }
+                ?.timeInSeconds
+                ?: 60
+
+            val trailingWarmupRestSeconds = ((stateAfterLastWarmup as WorkoutState.Rest).set as? RestSet)
+                ?.timeInSeconds
+            assertEquals(
+                "Rest between last warmup and calibration execution should match warmup rest duration",
+                expectedRestSeconds,
+                trailingWarmupRestSeconds
             )
         }
 

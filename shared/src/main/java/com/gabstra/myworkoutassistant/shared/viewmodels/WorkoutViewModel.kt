@@ -1010,7 +1010,7 @@ open class WorkoutViewModel(
 
     /**
      * Returns the total number of logical sets for an exercise, from the state machine.
-     * Counts Set, CalibrationLoadSelection, and CalibrationRIRSelection (unilateral counts once).
+     * Counts Set states only (including calibration execution sets; unilateral counts once).
      */
     fun getTotalSetCountForExercise(exerciseId: UUID): Int {
         val exerciseStates = getStatesForExercise(exerciseId)
@@ -1020,7 +1020,7 @@ open class WorkoutViewModel(
     /**
      * Returns (currentSetIndex1Based, totalSetCount) for the given exercise and current state.
      * Uses the state machine's exercise states as source of truth (not exercise.sets, which can be updated).
-     * Handles WorkoutState.Set, CalibrationLoadSelection, and CalibrationRIRSelection.
+     * Handles any state that maps to a counted set id.
      * Returns null when the current state does not represent a set (e.g. Rest) or is not for this exercise.
      */
     fun getSetCounterForExercise(exerciseId: UUID, currentState: WorkoutState): Pair<Int, Int>? {

@@ -48,7 +48,12 @@ class GetSetCounterForExerciseTest {
     private val setId2 = UUID.randomUUID()
     private val calibrationSetId = UUID.randomUUID()
 
-    private fun createSetState(exerciseId: UUID, setId: UUID, setIndex: UInt): WorkoutState.Set {
+    private fun createSetState(
+        exerciseId: UUID,
+        setId: UUID,
+        setIndex: UInt,
+        isCalibrationSet: Boolean = false
+    ): WorkoutState.Set {
         return WorkoutState.Set(
             exerciseId = exerciseId,
             set = WeightSet(setId, 10, 100.0),
@@ -68,7 +73,8 @@ class GetSetCounterForExerciseTest {
             equipment = null,
             isUnilateral = false,
             intraSetTotal = null,
-            intraSetCounter = 0u
+            intraSetCounter = 0u,
+            isCalibrationSet = isCalibrationSet
         )
     }
 
@@ -180,7 +186,7 @@ class GetSetCounterForExerciseTest {
         stateMachineField.set(viewModel, machine)
 
         val result = viewModel.getSetCounterForExercise(exerciseId, calibrationLoad)
-        assertEquals(Pair(3, 4), result)
+        assertNull(result)
     }
 
     @Test
@@ -266,7 +272,31 @@ class GetSetCounterForExerciseTest {
         )
         stateMachineField.set(viewModel, machine)
 
-        assertEquals(3, viewModel.getTotalSetCountForExercise(exerciseId))
+        assertEquals(2, viewModel.getTotalSetCountForExercise(exerciseId))
+    }
+
+    @Test
+    fun getTotalSetCountForExerciseIncludesCalibrationExecutionSet() {
+        val set1 = createSetState(exerciseId, setId1, 0u)
+        val calibrationExecutionSet = createSetState(
+            exerciseId = exerciseId,
+            setId = calibrationSetId,
+            setIndex = 1u,
+            isCalibrationSet = true
+        )
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId,
+            mutableListOf(set1, calibrationExecutionSet).map { ExerciseChildItem.Normal(it) }
+                .toMutableList()
+        )
+        val machine = WorkoutStateMachine.fromSequence(
+            listOf(WorkoutStateSequenceItem.Container(container)),
+            startIndex = 1
+        )
+        stateMachineField.set(viewModel, machine)
+
+        assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, calibrationExecutionSet))
+        assertEquals(2, viewModel.getTotalSetCountForExercise(exerciseId))
     }
 
     @Test

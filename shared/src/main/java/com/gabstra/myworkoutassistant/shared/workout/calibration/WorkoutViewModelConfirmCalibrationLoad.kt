@@ -103,6 +103,7 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
     currentState: WorkoutState.CalibrationLoadSelection,
     selectedWeight: Double
 ): List<WorkoutState> {
+    val warmupRestSeconds = 60
     if (!exercise.generateWarmUpSets || equipment == null ||
         (exercise.exerciseType != ExerciseType.BODY_WEIGHT && exercise.exerciseType != ExerciseType.WEIGHT)
     ) {
@@ -189,7 +190,7 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
         )
         warmupStates.add(warmupState)
         if (warmupIndex < warmups.size - 1) {
-            val restSet = RestSet(UUID.randomUUID(), 60)
+            val restSet = RestSet(UUID.randomUUID(), warmupRestSeconds)
             val restState = WorkoutState.Rest(
                 set = restSet,
                 order = (warmupIndex * 2 + 1).toUInt(),
@@ -198,6 +199,16 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
             )
             warmupStates.add(restState)
         }
+    }
+    if (warmupStates.isNotEmpty()) {
+        val restSet = RestSet(UUID.randomUUID(), warmupRestSeconds)
+        val restState = WorkoutState.Rest(
+            set = restSet,
+            order = (warmups.size * 2 - 1).toUInt(),
+            currentSetDataState = mutableStateOf(initializeSetData(restSet)),
+            exerciseId = exercise.id
+        )
+        warmupStates.add(restState)
     }
     return warmupStates
 }

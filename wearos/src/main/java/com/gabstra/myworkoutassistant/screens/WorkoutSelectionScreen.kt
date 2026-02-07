@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
@@ -66,7 +67,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -328,7 +328,7 @@ fun WorkoutSelectionScreen(
                                 .animateItem(),
                             text = "Enable Alarms for scheduled workouts",
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                             color = MediumLighterGray
                         )
                     }
@@ -372,7 +372,7 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Complete configuration on the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                 color = MediumLighterGray
                             )
                         } else {
@@ -384,7 +384,7 @@ fun WorkoutSelectionScreen(
                                     .animateItem(),
                                 text = "Install the companion app",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                 color = MediumLighterGray
                             )
                         }
@@ -425,7 +425,7 @@ fun WorkoutSelectionScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = "No Workouts Available",
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Thin),
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                 color = MediumLighterGray
                             )
                         }
