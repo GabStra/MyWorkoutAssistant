@@ -98,6 +98,7 @@ fun WorkoutCompleteScreen(
 
         val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
         prefs.edit { putBoolean("isWorkoutInProgress", false) }
+        viewModel.clearRecoveryCheckpoint()
 
         viewModel.setDimming(false)
         hapticsViewModel.doShortImpulse()

@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
+import androidx.core.content.edit
 import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.asIntState
@@ -43,6 +44,8 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private var applicationContext: android.content.Context? = null
+    private var lastCheckpointFingerprint: String? = null
+    private var pendingRecoveryCheckpoint: WorkoutRecoveryCheckpoint? = null
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -52,6 +55,11 @@ open class AppViewModel : WorkoutViewModel() {
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
+    }
+
+    private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
+        val context = applicationContext ?: return null
+        return WorkoutRecoveryCheckpointStore(context)
     }
 
     private fun getSyncedWorkoutHistoryIds(context: Context): Set<UUID> {
@@ -130,9 +138,58 @@ open class AppViewModel : WorkoutViewModel() {
         _incompleteWorkouts.value = emptyList()
     }
 
+    private val _showRecoveryPrompt = mutableStateOf(false)
+    val showRecoveryPrompt: State<Boolean> = _showRecoveryPrompt
+
+    private val _recoveryWorkout = mutableStateOf<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?>(null)
+    val recoveryWorkout: State<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?> = _recoveryWorkout
+
+    private val _showRecoveredWorkoutNotice = mutableStateOf(false)
+    val showRecoveredWorkoutNotice: State<Boolean> = _showRecoveredWorkoutNotice
+
+    fun consumeRecoveredWorkoutNotice() {
+        _showRecoveredWorkoutNotice.value = false
+    }
+
+    internal fun showProcessDeathRecoveryPrompt(
+        incompleteWorkout: com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout,
+        checkpoint: WorkoutRecoveryCheckpoint?
+    ) {
+        _recoveryWorkout.value = incompleteWorkout
+        _showRecoveryPrompt.value = true
+        pendingRecoveryCheckpoint = checkpoint
+    }
+
+    fun hideProcessDeathRecoveryPrompt() {
+        _showRecoveryPrompt.value = false
+        _recoveryWorkout.value = null
+    }
+
     fun prepareResumeWorkout(incompleteWorkout: WorkoutViewModel.IncompleteWorkout) {
         setSelectedWorkoutId(incompleteWorkout.workoutId)
         pendingResumeWorkoutHistoryId = incompleteWorkout.workoutHistory.id
+    }
+
+    internal fun getSavedRecoveryCheckpoint(): WorkoutRecoveryCheckpoint? {
+        return checkpointStore()?.load()
+    }
+
+    fun clearRecoveryCheckpoint() {
+        checkpointStore()?.clear()
+        lastCheckpointFingerprint = null
+        pendingRecoveryCheckpoint = null
+    }
+
+    fun clearWorkoutInProgressFlag() {
+        val context = applicationContext ?: return
+        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+        prefs.edit { putBoolean("isWorkoutInProgress", false) }
+    }
+
+    fun discardIncompleteWorkout(incompleteWorkout: WorkoutViewModel.IncompleteWorkout) {
+        launchIO {
+            workoutRecordDao.deleteByWorkoutId(incompleteWorkout.workoutId)
+        }
     }
 
     private val _hrDisplayMode = mutableStateOf(0)
@@ -246,6 +303,75 @@ open class AppViewModel : WorkoutViewModel() {
         if (_screenState.value != newState) {
             _screenState.value = newState
         }
+
+        persistRecoveryCheckpointForCurrentState(newState)
+    }
+
+    private fun persistRecoveryCheckpointForCurrentState(screenState: WorkoutScreenState) {
+        val context = applicationContext ?: return
+        val selectedWorkoutId = selectedWorkout.value.id
+
+        // Clear stale checkpoint when session is completed or not active.
+        if (screenState.workoutState is WorkoutState.Completed || screenState.sessionPhase != com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE) {
+            checkpointStore()?.clear()
+            lastCheckpointFingerprint = null
+            return
+        }
+
+        val currentState = screenState.workoutState
+        val stateType = when (currentState) {
+            is WorkoutState.Set -> RecoveryStateType.SET
+            is WorkoutState.Rest -> RecoveryStateType.REST
+            is WorkoutState.CalibrationLoadSelection -> RecoveryStateType.CALIBRATION_LOAD
+            is WorkoutState.CalibrationRIRSelection -> RecoveryStateType.CALIBRATION_RIR
+            else -> RecoveryStateType.UNKNOWN
+        }
+
+        if (stateType == RecoveryStateType.UNKNOWN) {
+            return
+        }
+
+        val exerciseId = when (currentState) {
+            is WorkoutState.Set -> currentState.exerciseId
+            is WorkoutState.Rest -> currentState.exerciseId
+            is WorkoutState.CalibrationLoadSelection -> currentState.exerciseId
+            is WorkoutState.CalibrationRIRSelection -> currentState.exerciseId
+            else -> null
+        }
+
+        val setId = when (currentState) {
+            is WorkoutState.Set -> currentState.set.id
+            is WorkoutState.Rest -> currentState.set.id
+            is WorkoutState.CalibrationLoadSelection -> currentState.calibrationSet.id
+            is WorkoutState.CalibrationRIRSelection -> currentState.calibrationSet.id
+            else -> null
+        }
+
+        val setIndex = when (currentState) {
+            is WorkoutState.Set -> currentState.setIndex
+            is WorkoutState.CalibrationLoadSelection -> currentState.setIndex
+            is WorkoutState.CalibrationRIRSelection -> currentState.setIndex
+            else -> null
+        }
+
+        val restOrder = (currentState as? WorkoutState.Rest)?.order
+
+        val checkpoint = WorkoutRecoveryCheckpoint(
+            workoutId = selectedWorkoutId,
+            workoutHistoryId = currentWorkoutHistory?.id,
+            stateType = stateType,
+            exerciseId = exerciseId,
+            setId = setId,
+            setIndex = setIndex,
+            restOrder = restOrder,
+            updatedAtEpochMs = System.currentTimeMillis()
+        )
+
+        val fingerprint = "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}"
+        if (fingerprint == lastCheckpointFingerprint) return
+
+        WorkoutRecoveryCheckpointStore(context).save(checkpoint)
+        lastCheckpointFingerprint = fingerprint
     }
 
     fun sendAll(context: Context) {
@@ -497,8 +623,26 @@ open class AppViewModel : WorkoutViewModel() {
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
-
+        val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()
         super.resumeWorkoutFromRecord {
+            val selectedWorkoutId = selectedWorkout.value.id
+            val checkpointApplied = if (checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
+                moveToRecoveredState(
+                    stateType = checkpoint.stateType.name,
+                    exerciseId = checkpoint.exerciseId,
+                    setId = checkpoint.setId,
+                    setIndex = checkpoint.setIndex,
+                    restOrder = checkpoint.restOrder
+                )
+            } else {
+                false
+            }
+
+            if (checkpointApplied) {
+                _showRecoveredWorkoutNotice.value = true
+            }
+
+            pendingRecoveryCheckpoint = null
             lightScreenUp()
             onEnd()
         }

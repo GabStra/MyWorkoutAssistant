@@ -51,6 +51,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
+import com.gabstra.myworkoutassistant.composables.ProcessDeathRecoveryDialog
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
@@ -459,16 +460,25 @@ fun WearApp(
                 // Check for incomplete workouts
                 val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
                 val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-
-                if (!isWorkoutInProgress) {
-                    try {
-                        val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
-                        if (incompleteWorkouts.isNotEmpty()) {
+                try {
+                    val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
+                    if (incompleteWorkouts.isNotEmpty()) {
+                        if (isWorkoutInProgress) {
+                            val checkpoint = appViewModel.getSavedRecoveryCheckpoint()
+                            if (checkpoint != null) {
+                                val candidate = incompleteWorkouts.firstOrNull { it.workoutId == checkpoint.workoutId }
+                                    ?: incompleteWorkouts.first()
+                                appViewModel.showProcessDeathRecoveryPrompt(candidate, checkpoint)
+                            }
+                        } else {
                             appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
                         }
-                    } catch (exception: Exception) {
-                        Log.e("MainActivity", "Error checking for incomplete workouts", exception)
+                    } else if (isWorkoutInProgress) {
+                        appViewModel.clearWorkoutInProgressFlag()
+                        appViewModel.clearRecoveryCheckpoint()
                     }
+                } catch (exception: Exception) {
+                    Log.e("MainActivity", "Error checking for incomplete workouts", exception)
                 }
 
                 val now = System.currentTimeMillis()
@@ -715,6 +725,9 @@ fun WearApp(
             // Resume workout dialog
             val showResumeDialog by appViewModel.showResumeWorkoutDialog
             val incompleteWorkouts by appViewModel.incompleteWorkouts
+            val showRecoveryPrompt by appViewModel.showRecoveryPrompt
+            val recoveryWorkout by appViewModel.recoveryWorkout
+            val showRecoveredNotice by appViewModel.showRecoveredWorkoutNotice
 
             val basePermissions = listOf(
                 android.Manifest.permission.BODY_SENSORS,
@@ -745,6 +758,12 @@ fun WearApp(
                     }
                 }
 
+            LaunchedEffect(showRecoveredNotice) {
+                if (!showRecoveredNotice) return@LaunchedEffect
+                Toast.makeText(localContext, "Recovered workout", Toast.LENGTH_SHORT).show()
+                appViewModel.consumeRecoveredWorkoutNotice()
+            }
+
             ResumeWorkoutDialog(
                 show = showResumeDialog,
                 hapticsViewModel = hapticsViewModel,
@@ -758,7 +777,22 @@ fun WearApp(
                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                 }
             )
+
+            ProcessDeathRecoveryDialog(
+                show = showRecoveryPrompt,
+                workout = recoveryWorkout,
+                onResume = { incompleteWorkout ->
+                    appViewModel.hideProcessDeathRecoveryPrompt()
+                    appViewModel.prepareResumeWorkout(incompleteWorkout)
+                    permissionLauncherResume.launch(basePermissions.toTypedArray())
+                },
+                onDiscard = { incompleteWorkout ->
+                    appViewModel.discardIncompleteWorkout(incompleteWorkout)
+                    appViewModel.clearWorkoutInProgressFlag()
+                    appViewModel.clearRecoveryCheckpoint()
+                    appViewModel.hideProcessDeathRecoveryPrompt()
+                }
+            )
         }
     }
 }
-

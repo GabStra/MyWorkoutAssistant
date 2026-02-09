@@ -1246,6 +1246,112 @@ open class WorkoutViewModel(
         }
     }
 
+    /**
+     * Attempts to move the current state machine pointer to a recovery target.
+     * Returns true when a matching state was found and selected.
+     */
+    fun moveToRecoveredState(
+        stateType: String,
+        exerciseId: UUID?,
+        setId: UUID?,
+        setIndex: UInt?,
+        restOrder: UInt?
+    ): Boolean {
+        val machine = stateMachine ?: return false
+        if (machine.allStates.isEmpty()) return false
+
+        val targetIndex = findRecoveryStateIndex(
+            allStates = machine.allStates,
+            stateType = stateType,
+            exerciseId = exerciseId,
+            setId = setId,
+            setIndex = setIndex,
+            restOrder = restOrder
+        ) ?: return false
+
+        stateMachine = machine.withCurrentIndex(targetIndex)
+        updateStateFlowsFromMachine()
+
+        val setState = _workoutState.value as? WorkoutState.Set
+        if (setState != null) {
+            val executedSetHistories = executedSetStore.executedSets.value
+            workoutTimerRestoreService.restoreTimerForTimeSet(setState, executedSetHistories, TAG)
+        }
+
+        return true
+    }
+
+    private fun findRecoveryStateIndex(
+        allStates: List<WorkoutState>,
+        stateType: String,
+        exerciseId: UUID?,
+        setId: UUID?,
+        setIndex: UInt?,
+        restOrder: UInt?
+    ): Int? {
+        fun firstMatching(predicate: (WorkoutState) -> Boolean): Int? {
+            val index = allStates.indexOfFirst(predicate)
+            return index.takeIf { it >= 0 }
+        }
+
+        val normalizedStateType = stateType.uppercase()
+
+        val exactMatch = when (normalizedStateType) {
+            "SET" -> firstMatching { state ->
+                state is WorkoutState.Set &&
+                    (setId == null || state.set.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (setIndex == null || state.setIndex == setIndex)
+            }
+
+            "REST" -> firstMatching { state ->
+                state is WorkoutState.Rest &&
+                    (setId == null || state.set.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (restOrder == null || state.order == restOrder)
+            }
+
+            "CALIBRATION_LOAD" -> firstMatching { state ->
+                state is WorkoutState.CalibrationLoadSelection &&
+                    (setId == null || state.calibrationSet.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (setIndex == null || state.setIndex == setIndex)
+            }
+
+            "CALIBRATION_RIR" -> firstMatching { state ->
+                state is WorkoutState.CalibrationRIRSelection &&
+                    (setId == null || state.calibrationSet.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (setIndex == null || state.setIndex == setIndex)
+            }
+
+            else -> null
+        }
+
+        if (exactMatch != null) return exactMatch
+
+        // Calibration fallback when calibration selection states are missing in regenerated sequence.
+        if (normalizedStateType == "CALIBRATION_LOAD" || normalizedStateType == "CALIBRATION_RIR") {
+            val calibrationSetFallback = firstMatching { state ->
+                state is WorkoutState.Set &&
+                    state.isCalibrationSet &&
+                    (setId == null || state.set.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (setIndex == null || state.setIndex == setIndex)
+            }
+            if (calibrationSetFallback != null) return calibrationSetFallback
+        }
+
+        val genericSetFallback = firstMatching { state ->
+            state is WorkoutState.Set &&
+                (exerciseId == null || state.exerciseId == exerciseId) &&
+                (setIndex == null || state.setIndex == setIndex)
+        }
+        if (genericSetFallback != null) return genericSetFallback
+
+        return firstMatching { _ -> true }
+    }
+
     private suspend fun resetWorkoutRuntimeState() {
         stateMachine = null
         setStates.clear()

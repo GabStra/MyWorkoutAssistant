@@ -227,6 +227,7 @@ fun PageButtons(
                         // Clear workout in progress flag
                         val prefs = context.getSharedPreferences("workout_state", android.content.Context.MODE_PRIVATE)
                         prefs.edit { putBoolean("isWorkoutInProgress", false) }
+                        viewModel.clearRecoveryCheckpoint()
                         
                         // Flush any pending sync before navigating away
                         scope.launch {

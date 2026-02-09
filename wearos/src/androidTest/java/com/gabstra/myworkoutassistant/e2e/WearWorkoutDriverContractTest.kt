@@ -102,12 +102,15 @@ class WearWorkoutDriverContractTest : BaseWearE2ETest() {
 
     @Test
     fun driver_goHomeAndVerifySelection_returnsToWorkoutSelection() {
-        CompletionWorkoutStoreFixture.setupWorkoutStore(context)
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
-        startWorkout(CompletionWorkoutStoreFixture.getWorkoutName())
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
         workoutDriver.completeCurrentSet()
-        workoutDriver.waitForWorkoutCompletion(timeoutMs = 15_000)
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+
+        val restVisible = device.wait(Until.hasObject(By.textContains(":")), 5_000)
+        require(restVisible) { "Expected rest timer before Go Home" }
 
         workoutDriver.goHomeAndVerifySelection(timeoutMs = 10_000)
     }

@@ -150,6 +150,7 @@ fun WorkoutScreen(
 
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
             prefs.edit { putBoolean("isWorkoutInProgress", false) }
+            viewModel.clearRecoveryCheckpoint()
 
             //viewModel.pushAndStoreWorkoutData(false,context)
             try {

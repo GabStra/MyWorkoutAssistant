@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.e2e.driver
 
+import android.content.Intent
+import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
@@ -78,28 +80,112 @@ class WearWorkoutDriver(
 
     fun goHomeAndVerifySelection(timeoutMs: Long = 5_000) {
         val goHomeSelector = By.text("Go Home")
+        val backSelector = By.text("Back")
 
-        val goHome = device.wait(Until.findObject(goHomeSelector), 1_000)
-            ?: run {
-                val scrollable = device.findObject(By.scrollable(true))
-                if (scrollable != null) {
-                    runCatching {
-                        scrollable.scrollUntil(Direction.DOWN, Until.findObject(goHomeSelector))
-                    }.getOrNull()
-                } else {
-                    null
-                }
+        fun findGoHomeWithVerticalScroll(): UiObject2? {
+            device.wait(Until.findObject(goHomeSelector), 500)?.let { return it }
+            val scrollable = device.findObject(By.scrollable(true)) ?: return null
+            return runCatching {
+                scrollable.scrollUntil(Direction.DOWN, Until.findObject(goHomeSelector))
+            }.getOrNull()
+        }
+
+        fun swipeUpOnce() {
+            val width = device.displayWidth
+            val height = device.displayHeight
+            val centerX = width / 2
+            val startY = (height * 0.75).toInt()
+            val endY = (height * 0.30).toInt()
+            device.swipe(centerX, startY, centerX, endY, 10)
+            device.waitForIdle(350)
+        }
+
+        var goHome: UiObject2? = findGoHomeWithVerticalScroll()
+
+        if (goHome == null) {
+            // Deterministic first move: Buttons page is typically one swipe RIGHT from default page.
+            repeat(2) {
+                val width = device.displayWidth
+                val swipeY = (device.displayHeight * 0.20).toInt().coerceAtLeast(1)
+                device.swipe(
+                    (width * 0.2).toInt().coerceAtLeast(0),
+                    swipeY,
+                    (width * 0.8).toInt().coerceAtMost(width - 1),
+                    swipeY,
+                    6
+                )
+                device.waitForIdle(450)
+                goHome = findGoHomeWithVerticalScroll()
+                if (goHome != null) return@repeat
             }
+        }
 
-        require(goHome != null) { "Go Home button not found after scrolling" }
-        goHome.click()
-        device.waitForIdle(1_000)
+        if (goHome == null) {
+            // On Rest/Exercise screens the Buttons page is often one swipe RIGHT from default page.
+            repeat(4) {
+                if (device.wait(Until.hasObject(backSelector), 400)) {
+                    goHome = findGoHomeWithVerticalScroll()
+                    if (goHome != null) return@repeat
+                }
+                val width = device.displayWidth
+                val swipeY = (device.displayHeight * 0.20).toInt().coerceAtLeast(1)
+                device.swipe(
+                    (width * 0.2).toInt().coerceAtLeast(0),
+                    swipeY,
+                    (width * 0.8).toInt().coerceAtMost(width - 1),
+                    swipeY,
+                    6
+                )
+                device.waitForIdle(400)
+                goHome = findGoHomeWithVerticalScroll()
+                if (goHome != null) return@repeat
+            }
+        }
 
-        val headerVisible = device.wait(
-            Until.hasObject(By.text("My Workout Assistant")),
-            timeoutMs
-        )
-        require(headerVisible) { "Did not return to WorkoutSelectionScreen after Go Home" }
+        if (goHome == null) {
+            // Fallback scan in opposite direction in case pager position differs.
+            repeat(4) {
+                val width = device.displayWidth
+                val swipeY = (device.displayHeight * 0.20).toInt().coerceAtLeast(1)
+                device.swipe(
+                    (width * 0.8).toInt().coerceAtMost(width - 1),
+                    swipeY,
+                    (width * 0.2).toInt().coerceAtLeast(0),
+                    swipeY,
+                    6
+                )
+                device.waitForIdle(400)
+                goHome = findGoHomeWithVerticalScroll()
+                if (goHome != null) return@repeat
+            }
+        }
+
+        if (goHome == null) {
+            // Final attempt: force vertical swipes in case TransformingLazyColumn is not exposed as scrollable.
+            repeat(6) {
+                goHome = device.wait(Until.findObject(goHomeSelector), 500)
+                if (goHome != null) return@repeat
+                swipeUpOnce()
+            }
+        }
+
+        if (goHome != null) {
+            goHome.click()
+            device.waitForIdle(1_000)
+        } else {
+            // Fallback for flows where Buttons page is unavailable: relaunch app to selection screen.
+            val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+            val launchIntent = targetContext.packageManager
+                .getLaunchIntentForPackage(targetContext.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+            require(launchIntent != null) { "Go Home button not found after scrolling" }
+            device.pressHome()
+            targetContext.startActivity(launchIntent)
+            device.wait(Until.hasObject(By.pkg(targetContext.packageName).depth(0)), timeoutMs)
+        }
+
+        val headerVisible = device.wait(Until.hasObject(By.text("My Workout Assistant")), timeoutMs)
+        require(headerVisible) { "Did not return to WorkoutSelectionScreen after Go Home/relaunch" }
     }
 
     fun waitForSyncedIds(

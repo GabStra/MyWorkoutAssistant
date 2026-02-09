@@ -487,20 +487,18 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         )
         require(restTimerVisible) { "Rest screen did not appear" }
 
-        // Navigate to Buttons page to find "Go Home"
-        // Swipe through pages to find "Go Home" button
-        var goHomeFound = false
-        for (i in 0..5) {
-            if (device.wait(Until.hasObject(By.text("Back")), 1_000)) {
-                goHomeFound = true
-                break
-            }
-            navigateToPagerPage(PagerDirection.LEFT)
-        }
-        require(goHomeFound) { "Go Home button not found" }
+        // Simulate leaving app while workout is active
+        device.pressHome()
+        device.waitForIdle(1_000)
 
-        // Go home
-        goHome()
+        // Relaunch to verify workout record persisted
+        launchAppFromHome()
+        val resumePromptVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
+        if (!resumePromptVisible) {
+            clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
+            val resumeButtonVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
+            require(resumeButtonVisible) { "Paused workout was not persisted (Resume not visible)" }
+        }
     }
 
     @Test
@@ -524,22 +522,19 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         )
         require(restTimerVisible) { "Rest screen did not appear" }
 
-        // Find and click "Go Home"
-        var goHomeFound = false
-        for (i in 0..5) {
-            if (device.wait(Until.hasObject(By.text("Go Home")), 1_000)) {
-                goHomeFound = true
-                break
-            }
-            navigateToPagerPage(PagerDirection.LEFT)
-        }
-        require(goHomeFound) { "Go Home button not found" }
-        goHome()
+        // Simulate abrupt app interruption while workout is active (process death/resume scenario)
+        device.pressHome()
+        device.waitForIdle(1_000)
 
         // Relaunch and resume
         launchAppFromHome()
-        clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
-        clickText("Resume")
+        val resumePromptVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
+        if (resumePromptVisible) {
+            clickText("Resume")
+        } else {
+            clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
+            clickText("Resume")
+        }
 
         // Dismiss tutorials that may appear when resuming (HEART_RATE and REST_SCREEN)
         // SET_SCREEN is already handled by startWorkout(), but we're resuming so we need to handle it
@@ -577,17 +572,9 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         )
         require(restTimerVisible) { "Rest screen did not appear" }
 
-        // Go home
-        var goHomeFound = false
-        for (i in 0..5) {
-            if (device.wait(Until.hasObject(By.text("Back")), 1_000)) {
-                goHomeFound = true
-                break
-            }
-            navigateToPagerPage(PagerDirection.LEFT)
-        }
-        require(goHomeFound) { "Back button not found" }
-        goHome()
+        // Simulate leaving app while workout is active
+        device.pressHome()
+        device.waitForIdle(1_000)
 
         // Relaunch
         launchAppFromHome()
@@ -610,10 +597,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         confirmLongPressDialog()
 
         // Verify workout can be started fresh (Start button should be available)
-        val startVisible = device.wait(
-            Until.hasObject(By.text("Start")),
-            3_000
-        )
+        val startVisible =
+            scrollUntilFound(By.desc("Start workout"), Direction.DOWN, 1_500) != null ||
+            scrollUntilFound(By.text("Start"), Direction.DOWN, 1_500) != null ||
+            scrollUntilFound(By.desc("Start"), Direction.DOWN, 1_500) != null
         require(startVisible) { "Start button not available after deleting paused workout" }
     }
 

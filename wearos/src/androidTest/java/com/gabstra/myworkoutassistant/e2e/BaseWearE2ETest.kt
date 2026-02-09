@@ -265,20 +265,21 @@ abstract class BaseWearE2ETest {
         // Get screen dimensions for swipe
         val width = device.displayWidth
         val height = device.displayHeight
-        val centerY = height / 2
+        // Use upper area for pager swipes so Rest timer touch targets in center don't intercept gestures.
+        val swipeY = (height * 0.20).toInt().coerceAtLeast(1)
 
         when (direction) {
             PagerDirection.LEFT -> {
                 // Swipe left to go to next page - swipe from 80% to 20% of screen width for more reliable page change
                 val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
                 val endX = (width * 0.2).toInt().coerceAtLeast(0)
-                device.swipe(startX, centerY, endX, centerY, 5)
+                device.swipe(startX, swipeY, endX, swipeY, 5)
             }
             PagerDirection.RIGHT -> {
                 // Swipe right to go to previous page - swipe from 20% to 80% of screen width for more reliable page change
                 val startX = (width * 0.2).toInt().coerceAtLeast(0)
                 val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
-                device.swipe(startX, centerY, endX, centerY, 5)
+                device.swipe(startX, swipeY, endX, swipeY, 5)
             }
         }
         device.waitForIdle(500)
