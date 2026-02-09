@@ -7,6 +7,8 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
+import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetWorkoutStoreFixture
@@ -19,6 +21,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class WorkoutE2ETest : BaseWearE2ETest() {
+    private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
     override fun baseSetUp() {
@@ -36,6 +39,9 @@ class WorkoutE2ETest : BaseWearE2ETest() {
             android.Manifest.permission.BLUETOOTH_SCAN,
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
+        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
+            longPressByDesc(desc, timeout)
+        }
     }
 
     // ==================== Helper Methods ====================
@@ -46,30 +52,14 @@ class WorkoutE2ETest : BaseWearE2ETest() {
      * After completing, dismisses rest screen tutorial if it appears.
      */
     private fun confirmLongPressDialog() {
-        device.waitForIdle(1_000)
-        longPressByDesc("Done")
-        device.waitForIdle(1_000)
+        workoutDriver.confirmLongPressDialog()
     }
 
     /**
      * Skips the rest timer by triggering the "Skip Rest" dialog and confirming.
      */
     private fun skipRest() {
-        // Double-press back to trigger skip rest dialog
-        device.pressBack()
-        device.waitForIdle(200)
-        device.pressBack()
-        device.waitForIdle(500)
-
-        // Wait for "Skip Rest" dialog
-        val dialogAppeared = device.wait(
-            Until.hasObject(By.text("Skip Rest")),
-            3_000
-        )
-        require(dialogAppeared) { "Skip Rest dialog did not appear" }
-
-        // Long-press the "Done" button to confirm skip
-        longPressByDesc("Done")
+        workoutDriver.skipRest()
     }
 
     /**
@@ -100,34 +90,14 @@ class WorkoutE2ETest : BaseWearE2ETest() {
      * Taps the "Go Home" button and verifies navigation to WorkoutSelectionScreen.
      */
     private fun goHome() {
-        val goHomeSelector = By.text("Go Home")
-        
-        // If not immediately visible or not clickable, scroll until found
-        scrollUntilFound(goHomeSelector, Direction.DOWN, 3_000)?.let { btn ->
-            runCatching { btn.click() }
-            device.waitForIdle(1000)
-            // Verify we're back at WorkoutSelectionScreen
-            val headerVisible = device.wait(
-                Until.hasObject(By.text("My Workout Assistant")),
-                5_000
-            )
-            require(headerVisible) { "Did not return to WorkoutSelectionScreen after Go Home" }
-            return
-        }
-        
-        // If still not found after scrolling, fail
-        require(false) { "Go Home button not found after scrolling" }
+        workoutDriver.goHomeAndVerifySelection()
     }
 
     /**
      * Waits for the workout completion screen to appear.
      */
     private fun waitForWorkoutCompletion() {
-        val completedVisible = device.wait(
-            Until.hasObject(By.text("Completed")),
-            10_000
-        )
-        require(completedVisible) { "Workout completion screen did not appear" }
+        workoutDriver.waitForWorkoutCompletion()
     }
 
     // ==================== Test Methods ====================
@@ -369,6 +339,54 @@ class WorkoutE2ETest : BaseWearE2ETest() {
             5_000
         )
         require(headerVisible) { "Did not return to WorkoutSelectionScreen after completion dialog" }
+    }
+
+    @Test
+    fun calibrationExercise_flowCompletesAndReachesWorkoutCompletion() {
+        CalibrationRequiredWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+
+        startWorkout(CalibrationRequiredWorkoutStoreFixture.getWorkoutName())
+
+        // Calibration load selection should be visible first.
+        val calibrationLoadVisible = device.wait(
+            Until.hasObject(By.textContains("Select load for")),
+            5_000
+        )
+        require(calibrationLoadVisible) { "Calibration load selection did not appear" }
+
+        // Confirm selected calibration load.
+        device.pressBack()
+        confirmLongPressDialog()
+
+        // Calibration execution set should appear before RIR selection.
+        val calibrationExecutionVisible = device.wait(
+            Until.hasObject(By.text("Calibrated Bench Press")),
+            5_000
+        )
+        require(calibrationExecutionVisible) { "Calibration execution set did not appear" }
+
+        // Complete calibration execution set.
+        device.pressBack()
+        confirmLongPressDialog()
+
+        // Calibration RIR selection must appear after calibration execution.
+        val calibrationRirVisible = device.wait(
+            Until.hasObject(By.text("0 = Form Breaks")),
+            5_000
+        )
+        require(calibrationRirVisible) { "Calibration RIR selection did not appear" }
+
+        // Confirm default RIR value.
+        device.pressBack()
+        confirmLongPressDialog()
+
+        // Verify the flow advances out of RIR selection after confirmation.
+        val rirSelectionGone = device.wait(
+            Until.gone(By.text("0 = Form Breaks")),
+            5_000
+        )
+        require(rirSelectionGone) { "Calibration flow did not advance after confirming RIR" }
     }
 
     // ==================== Pager Navigation Tests ====================
@@ -759,4 +777,3 @@ class WorkoutE2ETest : BaseWearE2ETest() {
     }
 
 }
-

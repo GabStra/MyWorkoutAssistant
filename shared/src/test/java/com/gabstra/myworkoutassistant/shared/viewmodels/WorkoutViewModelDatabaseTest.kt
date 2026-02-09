@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
 import android.content.Context
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -19,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
+import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -745,6 +747,73 @@ class WorkoutViewModelDatabaseTest {
 
         val record = database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
         assertNull("No WorkoutRecord should be inserted when both _workoutRecord and currentWorkoutHistory are null", record)
+    }
+
+    @Test
+    fun pushAndStoreWorkoutData_waitsForPendingSetStoreBeforeSnapshot() = runTest(testDispatcher) {
+        val exercise = Exercise(
+            id = testExercise1Id,
+            enabled = true,
+            name = "Bench Press",
+            doNotStoreHistory = false,
+            notes = "",
+            sets = emptyList(),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 1,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = testEquipmentId,
+            bodyWeightPercentage = null,
+            generateWarmUpSets = false,
+            enableProgression = true,
+            keepScreenOn = false,
+            showCountDownTimer = false,
+            intraSetRestInSeconds = null,
+            loadJumpDefaultPct = 0.025,
+            loadJumpMaxPct = 0.5,
+            loadJumpOvercapUntil = 2
+        )
+        viewModel.exercisesById = mapOf(exercise.id to exercise)
+        viewModel.startWorkoutTime = LocalDateTime.now()
+
+        val set = WeightSet(testSet1Id, 8, 100.0)
+        val setState = WorkoutState.Set(
+            exerciseId = exercise.id,
+            set = set,
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(initializeSetData(set)),
+            hasNoHistory = true,
+            startTime = LocalDateTime.now(),
+            skipped = false,
+            currentBodyWeight = 75.0,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipment = null
+        )
+        @Suppress("UNCHECKED_CAST")
+        val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
+        workoutStateFlow.value = setState
+
+        // Queue set persistence but do not drain the dispatcher before pushing.
+        viewModel.storeSetData()
+        viewModel.pushAndStoreWorkoutData(isDone = false, context = context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val histories = database.workoutHistoryDao().getAllWorkoutHistories()
+        assertTrue("WorkoutHistory should be inserted", histories.isNotEmpty())
+        val storedSetHistories = database.setHistoryDao().getSetHistoriesByWorkoutHistoryId(histories.first().id)
+        assertEquals(
+            "Push snapshot should include the pending set persisted right before push",
+            1,
+            storedSetHistories.size
+        )
+        assertEquals("Stored set should match the active state set id", set.id, storedSetHistories.first().setId)
     }
 }
 

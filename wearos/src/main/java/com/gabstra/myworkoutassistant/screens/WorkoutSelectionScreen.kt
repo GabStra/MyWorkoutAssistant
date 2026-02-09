@@ -33,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -98,7 +100,9 @@ private fun Workout.hasEnabledExerciseWithSet(): Boolean {
 @Composable
 fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit, modifier: Modifier, transformation: SurfaceTransformation) {
     ButtonWithText(
-        modifier = modifier,
+        modifier = modifier.semantics {
+            contentDescription = "Open workout: ${workout.name}"
+        },
         transformation = transformation,
         text = workout.name,
         onClick = { onItemClick() }

@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceOps
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -187,6 +188,34 @@ private fun WorkoutViewModel.updateWorkSetStatesInList(
     }
 }
 
+private fun WorkoutViewModel.applyWorkSetUpdateToState(
+    state: WorkoutState,
+    currentState: WorkoutState.CalibrationRIRSelection,
+    setUpdates: Map<UUID, Set>
+): WorkoutState {
+    if (state !is WorkoutState.Set) return state
+    if (WorkoutStateQueries.stateExerciseId(state) != currentState.exerciseId) return state
+
+    val updatedSet = setUpdates[WorkoutStateQueries.stateSetId(state)]
+    return if (updatedSet != null && !state.isCalibrationSet) {
+        // Work set: keep Set object and SetData aligned with adjusted load.
+        val newSetData = updateWorkSetStateData(state, updatedSet)
+        state.set = updatedSet
+        state.currentSetData = newSetData
+        state.copy(previousSetData = newSetData)
+    } else if (state.isCalibrationSet) {
+        // Calibration execution set: keep previous data aligned with executed data after RIR capture.
+        val updatedPreviousSetData = updateCalibrationSetPreviousData(state)
+        if (updatedPreviousSetData != null) {
+            state.copy(previousSetData = updatedPreviousSetData)
+        } else {
+            state
+        }
+    } else {
+        state
+    }
+}
+
 private fun WorkoutViewModel.calculateNewCurrentIndex(
     calibrationSetIndex: Int,
     currentIndex: Int,
@@ -330,11 +359,17 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                 }
             })
             
+            val fullyUpdatedMachine = updatedMachine.editSequence(transform = { sequence ->
+                WorkoutStateSequenceOps.mapSequenceStates(sequence) { state ->
+                    applyWorkSetUpdateToState(state, currentState, setUpdates)
+                }
+            })
+
             // Adjust current index if we removed CalibrationRIRSelection
             // If we were at CalibrationRIRSelection, move to next state after calibration Set execution
-            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, updatedMachine.allStates)
+            val newCurrentIndex = calculateNewCurrentIndex(calibrationSetIndex, currentIndex, fullyUpdatedMachine.allStates)
             
-            stateMachine = updatedMachine.withCurrentIndex(newCurrentIndex)
+            stateMachine = fullyUpdatedMachine.withCurrentIndex(newCurrentIndex)
             populateNextStateSets()
             updateStateFlowsFromMachine()
             

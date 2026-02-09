@@ -51,6 +51,7 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -148,6 +149,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-alpha07")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

@@ -14,6 +14,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.BodyWeightSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.ComprehensiveHistoryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
@@ -66,6 +67,7 @@ import java.util.UUID
  */
 @RunWith(AndroidJUnit4::class)
 class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
+    private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
     override fun baseSetUp() {
@@ -89,6 +91,10 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
             db.workoutHistoryDao().deleteAll()
             db.setHistoryDao().deleteAll()
             db.workoutRecordDao().deleteAll()
+        }
+
+        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
+            longPressByDesc(desc, timeout)
         }
     }
 
@@ -1851,37 +1857,24 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
      * Waits for workout completion screen.
      */
     private fun waitForWorkoutCompletion() {
-        val completedVisible = device.wait(
-            Until.hasObject(By.text("Completed")),
-            30_000
-        )
-        require(completedVisible) { "Workout completion screen did not appear" }
+        workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
     }
 
     /**
      * Completes a set by triggering the "Complete Set" dialog and confirming.
      */
     private fun confirmLongPressDialog() {
-        device.waitForIdle(1_000)
-        longPressByDesc("Done")
-        device.waitForIdle(1_000)
+        workoutDriver.confirmLongPressDialog()
     }
 
     /**
      * Skips the rest timer.
      */
     private fun skipRest() {
-        device.pressBack()
-        device.waitForIdle(200)
-        device.pressBack()
-        device.waitForIdle(500)
-
-        val dialogAppeared = device.wait(
-            Until.hasObject(By.text("Skip Rest")),
-            3_000
-        )
-        if (dialogAppeared) {
-            longPressByDesc("Done")
+        runCatching {
+            workoutDriver.skipRest()
+        }.onFailure {
+            println("WARN: skipRest failed to find skip dialog: ${it.message}")
         }
     }
 

@@ -1455,20 +1455,15 @@ open class WorkoutViewModel(
         forceNotSend: Boolean = false,
         onEnd: suspend () -> Unit = {}
     ) {
-        val startWorkoutTimeSnapshot = startWorkoutTime
-        val selectedWorkoutSnapshot = selectedWorkout.value
-        val currentWorkoutHistorySnapshot = currentWorkoutHistory
-        val heartBeatHistorySnapshot = heartBeatHistory.toList()
-        val progressionByExerciseIdSnapshot = exerciseProgressionByExerciseId.toMap()
-        val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
-            startWorkoutTime = startWorkoutTimeSnapshot,
-            selectedWorkout = selectedWorkoutSnapshot,
-            currentWorkoutHistory = currentWorkoutHistorySnapshot,
-            heartBeatRecords = heartBeatHistorySnapshot,
-            progressionByExerciseId = progressionByExerciseIdSnapshot
-        ) ?: return
         launchIO {
             storeSetDataJob?.join()
+            val snapshot = workoutPersistenceCoordinator.capturePushWorkoutDataSnapshot(
+                startWorkoutTime = startWorkoutTime,
+                selectedWorkout = selectedWorkout.value,
+                currentWorkoutHistory = currentWorkoutHistory,
+                heartBeatRecords = heartBeatHistory.toList(),
+                progressionByExerciseId = exerciseProgressionByExerciseId.toMap()
+            ) ?: return@launchIO
             val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
                 snapshot = snapshot,
                 isDone = isDone,

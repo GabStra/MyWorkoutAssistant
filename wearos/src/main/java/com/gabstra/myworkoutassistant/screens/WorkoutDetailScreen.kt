@@ -24,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -157,7 +159,11 @@ fun WorkoutDetailScreen(
         val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
         val spec = rememberTransformationSpec()
 
-        Box {
+        Box(
+            modifier = Modifier.semantics {
+                contentDescription = "Workout detail: ${workout.name}"
+            }
+        ) {
             ScreenScaffold(
                 scrollState = state,
                 scrollIndicator = {
@@ -196,6 +202,7 @@ fun WorkoutDetailScreen(
                     item {
                         Button(
                             modifier = Modifier
+                                .semantics { contentDescription = "Start workout" }
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec).animateItem(),
                             transformation = SurfaceTransformation(spec),
@@ -222,6 +229,7 @@ fun WorkoutDetailScreen(
                         item {
                             Button(
                                 modifier = Modifier
+                                    .semantics { contentDescription = "Resume workout" }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec).animateItem(),
                                 transformation = SurfaceTransformation(spec),

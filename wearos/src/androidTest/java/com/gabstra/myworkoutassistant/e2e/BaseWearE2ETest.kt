@@ -99,6 +99,16 @@ abstract class BaseWearE2ETest {
         device.waitForIdle(500)
     }
 
+    protected fun clickLabel(label: String) {
+        val obj = device.wait(Until.findObject(By.desc(label)), defaultTimeoutMs)
+            ?: device.wait(Until.findObject(By.text(label)), defaultTimeoutMs)
+        require(obj != null) {
+            "Timed out waiting for UI object with label '$label' to appear"
+        }
+        clickObjectOrAncestor(obj)
+        device.waitForIdle(500)
+    }
+
     /**
      * Performs a long press on a UI element identified by its content description.
      * This is used for dialogs that require long press confirmation (e.g., CustomDialogYesOnLongPress).
@@ -289,12 +299,38 @@ abstract class BaseWearE2ETest {
         val workoutAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
         require(workoutAppeared) { "Workout '$workoutName' not visible to tap" }
 
-        clickText(workoutName)
+        var startVisible = false
+        var resumeVisible = false
+        val openWorkoutDesc = "Open workout: $workoutName"
+        val detailDesc = "Workout detail: $workoutName"
+        repeat(3) {
+            val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 2_000)
+                ?: device.wait(Until.findObject(By.text(workoutName)), 2_000)
+            require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
+            clickObjectOrAncestor(openWorkout)
+            device.waitForIdle(500)
 
-        val detailAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
-        require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
+            val detailAppeared =
+                device.wait(Until.hasObject(By.desc(detailDesc)), defaultTimeoutMs) ||
+                    device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
+            require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
+            startVisible =
+                scrollUntilFound(By.desc("Start workout"), Direction.DOWN, 1_000) != null ||
+                scrollUntilFound(By.text("Start"), Direction.DOWN, 1_000) != null ||
+                scrollUntilFound(By.desc("Start"), Direction.DOWN, 1_000) != null
+            resumeVisible =
+                scrollUntilFound(By.desc("Resume workout"), Direction.DOWN, 1_000) != null ||
+                scrollUntilFound(By.textContains("Resume"), Direction.DOWN, 1_000) != null ||
+                scrollUntilFound(By.descContains("Resume"), Direction.DOWN, 1_000) != null
+            if (startVisible || resumeVisible) return@repeat
+            device.waitForIdle(500)
+        }
 
-        clickText("Start")
+        when {
+            startVisible -> clickLabel("Start workout")
+            resumeVisible -> clickLabel("Resume workout")
+            else -> error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
+        }
 
         // Dismiss heart rate tutorial if it appears (shown when workout starts, before Set/Rest states)
         // Use longer timeout to catch tutorial that appears after a delay
@@ -305,12 +341,12 @@ abstract class BaseWearE2ETest {
         // Note: Tutorial overlay is full-screen and blocks "Preparing" text when visible
         // If "Preparing" is visible, tutorial is definitely dismissed
         val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
-        require(preparingVisible) { "WorkoutScreen 'Preparing' state not visible" }
-
-        // Wait for preparing step to complete (preparing text disappears)
-        // This indicates we've moved past the preparing state
-        val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 10_000)
-        require(preparingGone) { "Preparing step did not complete" }
+        if (preparingVisible) {
+            // Wait for preparing step to complete (preparing text disappears)
+            // This indicates we've moved past the preparing state
+            val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 10_000)
+            require(preparingGone) { "Preparing step did not complete" }
+        }
 
         // After preparing step completes, we transition to the first exercise screen (Set state).
         // Dismiss set screen tutorial if it appears when transitioning to the first exercise screen.

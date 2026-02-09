@@ -6,6 +6,12 @@
 - Always run E2E tests via the PowerShell script (e.g., `pwsh ./scripts/run_wear_e2e.ps1`) rather than invoking Gradle directly.
 - When targeting a specific test class, call `pwsh ./scripts/run_wear_e2e.ps1 -TestClass <ClassName>` using a class from the `com.gabstra.myworkoutassistant.e2e` package (do not pass a fully qualified name).
 - When targeting a specific test method, provide both `-TestClass <ClassName>` (from the `com.gabstra.myworkoutassistant.e2e` package) and `-TestMethod <MethodName>`.
+- For cross-device sync E2E (Wear + phone emulator), run `pwsh ./scripts/run_cross_device_sync_e2e.ps1`.
+- The cross-device script requires at least one connected Wear emulator/device and one connected phone emulator/device via `adb`.
+- The cross-device script installs the mobile debug app, runs Wear producer E2E (`CrossDeviceWorkoutSyncProducerE2ETest`) via `run_wear_e2e.ps1`, then runs mobile verification (`com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest`).
+- To override classes, use:
+  - `pwsh ./scripts/run_cross_device_sync_e2e.ps1 -WearTestClass CrossDeviceWorkoutSyncProducerE2ETest`
+  - `pwsh ./scripts/run_cross_device_sync_e2e.ps1 -MobileTestClass com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest`
 
 ## Coding Conventions
 

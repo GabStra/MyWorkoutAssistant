@@ -570,6 +570,8 @@ object SyncHandshakeManager {
     private val pendingAcks = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val pendingCompletions = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val pendingErrors = ConcurrentHashMap<String, CompletableDeferred<String>>()
+    private val completedCompletions = ConcurrentHashMap.newKeySet<String>()
+    private val completedErrors = ConcurrentHashMap<String, String>()
 
     fun registerAckWaiter(transactionId: String): CompletableDeferred<Unit> {
         val deferred = CompletableDeferred<Unit>()
@@ -578,36 +580,34 @@ object SyncHandshakeManager {
     }
 
     fun registerCompletionWaiter(transactionId: String): CompletableDeferred<Unit> {
-        // Use compute to atomically check if there's already a completed deferred
-        // This prevents race conditions where completion arrives between registration and wait
+        if (completedCompletions.remove(transactionId)) {
+            return CompletableDeferred<Unit>().apply { complete(Unit) }
+        }
         return pendingCompletions.compute(transactionId) { _, existing ->
-            if (existing != null && existing.isCompleted) {
-                // Reuse the already-completed deferred
-                existing
-            } else {
-                // Create new deferred, but cancel the old one if it exists and isn't completed
-                existing?.cancel()
-                CompletableDeferred<Unit>()
+            when {
+                existing == null -> CompletableDeferred<Unit>()
+                existing.isCancelled -> CompletableDeferred<Unit>()
+                else -> existing
             }
         } ?: CompletableDeferred<Unit>()
     }
 
     fun registerErrorWaiter(transactionId: String): CompletableDeferred<String> {
-        // Use compute to atomically check if there's already a completed deferred
-        // This prevents race conditions where error arrives between registration and wait
+        val completedError = completedErrors.remove(transactionId)
+        if (completedError != null) {
+            return CompletableDeferred<String>().apply { complete(completedError) }
+        }
         return pendingErrors.compute(transactionId) { _, existing ->
-            if (existing != null && existing.isCompleted) {
-                // Reuse the already-completed deferred
-                existing
-            } else {
-                // Create new deferred, but cancel the old one if it exists and isn't completed
-                existing?.cancel()
-                CompletableDeferred<String>()
+            when {
+                existing == null -> CompletableDeferred<String>()
+                existing.isCancelled -> CompletableDeferred<String>()
+                else -> existing
             }
         } ?: CompletableDeferred<String>()
     }
     
     fun hasError(transactionId: String): Boolean {
+        if (completedErrors.containsKey(transactionId)) return true
         val deferred = pendingErrors[transactionId]
         return deferred?.isCompleted == true
     }
@@ -617,35 +617,26 @@ object SyncHandshakeManager {
     }
 
     fun completeCompletion(transactionId: String) {
-        // Use compute to atomically complete and handle race conditions
-        // This ensures we complete the deferred even if it's being checked/waiting concurrently
-        pendingCompletions.compute(transactionId) { _, deferred ->
-            deferred?.let {
-                if (!it.isCompleted) {
-                    it.complete(Unit)
-                }
+        completedCompletions.add(transactionId)
+        pendingCompletions[transactionId]?.let {
+            if (!it.isCompleted) {
+                it.complete(Unit)
             }
-            // Return null to remove from map after completion
-            null
         }
     }
 
     fun hasCompletion(transactionId: String): Boolean {
+        if (completedCompletions.contains(transactionId)) return true
         val deferred = pendingCompletions[transactionId]
         return deferred?.isCompleted == true
     }
 
     fun completeError(transactionId: String, errorMessage: String) {
-        // Use compute to atomically complete and handle race conditions
-        // This ensures we complete the deferred even if it's being checked/waiting concurrently
-        pendingErrors.compute(transactionId) { _, deferred ->
-            deferred?.let {
-                if (!it.isCompleted) {
-                    it.complete(errorMessage)
-                }
+        completedErrors[transactionId] = errorMessage
+        pendingErrors[transactionId]?.let {
+            if (!it.isCompleted) {
+                it.complete(errorMessage)
             }
-            // Return null to remove from map after completion
-            null
         }
     }
 
@@ -653,6 +644,8 @@ object SyncHandshakeManager {
         pendingAcks.remove(transactionId)?.cancel()
         pendingCompletions.remove(transactionId)?.cancel()
         pendingErrors.remove(transactionId)?.cancel()
+        completedCompletions.remove(transactionId)
+        completedErrors.remove(transactionId)
     }
 }
 
