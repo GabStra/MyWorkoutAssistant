@@ -954,6 +954,7 @@ open class WorkoutViewModel(
 
                 currentWorkoutHistory = resumeWorkoutHistory
                 pendingResumeWorkoutHistoryId = null
+                _hasWorkoutRecord.value = true
 
                 heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
                 val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
@@ -1418,9 +1419,9 @@ open class WorkoutViewModel(
     }
 
     protected suspend fun restoreExecutedSets() {
-        workoutSessionLifecycleService.restoreExecutedSetsForWorkoutRecord(
+        workoutSessionLifecycleService.restoreExecutedSetsForWorkoutHistory(
             workout = selectedWorkout.value,
-            workoutRecordHistoryId = _workoutRecord?.workoutHistoryId
+            workoutHistoryId = currentWorkoutHistory?.id ?: _workoutRecord?.workoutHistoryId
         )
     }
 
@@ -1966,6 +1967,9 @@ open class WorkoutViewModel(
         startWorkoutTime = startTime
         if (stateMachine != null) updateStateFlowsFromMachine()
         rebuildScreenState()
+        // Persist a baseline unfinished workout immediately so process-death recovery
+        // can discover an incomplete workout before the first completed set.
+        pushAndStoreWorkoutData(isDone = false, context = null, forceNotSend = true)
     }
 
     /**

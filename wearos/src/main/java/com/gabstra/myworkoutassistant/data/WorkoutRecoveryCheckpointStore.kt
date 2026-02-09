@@ -20,6 +20,7 @@ internal data class WorkoutRecoveryCheckpoint(
     val setId: UUID?,
     val setIndex: UInt?,
     val restOrder: UInt?,
+    val setStartEpochMs: Long?,
     val updatedAtEpochMs: Long
 )
 
@@ -35,6 +36,7 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
             putString(KEY_SET_ID, checkpoint.setId?.toString())
             putInt(KEY_SET_INDEX, checkpoint.setIndex?.toInt() ?: -1)
             putInt(KEY_REST_ORDER, checkpoint.restOrder?.toInt() ?: -1)
+            putLong(KEY_SET_START_EPOCH_MS, checkpoint.setStartEpochMs ?: -1L)
             putLong(KEY_UPDATED_AT, checkpoint.updatedAtEpochMs)
         }
     }
@@ -49,6 +51,7 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
         val setId = prefs.getString(KEY_SET_ID, null)?.toUuidOrNull()
         val setIndex = prefs.getInt(KEY_SET_INDEX, -1).takeIf { it >= 0 }?.toUInt()
         val restOrder = prefs.getInt(KEY_REST_ORDER, -1).takeIf { it >= 0 }?.toUInt()
+        val setStartEpochMs = prefs.getLong(KEY_SET_START_EPOCH_MS, -1L).takeIf { it >= 0L }
         val updatedAt = prefs.getLong(KEY_UPDATED_AT, 0L)
 
         return WorkoutRecoveryCheckpoint(
@@ -59,6 +62,7 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
             setId = setId,
             setIndex = setIndex,
             restOrder = restOrder,
+            setStartEpochMs = setStartEpochMs,
             updatedAtEpochMs = updatedAt
         )
     }
@@ -72,6 +76,7 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
             remove(KEY_SET_ID)
             remove(KEY_SET_INDEX)
             remove(KEY_REST_ORDER)
+            remove(KEY_SET_START_EPOCH_MS)
             remove(KEY_UPDATED_AT)
         }
     }
@@ -87,6 +92,7 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
         const val KEY_SET_ID = "setId"
         const val KEY_SET_INDEX = "setIndex"
         const val KEY_REST_ORDER = "restOrder"
+        const val KEY_SET_START_EPOCH_MS = "setStartEpochMs"
         const val KEY_UPDATED_AT = "updatedAt"
     }
 }

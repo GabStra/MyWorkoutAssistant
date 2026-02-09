@@ -25,17 +25,17 @@ internal class WorkoutSessionLifecycleService(
         val latestSetHistoryByExerciseAndSetId: Map<Pair<UUID, UUID>, SetHistory>
     )
 
-    suspend fun restoreExecutedSetsForWorkoutRecord(
+    suspend fun restoreExecutedSetsForWorkoutHistory(
         workout: Workout,
-        workoutRecordHistoryId: UUID?
+        workoutHistoryId: UUID?
     ) {
-        if (workoutRecordHistoryId == null) return
+        if (workoutHistoryId == null) return
 
         val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
         val allSetHistories = mutableListOf<SetHistory>()
         exercises.forEach { exercise ->
             val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                workoutRecordHistoryId,
+                workoutHistoryId,
                 exercise.id
             )
             allSetHistories.addAll(setHistories)

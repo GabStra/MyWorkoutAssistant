@@ -131,7 +131,6 @@ fun WorkoutDetailScreen(
             viewModel.resumeWorkoutFromRecord()
             val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
             prefs.edit { putBoolean("isWorkoutInProgress", true) }
-            viewModel.clearRecoveryCheckpoint()
 
             navController.navigate(Screen.Workout.route)
         }

@@ -9,6 +9,7 @@ import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 
 /**
  * Reusable UI driver for common workout E2E interactions.
@@ -18,6 +19,37 @@ class WearWorkoutDriver(
     private val device: UiDevice,
     private val longPressByDesc: (String, Long) -> Unit
 ) {
+    fun killAppProcess(packageName: String, settleMs: Long = 1_000) {
+        // Move app to background first so pause/stop persistence hooks run.
+        device.pressHome()
+        device.waitForIdle(settleMs)
+        device.executeShellCommand("am kill $packageName")
+        device.waitForIdle(settleMs)
+    }
+
+    fun readTimedDurationSeconds(
+        perAttemptTimeoutMs: Long = 2_000,
+        attempts: Int = 5
+    ): Int {
+        repeat(attempts) {
+            val timerRoot = device.wait(
+                Until.findObject(By.descContains(SetValueSemantics.TimedDurationValueDescription)),
+                perAttemptTimeoutMs
+            )
+            val timerText = timerRoot?.let { findTimerText(it) }
+                ?: device.findObjects(By.textContains(":"))
+                    .mapNotNull { node -> runCatching { node.text }.getOrNull() }
+                    .firstOrNull { it.matches(Regex("\\d{2}:\\d{2}(?::\\d{2})?")) }
+
+            if (!timerText.isNullOrBlank()) {
+                return parseTimerTextToSeconds(timerText)
+            }
+            device.waitForIdle(300)
+        }
+
+        error("Could not read timed duration value from UI")
+    }
+
     fun completeCurrentSet(timeoutMs: Long = 5_000) {
         device.pressBack()
         if (tryConfirmLongPressDialog(timeoutMs)) return
@@ -250,6 +282,33 @@ class WearWorkoutDriver(
             false
         } catch (_: StaleObjectException) {
             false
+        }
+    }
+
+    private fun findTimerText(root: UiObject2): String? {
+        val queue = ArrayDeque<UiObject2>()
+        queue.add(root)
+
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            val text = runCatching { current.text }.getOrNull()
+            if (!text.isNullOrBlank() && text.matches(Regex("\\d{2}:\\d{2}(?::\\d{2})?"))) {
+                return text
+            }
+            runCatching { current.children }.getOrDefault(emptyList()).forEach(queue::addLast)
+        }
+
+        return null
+    }
+
+    private fun parseTimerTextToSeconds(timerText: String): Int {
+        val parts = timerText.split(":").map { it.toIntOrNull() }
+        require(parts.all { it != null }) { "Timer text '$timerText' is not numeric" }
+
+        return when (parts.size) {
+            2 -> (parts[0]!! * 60) + parts[1]!!
+            3 -> (parts[0]!! * 3600) + (parts[1]!! * 60) + parts[2]!!
+            else -> error("Unexpected timer format: '$timerText'")
         }
     }
 }

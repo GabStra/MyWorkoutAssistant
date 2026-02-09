@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.gabstra.myworkoutassistant.MyApplication
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
@@ -32,6 +34,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
 import com.gabstra.myworkoutassistant.data.checkConnection
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
@@ -311,10 +315,21 @@ open class AppViewModel : WorkoutViewModel() {
         val context = applicationContext ?: return
         val selectedWorkoutId = selectedWorkout.value.id
 
-        // Clear stale checkpoint when session is completed or not active.
-        if (screenState.workoutState is WorkoutState.Completed || screenState.sessionPhase != com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE) {
+        // Clear checkpoint only when workout is completed.
+        if (screenState.workoutState is WorkoutState.Completed) {
             checkpointStore()?.clear()
             lastCheckpointFingerprint = null
+            return
+        }
+
+        if (screenState.sessionPhase != com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE) {
+            val isWorkoutInProgress = context
+                .getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+                .getBoolean("isWorkoutInProgress", false)
+            if (!isWorkoutInProgress) {
+                checkpointStore()?.clear()
+                lastCheckpointFingerprint = null
+            }
             return
         }
 
@@ -355,6 +370,19 @@ open class AppViewModel : WorkoutViewModel() {
         }
 
         val restOrder = (currentState as? WorkoutState.Rest)?.order
+        var setStartEpochMs = (currentState as? WorkoutState.Set)?.startTime?.let(::toEpochMillis)
+        if (stateType == RecoveryStateType.SET && setStartEpochMs == null) {
+            val existingCheckpoint = checkpointStore()?.load()
+            if (
+                existingCheckpoint?.workoutId == selectedWorkoutId &&
+                existingCheckpoint.stateType == RecoveryStateType.SET &&
+                existingCheckpoint.exerciseId == exerciseId &&
+                existingCheckpoint.setId == setId &&
+                existingCheckpoint.setStartEpochMs != null
+            ) {
+                setStartEpochMs = existingCheckpoint.setStartEpochMs
+            }
+        }
 
         val checkpoint = WorkoutRecoveryCheckpoint(
             workoutId = selectedWorkoutId,
@@ -364,10 +392,11 @@ open class AppViewModel : WorkoutViewModel() {
             setId = setId,
             setIndex = setIndex,
             restOrder = restOrder,
+            setStartEpochMs = setStartEpochMs,
             updatedAtEpochMs = System.currentTimeMillis()
         )
 
-        val fingerprint = "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}"
+        val fingerprint = "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}:${checkpoint.setStartEpochMs}"
         if (fingerprint == lastCheckpointFingerprint) return
 
         WorkoutRecoveryCheckpointStore(context).save(checkpoint)
@@ -639,6 +668,7 @@ open class AppViewModel : WorkoutViewModel() {
             }
 
             if (checkpointApplied) {
+                checkpoint?.let { applyTimerRecoveryFromCheckpoint(it) }
                 _showRecoveredWorkoutNotice.value = true
             }
 
@@ -646,6 +676,45 @@ open class AppViewModel : WorkoutViewModel() {
             lightScreenUp()
             onEnd()
         }
+    }
+
+    private fun applyTimerRecoveryFromCheckpoint(checkpoint: WorkoutRecoveryCheckpoint) {
+        val setState = workoutState.value as? WorkoutState.Set ?: return
+        val setStartEpochMs = checkpoint.setStartEpochMs ?: return
+
+        val nowEpochMs = System.currentTimeMillis()
+        val elapsedMs = (nowEpochMs - setStartEpochMs).coerceAtLeast(0L).toInt()
+        val setData = setState.currentSetData
+
+        when (setData) {
+            is TimedDurationSetData -> {
+                val remainingMs = (setData.startTimer - elapsedMs).coerceAtLeast(0)
+                setState.currentSetData = setData.copy(endTimer = remainingMs)
+                if (remainingMs > 0) {
+                    setState.startTime = fromEpochMillis(setStartEpochMs)
+                }
+            }
+
+            is EnduranceSetData -> {
+                val elapsedClamped = elapsedMs.coerceAtMost(setData.startTimer)
+                setState.currentSetData = setData.copy(endTimer = elapsedClamped)
+                if (elapsedClamped < setData.startTimer) {
+                    setState.startTime = fromEpochMillis(setStartEpochMs)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun toEpochMillis(dateTime: LocalDateTime): Long {
+        return dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+
+    private fun fromEpochMillis(epochMs: Long): LocalDateTime {
+        return LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(epochMs),
+            ZoneId.systemDefault()
+        )
     }
 
     override fun pushAndStoreWorkoutData(
@@ -656,8 +725,12 @@ open class AppViewModel : WorkoutViewModel() {
     ) {
         Log.d("WorkoutSync", "pushAndStoreWorkoutData called: isDone=$isDone, forceNotSend=$forceNotSend")
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
+            val currentState = workoutState.value
+            if (currentState is WorkoutState.Set) {
+                upsertWorkoutRecord(currentState.exerciseId, currentState.setIndex)
+            }
+
             if (!forceNotSend) {
-                val currentState = workoutState.value
                 Log.d(
                     "WorkoutSync",
                     "SYNC_TRACE event=push_store side=wear isDone=$isDone forceNotSend=$forceNotSend state=$currentState"
@@ -670,10 +743,6 @@ open class AppViewModel : WorkoutViewModel() {
                 // When isDone=true, we must sync the final workout state even if the
                 // state has already transitioned to Completed.
                 val shouldSendData = currentState is WorkoutState.Set || isDone
-
-                if(currentState is WorkoutState.Set){
-                    upsertWorkoutRecord(currentState.exerciseId,currentState.setIndex)
-                }
 
                 if (shouldSendData) {
                     Log.d("WorkoutSync", "pushAndStoreWorkoutData: shouldSendData=true, calling requestWorkoutHistorySync")

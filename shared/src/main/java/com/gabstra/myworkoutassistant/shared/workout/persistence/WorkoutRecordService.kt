@@ -87,11 +87,6 @@ internal class WorkoutRecordService(
                 ?: workouts.find { it.globalId == workoutHistory.globalId }
                 ?: return@mapNotNull null
 
-            val workoutRecord = workoutRecordDao().getWorkoutRecordByWorkoutId(workout.id)
-            if (workoutRecord == null || workoutRecord.workoutHistoryId != workoutHistory.id) {
-                return@mapNotNull null
-            }
-
             IncompleteWorkout(
                 workoutHistory = workoutHistory,
                 workoutName = workout.name,

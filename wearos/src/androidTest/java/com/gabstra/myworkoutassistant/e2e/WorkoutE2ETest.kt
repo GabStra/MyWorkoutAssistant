@@ -659,6 +659,104 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         waitForWorkoutCompletion()
     }
 
+    @Test
+    fun timedDurationSet_processDeathRecovery_restoresRunningTimer() {
+        TimedDurationSetWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+
+        startWorkout(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
+
+        val exerciseVisible = device.wait(
+            Until.hasObject(By.text("Timed Exercise")),
+            5_000
+        )
+        require(exerciseVisible) { "Timed exercise screen did not appear" }
+
+        val initialSeconds = workoutDriver.readTimedDurationSeconds()
+        Thread.sleep(4_000)
+        val preKillSeconds = workoutDriver.readTimedDurationSeconds()
+
+        require(preKillSeconds <= initialSeconds - 2) {
+            "Timer did not progress before process death. initial=$initialSeconds, preKill=$preKillSeconds"
+        }
+
+        workoutDriver.killAppProcess(context.packageName)
+        launchAppFromHome()
+
+        val processDeathPromptVisible = device.wait(
+            Until.hasObject(By.text("Workout interrupted")),
+            5_000
+        )
+        if (processDeathPromptVisible) {
+            clickText("Resume")
+        } else {
+            val resumeVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
+            if (resumeVisible) {
+                clickText("Resume")
+            } else {
+                val alreadyInWorkout = device.wait(
+                    Until.hasObject(By.text("Timed Exercise")),
+                    2_000
+                )
+                if (!alreadyInWorkout) {
+                    clickText(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
+                    val resumeInDetailVisible = device.wait(
+                        Until.hasObject(By.textContains("Resume")),
+                        5_000
+                    )
+                    require(resumeInDetailVisible) {
+                        "Recovery UI not available after process death. 'Resume' button not found."
+                    }
+                    clickText("Resume")
+                }
+            }
+        }
+
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+        dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
+
+        var exerciseVisibleAfterResume = device.wait(
+            Until.hasObject(By.text("Timed Exercise")),
+            8_000
+        )
+
+        if (!exerciseVisibleAfterResume) {
+            val preparingVisible = device.wait(
+                Until.hasObject(By.textContains("Preparing")),
+                3_000
+            )
+            if (preparingVisible) {
+                device.wait(Until.gone(By.textContains("Preparing")), 12_000)
+                dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+                dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
+            }
+
+            val resumeVisibleAgain = device.wait(
+                Until.hasObject(By.textContains("Resume")),
+                2_000
+            )
+            if (resumeVisibleAgain) {
+                clickText("Resume")
+            }
+
+            exerciseVisibleAfterResume = device.wait(
+                Until.hasObject(By.text("Timed Exercise")),
+                10_000
+            )
+        }
+
+        require(exerciseVisibleAfterResume) { "Timed exercise screen not visible after resume" }
+
+        val resumedSeconds = workoutDriver.readTimedDurationSeconds()
+
+        require(resumedSeconds < preKillSeconds) {
+            "Recovered timer was not restored as running. preKill=$preKillSeconds, resumed=$resumedSeconds"
+        }
+        require(resumedSeconds > 0) {
+            "Recovered timer resumed at an invalid value. resumed=$resumedSeconds"
+        }
+    }
+
     // ==================== Endurance Set Tests ====================
 
     @Test

@@ -474,8 +474,12 @@ fun WearApp(
                             appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
                         }
                     } else if (isWorkoutInProgress) {
-                        appViewModel.clearWorkoutInProgressFlag()
-                        appViewModel.clearRecoveryCheckpoint()
+                        // Preserve checkpoint if available so recovery can still be applied
+                        // when the resume action is triggered from workout detail.
+                        val checkpoint = appViewModel.getSavedRecoveryCheckpoint()
+                        if (checkpoint == null) {
+                            appViewModel.clearWorkoutInProgressFlag()
+                        }
                     }
                 } catch (exception: Exception) {
                     Log.e("MainActivity", "Error checking for incomplete workouts", exception)
