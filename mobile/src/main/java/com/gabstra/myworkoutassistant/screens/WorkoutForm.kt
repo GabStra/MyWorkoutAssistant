@@ -32,6 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -71,6 +72,7 @@ import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.WorkoutTypes
@@ -315,7 +317,7 @@ fun WorkoutForm(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                FormPrimaryButton(
+                FormPrimaryOutlinedButton(
                     text = "Add Single",
                     onClick = {
                         currentEditingSchedule.value = null
@@ -324,7 +326,7 @@ fun WorkoutForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                FormPrimaryOutlinedButton(
                     text = "Add Multiple",
                     onClick = { showBatchScheduleDialog.value = true },
                     modifier = Modifier.weight(1f)
@@ -485,7 +487,7 @@ fun ScheduleDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Time", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.width(Spacing.md))
-                    Button(onClick = { showTimePicker.value = true }) {
+                    OutlinedButton(onClick = { showTimePicker.value = true }) {
                         Text("${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}")
                     }
                 }
@@ -834,7 +836,7 @@ fun BatchScheduleDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("From")
                     Spacer(Modifier.width(Spacing.sm))
-                    Button(onClick = {
+                    OutlinedButton(onClick = {
                         timePickerState.hour = startHourState.intValue
                         timePickerState.minute = startMinuteState.intValue
                         currentPickerMode.value = "start"
@@ -845,7 +847,7 @@ fun BatchScheduleDialog(
 
                     Text("To")
                     Spacer(Modifier.width(Spacing.sm))
-                    Button(onClick = {
+                    OutlinedButton(onClick = {
                         timePickerState.hour = endHourState.intValue
                         timePickerState.minute = endMinuteState.intValue
                         currentPickerMode.value = "end"
@@ -1006,5 +1008,4 @@ fun BatchScheduleDialog(
         ) { DatePicker(state = datePickerState) }
     }
 }
-
 

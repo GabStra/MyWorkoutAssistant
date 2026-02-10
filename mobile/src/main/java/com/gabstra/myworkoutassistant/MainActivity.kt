@@ -48,6 +48,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
@@ -335,7 +337,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun hasDownloadsAccess(): Boolean {
+    internal fun hasDownloadsAccess(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -455,6 +457,22 @@ fun MyWorkoutAssistantNavHost(
     val updateMobileSignal by updateMobileFlow.collectAsState()
 
     val initialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState(initial = false)
+    var downloadsAccessGranted by remember {
+        mutableStateOf((context as? MainActivity)?.hasDownloadsAccess() ?: false)
+    }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                downloadsAccessGranted =
+                    (context as? MainActivity)?.hasDownloadsAccess() ?: false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(updateMobileSignal) {
         if (updateMobileSignal != null) {
@@ -654,7 +672,8 @@ fun MyWorkoutAssistantNavHost(
         exerciseInfoDao: ExerciseInfoDao,
         workoutScheduleDao: WorkoutScheduleDao,
         workoutRecordDao: WorkoutRecordDao,
-        healthConnectClient: HealthConnectClient
+        healthConnectClient: HealthConnectClient,
+        successToastMessage: String = "Data restored from backup"
     ) {
         withContext(Dispatchers.IO + NonCancellable) {
             try {
@@ -816,11 +835,7 @@ fun MyWorkoutAssistantNavHost(
                         appViewModel.triggerUpdate()
 
                         // Show the success toast after all operations are complete
-                        Toast.makeText(
-                            context,
-                            "Data restored from backup",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
@@ -861,6 +876,40 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
         }
+    }
+
+    LaunchedEffect(initialDataLoaded, downloadsAccessGranted) {
+        if (!initialDataLoaded || !downloadsAccessGranted) return@LaunchedEffect
+
+        val prefs = context.getSharedPreferences("startup_restore", Context.MODE_PRIVATE)
+        val alreadyChecked = prefs.getBoolean("auto_restore_checked", false)
+        if (alreadyChecked) return@LaunchedEffect
+
+        val hasCurrentData =
+            appViewModel.workoutStore.workouts.isNotEmpty() ||
+                appViewModel.workoutStore.workoutPlans.isNotEmpty() ||
+                appViewModel.workoutStore.equipments.isNotEmpty() ||
+                appViewModel.workoutStore.accessoryEquipments.isNotEmpty()
+
+        prefs.edit { putBoolean("auto_restore_checked", true) }
+        if (hasCurrentData) return@LaunchedEffect
+
+        val appBackup = loadLatestBackupFromDownloads(context) ?: return@LaunchedEffect
+        restoreFromAppBackup(
+            appBackup = appBackup,
+            context = context,
+            appViewModel = appViewModel,
+            workoutViewModel = workoutViewModel,
+            workoutStoreRepository = workoutStoreRepository,
+            db = db,
+            workoutHistoryDao = workoutHistoryDao,
+            setHistoryDao = setHistoryDao,
+            exerciseInfoDao = exerciseInfoDao,
+            workoutScheduleDao = workoutScheduleDao,
+            workoutRecordDao = workoutRecordDao,
+            healthConnectClient = healthConnectClient,
+            successToastMessage = "Data restored from backup because local data was empty"
+        )
     }
 
     val jsonPickerLauncher =
@@ -980,7 +1029,6 @@ fun MyWorkoutAssistantNavHost(
         scope.launch {
             MobileSyncToWatchWorker.enqueue(context)
             isSyncing = true
-            Toast.makeText(context, "Sync scheduled", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1215,46 +1263,6 @@ fun MyWorkoutAssistantNavHost(
                                         appViewModel.goBack()
                                     } finally {
                                         isSaving = false
-                                    }
-                                }
-                            },
-                            onRestoreFromBackup = {
-                                scope.launch {
-                                    try {
-                                        val appBackup = loadExternalBackup(context)
-                                        if (appBackup == null) {
-                                            Toast.makeText(
-                                                context,
-                                                "No backup found or backup file is invalid",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                            return@launch
-                                        }
-                                        // Use the same restore logic as file import
-                                        restoreFromAppBackup(
-                                            appBackup = appBackup,
-                                            context = context,
-                                            appViewModel = appViewModel,
-                                            workoutViewModel = workoutViewModel,
-                                            workoutStoreRepository = workoutStoreRepository,
-                                            db = db,
-                                            workoutHistoryDao = workoutHistoryDao,
-                                            setHistoryDao = setHistoryDao,
-                                            exerciseInfoDao = exerciseInfoDao,
-                                            workoutScheduleDao = workoutScheduleDao,
-                                            workoutRecordDao = workoutRecordDao,
-                                            healthConnectClient = healthConnectClient
-                                        )
-                                    } catch (e: Exception) {
-                                        Log.e("MainActivity", "Error during restore from backup: ${e.javaClass.simpleName}. " +
-                                                "Message: ${e.message}, " +
-                                                "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
-                                                "Stack trace:\n${Log.getStackTraceString(e)}", e)
-                                        Toast.makeText(
-                                            context,
-                                            "Failed to restore backup: ${e.message ?: "Unknown error"}",
-                                            Toast.LENGTH_LONG
-                                        ).show()
                                     }
                                 }
                             },

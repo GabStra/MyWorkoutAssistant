@@ -2,7 +2,9 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,7 +13,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,9 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -44,14 +43,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
-import com.gabstra.myworkoutassistant.hasExternalBackup
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -60,7 +59,6 @@ import java.util.Calendar
 fun SettingsScreen(
     onSave: (WorkoutStore) -> Unit,
     onCancel: () -> Unit,
-    onRestoreFromBackup: () -> Unit,
     workoutStore: WorkoutStore,
     healthConnectClient: HealthConnectClient,
     isSaving: Boolean = false
@@ -71,23 +69,32 @@ fun SettingsScreen(
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
-    val progressionPercentageAmount = remember { mutableStateOf(workoutStore.progressionPercentageAmount) }
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
     val restingHeartRateState = remember {
         mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
     }
     
-    var hasBackup by remember { mutableStateOf(false) }
-    var showRestoreConfirmation by remember { mutableStateOf(false) }
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
+
+    suspend fun loadRestingHeartRateWithMinimumLoadingTime(): Int? {
+        val startedAt = System.currentTimeMillis()
+        return try {
+            getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+        } finally {
+            val elapsed = System.currentTimeMillis() - startedAt
+            val remaining = 1000L - elapsed
+            if (remaining > 0L) {
+                delay(remaining)
+            }
+        }
+    }
     
     LaunchedEffect(Unit) {
-        hasBackup = hasExternalBackup(context)
         if (workoutStore.restingHeartRate == null) {
             isLoadingRestingHeartRate = true
             try {
                 val historicalRestingHeartRate =
-                    getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+                    loadRestingHeartRateWithMinimumLoadingTime()
                 if (historicalRestingHeartRate != null) {
                     restingHeartRateState.value = historicalRestingHeartRate.toString()
                 }
@@ -233,7 +240,7 @@ fun SettingsScreen(
                         isLoadingRestingHeartRate = true
                         try {
                             val historicalRestingHeartRate =
-                                getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+                                loadRestingHeartRateWithMinimumLoadingTime()
                             if (historicalRestingHeartRate != null) {
                                 restingHeartRateState.value = historicalRestingHeartRate.toString()
                                 Toast.makeText(
@@ -272,119 +279,70 @@ fun SettingsScreen(
                 )
             }
 
-            Text(
-                text = "Progress between Sessions: ${progressionPercentageAmount.value.round(2)}%",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 16.dp, bottom = 8.dp)
-            )
-
-            Slider(
-                value = progressionPercentageAmount.value.toFloat(),
-                onValueChange = { value ->
-                    progressionPercentageAmount.value = value.toDouble()
-                },
-                valueRange = 0f..5f,
-                steps = 19, // (5 - 0) / 0.25 - 1 = 19 steps for 0.25 increments
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
-                onClick = {
-                    val birthDateYear = birthDateYearState.value.toIntOrNull()
-                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-
-                    if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
-                        Toast.makeText(context, "Invalid birth year", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-
-                    val weight = weightState.value.toDoubleOrNull()
-                    if (weight == null || weight <= 0) {
-                        Toast.makeText(context, "Invalid weight", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-
-                    val measuredMaxHeartRate = measuredMaxHeartRateState.value.toIntOrNull()
-                    if (measuredMaxHeartRateState.value.isNotBlank() &&
-                        (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
-                    ) {
-                        Toast.makeText(context, "Invalid measured max HR", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-
-                    val restingHeartRate = restingHeartRateState.value.toIntOrNull()
-                        ?: getEffectiveRestingHeartRate()
-                    if (restingHeartRate !in 30..120) {
-                        Toast.makeText(context, "Invalid resting HR", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-
-                    val newWorkoutStore = workoutStore.copy(
-                        polarDeviceId = polarDeviceIdState.value.ifBlank { null },
-                        birthDateYear = birthDateYear,
-                        weightKg = weight,
-                        progressionPercentageAmount = progressionPercentageAmount.value,
-                        measuredMaxHeartRate = measuredMaxHeartRate,
-                        restingHeartRate = restingHeartRate
-                    )
-                    onSave(newWorkoutStore)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Save Settings", color = MaterialTheme.colorScheme.onPrimary)
-            }
-            
-            OutlinedButton(
-                onClick = {
-                    showRestoreConfirmation = true
-                },
-                enabled = hasBackup,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            ) {
-                Text(
-                    text = if (hasBackup) "Restore from Backup" else "No Backup Available",
-                    color = if (hasBackup) MaterialTheme.colorScheme.primary else DisabledContentGray
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = onCancel,
+                    enabled = !isSaving,
+                    modifier = Modifier.weight(1f)
                 )
+
+                Button(
+                    colors = ButtonDefaults.buttonColors(
+                        contentColor = MaterialTheme.colorScheme.background,
+                        disabledContentColor = DisabledContentGray
+                    ),
+                    onClick = {
+                        val birthDateYear = birthDateYearState.value.toIntOrNull()
+                        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+
+                        if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
+                            Toast.makeText(context, "Invalid birth year", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val weight = weightState.value.toDoubleOrNull()
+                        if (weight == null || weight <= 0) {
+                            Toast.makeText(context, "Invalid weight", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val measuredMaxHeartRate = measuredMaxHeartRateState.value.toIntOrNull()
+                        if (measuredMaxHeartRateState.value.isNotBlank() &&
+                            (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
+                        ) {
+                            Toast.makeText(context, "Invalid measured max HR", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val restingHeartRate = restingHeartRateState.value.toIntOrNull()
+                            ?: getEffectiveRestingHeartRate()
+                        if (restingHeartRate !in 30..120) {
+                            Toast.makeText(context, "Invalid resting HR", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val newWorkoutStore = workoutStore.copy(
+                            polarDeviceId = polarDeviceIdState.value.ifBlank { null },
+                            birthDateYear = birthDateYear,
+                            weightKg = weight,
+                            measuredMaxHeartRate = measuredMaxHeartRate,
+                            restingHeartRate = restingHeartRate
+                        )
+                        onSave(newWorkoutStore)
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Save", color = MaterialTheme.colorScheme.onPrimary)
+                }
             }
         }
     }
-    
-    if (showRestoreConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showRestoreConfirmation = false },
-            title = { Text("Restore from Backup") },
-            text = { Text("This will replace all current data with the backup. This action cannot be undone. Continue?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRestoreConfirmation = false
-                        onRestoreFromBackup()
-                    }
-                ) {
-                    Text("Restore")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showRestoreConfirmation = false }
-                ) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
+
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }

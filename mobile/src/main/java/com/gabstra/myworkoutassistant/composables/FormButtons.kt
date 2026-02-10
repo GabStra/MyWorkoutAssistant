@@ -75,20 +75,10 @@ fun FormSecondaryButton(
     enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
+    CustomButton(
         modifier = modifier.heightIn(min = 48.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            disabledContentColor = DisabledContentGray
-        )
-    ) {
-        Text(
-            text = text,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyLarge
-        )
-    }
+        text = text,
+        onClick = onClick,
+        enabled = enabled
+    )
 }

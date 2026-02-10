@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,38 +12,49 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import kotlinx.coroutines.launch
 
 @Composable
 fun HealthConnectHandler(
     appViewModel: AppViewModel,
     healthConnectClient: HealthConnectClient,
 ) {
+    val coroutineScope = rememberCoroutineScope()
+
     val requiredPermissions = setOf(
         HealthPermission.getWritePermission(ExerciseSessionRecord::class),
         HealthPermission.getWritePermission(HeartRateRecord::class),
         HealthPermission.getReadPermission(ExerciseSessionRecord::class),
         HealthPermission.getReadPermission(HeartRateRecord::class),
+        HealthPermission.getReadPermission(RestingHeartRateRecord::class),
         HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
         HealthPermission.getWritePermission(WeightRecord::class),
         HealthPermission.getReadPermission(SleepSessionRecord::class),
     )
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val hasAllPermissions = permissions.values.all { it }
-        appViewModel.setHealthPermissions(hasAllPermissions)
+        PermissionController.createRequestPermissionResultContract()
+    ) {
+        coroutineScope.launch {
+            val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
+            val missingPermissions = requiredPermissions - grantedPermissions
+            appViewModel.setHealthPermissions(missingPermissions.isEmpty())
+            appViewModel.setHealthPermissionsChecked()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -71,7 +81,7 @@ fun HealthConnectHandler(
                 ),
                 onClick = {
                     try {
-                        permissionLauncher.launch(requiredPermissions.toTypedArray())
+                        permissionLauncher.launch(requiredPermissions)
                     } catch (e: Exception) {
                         Log.e("MainActivity", "Error launching permission launcher", e)
                     }

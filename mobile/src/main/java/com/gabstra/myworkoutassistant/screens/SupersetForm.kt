@@ -39,8 +39,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.CustomButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
+import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -252,41 +252,41 @@ fun SupersetForm(
                 }
             }
 
-            // Confirm Button
-            Button(
-                onClick = {
-                    // Convert the H:M:S triples into a map of [UUID, Int] for total seconds
-                    val restSecondsByExercise = selectedExercises.associate { ex ->
-                        val (h, m, s) = restsByExerciseHms[ex.id] ?: Triple(0, 0, 0)
-                        ex.id to TimeConverter.hmsToTotalSeconds(h, m, s)
-                    }
-
-                    val newOrUpdatedSuperset = Superset(
-                        id = superset?.id ?: UUID.randomUUID(),
-                        exercises = selectedExercises,
-                        restSecondsByExercise = restSecondsByExercise,
-                        enabled = superset?.enabled ?: true
-                    )
-                    onSupersetUpsert(newOrUpdatedSuperset)
-                },
-                enabled = selectedExercises.size >= 2,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (superset == null) "Create Superset" else "Update Superset")
+                FormSecondaryButton(
+                    text = "Cancel",
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Button(
+                    onClick = {
+                        // Convert the H:M:S triples into a map of [UUID, Int] for total seconds
+                        val restSecondsByExercise = selectedExercises.associate { ex ->
+                            val (h, m, s) = restsByExerciseHms[ex.id] ?: Triple(0, 0, 0)
+                            ex.id to TimeConverter.hmsToTotalSeconds(h, m, s)
+                        }
+
+                        val newOrUpdatedSuperset = Superset(
+                            id = superset?.id ?: UUID.randomUUID(),
+                            exercises = selectedExercises,
+                            restSecondsByExercise = restSecondsByExercise,
+                            enabled = superset?.enabled ?: true
+                        )
+                        onSupersetUpsert(newOrUpdatedSuperset)
+                    },
+                    enabled = selectedExercises.size >= 2,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (superset == null) "Create Superset" else "Update Superset")
+                }
             }
-
-            Spacer(modifier = Modifier.height(Spacing.md))
-
-            // Cancel Button
-            CustomButton(
-                text = "Cancel",
-                onClick = onCancel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm)
-            )
 
             Spacer(modifier = Modifier.height(10.dp))
         }
@@ -294,4 +294,3 @@ fun SupersetForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
-
