@@ -8,9 +8,9 @@
 - When targeting a specific test method, provide both `-TestClass <ClassName>` (from the `com.gabstra.myworkoutassistant.e2e` package) and `-TestMethod <MethodName>`.
 - For cross-device sync E2E (Wear + phone emulator), run `pwsh ./scripts/run_cross_device_sync_e2e.ps1`.
 - The cross-device script requires at least one connected Wear emulator/device and one connected phone emulator/device via `adb`.
-- The cross-device script installs the mobile debug app, runs Wear producer E2E (`CrossDeviceWorkoutSyncProducerE2ETest`) via `run_wear_e2e.ps1`, then runs mobile verification (`com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest`).
+- The cross-device script installs the mobile debug app, runs Wear producer E2E (`WearCrossDeviceSyncProducerE2ETest`) via `run_wear_e2e.ps1`, then runs mobile verification (`com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest`).
 - To override classes, use:
-  - `pwsh ./scripts/run_cross_device_sync_e2e.ps1 -WearTestClass CrossDeviceWorkoutSyncProducerE2ETest`
+  - `pwsh ./scripts/run_cross_device_sync_e2e.ps1 -WearTestClass WearCrossDeviceSyncProducerE2ETest`
   - `pwsh ./scripts/run_cross_device_sync_e2e.ps1 -MobileTestClass com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest`
 
 ## Coding Conventions
@@ -44,3 +44,4 @@
 - If build errors persist after attempts to fix them, clearly report the specific errors and their locations to the user rather than leaving the code in a broken state.
 - If Gradle fails with `gradle-*.zip.lck (Access is denied)`, rerun the same Gradle command with escalated permissions so wrapper lock access is available.
 - Use `read_lints` tool to check for linter errors after code changes and address any issues found.
+

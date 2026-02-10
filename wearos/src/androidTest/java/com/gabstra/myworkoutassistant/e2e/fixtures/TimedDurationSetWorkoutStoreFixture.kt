@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.e2e.fixtures
 
 import android.content.Context
-import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
+import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -82,4 +82,5 @@ object TimedDurationSetWorkoutStoreFixture {
 
     fun getWorkoutName(): String = WORKOUT_NAME
 }
+
 

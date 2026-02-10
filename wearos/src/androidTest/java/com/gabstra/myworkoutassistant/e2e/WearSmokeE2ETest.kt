@@ -2,7 +2,7 @@ package com.gabstra.myworkoutassistant.e2e
 
 import org.junit.Test
 
-class SmokeE2ETest : BaseWearE2ETest() {
+class WearSmokeE2ETest : WearBaseE2ETest() {
 
     @Test
     fun appLaunches_toWorkoutSelectionScreen() {
@@ -10,3 +10,4 @@ class SmokeE2ETest : BaseWearE2ETest() {
         require(headerVisible) { "Workout selection header not visible after app launch" }
     }
 }
+

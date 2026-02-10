@@ -9,10 +9,10 @@ import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
-import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
+import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import org.junit.Before
 
-abstract class BaseWearE2ETest {
+abstract class WearBaseE2ETest {
 
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
@@ -214,3 +214,5 @@ abstract class BaseWearE2ETest {
         dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
     }
 }
+
+

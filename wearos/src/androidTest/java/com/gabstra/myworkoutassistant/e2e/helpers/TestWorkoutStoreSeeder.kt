@@ -1,4 +1,4 @@
-package com.gabstra.myworkoutassistant
+package com.gabstra.myworkoutassistant.e2e.helpers
 
 import android.content.Context
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -162,5 +162,4 @@ object TestWorkoutStoreSeeder {
         )
     }
 }
-
 

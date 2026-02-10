@@ -39,6 +39,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.runBlocking
+import org.junit.Ignore
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -66,7 +67,7 @@ import java.util.UUID
  * - exerciseHistory_storedCorrectlyAfterWorkoutCompletion: completes a comprehensive workout and validates history shape.
  */
 @RunWith(AndroidJUnit4::class)
-class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
+class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
@@ -394,6 +395,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
     }
 
     @Test
+    @Ignore("Covered by comprehensive history test; kept out to reduce redundant E2E runtime.")
     fun exerciseHistory_singleBodyWeightSetStoresModifiedRepsAndAdditionalWeight() = runBlocking {
         BodyWeightSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
@@ -496,6 +498,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
     }
 
     @Test
+    @Ignore("Covered by comprehensive history test; kept out to reduce redundant E2E runtime.")
     fun exerciseHistory_singleTimedDurationSetStoresModifiedDuration() = runBlocking {
         TimedDurationManualStartWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
@@ -555,6 +558,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
     }
 
     @Test
+    @Ignore("Covered by comprehensive history test; kept out to reduce redundant E2E runtime.")
     fun exerciseHistory_singleEnduranceSetStoresModifiedDuration() = runBlocking {
         EnduranceSetManualStartWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
@@ -2129,4 +2133,5 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
         }
     }
 }
+
 

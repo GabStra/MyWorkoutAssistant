@@ -68,7 +68,19 @@ class PhoneAppDriver(
             ?: device.wait(Until.findObject(By.textContains("Sync with Watch")), timeoutMs)
             ?: error("'Sync with Watch' menu item not found")
         clickWithRetry { syncMenuItem.click() }
-        device.waitForIdle(1_500)
+        device.waitForIdle(1_000)
+
+        val syncStarted = device.wait(Until.hasObject(By.text("Syncing...")), timeoutMs)
+        require(syncStarted) {
+            "Expected Syncing overlay after tapping 'Sync with Watch', but it did not appear."
+        }
+
+        val syncSettled = device.wait(Until.gone(By.text("Syncing...")), timeoutMs)
+        require(syncSettled) {
+            "Syncing overlay did not dismiss within timeout after tapping 'Sync with Watch'."
+        }
+
+        device.waitForIdle(1_000)
     }
 
     fun grantRuntimePermissions(vararg permissions: String) {

@@ -88,7 +88,7 @@ This document gives future agents the context they need to work on the Wear OS a
 
 ## Testing and E2E guidance
 - **Current E2E tests:** `src/androidTest/java/com/gabstra/myworkoutassistant/e2e/`
-  - `BaseWearE2ETest` grants permissions via shell, seeds WorkoutStore, launches app, dismisses tutorial.
+  - `WearBaseE2ETest` grants permissions via shell, seeds WorkoutStore, launches app, dismisses tutorial.
   - `TestWorkoutStoreSeeder` writes `workout_store.json` (currently one default workout: Bench/Squat with rest set).
   - Tests cover: selection header and tap to detail; start preparing; basic in-progress back dialog; complete flow via dialog; smoke launch.
 - **Gaps to be aware of** (worth covering in new tests):
@@ -133,7 +133,7 @@ This document gives future agents the context they need to work on the Wear OS a
 - `DataLayerListenerService.kt`: sync in/out, backup handling, cleanup.
 
 ## How to add/adjust E2E tests (suggested patterns)
-- Use `BaseWearE2ETest` helpers: `launchAppFromHome`, `waitForText`, `clickText`, `dismissTutorialIfPresent`.
+- Use `WearBaseE2ETest` helpers: `launchAppFromHome`, `waitForText`, `clickText`, `dismissTutorialIfPresent`.
 - Add helper to start a specific workout by name, optionally resume vs start fresh.
 - For set/rest interactions:
   - Complete set via "Complete Set" dialog (`CustomDialogYesOnLongPress`).
@@ -176,3 +176,4 @@ This document gives future agents the context they need to work on the Wear OS a
 - Completion: "Completed", dialog title "Workout completed", countdown text "Closing in:"
 - Go home: "Go Home" (PageButtons)
 - Alarm dialog: shows workout name or app name; yes/no are long-press icons.
+

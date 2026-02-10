@@ -186,7 +186,7 @@ if ($TestMethod) {
     }
     $classArgument = $classes -join ","
 } elseif ($SmokeOnly) {
-    $classArgument = "com.gabstra.myworkoutassistant.e2e.SmokeE2ETest"
+    $classArgument = "com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
 }
 
 $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
@@ -298,5 +298,6 @@ if ($exitCode -ne 0) {
 }
 
 Write-Host "Wear OS E2E tests completed successfully." -ForegroundColor Green
+
 
 

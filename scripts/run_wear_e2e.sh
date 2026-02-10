@@ -97,7 +97,7 @@ elif [ -n "$TEST_CLASS" ]; then
   done
   TEST_ARG="-Pandroid.testInstrumentationRunnerArguments.class=$(IFS=','; echo "${FULL_CLASSES[*]}")"
 elif [ "$SMOKE_ONLY" = true ]; then
-  TEST_ARG="-Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest"
+  TEST_ARG="-Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
 fi
 
 if [ -n "$TEST_ARG" ]; then
@@ -127,5 +127,6 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 
 echo "Wear OS E2E tests completed successfully."
+
 
 

@@ -13,7 +13,7 @@
 - Run Wear OS E2E tests against release build (near-production, if needed):
   - `./gradlew :wearos:connectedReleaseAndroidTest`
 - Run only the Wear OS smoke E2E suite (fast launch + basic flows):
-  - `./gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.SmokeE2ETest`
+  - `./gradlew :wearos:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest`
 
 ### Agent workflow for Wear OS E2E tests
 - Ensure at least one Wear OS device/emulator is connected and online:

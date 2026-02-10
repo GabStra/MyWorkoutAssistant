@@ -1,5 +1,5 @@
 Param(
-    [string]$WearTestClass = "CrossDeviceWorkoutSyncProducerE2ETest",
+    [string]$WearTestClass = "WearCrossDeviceSyncProducerE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
@@ -326,3 +326,4 @@ try {
 } finally {
     $env:ANDROID_SERIAL = $previousAndroidSerial
 }
+
