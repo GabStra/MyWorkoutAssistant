@@ -188,11 +188,16 @@ fun ExerciseScreen(
         transitionSpec = {
             fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
         }, label = ""
-    ) { _ ->
+    ) { targetState ->
+        val animatedExerciseId = targetState.first
+        val animatedExercise = remember(animatedExerciseId, exercise) {
+            viewModel.exercisesById[animatedExerciseId] ?: exercise
+        }
+
         val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
             { providedOnLongClick ->
                 ScrollableTextColumn(
-                    text = exercise.name,
+                    text = animatedExercise.name,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 25.dp)
@@ -256,8 +261,8 @@ fun ExerciseScreen(
                                 viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
                             } else null
                         }
-                        val supersetIndex = remember(supersetExercises, exercise) {
-                            supersetExercises?.indexOf(exercise)
+                        val supersetIndex = remember(supersetExercises, animatedExercise) {
+                            supersetExercises?.indexOf(animatedExercise)
                         }
                         
                         val sideIndicator = remember(state.intraSetTotal) {
@@ -336,13 +341,13 @@ fun ExerciseScreen(
                     }
                 )
 
-                PageType.MUSCLES -> PageMuscles(exercise = exercise)
+                PageType.MUSCLES -> PageMuscles(exercise = animatedExercise)
 
                 PageType.EXERCISES -> PageExercises(
                             workoutState = state,
                             viewModel = viewModel,
                             hapticsViewModel = hapticsViewModel,
-                            currentExercise = exercise,
+                            currentExercise = animatedExercise,
                             onExerciseSelected = {
                                 selectedExerciseId = it
                             })
@@ -418,5 +423,4 @@ fun ExerciseScreen(
         }
     }
 }
-
 
