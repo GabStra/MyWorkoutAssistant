@@ -336,7 +336,7 @@ fun ExerciseSetsViewer(
         val calibrationExecutionColor = if (rowIndex < setIndex) {
             Green
         } else {
-            Green.copy(alpha = 0.35f)
+            Green.copy(alpha = 0.5f)
         }
 
         val borderColor = when {

@@ -300,10 +300,10 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
 
 val colorsByZone = arrayOf(
     MediumLighterGray, // Not used
-    Color(0xFF19699c), // Blue
-    Color(0xFF088543), // Green
-    Color(0xFF8c8317), // Yellow
-    Color(0xFFcb781f), // Orange
+    Color(0xFF5ca6dd), // Blue
+    Color(0xFF2bbb66), // Green
+    Color(0xFFaca228), // Yellow
+    Color(0xFFdf8629), // Orange
     Color(0xFFfa695e)  // Red
 )
 

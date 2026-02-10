@@ -481,7 +481,7 @@ fun BodyWeightSetScreen(
                     .fillMaxSize()
                     .alpha(if (isInEditMode) 0f else 1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.Top
             ) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)

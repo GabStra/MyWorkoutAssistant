@@ -424,7 +424,7 @@ fun TimedDurationSetScreen(
     customComponentWrapper {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.Top,
             modifier = modifier.semantics {
                 contentDescription = SetValueSemantics.TimedDurationSetTypeDescription
             }

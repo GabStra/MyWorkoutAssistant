@@ -656,7 +656,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            colorsByZone[index].copy(alpha = 0.35f)
+            colorsByZone[index].copy(alpha = 0.5f)
         } else {
             MediumDarkGray
         }
@@ -902,7 +902,7 @@ private fun HeartRateView(
                     .padding(3.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.35f),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.5f),
                 strokeWidth = 18.dp,
                 borderWidth = 6.dp,
                 innerBorderWidth = 4.dp
@@ -1030,10 +1030,10 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(67.5f, 30),
+            hr = getHeartRateFromPercentage(72.5f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 65f,
-            upperBoundMaxHRPercent = 75f
+            upperBoundMaxHRPercent = 80f
         )
     }
 }

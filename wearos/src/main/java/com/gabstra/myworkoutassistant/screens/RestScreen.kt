@@ -240,14 +240,14 @@ private fun RestTimerBlock(
         contentAlignment = Alignment.Center
     ) {
         val primaryColor = MaterialTheme.colorScheme.primary
-        val trackColor = remember(primaryColor) { primaryColor.copy(alpha = 0.35f) }
+        val trackColor = remember(primaryColor) { primaryColor.copy(alpha = 0.5f) }
         CircularProgressIndicator(
             progress = { indicatorProgress.floatValue },
             modifier = Modifier.fillMaxSize().padding(10.dp),
             colors = ProgressIndicatorDefaults.colors(indicatorColor = primaryColor, trackColor = trackColor),
             strokeWidth = 4.dp,
-            startAngle = 125f,
-            endAngle = 235f,
+            startAngle = 130f,
+            endAngle = 230f,
         )
         textComposable(
             seconds = if (isTimerInEditMode) currentSecondsFreeze else currentSeconds,
