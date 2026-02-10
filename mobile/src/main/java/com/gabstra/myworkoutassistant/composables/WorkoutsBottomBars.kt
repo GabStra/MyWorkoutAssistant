@@ -3,6 +3,8 @@ package com.gabstra.myworkoutassistant.composables
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +42,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -61,6 +65,8 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -421,6 +427,13 @@ fun AccessoriesBottomBar(
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
+        var showDeleteConfirmation by remember { mutableStateOf(false) }
+        val deleteMessage = remember(selectedAccessories, appViewModel.workouts) {
+            buildAccessoryDeleteConfirmationMessage(
+                selectedAccessories = selectedAccessories,
+                workouts = appViewModel.workouts
+            )
+        }
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -504,11 +517,7 @@ fun AccessoriesBottomBar(
                             modifier = Modifier.width(56.dp)
                         ) {
                             IconButton(onClick = {
-                                val newAccessories = accessories.filter { item ->
-                                    selectedAccessories.none { it.id == item.id }
-                                }
-                                appViewModel.updateAccessoryEquipments(newAccessories)
-                                onSelectionModeChange(false)
+                                showDeleteConfirmation = true
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
@@ -525,6 +534,43 @@ fun AccessoriesBottomBar(
                     }
                 }
             )
+            if (showDeleteConfirmation) {
+                StandardDialog(
+                    onDismissRequest = { showDeleteConfirmation = false },
+                    title = if (selectedAccessories.size == 1) {
+                        "Delete Accessory"
+                    } else {
+                        "Delete Accessories"
+                    },
+                    body = {
+                        val scrollState = rememberScrollState()
+                        Box(
+                            modifier = Modifier
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(scrollState)
+                        ) {
+                            Text(
+                                text = deleteMessage,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    },
+                    confirmText = "Delete",
+                    onConfirm = {
+                        val newAccessories = accessories.filter { item ->
+                            selectedAccessories.none { it.id == item.id }
+                        }
+                        appViewModel.updateAccessoryEquipments(newAccessories)
+                        onSelectionChange(emptyList())
+                        onSelectionModeChange(false)
+                        showDeleteConfirmation = false
+                    },
+                    dismissText = "Cancel",
+                    onDismissButton = {
+                        showDeleteConfirmation = false
+                    }
+                )
+            }
         }
     }
 }
@@ -539,6 +585,13 @@ fun EquipmentsBottomBar(
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
+        var showDeleteConfirmation by remember { mutableStateOf(false) }
+        val deleteMessage = remember(selectedEquipments, appViewModel.workouts) {
+            buildEquipmentDeleteConfirmationMessage(
+                selectedEquipments = selectedEquipments,
+                workouts = appViewModel.workouts
+            )
+        }
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -670,11 +723,7 @@ fun EquipmentsBottomBar(
                             modifier = Modifier.width(56.dp)
                         ) {
                             IconButton(onClick = {
-                                val newEquipments = equipments.filter { item ->
-                                    selectedEquipments.none { it.id == item.id }
-                                }
-                                appViewModel.updateEquipments(newEquipments)
-                                onSelectionModeChange(false)
+                                showDeleteConfirmation = true
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
@@ -691,6 +740,158 @@ fun EquipmentsBottomBar(
                     }
                 }
             )
+            if (showDeleteConfirmation) {
+                StandardDialog(
+                    onDismissRequest = { showDeleteConfirmation = false },
+                    title = if (selectedEquipments.size == 1) {
+                        "Delete Equipment"
+                    } else {
+                        "Delete Equipment"
+                    },
+                    body = {
+                        val scrollState = rememberScrollState()
+                        Box(
+                            modifier = Modifier
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(scrollState)
+                        ) {
+                            Text(
+                                text = deleteMessage,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    },
+                    confirmText = "Delete",
+                    onConfirm = {
+                        val newEquipments = equipments.filter { item ->
+                            selectedEquipments.none { it.id == item.id }
+                        }
+                        appViewModel.updateEquipments(newEquipments)
+                        onSelectionChange(emptyList())
+                        onSelectionModeChange(false)
+                        showDeleteConfirmation = false
+                    },
+                    dismissText = "Cancel",
+                    onDismissButton = {
+                        showDeleteConfirmation = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+private data class ExerciseUsage(
+    val workoutName: String,
+    val exerciseName: String
+)
+
+private fun buildAccessoryDeleteConfirmationMessage(
+    selectedAccessories: List<AccessoryEquipment>,
+    workouts: List<Workout>
+): String {
+    val header = if (selectedAccessories.size == 1) {
+        "Delete accessory \"${selectedAccessories.first().name}\"?"
+    } else {
+        "Delete ${selectedAccessories.size} accessories?"
+    }
+
+    val usageLines = selectedAccessories.mapNotNull { accessory ->
+        val usages = findAccessoryUsages(workouts, accessory.id)
+            .distinct()
+            .sortedWith(compareBy({ it.workoutName }, { it.exerciseName }))
+        if (usages.isEmpty()) {
+            null
+        } else {
+            formatUsageLine(accessory.name, usages)
+        }
+    }
+
+    val usageText = if (usageLines.isEmpty()) {
+        "Not currently used in any workout."
+    } else {
+        "Used by:\n${usageLines.joinToString("\n")}"
+    }
+
+    return "$header\n\n$usageText"
+}
+
+private fun buildEquipmentDeleteConfirmationMessage(
+    selectedEquipments: List<WeightLoadedEquipment>,
+    workouts: List<Workout>
+): String {
+    val header = if (selectedEquipments.size == 1) {
+        "Delete equipment \"${selectedEquipments.first().name}\"?"
+    } else {
+        "Delete ${selectedEquipments.size} equipment items?"
+    }
+
+    val usageLines = selectedEquipments.mapNotNull { equipment ->
+        val usages = findEquipmentUsages(workouts, equipment.id)
+            .distinct()
+            .sortedWith(compareBy({ it.workoutName }, { it.exerciseName }))
+        if (usages.isEmpty()) {
+            null
+        } else {
+            formatUsageLine(equipment.name, usages)
+        }
+    }
+
+    val usageText = if (usageLines.isEmpty()) {
+        "Not currently used in any workout."
+    } else {
+        "Used by:\n${usageLines.joinToString("\n")}"
+    }
+
+    return "$header\n\n$usageText"
+}
+
+private fun formatUsageLine(itemName: String, usages: List<ExerciseUsage>): String {
+    val usageEntries = usages.joinToString("\n") { usage ->
+        "    - ${usage.workoutName} > ${usage.exerciseName}"
+    }
+    return "- $itemName:\n$usageEntries"
+}
+
+private fun findEquipmentUsages(workouts: List<Workout>, equipmentId: UUID): List<ExerciseUsage> {
+    return workouts.flatMap { workout ->
+        workout.workoutComponents.flatMap { component ->
+            when (component) {
+                is Exercise -> {
+                    if (component.equipmentId == equipmentId) {
+                        listOf(ExerciseUsage(workout.name, component.name))
+                    } else {
+                        emptyList()
+                    }
+                }
+                is Superset -> {
+                    component.exercises.filter { it.equipmentId == equipmentId }
+                        .map { ExerciseUsage(workout.name, it.name) }
+                }
+                else -> emptyList()
+            }
+        }
+    }
+}
+
+private fun findAccessoryUsages(workouts: List<Workout>, accessoryId: UUID): List<ExerciseUsage> {
+    return workouts.flatMap { workout ->
+        workout.workoutComponents.flatMap { component ->
+            when (component) {
+                is Exercise -> {
+                    if (component.requiredAccessoryEquipmentIds?.contains(accessoryId) == true) {
+                        listOf(ExerciseUsage(workout.name, component.name))
+                    } else {
+                        emptyList()
+                    }
+                }
+                is Superset -> {
+                    component.exercises.filter {
+                        it.requiredAccessoryEquipmentIds?.contains(accessoryId) == true
+                    }.map { ExerciseUsage(workout.name, it.name) }
+                }
+                else -> emptyList()
+            }
         }
     }
 }
