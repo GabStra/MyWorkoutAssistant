@@ -106,19 +106,83 @@ fun EnduranceSetScreen (
     }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
+    var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
+    var pausedElapsedMillisForEditMode by remember(set.id) { mutableIntStateOf(-1) }
 
 
     var lastInteractionTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
+    val isPaused by viewModel.isPaused
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle =  MaterialTheme.typography.numeralSmall
 
+    fun pauseRunningTimerForEditMode() {
+        val setData = state.currentSetData as? EnduranceSetData ?: return
+        if (!viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+            wasTimerRunningBeforeEditMode = false
+            pausedElapsedMillisForEditMode = -1
+            return
+        }
+
+        val elapsedMillis = setData.endTimer.coerceIn(0, setData.startTimer)
+        wasTimerRunningBeforeEditMode = elapsedMillis < setData.startTimer
+        pausedElapsedMillisForEditMode = elapsedMillis
+        state.currentSetData = setData.copy(endTimer = elapsedMillis)
+
+        if (wasTimerRunningBeforeEditMode) {
+            viewModel.workoutTimerService.unregisterTimer(set.id)
+        }
+    }
+
+    fun resumeTimerAfterEditMode() {
+        if (!wasTimerRunningBeforeEditMode) return
+
+        val setData = state.currentSetData as? EnduranceSetData ?: return
+        val elapsedMillis = pausedElapsedMillisForEditMode.coerceIn(0, setData.startTimer)
+        if (elapsedMillis >= setData.startTimer) {
+            wasTimerRunningBeforeEditMode = false
+            pausedElapsedMillisForEditMode = -1
+            return
+        }
+
+        state.startTime = LocalDateTime.now().minusNanos(elapsedMillis.toLong() * 1_000_000L)
+        state.currentSetData = setData.copy(endTimer = elapsedMillis)
+
+        if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+            viewModel.workoutTimerService.registerTimer(
+                state = state,
+                callbacks = WorkoutTimerService.TimerCallbacks(
+                    onTimerEnd = {
+                        hapticsViewModel.doHardVibrationTwice()
+                        onTimerEnd()
+                    },
+                    onTimerEnabled = onTimerEnabled,
+                    onTimerDisabled = onTimerDisabled
+                )
+            )
+        }
+
+        wasTimerRunningBeforeEditMode = false
+        pausedElapsedMillisForEditMode = -1
+    }
+
+    fun setTimerEditMode(enabled: Boolean) {
+        if (isTimerInEditMode == enabled) return
+        if (enabled) {
+            pauseRunningTimerForEditMode()
+            updateInteractionTime()
+        } else {
+            resumeTimerAfterEditMode()
+        }
+        isTimerInEditMode = enabled
+    }
+
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
             if (System.currentTimeMillis() - lastInteractionTime > 5000) {
-                isTimerInEditMode = false
+                setTimerEditMode(false)
             }
             delay(1000) // Check every second
         }
@@ -194,7 +258,7 @@ fun EnduranceSetScreen (
                     onClick = {},
                     onLongClick = {
                         if (showStartButton) {
-                            isTimerInEditMode = !isTimerInEditMode
+                            setTimerEditMode(!isTimerInEditMode)
                             updateInteractionTime()
                             hapticsViewModel.doGentleVibration()
                         }
@@ -221,7 +285,7 @@ fun EnduranceSetScreen (
                     onClick = {},
                     onLongClick = {
                         if (showStartButton) {
-                            isTimerInEditMode = !isTimerInEditMode
+                            setTimerEditMode(!isTimerInEditMode)
                             updateInteractionTime()
                             hapticsViewModel.doGentleVibration()
                         }
@@ -261,8 +325,6 @@ fun EnduranceSetScreen (
 
         if (!hasBeenStartedOnce) hasBeenStartedOnce = true
     }
-
-    val isPaused by viewModel.isPaused
 
     LaunchedEffect(set.id, set.autoStart, isPaused) {
         // Check if timer has already started (e.g., resuming workout)
@@ -396,7 +458,7 @@ fun EnduranceSetScreen (
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     onCloseClick = {
-                        isTimerInEditMode = false
+                        setTimerEditMode(false)
                     },
                     content = {
                         textComposable()

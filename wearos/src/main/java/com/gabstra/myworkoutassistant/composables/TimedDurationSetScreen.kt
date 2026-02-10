@@ -103,18 +103,55 @@ fun TimedDurationSetScreen(
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
     }
 
-    var isTimerInEditMode by remember { mutableStateOf(false) }
-
-    var lastInteractionTime by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    val updateInteractionTime = { lastInteractionTime = SystemClock.elapsedRealtime() }
+    val isPaused by viewModel.isPaused
+    val timerEditModeController = remember(set.id) {
+        ServiceBackedTimerEditModeController(
+            isWorkoutPaused = { isPaused },
+            isTimerRegistered = { viewModel.workoutTimerService.isTimerRegistered(set.id) },
+            readProgressMillis = {
+                (state.currentSetData as? TimedDurationSetData)?.endTimer ?: currentSet.startTimer
+            },
+            readMaxMillis = {
+                (state.currentSetData as? TimedDurationSetData)?.startTimer ?: currentSet.startTimer
+            },
+            isProgressRunning = { progressMillis, _ -> progressMillis > 0 },
+            toElapsedMillis = { progressMillis, maxMillis -> (maxMillis - progressMillis).coerceAtLeast(0) },
+            applyFrozenProgressMillis = { progressMillis ->
+                val setData = state.currentSetData as? TimedDurationSetData
+                if (setData != null) {
+                    state.currentSetData = setData.copy(endTimer = progressMillis)
+                }
+            },
+            applyStartTimeFromElapsedMillis = { elapsedMillis ->
+                state.startTime = LocalDateTime.now().minusNanos(elapsedMillis.toLong() * 1_000_000L)
+            },
+            registerTimer = {
+                viewModel.workoutTimerService.registerTimer(
+                    state = state,
+                    callbacks = WorkoutTimerService.TimerCallbacks(
+                        onTimerEnd = {
+                            hapticsViewModel.doHardVibrationTwice()
+                            onTimerEnd()
+                        },
+                        onTimerEnabled = onTimerEnabled,
+                        onTimerDisabled = onTimerDisabled
+                    )
+                )
+            },
+            unregisterTimer = { viewModel.workoutTimerService.unregisterTimer(set.id) },
+            nowMillis = { SystemClock.elapsedRealtime() }
+        )
+    }
+    val isTimerInEditMode = timerEditModeController.isEditMode
+    val updateInteractionTime = { timerEditModeController.recordInteraction() }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val itemStyle =  MaterialTheme.typography.numeralSmall
 
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
-                isTimerInEditMode = false
+            if (timerEditModeController.shouldAutoClose(timeoutMillis = 5000L)) {
+                timerEditModeController.updateEditMode(false)
             }
             delay(1000) // Check every second
         }
@@ -201,8 +238,6 @@ fun TimedDurationSetScreen(
         }
     }
 
-    val isPaused by viewModel.isPaused
-
     LaunchedEffect(set.id, set.autoStart, isPaused) {
         // Check if timer has already started (e.g., resuming workout)
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
@@ -266,7 +301,7 @@ fun TimedDurationSetScreen(
                         onClick = {},
                         onLongClick = {
                             if (showStartButton) {
-                                isTimerInEditMode = !isTimerInEditMode
+                                timerEditModeController.toggleEditMode()
                                 updateInteractionTime()
                                 hapticsViewModel.doGentleVibration()
                             }
@@ -295,7 +330,7 @@ fun TimedDurationSetScreen(
                         onClick = {},
                         onLongClick = {
                             if (showStartButton) {
-                                isTimerInEditMode = !isTimerInEditMode
+                                timerEditModeController.toggleEditMode()
                                 updateInteractionTime()
                                 hapticsViewModel.doGentleVibration()
                             }
@@ -409,7 +444,7 @@ fun TimedDurationSetScreen(
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
                     onCloseClick = {
-                        isTimerInEditMode = false
+                        timerEditModeController.updateEditMode(false)
                     },
                     content = {
                         textComposable()

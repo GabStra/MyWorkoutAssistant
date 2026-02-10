@@ -6,10 +6,12 @@ import android.content.Context
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.StaleObjectException
+import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
+import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
 
 /**
  * Reusable UI driver for common workout E2E interactions.
@@ -19,6 +21,98 @@ class WearWorkoutDriver(
     private val device: UiDevice,
     private val longPressByDesc: (String, Long) -> Unit
 ) {
+    fun clickObjectOrAncestor(obj: UiObject2) {
+        clickObjectOrAncestorInternal(obj)
+    }
+
+    fun waitForText(text: String, timeoutMs: Long): Boolean {
+        return device.wait(Until.hasObject(By.text(text)), timeoutMs)
+    }
+
+    fun clickText(text: String, timeoutMs: Long) {
+        val obj = device.wait(Until.findObject(By.text(text)), timeoutMs)
+        require(obj != null) {
+            "Timed out waiting for UI object with text '$text' to appear"
+        }
+        clickObjectOrAncestorInternal(obj)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    fun clickLabel(label: String, timeoutMs: Long) {
+        val obj = device.wait(Until.findObject(By.desc(label)), timeoutMs)
+            ?: device.wait(Until.findObject(By.text(label)), timeoutMs)
+        require(obj != null) {
+            "Timed out waiting for UI object with label '$label' to appear"
+        }
+        clickObjectOrAncestorInternal(obj)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    fun scrollUntilFound(
+        selector: BySelector,
+        direction: Direction,
+        initialWaitMs: Long = 1_000
+    ): UiObject2? {
+        device.wait(Until.findObject(selector), initialWaitMs)?.let { return it }
+
+        val scrollable = device.findObject(By.scrollable(true))
+        if (scrollable != null) {
+            return runCatching {
+                scrollable.scrollUntil(direction, Until.findObject(selector))
+            }.getOrNull()
+        }
+
+        return null
+    }
+
+    fun navigateToPagerPage(direction: Direction) {
+        val width = device.displayWidth
+        val height = device.displayHeight
+        val swipeY = (height * 0.20).toInt().coerceAtLeast(1)
+
+        if (direction == Direction.LEFT) {
+            val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
+            val endX = (width * 0.2).toInt().coerceAtLeast(0)
+            device.swipe(startX, swipeY, endX, swipeY, 5)
+        } else {
+            val startX = (width * 0.2).toInt().coerceAtLeast(0)
+            val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
+            device.swipe(startX, swipeY, endX, swipeY, 5)
+        }
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    fun dismissResumeDialogIfPresent(timeoutMs: Long = 2_000) {
+        val resumeVisible = device.wait(Until.hasObject(By.textContains("Resume")), timeoutMs)
+        if (resumeVisible) {
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        }
+    }
+
+    fun openWorkoutDetailAndStartOrResume(
+        workoutName: String,
+        timeoutMs: Long
+    ): String {
+        val openWorkoutDesc = "Open workout: $workoutName"
+        val detailDesc = "Workout detail: $workoutName"
+        val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 2_000)
+            ?: device.wait(Until.findObject(By.text(workoutName)), 2_000)
+        require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
+        clickObjectOrAncestorInternal(openWorkout)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+        val detailAppeared =
+            device.wait(Until.hasObject(By.desc(detailDesc)), timeoutMs) ||
+                device.wait(Until.hasObject(By.text(workoutName)), timeoutMs)
+        require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
+
+        val action = findWorkoutDetailPrimaryAction()
+            ?: error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
+        clickObjectOrAncestorInternal(action.second)
+        return action.first
+    }
+
     fun killAppProcess(packageName: String, settleMs: Long = 1_000) {
         // Move app to background first so pause/stop persistence hooks run.
         device.pressHome()
@@ -44,7 +138,7 @@ class WearWorkoutDriver(
             if (!timerText.isNullOrBlank()) {
                 return parseTimerTextToSeconds(timerText)
             }
-            device.waitForIdle(300)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
 
         error("Could not read timed duration value from UI")
@@ -61,25 +155,25 @@ class WearWorkoutDriver(
     }
 
     fun confirmLongPressDialog(timeoutMs: Long = 5_000) {
-        device.waitForIdle(1_000)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         longPressByDesc("Done", timeoutMs)
-        device.waitForIdle(1_000)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     private fun tryConfirmLongPressDialog(timeoutMs: Long): Boolean {
-        device.waitForIdle(500)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         val hasDone = device.wait(Until.hasObject(By.desc("Done")), timeoutMs)
         if (!hasDone) return false
         longPressByDesc("Done", timeoutMs)
-        device.waitForIdle(500)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         return true
     }
 
     fun skipRest(timeoutMs: Long = 3_000) {
         device.pressBack()
-        device.waitForIdle(200)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         device.pressBack()
-        device.waitForIdle(500)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
         val dialogAppeared = device.wait(Until.hasObject(By.text("Skip Rest")), timeoutMs)
         require(dialogAppeared) { "Skip Rest dialog did not appear" }
@@ -100,11 +194,11 @@ class WearWorkoutDriver(
     fun completeTimedSet(timeoutMs: Long = 5_000) {
         val started = clickButtonWithRetry("Start", timeoutMs = 3_000, attempts = 4)
         if (started) {
-            device.waitForIdle(2_000)
-            device.waitForIdle(3_000)
-            clickButtonWithRetry("Stop", timeoutMs = 3_000, attempts = 4)
+            waitForControl("Stop", timeoutMs = 4_000)
+            clickButtonWithRetry("Stop", timeoutMs = 2_000, attempts = 3)
         } else {
-            device.waitForIdle(5_000)
+            // Auto-start sets begin after countdown; continue as soon as Stop or Done is visible.
+            waitForAnyControl(timeoutMs = 4_000, labels = arrayOf("Stop", "Done"))
         }
 
         completeCurrentSet(timeoutMs)
@@ -129,7 +223,7 @@ class WearWorkoutDriver(
             val startY = (height * 0.75).toInt()
             val endY = (height * 0.30).toInt()
             device.swipe(centerX, startY, centerX, endY, 10)
-            device.waitForIdle(350)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         }
 
         var goHome: UiObject2? = findGoHomeWithVerticalScroll()
@@ -146,7 +240,7 @@ class WearWorkoutDriver(
                     swipeY,
                     6
                 )
-                device.waitForIdle(450)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
                 goHome = findGoHomeWithVerticalScroll()
                 if (goHome != null) return@repeat
             }
@@ -168,7 +262,7 @@ class WearWorkoutDriver(
                     swipeY,
                     6
                 )
-                device.waitForIdle(400)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
                 goHome = findGoHomeWithVerticalScroll()
                 if (goHome != null) return@repeat
             }
@@ -186,7 +280,7 @@ class WearWorkoutDriver(
                     swipeY,
                     6
                 )
-                device.waitForIdle(400)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
                 goHome = findGoHomeWithVerticalScroll()
                 if (goHome != null) return@repeat
             }
@@ -203,7 +297,7 @@ class WearWorkoutDriver(
 
         if (goHome != null) {
             goHome.click()
-            device.waitForIdle(1_000)
+            device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
         } else {
             // Fallback for flows where Buttons page is unavailable: relaunch app to selection screen.
             val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
@@ -233,7 +327,7 @@ class WearWorkoutDriver(
             if (prefs.getStringSet(key, emptySet()).orEmpty().isNotEmpty()) {
                 return true
             }
-            device.waitForIdle(1_000)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         }
 
         return false
@@ -259,12 +353,78 @@ class WearWorkoutDriver(
             val stepTimeout = if (remaining > 1_000L) 1_000L else remaining
             val button = waitForButtonByLabel(label, stepTimeout)
             if (button != null && clickBestEffort(button)) {
-                device.waitForIdle(200)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
                 return true
             }
-            device.waitForIdle(300)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
         return false
+    }
+
+    private fun waitForControl(label: String, timeoutMs: Long): Boolean {
+        return waitForAnyControl(timeoutMs = timeoutMs, labels = arrayOf(label))
+    }
+
+    private fun waitForAnyControl(timeoutMs: Long, labels: Array<String>): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (labels.any { label ->
+                    device.findObject(By.desc(label)) != null || device.findObject(By.text(label)) != null
+                }) {
+                return true
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
+    }
+
+    private fun findWorkoutDetailPrimaryAction(): Pair<String, UiObject2>? {
+        fun findVisibleAction(): Pair<String, UiObject2>? {
+            val startButton = device.findObject(By.desc("Start workout"))
+                ?: device.findObject(By.text("Start"))
+                ?: device.findObject(By.desc("Start"))
+            if (startButton != null) return "start" to startButton
+
+            val resumeButton = device.findObject(By.desc("Resume workout"))
+                ?: device.findObject(By.textContains("Resume"))
+                ?: device.findObject(By.descContains("Resume"))
+            if (resumeButton != null) return "resume" to resumeButton
+
+            return null
+        }
+
+        findVisibleAction()?.let { return it }
+
+        val scrollable = device.findObject(By.scrollable(true))
+        if (scrollable != null) {
+            runCatching { scrollable.scroll(Direction.DOWN, 0.75f) }
+        } else {
+            verticalSwipe(Direction.DOWN)
+        }
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+        return findVisibleAction()
+    }
+
+    private fun verticalSwipe(direction: Direction) {
+        val width = device.displayWidth
+        val height = device.displayHeight
+        val centerX = width / 2
+        val topY = (height * 0.25).toInt().coerceAtLeast(1)
+        val bottomY = (height * 0.75).toInt().coerceAtMost(height - 1)
+        if (direction == Direction.DOWN) {
+            device.swipe(centerX, bottomY, centerX, topY, 8)
+        } else {
+            device.swipe(centerX, topY, centerX, bottomY, 8)
+        }
+    }
+
+    private fun clickObjectOrAncestorInternal(obj: UiObject2) {
+        var current: UiObject2? = obj
+        while (current != null && !current.isClickable) {
+            current = current.parent
+        }
+        (current ?: obj).click()
     }
 
     private fun clickBestEffort(target: UiObject2): Boolean {

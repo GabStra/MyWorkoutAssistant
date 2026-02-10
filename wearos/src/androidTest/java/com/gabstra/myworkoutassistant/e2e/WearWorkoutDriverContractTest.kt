@@ -35,9 +35,7 @@ class WearWorkoutDriverContractTest : BaseWearE2ETest() {
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
 
-        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
-            longPressByDesc(desc, timeout)
-        }
+        workoutDriver = createWorkoutDriver()
     }
 
     @Test

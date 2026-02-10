@@ -94,6 +94,7 @@ private fun RestTimerBlock(
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
+    val isPaused by viewModel.isPaused
 
     isEditModeState.value = isTimerInEditMode
 
@@ -161,19 +162,22 @@ private fun RestTimerBlock(
     LaunchedEffect(currentSetData) { state.currentSetData = currentSetData }
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
-            if (System.currentTimeMillis() - lastInteractionTime > 5000) isTimerInEditMode = false
+            if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                isTimerInEditMode = false
+            }
             delay(1000)
         }
     }
     LaunchedEffect(set.id) {
         delay(500)
-        startTimerJob()
+        if (!isTimerInEditMode) {
+            startTimerJob()
+        }
         if (state.startTime == null) state.startTime = LocalDateTime.now()
     }
-    val isPaused by viewModel.isPaused
-    LaunchedEffect(isPaused) {
+    LaunchedEffect(isPaused, isTimerInEditMode) {
         if (!hasBeenStartedOnce) return@LaunchedEffect
-        if (isPaused) timerJob?.takeIf { it.isActive }?.cancel()
+        if (isPaused || isTimerInEditMode) timerJob?.takeIf { it.isActive }?.cancel()
         else if (timerJob?.isActive != true) startTimerJob()
     }
 
@@ -192,6 +196,7 @@ private fun RestTimerBlock(
                     onLongClick = {
                         currentSecondsFreeze = currentSeconds
                         amountToWaitFreeze = amountToWait
+                        state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
                         isTimerInEditMode = !isTimerInEditMode
                         updateInteractionTime()
                         hapticsViewModel.doGentleVibration()

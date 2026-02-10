@@ -11,6 +11,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -61,7 +62,7 @@ class CrossDeviceWorkoutFlowHelper(
                 continue
             }
 
-            device.waitForIdle(500)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
 
         require(isCompletionVisible()) {
@@ -125,7 +126,7 @@ class CrossDeviceWorkoutFlowHelper(
                 continue
             }
 
-            device.waitForIdle(500)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
 
         require(sawCalibrationLoad) {
@@ -189,7 +190,7 @@ class CrossDeviceWorkoutFlowHelper(
             if (!isRestScreenVisible()) {
                 return
             }
-            device.waitForIdle(500)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
         error("Rest screen did not auto-advance within ${timeoutMs}ms.")
     }
@@ -202,14 +203,14 @@ class CrossDeviceWorkoutFlowHelper(
 
         val before = parseIntFromValueTarget(repsTarget) ?: return false
         repsTarget.longClick()
-        device.waitForIdle(400)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
 
         val addButton = device.wait(Until.findObject(By.desc("Add")), 2_000) ?: return false
         addButton.click()
-        device.waitForIdle(300)
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
         device.wait(Until.findObject(By.desc("Close")), 1_500)?.click()
-        device.waitForIdle(700)
+        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
 
         val afterTarget = device.wait(
             Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),

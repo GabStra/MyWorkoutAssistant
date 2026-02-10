@@ -38,9 +38,7 @@ class CrossDeviceWorkoutSyncProducerE2ETest : BaseWearE2ETest() {
         CrossDeviceWearSyncStateHelper.clearWearHistoryState(context)
         CrossDeviceSyncWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
-        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
-            longPressByDesc(desc, timeout)
-        }
+        workoutDriver = createWorkoutDriver()
         flowHelper = CrossDeviceWorkoutFlowHelper(device, workoutDriver)
     }
 
@@ -67,8 +65,8 @@ class CrossDeviceWorkoutSyncProducerE2ETest : BaseWearE2ETest() {
         if (!workoutVisible) return
 
         runCatching {
-            clickText(workoutName)
-            clickText("Resume")
+            workoutDriver.clickText(workoutName, defaultTimeoutMs)
+            workoutDriver.clickText("Resume", defaultTimeoutMs)
             dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
             dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
             dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)

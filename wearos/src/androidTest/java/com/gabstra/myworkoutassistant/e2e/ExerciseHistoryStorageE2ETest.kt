@@ -93,9 +93,7 @@ class ExerciseHistoryStorageE2ETest : BaseWearE2ETest() {
             db.workoutRecordDao().deleteAll()
         }
 
-        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
-            longPressByDesc(desc, timeout)
-        }
+        workoutDriver = createWorkoutDriver()
     }
 
     private data class ModifiedSetData(

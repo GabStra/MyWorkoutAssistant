@@ -5,11 +5,10 @@ import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
-import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.TestWorkoutStoreSeeder
 import org.junit.Before
 
@@ -17,7 +16,10 @@ abstract class BaseWearE2ETest {
 
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
-    protected val defaultTimeoutMs: Long = 5_000
+    protected val defaultTimeoutMs: Long = E2ETestTimings.DEFAULT_TIMEOUT_MS
+    private val interactionDriver: WearWorkoutDriver by lazy {
+        WearWorkoutDriver(device) { desc, timeout -> longPressByDesc(desc, timeout) }
+    }
 
     @Before
     open fun baseSetUp() {
@@ -74,40 +76,16 @@ abstract class BaseWearE2ETest {
         require(appeared) { "Timed out waiting for app ($pkg) to appear on screen" }
 
         // Wait a bit for the app to fully initialize and potentially show tutorial
-        device.waitForIdle(2_000)
+        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
         
         // Dismiss tutorial overlay if present (shown after app launch on WorkoutSelectionScreen)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION)
         
         // Wait for UI to settle after tutorial dismissal
-        device.waitForIdle(1_000)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
-    protected fun waitForText(text: String, timeoutMs: Long = defaultTimeoutMs): Boolean {
-        return device.wait(Until.hasObject(By.text(text)), timeoutMs)
-    }
-
-    protected fun clickText(text: String) {
-        // Wait for the target text to actually appear in the UI before clicking.
-        // Using Until.findObject() avoids the race where hasObject() returns true
-        // but a subsequent findObject() still returns null.
-        val obj = device.wait(Until.findObject(By.text(text)), defaultTimeoutMs)
-        require(obj != null) {
-            "Timed out waiting for UI object with text '$text' to appear"
-        }
-        clickObjectOrAncestor(obj)
-        device.waitForIdle(500)
-    }
-
-    protected fun clickLabel(label: String) {
-        val obj = device.wait(Until.findObject(By.desc(label)), defaultTimeoutMs)
-            ?: device.wait(Until.findObject(By.text(label)), defaultTimeoutMs)
-        require(obj != null) {
-            "Timed out waiting for UI object with label '$label' to appear"
-        }
-        clickObjectOrAncestor(obj)
-        device.waitForIdle(500)
-    }
+    protected fun createWorkoutDriver(): WearWorkoutDriver = interactionDriver
 
     /**
      * Performs a long press on a UI element identified by its content description.
@@ -116,7 +94,7 @@ abstract class BaseWearE2ETest {
      * @param contentDescription The content description of the element to long press
      * @param timeoutMs Timeout in milliseconds to wait for the element to appear
      */
-    protected fun longPressByDesc(contentDescription: String, timeoutMs: Long = defaultTimeoutMs) {
+    private fun longPressByDesc(contentDescription: String, timeoutMs: Long = defaultTimeoutMs) {
         val obj = device.wait(Until.findObject(By.desc(contentDescription)), timeoutMs)
         require(obj != null) {
             "Timed out waiting for UI object with content description '$contentDescription' to appear"
@@ -126,39 +104,7 @@ abstract class BaseWearE2ETest {
         val centerX = bounds.centerX()
         val centerY = bounds.centerY()
         device.swipe(centerX, centerY, centerX, centerY, 100)
-        device.waitForIdle(1_000)
-    }
-
-    /**
-     * Generic helper that scrolls until a selector is found.
-     * First checks if the element is already visible (fast path), then attempts to scroll
-     * in the specified direction until the element is found.
-     * 
-     * @param selector The By selector to search for
-     * @param direction The direction to scroll (e.g., Direction.DOWN, Direction.UP)
-     * @param initialWaitMs Timeout in milliseconds to wait for the element before scrolling (default: 1_000)
-     * @return The found UiObject2, or null if not found after scrolling
-     */
-    protected fun scrollUntilFound(
-        selector: BySelector,
-        direction: Direction,
-        initialWaitMs: Long = 1_000
-    ): UiObject2? {
-        // Fast path: if already visible, return it immediately
-        device.wait(Until.findObject(selector), initialWaitMs)?.let {
-            return it
-        }
-
-        // Find scrollable container and scroll until the selector is found
-        val scrollable = device.findObject(By.scrollable(true))
-        if (scrollable != null) {
-            return runCatching {
-                scrollable.scrollUntil(direction, Until.findObject(selector))
-            }.getOrNull()
-        }
-
-        // No scrollable container found, return null
-        return null
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     /**
@@ -173,14 +119,6 @@ abstract class BaseWearE2ETest {
     }
 
     /**
-     * Enum representing pager navigation directions.
-     */
-    protected enum class PagerDirection {
-        LEFT,   // Swipe left to go to next page
-        RIGHT   // Swipe right to go to previous page
-    }
-
-    /**
      * Dismisses the resume workout dialog if present when reopening the app after leaving
      * a workout incomplete. This ensures tests can start fresh without dealing with resume options.
      * 
@@ -190,14 +128,7 @@ abstract class BaseWearE2ETest {
      * 3) This allows tests to start workouts fresh rather than resuming
      */
     protected fun dismissResumeDialogIfPresent() {
-        // Check if "Resume" button is visible (indicates we're on WorkoutDetailScreen with paused workout)
-        val resumeVisible = device.wait(Until.hasObject(By.textContains("Resume")), 2_000)
-        
-        if (resumeVisible) {
-            // Press back to dismiss the resume dialog and return to workout selection
-            device.pressBack()
-            device.waitForIdle(1_000)
-        }
+        interactionDriver.dismissResumeDialogIfPresent(timeoutMs = 2_000)
     }
 
     /**
@@ -235,54 +166,9 @@ abstract class BaseWearE2ETest {
         val gotItSelector = By.text("Got it")
         
         // If not immediately visible, scroll until found
-        scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
-            runCatching { clickObjectOrAncestor(btn) }
+        interactionDriver.scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
+            runCatching { interactionDriver.clickObjectOrAncestor(btn) }
         }
-    }
-
-    private fun clickObjectOrAncestor(obj: UiObject2) {
-        var current: UiObject2? = obj
-        while (current != null && !current.isClickable) {
-            current = current.parent
-        }
-        (current ?: obj).click()
-    }
-
-    private fun longClickObjectOrAncestor(obj: UiObject2) {
-        var current: UiObject2? = obj
-        while (current != null && !current.isLongClickable) {
-            current = current.parent
-        }
-        (current ?: obj).longClick()
-    }
-
-    /**
-     * Navigates to a specific pager page by swiping horizontally.
-     * 
-     * @param direction The direction to swipe (LEFT for next page, RIGHT for previous page)
-     */
-    protected fun navigateToPagerPage(direction: PagerDirection) {
-        // Get screen dimensions for swipe
-        val width = device.displayWidth
-        val height = device.displayHeight
-        // Use upper area for pager swipes so Rest timer touch targets in center don't intercept gestures.
-        val swipeY = (height * 0.20).toInt().coerceAtLeast(1)
-
-        when (direction) {
-            PagerDirection.LEFT -> {
-                // Swipe left to go to next page - swipe from 80% to 20% of screen width for more reliable page change
-                val startX = (width * 0.8).toInt().coerceAtMost(width - 1)
-                val endX = (width * 0.2).toInt().coerceAtLeast(0)
-                device.swipe(startX, swipeY, endX, swipeY, 5)
-            }
-            PagerDirection.RIGHT -> {
-                // Swipe right to go to previous page - swipe from 20% to 80% of screen width for more reliable page change
-                val startX = (width * 0.2).toInt().coerceAtLeast(0)
-                val endX = (width * 0.8).toInt().coerceAtMost(width - 1)
-                device.swipe(startX, swipeY, endX, swipeY, 5)
-            }
-        }
-        device.waitForIdle(500)
     }
 
     /**
@@ -294,44 +180,16 @@ abstract class BaseWearE2ETest {
         // Dismiss workout selection tutorial if present (we're still on WorkoutSelectionScreen)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
 
-        val headerAppeared = waitForText("My Workout Assistant")
+        val headerAppeared = interactionDriver.waitForText("My Workout Assistant", defaultTimeoutMs)
         require(headerAppeared) { "Selection header not visible" }
 
         val workoutAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
         require(workoutAppeared) { "Workout '$workoutName' not visible to tap" }
 
-        var startVisible = false
-        var resumeVisible = false
-        val openWorkoutDesc = "Open workout: $workoutName"
-        val detailDesc = "Workout detail: $workoutName"
-        repeat(3) {
-            val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 2_000)
-                ?: device.wait(Until.findObject(By.text(workoutName)), 2_000)
-            require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
-            clickObjectOrAncestor(openWorkout)
-            device.waitForIdle(500)
-
-            val detailAppeared =
-                device.wait(Until.hasObject(By.desc(detailDesc)), defaultTimeoutMs) ||
-                    device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
-            require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
-            startVisible =
-                scrollUntilFound(By.desc("Start workout"), Direction.DOWN, 1_000) != null ||
-                scrollUntilFound(By.text("Start"), Direction.DOWN, 1_000) != null ||
-                scrollUntilFound(By.desc("Start"), Direction.DOWN, 1_000) != null
-            resumeVisible =
-                scrollUntilFound(By.desc("Resume workout"), Direction.DOWN, 1_000) != null ||
-                scrollUntilFound(By.textContains("Resume"), Direction.DOWN, 1_000) != null ||
-                scrollUntilFound(By.descContains("Resume"), Direction.DOWN, 1_000) != null
-            if (startVisible || resumeVisible) return@repeat
-            device.waitForIdle(500)
-        }
-
-        when {
-            startVisible -> clickLabel("Start workout")
-            resumeVisible -> clickLabel("Resume workout")
-            else -> error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
-        }
+        interactionDriver.openWorkoutDetailAndStartOrResume(
+            workoutName = workoutName,
+            timeoutMs = defaultTimeoutMs
+        )
 
         // Dismiss heart rate tutorial if it appears (shown when workout starts, before Set/Rest states)
         // Use longer timeout to catch tutorial that appears after a delay
@@ -341,11 +199,11 @@ abstract class BaseWearE2ETest {
         // The screen shows "Preparing HR Sensor" not just "Preparing"
         // Note: Tutorial overlay is full-screen and blocks "Preparing" text when visible
         // If "Preparing" is visible, tutorial is definitely dismissed
-        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 10_000)
+        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 8_000)
         if (preparingVisible) {
             // Wait for preparing step to complete (preparing text disappears)
             // This indicates we've moved past the preparing state
-            val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 10_000)
+            val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 8_000)
             require(preparingGone) { "Preparing step did not complete" }
         }
 

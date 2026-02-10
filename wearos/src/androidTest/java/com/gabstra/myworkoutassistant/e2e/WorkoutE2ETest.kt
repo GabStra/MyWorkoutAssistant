@@ -39,9 +39,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
             android.Manifest.permission.BLUETOOTH_SCAN,
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
-        workoutDriver = WearWorkoutDriver(device) { desc, timeout ->
-            longPressByDesc(desc, timeout)
-        }
+        workoutDriver = createWorkoutDriver()
     }
 
     // ==================== Helper Methods ====================
@@ -331,7 +329,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(dialogVisible) { "Workout completed dialog did not appear" }
 
         // Confirm via long-press on "Done"
-        longPressByDesc("Done")
+        workoutDriver.confirmLongPressDialog()
 
         // Verify return to WorkoutSelectionScreen
         val headerVisible = device.wait(
@@ -399,7 +397,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Swipe left to navigate to Plates page
-        navigateToPagerPage(PagerDirection.LEFT)
+        workoutDriver.navigateToPagerPage(Direction.LEFT)
         device.waitForIdle(1_000)
 
         // Verify we're on a different page (plates page should show plate information)
@@ -417,7 +415,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         startWorkout(WeightSetWorkoutStoreFixture.getWorkoutName())
 
         // Navigate away from detail page
-        navigateToPagerPage(PagerDirection.LEFT)
+        workoutDriver.navigateToPagerPage(Direction.LEFT)
         device.waitForIdle(500)
 
         // Wait 10+ seconds for auto-return
@@ -453,7 +451,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(restTimerVisible) { "Rest screen did not appear" }
 
         // Navigate pager (swipe)
-        navigateToPagerPage(PagerDirection.LEFT)
+        workoutDriver.navigateToPagerPage(Direction.LEFT)
         device.waitForIdle(1_000)
 
         // Verify we're still on rest screen (pager navigation doesn't exit rest)
@@ -495,7 +493,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         launchAppFromHome()
         val resumePromptVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
         if (!resumePromptVisible) {
-            clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
+            workoutDriver.clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
             val resumeButtonVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
             require(resumeButtonVisible) { "Paused workout was not persisted (Resume not visible)" }
         }
@@ -530,10 +528,10 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         launchAppFromHome()
         val resumePromptVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
         if (resumePromptVisible) {
-            clickText("Resume")
+            workoutDriver.clickText("Resume", defaultTimeoutMs)
         } else {
-            clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
-            clickText("Resume")
+            workoutDriver.clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
+            workoutDriver.clickText("Resume", defaultTimeoutMs)
         }
 
         // Dismiss tutorials that may appear when resuming (HEART_RATE and REST_SCREEN)
@@ -582,7 +580,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         device.waitForIdle(1_000)
         dismissResumeDialogIfPresent()
 
-        clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
+        workoutDriver.clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
 
         // Verify "Delete paused workout" button appears
         val deleteVisible = device.wait(
@@ -592,15 +590,15 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(deleteVisible) { "Delete paused workout button did not appear" }
 
         // Click delete
-        clickText("Delete paused workout")
+        workoutDriver.clickText("Delete paused workout", defaultTimeoutMs)
 
         confirmLongPressDialog()
 
         // Verify workout can be started fresh (Start button should be available)
         val startVisible =
-            scrollUntilFound(By.desc("Start workout"), Direction.DOWN, 1_500) != null ||
-            scrollUntilFound(By.text("Start"), Direction.DOWN, 1_500) != null ||
-            scrollUntilFound(By.desc("Start"), Direction.DOWN, 1_500) != null
+            workoutDriver.scrollUntilFound(By.desc("Start workout"), Direction.DOWN, 1_500) != null ||
+            workoutDriver.scrollUntilFound(By.text("Start"), Direction.DOWN, 1_500) != null ||
+            workoutDriver.scrollUntilFound(By.desc("Start"), Direction.DOWN, 1_500) != null
         require(startVisible) { "Start button not available after deleting paused workout" }
     }
 
@@ -688,18 +686,18 @@ class WorkoutE2ETest : BaseWearE2ETest() {
             5_000
         )
         if (processDeathPromptVisible) {
-            clickText("Resume")
+            workoutDriver.clickText("Resume", defaultTimeoutMs)
         } else {
             val resumeVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
             if (resumeVisible) {
-                clickText("Resume")
+                workoutDriver.clickText("Resume", defaultTimeoutMs)
             } else {
                 val alreadyInWorkout = device.wait(
                     Until.hasObject(By.text("Timed Exercise")),
                     2_000
                 )
                 if (!alreadyInWorkout) {
-                    clickText(TimedDurationSetWorkoutStoreFixture.getWorkoutName())
+                    workoutDriver.clickText(TimedDurationSetWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
                     val resumeInDetailVisible = device.wait(
                         Until.hasObject(By.textContains("Resume")),
                         5_000
@@ -707,7 +705,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
                     require(resumeInDetailVisible) {
                         "Recovery UI not available after process death. 'Resume' button not found."
                     }
-                    clickText("Resume")
+                    workoutDriver.clickText("Resume", defaultTimeoutMs)
                 }
             }
         }
@@ -736,7 +734,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
                 2_000
             )
             if (resumeVisibleAgain) {
-                clickText("Resume")
+                workoutDriver.clickText("Resume", defaultTimeoutMs)
             }
 
             exerciseVisibleAfterResume = device.wait(
@@ -851,7 +849,7 @@ class WorkoutE2ETest : BaseWearE2ETest() {
         require(dialogVisible) { "Workout in progress dialog did not appear on double-press" }
 
         // Long-press "Done" to pause/exit workout
-        longPressByDesc("Done")
+        workoutDriver.confirmLongPressDialog()
 
         // Verify we return to WorkoutSelectionScreen
         val headerVisible = device.wait(
