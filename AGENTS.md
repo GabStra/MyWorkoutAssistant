@@ -35,9 +35,18 @@
 - A build is NOT required for non-runtime/non-compilation changes only, such as:
   - Documentation (`*.md`), comments-only edits, or planning notes
   - Pure formatting/text changes that do not alter code/resource semantics
-- Build commands when required:
-  - For Android projects: `./gradlew build` or `./gradlew assembleDebug`
-  - For specific modules: `./gradlew :module:build`
+- Prefer the fastest sufficient verification command first (to keep iteration fast):
+  - Kotlin/Java-only changes in mobile/shared code: `./gradlew :mobile:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
+  - Kotlin/Java-only changes in wear/shared code: `./gradlew :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
+  - Kotlin/Java changes affecting both apps (mobile + wear + shared): `./gradlew :mobile:compileDebugKotlin :wearos:compileDebugKotlin :shared:compileDebugKotlin --parallel --build-cache`
+  - Mobile app changes affecting resources/manifests/packaging: `./gradlew :mobile:assembleDebug --parallel --build-cache`
+  - Wear app changes affecting resources/manifests/packaging: `./gradlew :wearos:assembleDebug --parallel --build-cache`
+  - Changes affecting both apps' resources/manifests/packaging: `./gradlew :mobile:assembleDebug :wearos:assembleDebug --parallel --build-cache`
+- Use full builds (`./gradlew :mobile:build` or `./gradlew build`) only when explicitly requested, for release-critical validation, or when changes span multiple modules with potential integration impact.
+- For specific modules, prefer debug variants before full build:
+  - `./gradlew :module:compileDebugKotlin` (code-only)
+  - `./gradlew :module:assembleDebug` (code + resources/manifest)
+- If a fast-path command fails or is inconclusive, escalate to the next level (compile -> assemble -> full build).
 - If compilation errors are found, fix them immediately before proceeding with other tasks or reporting completion.
 - Do not leave code in a broken or uncompilable state. All code changes must result in a successfully compiling project.
 - Check for both Kotlin and Java compilation errors, as well as resource and manifest errors.
