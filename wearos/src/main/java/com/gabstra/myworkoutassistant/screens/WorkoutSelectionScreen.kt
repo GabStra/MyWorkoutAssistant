@@ -210,8 +210,13 @@ fun WorkoutSelectionScreen(
     val workouts by viewModel.workouts.collectAsState()
     
     // Get workout plans from workoutStore - access directly since it's a mutableStateOf
-    val allPlans = remember { 
-        viewModel.workoutStore.workoutPlans.sortedBy { plan: WorkoutPlan -> plan.order } 
+    val allPlans = remember(viewModel.workoutStore.workoutPlans) {
+        viewModel.workoutStore.workoutPlans.sortedWith(
+            compareBy<WorkoutPlan>(
+                { it.name == UNASSIGNED_PLAN_NAME },
+                { it.order }
+            )
+        )
     }
     
     // Group workouts by plan
@@ -241,9 +246,12 @@ fun WorkoutSelectionScreen(
         }
         
         // Return sorted by plan order, with unassigned at the end
-        grouped.toList().sortedBy { (plan, _) ->
-            plan?.order ?: Int.MAX_VALUE
-        }
+        grouped.toList().sortedWith(
+            compareBy<Pair<WorkoutPlan?, MutableList<Workout>>>(
+                { (plan, _) -> plan == null || plan.name == UNASSIGNED_PLAN_NAME },
+                { (plan, _) -> plan?.order ?: Int.MAX_VALUE }
+            )
+        )
     }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 

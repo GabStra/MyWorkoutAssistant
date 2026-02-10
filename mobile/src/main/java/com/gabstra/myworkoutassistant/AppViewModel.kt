@@ -199,7 +199,7 @@ class AppViewModel(
         )
 
     val workoutPlansFlow: StateFlow<List<WorkoutPlan>> = workoutStoreFlow
-        .map { it.workoutPlans }
+        .map { sortWorkoutPlansWithUnassignedLast(it.workoutPlans) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -810,7 +810,16 @@ class AppViewModel(
     
     fun getAllWorkoutPlans(): List<WorkoutPlan> {
         // Safety net: deduplicate by ID before sorting to prevent displaying duplicates
-        return workoutStore.workoutPlans.distinctBy { it.id }.sortedBy { it.order }
+        return sortWorkoutPlansWithUnassignedLast(workoutStore.workoutPlans.distinctBy { it.id })
+    }
+
+    private fun sortWorkoutPlansWithUnassignedLast(plans: List<WorkoutPlan>): List<WorkoutPlan> {
+        return plans.sortedWith(
+            compareBy<WorkoutPlan>(
+                { isUnassignedPlan(it) },
+                { it.order }
+            )
+        )
     }
 
     fun getSelectableWorkoutPlans(currentPlanId: UUID?): List<WorkoutPlan> {

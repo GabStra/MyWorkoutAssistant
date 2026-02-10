@@ -39,6 +39,7 @@ import java.time.ZoneId
 import java.util.UUID
 import com.gabstra.myworkoutassistant.data.checkConnection
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
+import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 
 open class AppViewModel : WorkoutViewModel() {
 
@@ -846,7 +847,12 @@ open class AppViewModel : WorkoutViewModel() {
     }
     
     fun getAllWorkoutPlans(): List<WorkoutPlan> {
-        return workoutStore.workoutPlans.sortedBy { it.order }
+        return workoutStore.workoutPlans.sortedWith(
+            compareBy<WorkoutPlan>(
+                { it.name == UNASSIGNED_PLAN_NAME },
+                { it.order }
+            )
+        )
     }
     
     fun getWorkoutsByPlan(planId: UUID?): List<com.gabstra.myworkoutassistant.shared.Workout> {

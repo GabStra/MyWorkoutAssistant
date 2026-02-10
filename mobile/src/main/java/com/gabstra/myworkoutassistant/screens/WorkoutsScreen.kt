@@ -154,6 +154,15 @@ fun WorkoutsScreen(
         filteredWorkouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
     }
 
+    // Status tab always uses all workouts across plans.
+    val allEnabledWorkouts = remember(workouts) {
+        workouts.filter { it.enabled }
+    }
+
+    val allActiveAndEnabledWorkouts = remember(workouts) {
+        workouts.filter { it.enabled && it.isActive }.sortedBy { it.order }
+    }
+
     val activeWorkouts = remember(filteredWorkouts) {
         filteredWorkouts.filter { it.isActive }.sortedBy { it.order }
     }
@@ -197,7 +206,7 @@ fun WorkoutsScreen(
     }
 
     val timesCompletedInAWeekObjective =
-        enabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
+        allEnabledWorkouts.filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
             .associate { workout ->
                 workout.id to (workout.timesCompletedInAWeek ?: 0)
             }
@@ -278,7 +287,7 @@ fun WorkoutsScreen(
     fun calculateObjectiveProgress(currentDate: LocalDate) {
         weeklyWorkoutsByActualTarget = null
         objectiveProgress = 0.0
-        if (enabledWorkouts.isEmpty()) return
+        if (allEnabledWorkouts.isEmpty()) return
 
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
@@ -292,7 +301,7 @@ fun WorkoutsScreen(
                 .toList()
 
         // Fast lookup of eligible workouts and DE-DUPE by workout id
-        val eligibleById = enabledWorkouts
+        val eligibleById = allEnabledWorkouts
             .filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
             .associateBy { it.id }
 
@@ -303,7 +312,7 @@ fun WorkoutsScreen(
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.toSet()
 
         val totalWeeklyWorkouts = weeklyWorkouts +
-                activeAndEnabledWorkouts.filter {
+                allActiveAndEnabledWorkouts.filter {
                     it.globalId !in uniqueGlobalIds && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
                 }
 
@@ -348,12 +357,12 @@ fun WorkoutsScreen(
             if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
     }
 
-    LaunchedEffect(enabledWorkouts.map { it.id }.toSet(), selectedPlanFilter) {
+    LaunchedEffect(allEnabledWorkouts.map { it.id }.toSet()) {
         // #region agent log
-        Log.d(TAG, "LaunchedEffect H3 effect run enabledCount=${enabledWorkouts.size} planFilter=$selectedPlanFilter")
+        Log.d(TAG, "LaunchedEffect H3 effect run enabledCount=${allEnabledWorkouts.size}")
         // #endregion
-        if (enabledWorkouts.isNotEmpty()) {
-            appViewModel.loadWorkoutHistories(enabledWorkouts)
+        if (allEnabledWorkouts.isNotEmpty()) {
+            appViewModel.loadWorkoutHistories(allEnabledWorkouts)
         }
     }
 
@@ -367,11 +376,9 @@ fun WorkoutsScreen(
         }
     }
 
-    LaunchedEffect(selectedDate, selectedPlanFilter) {
-        if (selectedDate == null) return@LaunchedEffect
-
+    LaunchedEffect(selectedDate) {
         isLoading = true
-        calculateObjectiveProgress(selectedDate!!.date)
+        calculateObjectiveProgress(selectedDate.date)
         delay(500)
         isLoading = false
     }
@@ -558,7 +565,7 @@ fun WorkoutsScreen(
                                     enabled
                                 )
                             },
-                            onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(enabledWorkouts) },
+                            onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(allEnabledWorkouts) },
                             onMoveWorkoutUp = { onMoveWorkoutUp() },
                             onMoveWorkoutDown = { onMoveWorkoutDown() },
                             isSelectionModeActive = isWorkoutSelectionModeActive
@@ -634,7 +641,7 @@ fun WorkoutsScreen(
                     }
 
                     // Plan Selector
-                    if (allPlans.size > 1) {
+                    if ((pagerState.currentPage == 1 || pagerState.currentPage == 3) && allPlans.size > 1) {
                         var planSelectorExpanded by remember { mutableStateOf(false) }
                         val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
                         val dropdownBackground = DarkGray
