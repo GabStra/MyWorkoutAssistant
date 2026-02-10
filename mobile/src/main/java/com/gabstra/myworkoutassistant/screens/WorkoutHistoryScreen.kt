@@ -180,6 +180,8 @@ fun WorkoutHistoryScreen(
     val currentLocale = Locale.getDefault()
     val scope = rememberCoroutineScope()
     val userAge by appViewModel.userAge
+    val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
+    val restingHeartRate = appViewModel.workoutStore.restingHeartRate
 
     val dateFormatter = remember(currentLocale) {
         DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
@@ -405,7 +407,12 @@ fun WorkoutHistoryScreen(
                 zoneCounter = mapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0)
 
                 for (heartBeat in selectedWorkoutHistory!!.heartBeatRecords) {
-                    val percentage = getMaxHearthRatePercentage(heartBeat, userAge)
+                    val percentage = getMaxHearthRatePercentage(
+                        heartBeat,
+                        userAge,
+                        measuredMaxHeartRate,
+                        restingHeartRate
+                    )
                     val zone = mapPercentageToZone(percentage)
                     if (zone == 0) continue
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
@@ -414,7 +421,14 @@ fun WorkoutHistoryScreen(
                 heartRateEntryModel =
                     CartesianChartModel(LineCartesianLayerModel.build {
                         series(
-                            selectedWorkoutHistory!!.heartBeatRecords.map { getMaxHearthRatePercentage(it, userAge) }
+                            selectedWorkoutHistory!!.heartBeatRecords.map {
+                                getMaxHearthRatePercentage(
+                                    it,
+                                    userAge,
+                                    measuredMaxHeartRate,
+                                    restingHeartRate
+                                )
+                            }
                         )
                     })
             }
@@ -689,9 +703,19 @@ fun WorkoutHistoryScreen(
                                         Row(modifier = Modifier.fillMaxWidth()) {
                                             val (lowerBound, upperBound) = zoneRanges[zone]
                                             val lowHr =
-                                                getHeartRateFromPercentage(lowerBound, userAge)
+                                                getHeartRateFromPercentage(
+                                                    lowerBound,
+                                                    userAge,
+                                                    measuredMaxHeartRate,
+                                                    restingHeartRate
+                                                )
                                             val highHr =
-                                                getHeartRateFromPercentage(upperBound, userAge)
+                                                getHeartRateFromPercentage(
+                                                    upperBound,
+                                                    userAge,
+                                                    measuredMaxHeartRate,
+                                                    restingHeartRate
+                                                )
                                             Text(
                                                 text = "$lowHr - $highHr bpm",
                                                 modifier = Modifier.weight(1f),
@@ -769,11 +793,15 @@ fun WorkoutHistoryScreen(
 
                                             val lowHr = getHeartRateFromPercentage(
                                                 exercise.lowerBoundMaxHRPercent!!,
-                                                userAge
+                                                userAge,
+                                                measuredMaxHeartRate,
+                                                restingHeartRate
                                             )
                                             val highHr = getHeartRateFromPercentage(
                                                 exercise.upperBoundMaxHRPercent!!,
-                                                userAge
+                                                userAge,
+                                                measuredMaxHeartRate,
+                                                restingHeartRate
                                             )
 
                                             val hrEntriesCount =
@@ -817,11 +845,15 @@ fun WorkoutHistoryScreen(
                                                     Row(modifier = Modifier.fillMaxWidth()) {
                                                         val lowHr = getHeartRateFromPercentage(
                                                             exercise.lowerBoundMaxHRPercent!!,
-                                                            userAge
+                                                            userAge,
+                                                            measuredMaxHeartRate,
+                                                            restingHeartRate
                                                         )
                                                         val highHr = getHeartRateFromPercentage(
                                                             exercise.upperBoundMaxHRPercent!!,
-                                                            userAge
+                                                            userAge,
+                                                            measuredMaxHeartRate,
+                                                            restingHeartRate
                                                         )
                                                         Text(
                                                             "$lowHr - $highHr bpm",
@@ -1195,4 +1227,3 @@ fun WorkoutHistoryScreen(
         }
     }
 }
-

@@ -77,7 +77,6 @@ import com.gabstra.myworkoutassistant.data.truncate
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
@@ -219,7 +218,7 @@ fun HrStatusBadge(
             Box(
                 modifier = modifier
                     .fillMaxWidth()
-                    .padding(top = 15.dp),
+                    .padding(top = 25.dp),
                 contentAlignment = Alignment.TopCenter
             ) {
                 Box(
@@ -266,11 +265,15 @@ fun HeartRateCircularChart(
     heartRateChangeViewModel: HeartRateChangeViewModel,
     hr: Int,
     age: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
-    val mhrPercentage = remember(hr, age) { getMaxHearthRatePercentage(hr, age) }
+    val mhrPercentage = remember(hr, age, measuredMaxHeartRate, restingHeartRate) {
+        getMaxHearthRatePercentage(hr, age, measuredMaxHeartRate, restingHeartRate)
+    }
     val scope = rememberWearCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
@@ -553,7 +556,7 @@ private fun TargetRangeArc(
         val strokePx = strokeWidth.toPx()
         val borderPx = borderWidth.toPx()
         val innerBorderPx = innerBorderWidth.toPx()
-        val nudgePx = 0.dp.toPx()
+        val nudgePx = 2.dp.toPx()
 
         if (strokePx <= 0f || borderPx < 0f || innerBorderPx < 0f) return@Canvas
 
@@ -656,7 +659,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            colorsByZone[index].copy(alpha = 0.5f)
+            colorsByZone[index].copy(alpha = 0.35f)
         } else {
             MediumDarkGray
         }
@@ -887,13 +890,26 @@ private fun HeartRateView(
 
         if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
             val inBounds = remember(
-                mhrPercentage,
+                hr,
                 lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent
+                upperBoundMaxHRPercent,
+                screenState.userAge,
+                screenState.measuredMaxHeartRate,
+                screenState.restingHeartRate
             ) {
-                val truncatedLowerBound = lowerBoundMaxHRPercent!!.truncate(1)
-                val truncatedUpperBound = upperBoundMaxHRPercent!!.truncate(1)
-                mhrPercentage.truncate(1) in truncatedLowerBound..truncatedUpperBound
+                val lowTargetHr = getHeartRateFromPercentage(
+                    lowerBoundMaxHRPercent!!,
+                    screenState.userAge,
+                    screenState.measuredMaxHeartRate,
+                    screenState.restingHeartRate
+                )
+                val highTargetHr = getHeartRateFromPercentage(
+                    upperBoundMaxHRPercent!!,
+                    screenState.userAge,
+                    screenState.measuredMaxHeartRate,
+                    screenState.restingHeartRate
+                )
+                hr in lowTargetHr..highTargetHr
             }
 
             TargetRangeArc(
@@ -902,7 +918,7 @@ private fun HeartRateView(
                     .padding(3.dp),
                 startAngle = lowerBoundRotationAngle,
                 endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else Orange.copy(alpha = 0.5f),
+                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
                 strokeWidth = 18.dp,
                 borderWidth = 6.dp,
                 innerBorderWidth = 4.dp
@@ -943,6 +959,8 @@ fun HeartRateStandard(
     heartRateChangeViewModel: HeartRateChangeViewModel,
     hrViewModel: SensorDataViewModel,
     userAge: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
@@ -965,6 +983,8 @@ fun HeartRateStandard(
         heartRateChangeViewModel = heartRateChangeViewModel,
         hr = hr,
         age = userAge,
+        measuredMaxHeartRate = measuredMaxHeartRate,
+        restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
         onHrStatusChange = onHrStatusChange
@@ -979,6 +999,8 @@ fun HeartRatePolar(
     heartRateChangeViewModel: HeartRateChangeViewModel,
     polarViewModel: PolarViewModel,
     userAge: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
@@ -1001,6 +1023,8 @@ fun HeartRatePolar(
         heartRateChangeViewModel = heartRateChangeViewModel,
         hr = hr,
         age = userAge,
+        measuredMaxHeartRate = measuredMaxHeartRate,
+        restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
         onHrStatusChange = onHrStatusChange
@@ -1030,10 +1054,10 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(72.5f, 30),
+            hr = getHeartRateFromPercentage(74.9f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 65f,
-            upperBoundMaxHRPercent = 80f
+            upperBoundMaxHRPercent = 75f
         )
     }
 }

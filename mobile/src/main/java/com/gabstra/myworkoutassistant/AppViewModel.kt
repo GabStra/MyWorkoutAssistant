@@ -120,7 +120,9 @@ private fun emptyWorkoutStore(): WorkoutStore {
         equipments = emptyList(),
         accessoryEquipments = emptyList(),
         workoutPlans = emptyList(),
-        progressionPercentageAmount = 0.0
+        progressionPercentageAmount = 0.0,
+        measuredMaxHeartRate = null,
+        restingHeartRate = null
     )
 }
 

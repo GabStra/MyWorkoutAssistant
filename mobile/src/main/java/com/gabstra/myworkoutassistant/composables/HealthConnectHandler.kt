@@ -19,6 +19,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -36,6 +37,7 @@ fun HealthConnectHandler(
         HealthPermission.getReadPermission(HeartRateRecord::class),
         HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
         HealthPermission.getWritePermission(WeightRecord::class),
+        HealthPermission.getReadPermission(SleepSessionRecord::class),
     )
 
     val permissionLauncher = rememberLauncherForActivityResult(

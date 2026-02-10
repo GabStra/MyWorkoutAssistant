@@ -272,6 +272,8 @@ open class WorkoutViewModel(
             equipments = emptyList(),
             workoutPlans = emptyList(),
             progressionPercentageAmount = 0.0,
+            measuredMaxHeartRate = null,
+            restingHeartRate = null,
         )
     )
 
@@ -350,6 +352,8 @@ open class WorkoutViewModel(
                 equipments = emptyList(),
                 workoutPlans = emptyList(),
                 progressionPercentageAmount = 0.0,
+                measuredMaxHeartRate = null,
+                restingHeartRate = null,
             )
         )
     }
@@ -639,6 +643,8 @@ open class WorkoutViewModel(
             isCustomDialogOpen = _isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.value,
             userAge = _userAge.intValue,
+            measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
+            restingHeartRate = workoutStore.restingHeartRate,
             startWorkoutTime = startWorkoutTime,
             enableDimming = enableDimming.value,
             keepScreenOn = _keepScreenOn.value,

@@ -521,18 +521,40 @@ private fun srgbToLinear(x: Float): Float =
     if (x <= 0.04045f) x / 12.92f else ((x + 0.055f) / 1.055f).pow(2.4f)
 
 
-fun getMaxHearthRatePercentage(heartRate: Int, age: Int): Float{
-    val mhr = 211 - (0.64f * age)
-    return (heartRate / mhr) * 100
+fun getEffectiveMaxHeartRate(age: Int, measuredMaxHeartRate: Int? = null): Int {
+    return measuredMaxHeartRate ?: getMaxHeartRate(age)
+}
+
+fun getEffectiveRestingHeartRate(restingHeartRate: Int? = null): Int {
+    return restingHeartRate ?: 60
+}
+
+fun getMaxHearthRatePercentage(
+    heartRate: Int,
+    age: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null
+): Float{
+    val maxHeartRate = getEffectiveMaxHeartRate(age, measuredMaxHeartRate)
+    val restHeartRate = getEffectiveRestingHeartRate(restingHeartRate)
+    val reserve = (maxHeartRate - restHeartRate).coerceAtLeast(1)
+    return ((heartRate - restHeartRate).toFloat() / reserve) * 100f
 }
 
 fun getMaxHeartRate(age: Int): Int {
     return 211 - (0.64f * age).roundToInt()
 }
 
-fun getHeartRateFromPercentage(percentage: Float, age: Int): Int {
-    val mhr = getMaxHeartRate(age)
-    val heartRate = (percentage/100) * mhr
+fun getHeartRateFromPercentage(
+    percentage: Float,
+    age: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null
+): Int {
+    val maxHeartRate = getEffectiveMaxHeartRate(age, measuredMaxHeartRate)
+    val restHeartRate = getEffectiveRestingHeartRate(restingHeartRate)
+    val reserve = (maxHeartRate - restHeartRate).coerceAtLeast(1)
+    val heartRate = restHeartRate + (percentage / 100f) * reserve
     return heartRate.roundToInt()
 }
 

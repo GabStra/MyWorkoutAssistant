@@ -37,8 +37,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.request.ReadRecordsRequest
+import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
@@ -121,6 +124,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import java.security.MessageDigest
 
 /**
@@ -2289,6 +2293,143 @@ suspend fun deleteWorkoutHistoriesFromHealthConnect(
     )
 }
 
+suspend fun getHistoricalRestingHeartRateFromHealthConnect(
+    healthConnectClient: HealthConnectClient,
+    lookbackDays: Long = 14
+): Int? {
+    val requiredPermissions = setOf(
+        HealthPermission.getReadPermission(HeartRateRecord::class)
+    )
+    val grantedPermissions = healthConnectClient.permissionController.getGrantedPermissions()
+    if (!grantedPermissions.containsAll(requiredPermissions)) {
+        return null
+    }
+
+    val endTime = Instant.now()
+    val startTime = endTime.minus(Duration.ofDays(lookbackDays))
+    val zoneId = ZoneId.systemDefault()
+
+    val allSamples = mutableListOf<HeartRateRecord.Sample>()
+    var hrPageToken: String? = null
+    do {
+        val response = healthConnectClient.readRecords(
+            ReadRecordsRequest(
+                recordType = HeartRateRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
+                pageToken = hrPageToken
+            )
+        )
+
+        response.records.forEach { record ->
+            record.samples
+                .asSequence()
+                .filter { it.beatsPerMinute > 0 }
+                .forEach { allSamples.add(it) }
+        }
+        hrPageToken = response.pageToken
+    } while (hrPageToken != null)
+
+    if (allSamples.isEmpty()) {
+        return null
+    }
+
+    val sortedSamples = allSamples.sortedBy { it.time }
+    val sleepPermission = HealthPermission.getReadPermission(SleepSessionRecord::class)
+
+    if (grantedPermissions.contains(sleepPermission)) {
+        val sleepSessions = mutableListOf<SleepSessionRecord>()
+        var sleepPageToken: String? = null
+        do {
+            val response = healthConnectClient.readRecords(
+                ReadRecordsRequest(
+                    recordType = SleepSessionRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
+                    pageToken = sleepPageToken
+                )
+            )
+            sleepSessions.addAll(response.records)
+            sleepPageToken = response.pageToken
+        } while (sleepPageToken != null)
+
+        val nightlyValues = sleepSessions.mapNotNull { session ->
+            val sessionBpms = sortedSamples
+                .asSequence()
+                .filter { it.time >= session.startTime && it.time <= session.endTime }
+                .map { it.beatsPerMinute.toDouble() }
+                .toList()
+            if (sessionBpms.isEmpty()) {
+                null
+            } else {
+                percentile(sessionBpms, 5.0)
+            }
+        }
+
+        if (nightlyValues.isNotEmpty()) {
+            return medianValue(nightlyValues).roundToInt().coerceIn(30, 120)
+        }
+    }
+
+    // Fallback: robust daily low-percentile from HR samples with basic artifact/activity filtering.
+    val filtered = sortedSamples.filterIndexed { index, sample ->
+        if (index == 0) {
+            return@filterIndexed true
+        }
+        val previous = sortedSamples[index - 1]
+        val seconds = Duration.between(previous.time, sample.time).seconds
+        if (seconds <= 0 || seconds > 15) {
+            return@filterIndexed true
+        }
+        val delta = kotlin.math.abs(sample.beatsPerMinute - previous.beatsPerMinute)
+        delta <= 3
+    }
+
+    val byDay = filtered.groupBy { it.time.atZone(zoneId).toLocalDate() }
+    val dailyLowValues = byDay.values.mapNotNull { daySamples ->
+        val bpms = daySamples.map { it.beatsPerMinute.toDouble() }
+        if (bpms.isEmpty()) null else percentile(bpms, 5.0)
+    }
+
+    if (dailyLowValues.isNotEmpty()) {
+        return medianValue(dailyLowValues).roundToInt().coerceIn(30, 120)
+    }
+
+    return percentile(sortedSamples.map { it.beatsPerMinute.toDouble() }, 1.0)
+        .roundToInt()
+        .coerceIn(30, 120)
+}
+
+private fun percentile(values: List<Double>, p: Double): Double {
+    if (values.isEmpty()) {
+        return 0.0
+    }
+    val sorted = values.sorted()
+    if (sorted.size == 1) {
+        return sorted.first()
+    }
+    val clampedP = p.coerceIn(0.0, 100.0)
+    val rank = (clampedP / 100.0) * (sorted.size - 1)
+    val lowIndex = kotlin.math.floor(rank).toInt()
+    val highIndex = kotlin.math.ceil(rank).toInt()
+    if (lowIndex == highIndex) {
+        return sorted[lowIndex]
+    }
+    val fraction = rank - lowIndex
+    return sorted[lowIndex] + (sorted[highIndex] - sorted[lowIndex]) * fraction
+}
+
+private fun medianValue(values: List<Double>): Double {
+    if (values.isEmpty()) {
+        return 0.0
+    }
+    val sorted = values.sorted()
+    val n = sorted.size
+    return if (n % 2 == 1) {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+}
+
 fun calculateVolume(weight: Double, reps: Int): Double {
     if(weight == 0.0) return reps.toDouble()
     return weight * reps
@@ -3576,6 +3717,8 @@ fun mergeWorkoutStore(
     val mergedWeightKg = existing.weightKg
     val mergedProgressionPercentageAmount = existing.progressionPercentageAmount
     val mergedPolarDeviceId = existing.polarDeviceId
+    val mergedMeasuredMaxHeartRate = existing.measuredMaxHeartRate
+    val mergedRestingHeartRate = existing.restingHeartRate
     
     // Merge workout plans
     val existingPlanIds = existing.workoutPlans.map { it.id }.toSet()
@@ -3617,6 +3760,8 @@ fun mergeWorkoutStore(
         birthDateYear = mergedBirthDateYear,
         weightKg = mergedWeightKg,
         progressionPercentageAmount = mergedProgressionPercentageAmount,
-        polarDeviceId = mergedPolarDeviceId
+        polarDeviceId = mergedPolarDeviceId,
+        measuredMaxHeartRate = mergedMeasuredMaxHeartRate,
+        restingHeartRate = mergedRestingHeartRate
     )
 }

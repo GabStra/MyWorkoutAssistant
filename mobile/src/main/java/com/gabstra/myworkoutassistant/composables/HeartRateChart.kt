@@ -165,6 +165,8 @@ fun HeartRateChart(
     cartesianChartModel: CartesianChartModel,
     title: String,
     userAge: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
     includeCard: Boolean = true,
 ) {
     val chartContent = @Composable {
@@ -172,6 +174,8 @@ fun HeartRateChart(
             modifier = modifier,
             cartesianChartModel = cartesianChartModel,
             userAge = userAge,
+            measuredMaxHeartRate = measuredMaxHeartRate,
+            restingHeartRate = restingHeartRate,
         )
     }
 
@@ -207,10 +211,17 @@ fun HeartRateChartContent(
     modifier: Modifier = Modifier,
     cartesianChartModel: CartesianChartModel,
     userAge: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
 ) {
     val startAxisValueFormatter =
         CartesianValueFormatter { _, value, _ ->
-            getHeartRateFromPercentage(value.toFloat(),userAge).toString()
+            getHeartRateFromPercentage(
+                value.toFloat(),
+                userAge,
+                measuredMaxHeartRate,
+                restingHeartRate
+            ).toString()
         }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
@@ -218,7 +229,12 @@ fun HeartRateChartContent(
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
-                getHeartRateFromPercentage(it.toFloat(),userAge).toString()
+                getHeartRateFromPercentage(
+                    it.toFloat(),
+                    userAge,
+                    measuredMaxHeartRate,
+                    restingHeartRate
+                ).toString()
             }, textColor)
         },
         label = rememberTextComponent(

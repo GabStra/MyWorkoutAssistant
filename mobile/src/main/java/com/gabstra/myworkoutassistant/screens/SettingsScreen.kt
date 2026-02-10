@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -41,13 +42,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.hasExternalBackup
+import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,20 +62,41 @@ fun SettingsScreen(
     onCancel: () -> Unit,
     onRestoreFromBackup: () -> Unit,
     workoutStore: WorkoutStore,
+    healthConnectClient: HealthConnectClient,
     isSaving: Boolean = false
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val progressionPercentageAmount = remember { mutableStateOf(workoutStore.progressionPercentageAmount) }
+    val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
+    val restingHeartRateState = remember {
+        mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
+    }
     
     var hasBackup by remember { mutableStateOf(false) }
     var showRestoreConfirmation by remember { mutableStateOf(false) }
+    var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
     
     LaunchedEffect(Unit) {
         hasBackup = hasExternalBackup(context)
+        if (workoutStore.restingHeartRate == null) {
+            isLoadingRestingHeartRate = true
+            try {
+                val historicalRestingHeartRate =
+                    getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+                if (historicalRestingHeartRate != null) {
+                    restingHeartRateState.value = historicalRestingHeartRate.toString()
+                }
+            } catch (_: Exception) {
+                // Keep manual entry flow on errors or missing permission.
+            } finally {
+                isLoadingRestingHeartRate = false
+            }
+        }
     }
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
@@ -170,6 +196,82 @@ fun SettingsScreen(
                     .padding(8.dp)
             )
 
+            OutlinedTextField(
+                value = measuredMaxHeartRateState.value,
+                onValueChange = { input ->
+                    if (input.isEmpty() || input.all { it.isDigit() }) {
+                        measuredMaxHeartRateState.value = input
+                    }
+                },
+                label = { Text("Measured HR Max (optional)") },
+                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            OutlinedTextField(
+                value = restingHeartRateState.value,
+                onValueChange = { input ->
+                    if (input.isEmpty() || input.all { it.isDigit() }) {
+                        restingHeartRateState.value = input
+                    }
+                },
+                label = { Text("Resting HR (bpm)") },
+                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            OutlinedButton(
+                onClick = {
+                    if (isLoadingRestingHeartRate) {
+                        return@OutlinedButton
+                    }
+                    coroutineScope.launch {
+                        isLoadingRestingHeartRate = true
+                        try {
+                            val historicalRestingHeartRate =
+                                getHistoricalRestingHeartRateFromHealthConnect(healthConnectClient)
+                            if (historicalRestingHeartRate != null) {
+                                restingHeartRateState.value = historicalRestingHeartRate.toString()
+                                Toast.makeText(
+                                    context,
+                                    "Resting HR loaded from Health Connect",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "Unable to read historical resting HR",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } catch (_: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Unable to read historical resting HR",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } finally {
+                            isLoadingRestingHeartRate = false
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = if (isLoadingRestingHeartRate) {
+                        "Loading Resting HR..."
+                    } else {
+                        "Use Health Connect Resting HR"
+                    }
+                )
+            }
+
             Text(
                 text = "Progress between Sessions: ${progressionPercentageAmount.value.round(2)}%",
                 style = MaterialTheme.typography.bodyMedium,
@@ -211,11 +313,28 @@ fun SettingsScreen(
                         return@Button
                     }
 
+                    val measuredMaxHeartRate = measuredMaxHeartRateState.value.toIntOrNull()
+                    if (measuredMaxHeartRateState.value.isNotBlank() &&
+                        (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
+                    ) {
+                        Toast.makeText(context, "Invalid measured max HR", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+
+                    val restingHeartRate = restingHeartRateState.value.toIntOrNull()
+                        ?: getEffectiveRestingHeartRate()
+                    if (restingHeartRate !in 30..120) {
+                        Toast.makeText(context, "Invalid resting HR", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+
                     val newWorkoutStore = workoutStore.copy(
                         polarDeviceId = polarDeviceIdState.value.ifBlank { null },
                         birthDateYear = birthDateYear,
                         weightKg = weight,
-                        progressionPercentageAmount = progressionPercentageAmount.value
+                        progressionPercentageAmount = progressionPercentageAmount.value,
+                        measuredMaxHeartRate = measuredMaxHeartRate,
+                        restingHeartRate = restingHeartRate
                     )
                     onSave(newWorkoutStore)
                 },
@@ -269,4 +388,3 @@ fun SettingsScreen(
     }
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }
-

@@ -129,6 +129,8 @@ fun ExerciseHistoryScreen(
     var selectedMode by remember { mutableIntStateOf(0) }
 
     val userAge by appViewModel.userAge
+    val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
+    val restingHeartRate = appViewModel.workoutStore.restingHeartRate
 
     val currentLocale = Locale.getDefault()
 
@@ -640,11 +642,15 @@ fun ExerciseHistoryScreen(
 
                                                     val lowHr = getHeartRateFromPercentage(
                                                         exercise.lowerBoundMaxHRPercent!!,
-                                                        userAge
+                                                        userAge,
+                                                        measuredMaxHeartRate,
+                                                        restingHeartRate
                                                     )
                                                     val highHr = getHeartRateFromPercentage(
                                                         exercise.upperBoundMaxHRPercent!!,
-                                                        userAge
+                                                        userAge,
+                                                        measuredMaxHeartRate,
+                                                        restingHeartRate
                                                     )
 
                                                     val hrEntriesCount =
@@ -682,12 +688,16 @@ fun ExerciseHistoryScreen(
                                                         val lowHr =
                                                             getHeartRateFromPercentage(
                                                                 exercise.lowerBoundMaxHRPercent!!,
-                                                                userAge
+                                                                userAge,
+                                                                measuredMaxHeartRate,
+                                                                restingHeartRate
                                                             )
                                                         val highHr =
                                                             getHeartRateFromPercentage(
                                                                 exercise.upperBoundMaxHRPercent!!,
-                                                                userAge
+                                                                userAge,
+                                                                measuredMaxHeartRate,
+                                                                restingHeartRate
                                                             )
                                                         Text(
                                                             "$lowHr - $highHr bpm",
@@ -742,4 +752,3 @@ fun ExerciseHistoryScreen(
         }
     }
 }
-

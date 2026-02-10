@@ -1262,6 +1262,7 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.goBack()
                             },
                             workoutStore = appViewModel.workoutStore,
+                            healthConnectClient = healthConnectClient,
                             isSaving = isSaving
                         )
                     }

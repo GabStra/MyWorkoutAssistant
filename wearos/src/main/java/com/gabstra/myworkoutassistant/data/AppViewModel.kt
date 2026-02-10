@@ -295,6 +295,8 @@ open class AppViewModel : WorkoutViewModel() {
             isCustomDialogOpen = isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = enableWorkoutNotificationFlow.value,
             userAge = userAge.value,
+            measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
+            restingHeartRate = workoutStore.restingHeartRate,
             startWorkoutTime = startWorkoutTime,
             enableDimming = enableDimming.value,
             keepScreenOn = keepScreenOn.value,

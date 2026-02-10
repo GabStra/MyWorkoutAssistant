@@ -77,6 +77,8 @@ fun WorkoutScreen(
     val workoutState = screenState.workoutState
     val selectedWorkout = screenState.selectedWorkout
     val userAge = screenState.userAge
+    val measuredMaxHeartRate = screenState.measuredMaxHeartRate
+    val restingHeartRate = screenState.restingHeartRate
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
     val isResuming = screenState.isResuming
     val isRefreshing = screenState.isRefreshing
@@ -123,6 +125,8 @@ fun WorkoutScreen(
                 heartRateChangeViewModel,
                 polarViewModel,
                 userAge,
+                measuredMaxHeartRate,
+                restingHeartRate,
                 lowerBoundMaxHRPercent,
                 upperBoundMaxHRPercent,
                 onHrStatusChange = { status -> hrStatus = status }
@@ -135,6 +139,8 @@ fun WorkoutScreen(
                 heartRateChangeViewModel,
                 hrViewModel,
                 userAge,
+                measuredMaxHeartRate,
+                restingHeartRate,
                 lowerBoundMaxHRPercent,
                 upperBoundMaxHRPercent,
                 onHrStatusChange = { status -> hrStatus = status }

@@ -278,8 +278,18 @@ suspend fun buildExerciseHistoryMarkdown(
                         setLine.append(" HR:${setAvgHR}(${setMinHR}-${setMaxHR})")
 
                         if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-                            val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
-                            val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
+                            val lowHr = getHeartRateFromPercentage(
+                                exercise.lowerBoundMaxHRPercent!!,
+                                userAge,
+                                workoutStore.measuredMaxHeartRate,
+                                workoutStore.restingHeartRate
+                            )
+                            val highHr = getHeartRateFromPercentage(
+                                exercise.upperBoundMaxHRPercent!!,
+                                userAge,
+                                workoutStore.measuredMaxHeartRate,
+                                workoutStore.restingHeartRate
+                            )
 
                             val hrInZoneCount = setHRRecords.count { it in lowHr..highHr }
                             val zonePercentage = if (setHRRecords.isNotEmpty()) {
@@ -308,8 +318,18 @@ suspend fun buildExerciseHistoryMarkdown(
             exercise.upperBoundMaxHRPercent != null &&
             workoutHistory.heartBeatRecords.isNotEmpty()
         ) {
-            val lowHr = getHeartRateFromPercentage(exercise.lowerBoundMaxHRPercent!!, userAge)
-            val highHr = getHeartRateFromPercentage(exercise.upperBoundMaxHRPercent!!, userAge)
+            val lowHr = getHeartRateFromPercentage(
+                exercise.lowerBoundMaxHRPercent!!,
+                userAge,
+                workoutStore.measuredMaxHeartRate,
+                workoutStore.restingHeartRate
+            )
+            val highHr = getHeartRateFromPercentage(
+                exercise.upperBoundMaxHRPercent!!,
+                userAge,
+                workoutStore.measuredMaxHeartRate,
+                workoutStore.restingHeartRate
+            )
             val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }
             val hrInZoneCount = validHRRecords.count { it in lowHr..highHr }
             val zonePercentage = if (validHRRecords.isNotEmpty()) {
@@ -361,4 +381,3 @@ private fun findClosestAchievableWeight(
     if (achievableWeights.isNullOrEmpty()) return targetWeight
     return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
 }
-

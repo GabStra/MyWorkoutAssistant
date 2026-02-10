@@ -52,6 +52,12 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val birthDateYear = jsonObject.get("birthDateYear")?.asInt ?: 0
         val weightKg = jsonObject.get("weightKg")?.asDouble ?: 0.0
         val progressionPercentageAmount = jsonObject.get("progressionPercentageAmount")?.asDouble ?: 0.0
+        val measuredMaxHeartRate = jsonObject.get("measuredMaxHeartRate")?.let {
+            if (it.isJsonNull) null else it.asInt
+        }
+        val restingHeartRate = jsonObject.get("restingHeartRate")?.let {
+            if (it.isJsonNull) null else it.asInt
+        }
         
         return WorkoutStore(
             workouts = workouts,
@@ -61,7 +67,9 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             polarDeviceId = polarDeviceId,
             birthDateYear = birthDateYear,
             weightKg = weightKg,
-            progressionPercentageAmount = progressionPercentageAmount
+            progressionPercentageAmount = progressionPercentageAmount,
+            measuredMaxHeartRate = measuredMaxHeartRate,
+            restingHeartRate = restingHeartRate
         )
     }
 }

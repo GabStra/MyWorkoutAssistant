@@ -12,4 +12,6 @@ data class WorkoutStore(
     val birthDateYear: Int,
     val weightKg: Double,
     val progressionPercentageAmount: Double,
+    val measuredMaxHeartRate: Int? = null,
+    val restingHeartRate: Int? = null,
 )

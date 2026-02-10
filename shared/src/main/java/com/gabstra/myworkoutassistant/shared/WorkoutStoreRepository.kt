@@ -15,7 +15,16 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
             workoutStore = fromJSONToWorkoutStore(jsonString)
         }
 
-        val result = workoutStore ?: WorkoutStore(emptyList(), emptyList(), emptyList(), emptyList(), null, 0, 0.0, 0.0)
+        val result = workoutStore ?: WorkoutStore(
+            workouts = emptyList(),
+            equipments = emptyList(),
+            accessoryEquipments = emptyList(),
+            workoutPlans = emptyList(),
+            polarDeviceId = null,
+            birthDateYear = 0,
+            weightKg = 0.0,
+            progressionPercentageAmount = 0.0
+        )
         // WorkoutStoreAdapter ensures lists are never null, so we can directly migrate
         return migrateWorkoutStore(result)
     }
