@@ -6,7 +6,6 @@
 
 package com.gabstra.myworkoutassistant
 
-import android.app.Activity
 import android.app.AlarmManager
 import android.app.KeyguardManager
 import android.app.NotificationManager
@@ -41,7 +40,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.wear.compose.material.CircularProgressIndicator
@@ -51,7 +49,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
-import com.gabstra.myworkoutassistant.composables.ProcessDeathRecoveryDialog
+import com.gabstra.myworkoutassistant.composables.RecoveryDialog
 import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
@@ -87,108 +85,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
-
-class MyReceiver(
-    private val navController: NavController,
-    private val appViewModel: AppViewModel,
-    private val workoutStoreRepository: WorkoutStoreRepository,
-    private val activity: Activity
-) : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        activity.run {
-            try {
-                val workoutStoreJson =
-                    intent.getStringExtra(DataLayerListenerService.WORKOUT_STORE_JSON)
-                val appBackupEndJson =
-                    intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON)
-
-                val appBackupStartJson =
-                    intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
-
-                val appBackupFailed =
-                    intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED)
-
-                val appBackupProgress =
-                    intent.getStringExtra(DataLayerListenerService.APP_BACKUP_PROGRESS_UPDATE)
-
-                val syncComplete =
-                    intent.getStringExtra(DataLayerListenerService.SYNC_COMPLETE)
-
-                if (appBackupStartJson != null) {
-                    Log.d("DataLayerSync", "Received APP_BACKUP_START_JSON - triggering loading screen")
-                    appViewModel.setBackupProgress(0f)
-
-                    val currentRoute = navController.currentBackStackEntry?.destination?.route
-                    if (currentRoute != Screen.Workout.route) {
-                        navController.navigate(Screen.Loading.route)
-                    }
-                }
-
-                if (workoutStoreJson != null || appBackupEndJson != null) {
-                    appViewModel.resetWorkoutStore()
-                    appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-                }
-
-                if (workoutStoreJson != null) {
-                    Toast.makeText(context, "Workouts updated", Toast.LENGTH_SHORT).show()
-                }
-
-                if (appBackupEndJson != null) {
-                    Log.d("DataLayerSync", "Received APP_BACKUP_END_JSON - dismissing loading screen")
-                    val currentRoute = navController.currentBackStackEntry?.destination?.route
-                    if (currentRoute != Screen.Workout.route) {
-                        navController.navigate(Screen.WorkoutSelection.route) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    }
-
-                    val scheduler = WorkoutAlarmScheduler(this)
-                    scheduler.rescheduleAllWorkouts()
-                }
-
-                if (appBackupProgress != null) {
-                    val progress = appBackupProgress.toFloat()
-                    appViewModel.setBackupProgress(progress)
-                }
-
-                if (syncComplete != null) {
-                    val transactionId = intent.getStringExtra(DataLayerListenerService.TRANSACTION_ID)
-                    appViewModel.markHistorySyncedForTransaction(transactionId)
-                    Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
-                    // Only show toast if SyncStatusBadge is not showing "Syncing..." and workout is not active
-                    val workoutState = appViewModel.workoutState.value
-                    val isWorkoutActive = workoutState !is WorkoutState.Completed
-                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-                        Toast.makeText(context, "Sync completed", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
-                if (appBackupFailed != null) {
-                    Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
-                    // Reset backup progress state and sync status
-                    appViewModel.setBackupProgress(0f)
-                    appViewModel.resetSyncStatus() // Clear stuck sync state
-                    val currentRoute = navController.currentBackStackEntry?.destination?.route
-                    if (currentRoute == Screen.Loading.route) {
-                        navController.navigate(Screen.WorkoutSelection.route) {
-                            popUpTo(0) { inclusive = true }
-                        }
-                    }
-                    // Only show toast if SyncStatusBadge is not showing "Syncing..." and workout is not active
-                    val workoutState = appViewModel.workoutState.value
-                    val isWorkoutActive = workoutState !is WorkoutState.Completed
-                    if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-                        Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
-            } catch (exception: Exception) {
-                Log.e("MyReceiver", "Error processing data", exception)
-            }
-        }
-    }
-}
 
 class MainActivity : ComponentActivity() {
     private val alarmManager by lazy { getSystemService(ALARM_SERVICE) as AlarmManager }
@@ -269,7 +165,13 @@ class MainActivity : ComponentActivity() {
         setTurnScreenOn(true)
 
         // Handle intent if app was launched from notification
-        handleNotificationIntent(intent)
+        WearNotificationIntentHandler.handle(
+            intent = intent,
+            notificationManager = notificationManager,
+            isWorkoutInProgress = isWorkoutInProgress(),
+            workoutStoreRepository = workoutStoreRepository,
+            appViewModel = appViewModel
+        )
 
         appViewModel.initDataClient(dataClient)
         val wearDataLayerRegistry = WearDataLayerRegistry.fromContext(this, lifecycleScope)
@@ -305,37 +207,20 @@ class MainActivity : ComponentActivity() {
                 workoutStoreRepository
             ) { navController ->
                 if (::myReceiver.isInitialized) return@WearApp
-                myReceiver = MyReceiver(navController, appViewModel, workoutStoreRepository, this)
+                myReceiver = WearDataLayerReceiver(
+                    navController = navController,
+                    appViewModel = appViewModel,
+                    workoutStoreRepository = workoutStoreRepository,
+                    activity = this
+                )
                 val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
                 registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
-                
-                // Register receiver for error log sync
-                errorLogReceiver = object : BroadcastReceiver() {
-                    override fun onReceive(context: Context, intent: Intent) {
-                        if (intent.action == MyApplication.ERROR_LOGGED_ACTION) {
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                try {
-                                    val errorLogs = (applicationContext as? MyApplication)?.getErrorLogs() ?: emptyList()
-                                    if (errorLogs.isNotEmpty()) {
-                                        val success = sendErrorLogsToMobile(dataClient, errorLogs)
-                                        if (success) {
-                                            withContext(Dispatchers.Main) {
-                                                Toast.makeText(
-                                                    this@MainActivity,
-                                                    "Synced ${errorLogs.size} error log(s) to mobile",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                            (applicationContext as? MyApplication)?.clearErrorLogs()
-                                        }
-                                    }
-                                } catch (exception: Exception) {
-                                    Log.e("MainActivity", "Error syncing error logs on error", exception)
-                                }
-                            }
-                        }
-                    }
-                }
+
+                errorLogReceiver = WearErrorLogSyncReceiver(
+                    appContext = applicationContext,
+                    toastContext = this,
+                    dataClient = dataClient
+                )
                 val errorLogFilter = IntentFilter(MyApplication.ERROR_LOGGED_ACTION)
                 registerReceiver(errorLogReceiver, errorLogFilter, RECEIVER_NOT_EXPORTED)
             }
@@ -345,35 +230,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
-        handleNotificationIntent(intent)
+        WearNotificationIntentHandler.handle(
+            intent = intent,
+            notificationManager = notificationManager,
+            isWorkoutInProgress = isWorkoutInProgress(),
+            workoutStoreRepository = workoutStoreRepository,
+            appViewModel = appViewModel
+        )
     }
 
-    private fun handleNotificationIntent(intent: Intent) {
-        if (intent.hasExtra("WORKOUT_ID")) {
-            val workoutId = intent.getStringExtra("WORKOUT_ID")
-            val scheduleId = intent.getStringExtra("SCHEDULE_ID")
-
-            notificationManager.cancel(scheduleId.hashCode())
-
-            // Check if a workout is already in progress
-            val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
-            val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-
-            if (isWorkoutInProgress) {
-                return
-            }
-
-            if (workoutId != null) {
-                val uuid = UUID.fromString(workoutId)
-
-                val workoutStore = workoutStoreRepository.getWorkoutStore()
-                val workout = workoutStore.workouts.find { it.globalId == uuid }
-
-                if (workout != null) {
-                    appViewModel.triggerStartWorkout(uuid)
-                }
-            }
-        }
+    private fun isWorkoutInProgress(): Boolean {
+        val prefs = getSharedPreferences("workout_state", MODE_PRIVATE)
+        return prefs.getBoolean("isWorkoutInProgress", false)
     }
 }
 
@@ -466,9 +334,21 @@ fun WearApp(
                         if (isWorkoutInProgress) {
                             val checkpoint = appViewModel.getSavedRecoveryCheckpoint()
                             if (checkpoint != null) {
-                                val candidate = incompleteWorkouts.firstOrNull { it.workoutId == checkpoint.workoutId }
-                                    ?: incompleteWorkouts.first()
-                                appViewModel.showProcessDeathRecoveryPrompt(candidate, checkpoint)
+                                val candidate =
+                                    incompleteWorkouts.firstOrNull { it.workoutId == checkpoint.workoutId }
+
+                                if (candidate != null) {
+                                    appViewModel.showRecoveryPrompt(candidate, checkpoint)
+                                } else {
+                                    Log.w(
+                                        "MainActivity",
+                                        "Recovery checkpoint did not match any incomplete workout; showing resume list instead."
+                                    )
+                                    appViewModel.clearRecoveryCheckpoint()
+                                    appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                                }
+                            } else {
+                                appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
                             }
                         } else {
                             appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
@@ -782,11 +662,14 @@ fun WearApp(
                 }
             )
 
-            ProcessDeathRecoveryDialog(
+            RecoveryDialog(
                 show = showRecoveryPrompt,
                 workout = recoveryWorkout,
+                onDismiss = {
+                    appViewModel.hideRecoveryPrompt()
+                },
                 onResume = { incompleteWorkout ->
-                    appViewModel.hideProcessDeathRecoveryPrompt()
+                    appViewModel.hideRecoveryPrompt()
                     appViewModel.prepareResumeWorkout(incompleteWorkout)
                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                 },
@@ -794,7 +677,7 @@ fun WearApp(
                     appViewModel.discardIncompleteWorkout(incompleteWorkout)
                     appViewModel.clearWorkoutInProgressFlag()
                     appViewModel.clearRecoveryCheckpoint()
-                    appViewModel.hideProcessDeathRecoveryPrompt()
+                    appViewModel.hideRecoveryPrompt()
                 }
             )
         }

@@ -155,7 +155,7 @@ open class AppViewModel : WorkoutViewModel() {
         _showRecoveredWorkoutNotice.value = false
     }
 
-    internal fun showProcessDeathRecoveryPrompt(
+    internal fun showRecoveryPrompt(
         incompleteWorkout: com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout,
         checkpoint: WorkoutRecoveryCheckpoint?
     ) {
@@ -164,7 +164,7 @@ open class AppViewModel : WorkoutViewModel() {
         pendingRecoveryCheckpoint = checkpoint
     }
 
-    fun hideProcessDeathRecoveryPrompt() {
+    fun hideRecoveryPrompt() {
         _showRecoveryPrompt.value = false
         _recoveryWorkout.value = null
     }

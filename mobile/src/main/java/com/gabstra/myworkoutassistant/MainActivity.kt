@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant
 
 import android.Manifest
-import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -96,6 +95,8 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
+import com.gabstra.myworkoutassistant.shared.determineBackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -125,79 +126,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-
-class MyReceiver(
-    private val appViewModel: AppViewModel,
-    private val workoutViewModel: WorkoutViewModel,
-    private val workoutStoreRepository: WorkoutStoreRepository,
-    private val activity: Activity
-) : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        activity.run {
-            try {
-                if (intent.getStringExtra(DataLayerListenerService.UPDATE_WORKOUTS) != null) {
-                    val workoutStore = workoutStoreRepository.getWorkoutStore()
-
-                    val healthConnectClient = HealthConnectClient.getOrCreate(this)
-                    val db = AppDatabase.getDatabase(this)
-                    var workoutHistoryDao = db.workoutHistoryDao()
-
-                    val scope = CoroutineScope(Dispatchers.IO)
-
-                    scope.launch {
-                        val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                            workoutStore,
-                            db,
-                            workoutStoreRepository
-                        )
-                        appViewModel.updateWorkoutStore(migratedWorkoutStore, false)
-                        workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
-
-                        appViewModel.triggerUpdate()
-
-                        try {
-                            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                            val workoutStore = workoutStoreRepository.getWorkoutStore()
-
-                            val age = currentYear - workoutStore.birthDateYear
-                            val weight = workoutStore.weightKg
-
-                            sendWorkoutsToHealthConnect(
-                                healthConnectClient = healthConnectClient,
-                                workouts = workoutStore.workouts,
-                                workoutHistoryDao = workoutHistoryDao,
-                                age = age,
-                                weightKg = weight
-                            )
-                        } catch (exception: Exception) {
-                            Log.e(
-                                "MyWorkoutAssistant",
-                                "Error sending workouts to HealthConnect",
-                                exception
-                            )
-                        }
-                    }
-                }
-
-                val errorLogsSynced =
-                    intent.getStringExtra(DataLayerListenerService.ERROR_LOGS_SYNCED)
-                if (errorLogsSynced != null) {
-                    val count = errorLogsSynced.toIntOrNull() ?: 0
-                    if (count > 0) {
-                        Toast.makeText(
-                            context,
-                            "Received $count error log(s) from watch",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("MyWorkoutAssistant", "Error in MyReceiver", e)
-            }
-        }
-    }
-
-}
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -323,7 +251,12 @@ class MainActivity : ComponentActivity() {
             HapticsViewModelFactory(applicationContext)
         )[HapticsViewModel::class.java]
 
-        myReceiver = MyReceiver(appViewModel, workoutViewModel, workoutStoreRepository, this)
+        myReceiver = MobileDataLayerReceiver(
+            appViewModel = appViewModel,
+            workoutViewModel = workoutViewModel,
+            workoutStoreRepository = workoutStoreRepository,
+            activity = this
+        )
         val filter = IntentFilter(DataLayerListenerService.INTENT_ID)
         registerReceiver(myReceiver, filter, RECEIVER_NOT_EXPORTED)
 
@@ -377,30 +310,21 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
-        val receivedValue = intent.getStringExtra(DataLayerListenerService.PAGE)
-        receivedValue?.let { page ->
-            when (page) {
-                "workouts" -> {
-                    appViewModel.setScreenData(ScreenData.Workouts(1))
-                }
-
-                "settings" -> {
-                    appViewModel.setScreenData(ScreenData.Settings())
-                }
-            }
-        }
+        MainActivityIntentRouter.route(intent, appViewModel)
     }
 
     private fun requestBackupCleanup() {
-        if (hasDownloadsAccess()) {
-            runBackupCleanup()
-            return
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            showAllFilesAccessRationale()
-        } else {
-            readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+        when (
+            determineBackupCleanupAction(
+                hasDownloadsAccess = hasDownloadsAccess(),
+                sdkInt = Build.VERSION.SDK_INT
+            )
+        ) {
+            BackupCleanupAction.RUN_CLEANUP -> runBackupCleanup()
+            BackupCleanupAction.SHOW_ALL_FILES_RATIONALE -> showAllFilesAccessRationale()
+            BackupCleanupAction.REQUEST_READ_STORAGE_PERMISSION -> {
+                readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
         }
     }
 
