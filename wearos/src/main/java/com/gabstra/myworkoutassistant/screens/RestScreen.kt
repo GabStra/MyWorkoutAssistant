@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -240,11 +241,14 @@ private fun RestTimerBlock(
         contentAlignment = Alignment.Center
     ) {
         val primaryColor = MaterialTheme.colorScheme.primary
-        val trackColor = remember(primaryColor) { primaryColor.copy(alpha = 0.5f) }
+        //val trackColor = remember(primaryColor) { primaryColor.copy(alpha = 0.5f) }
         CircularProgressIndicator(
             progress = { indicatorProgress.floatValue },
             modifier = Modifier.fillMaxSize().padding(10.dp),
-            colors = ProgressIndicatorDefaults.colors(indicatorColor = primaryColor, trackColor = trackColor),
+            colors = ProgressIndicatorDefaults.colors(
+                indicatorColor = primaryColor,
+                trackColor = MediumDarkGray
+            ),
             strokeWidth = 4.dp,
             startAngle = 130f,
             endAngle = 230f,
