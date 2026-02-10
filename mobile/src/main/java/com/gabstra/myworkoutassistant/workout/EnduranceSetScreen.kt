@@ -406,7 +406,7 @@ fun EnduranceSetScreen (
             }
         )
 
-        CountDownDialog(displayStartingDialog,countdownValue)
+        CountdownOverlayBox(displayStartingDialog, countdownValue)
     }
 }
 

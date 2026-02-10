@@ -508,7 +508,7 @@ fun EnduranceSetScreen (
             }
         )
 
-        CountDownDialog(
+        CountdownOverlayBox(
             show = displayStartingDialog,
             time = countdownValue,
             onVisibilityChange = { isVisible ->

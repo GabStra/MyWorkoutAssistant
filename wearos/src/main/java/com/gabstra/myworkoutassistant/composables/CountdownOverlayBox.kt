@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,16 +10,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight.Companion.W700
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
 @Composable
-fun CountDownDialog(
+fun CountdownOverlayBox(
     show: Boolean,
     time: Int,
     onVisibilityChange: (Boolean) -> Unit = {},
@@ -30,24 +30,22 @@ fun CountDownDialog(
         onVisibilityChange(show)
     }
 
-    if(show) {
-        Dialog(
-            onDismissRequest = { },
-            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+    if (show) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f)),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
+            Text(
                 modifier = Modifier
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
-                    .fillMaxSize()
-                    .padding(20.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "$time",
-                    textAlign = TextAlign.Center,
-                    style = itemStyle
-                )
-            }
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                text = "$time",
+                textAlign = TextAlign.Center,
+                style = itemStyle
+            )
         }
     }
 }

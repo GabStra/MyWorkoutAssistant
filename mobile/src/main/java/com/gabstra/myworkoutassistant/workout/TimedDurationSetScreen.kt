@@ -420,7 +420,7 @@ fun TimedDurationSetScreen(
             }
         )
 
-        CountDownDialog(displayStartingDialog,countdownValue)
+        CountdownOverlayBox(displayStartingDialog, countdownValue)
     }
 }
 
