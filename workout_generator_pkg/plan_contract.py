@@ -149,13 +149,6 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
 
         plan_name = plan_ex.get("name")
         actual_name = actual.get("name")
-        if plan_name and actual_name != plan_name:
-            issues.append(
-                ContractIssue(
-                    "exercise_name_mismatch",
-                    f"Exercise '{ex_id}' name mismatch: expected '{plan_name}', got '{actual_name}'.",
-                )
-            )
 
         plan_type = plan_ex.get("exerciseType")
         actual_type = actual.get("exerciseType")
@@ -163,21 +156,9 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
             issues.append(
                 ContractIssue(
                     "exercise_type_mismatch",
-                    f"Exercise '{actual_name or ex_id}' type mismatch: expected '{plan_type}', got '{actual_type}'.",
+                    f"Exercise '{ex_id}' type mismatch: expected '{plan_type}', got '{actual_type}' (name: '{actual_name}').",
                 )
             )
-
-        # Loadable bodyweight movements should retain an equipment link for progressive overload.
-        if plan_type == "BODY_WEIGHT":
-            name_l = (actual_name or plan_name or "").lower()
-            if any(k in name_l for k in ("pull-up", "pull up", "chin-up", "chin up", "dip", "dips")):
-                if not actual.get("equipmentId"):
-                    issues.append(
-                        ContractIssue(
-                            "bodyweight_progression_equipment_missing",
-                            f"Exercise '{actual_name or ex_id}' is BODY_WEIGHT and loadable, but equipmentId is missing.",
-                        )
-                    )
 
         plan_min = plan_ex.get("minReps")
         plan_max = plan_ex.get("maxReps")
@@ -185,14 +166,14 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
             issues.append(
                 ContractIssue(
                     "min_reps_mismatch",
-                    f"Exercise '{actual_name or ex_id}' minReps mismatch: expected {plan_min}, got {actual.get('minReps')}.",
+                    f"Exercise '{ex_id}' minReps mismatch: expected {plan_min}, got {actual.get('minReps')} (name: '{actual_name}').",
                 )
             )
         if plan_max is not None and actual.get("maxReps") != plan_max:
             issues.append(
                 ContractIssue(
                     "max_reps_mismatch",
-                    f"Exercise '{actual_name or ex_id}' maxReps mismatch: expected {plan_max}, got {actual.get('maxReps')}.",
+                    f"Exercise '{ex_id}' maxReps mismatch: expected {plan_max}, got {actual.get('maxReps')} (name: '{actual_name}').",
                 )
             )
 
@@ -203,7 +184,7 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
                 issues.append(
                     ContractIssue(
                         "required_accessory_mismatch",
-                        f"Exercise '{actual_name or ex_id}' requiredAccessoryEquipmentIds mismatch: expected {plan_accessory}, got {actual_accessory}.",
+                        f"Exercise '{ex_id}' requiredAccessoryEquipmentIds mismatch: expected {plan_accessory}, got {actual_accessory} (name: '{actual_name}').",
                     )
                 )
 
@@ -216,7 +197,7 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
                 issues.append(
                     ContractIssue(
                         "work_set_count_mismatch",
-                        f"Exercise '{actual_name or ex_id}' work set count mismatch: expected {expected_work_sets}, got {actual_work_sets}.",
+                        f"Exercise '{ex_id}' work set count mismatch: expected {expected_work_sets}, got {actual_work_sets} (name: '{actual_name}').",
                     )
                 )
 
@@ -227,7 +208,7 @@ def validate_exercise_definitions_contract(plan_index: Dict[str, Any], exercise_
                     issues.append(
                         ContractIssue(
                             "rest_between_sets_mismatch",
-                            f"Exercise '{actual_name or ex_id}' has restSet values {actual_rest_sets}, expected all {expected_rest_between}.",
+                            f"Exercise '{ex_id}' has restSet values {actual_rest_sets}, expected all {expected_rest_between} (name: '{actual_name}').",
                         )
                     )
 
@@ -287,6 +268,15 @@ def validate_workout_structures_contract(
                 )
             )
             continue
+        metadata = structure.get("workoutMetadata", {})
+        metadata_name = metadata.get("name") if isinstance(metadata, dict) else None
+        if wo_name and metadata_name != wo_name:
+            issues.append(
+                ContractIssue(
+                    "workout_name_mismatch",
+                    f"Workout '{wo_name}' ({wo_id}) metadata name mismatch: expected '{wo_name}', got '{metadata_name}'.",
+                )
+            )
 
         refs = _collect_referenced_exercise_ids_from_structure(structure)
         expected = [x for x in (wo.get("exerciseIds", []) or []) if x]

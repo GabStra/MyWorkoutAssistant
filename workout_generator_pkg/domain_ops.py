@@ -18,23 +18,17 @@ except Exception:
     validate = None
 
 
-def infer_bodyweight_progression_equipment_id(exercise, equipment_candidates=None, accessory_subset=None):
-    """
-    Infer a loadable equipmentId for BODY_WEIGHT exercises that commonly support external loading.
-
-    Priority: dumbbell -> barbell -> plate-loaded cable -> any remaining equipment.
-    """
+def _is_loadable_bodyweight_exercise(exercise: Dict[str, Any], accessory_subset=None) -> bool:
+    """Detect BODY_WEIGHT exercises that are commonly externally loadable."""
     if not isinstance(exercise, dict):
-        return None
+        return False
     if exercise.get("exerciseType") != "BODY_WEIGHT":
-        return None
-    if exercise.get("equipmentId"):
-        return None
+        return False
 
     name = (exercise.get("name") or "").lower()
-    keywords = ("pull-up", "pull up", "chin-up", "chin up", "dip", "dips")
+    if any(k in name for k in ("pull-up", "pull up", "chin-up", "chin up", "dip", "dips")):
+        return True
 
-    accessory_names = []
     required_ids = set(exercise.get("requiredAccessoryEquipmentIds") or [])
     for acc in (accessory_subset or []):
         if not isinstance(acc, dict):
@@ -42,29 +36,51 @@ def infer_bodyweight_progression_equipment_id(exercise, equipment_candidates=Non
         if required_ids and acc.get("id") not in required_ids:
             continue
         acc_name = (acc.get("name") or "").lower()
-        if acc_name:
-            accessory_names.append(acc_name)
+        if any(k in acc_name for k in ("pull-up", "pull up", "ring", "rings", "dip")):
+            return True
+    return False
 
-    accessory_signal = any(
-        token in n
-        for n in accessory_names
-        for token in ("pull-up", "pull up", "ring", "rings", "dip")
-    )
-    name_signal = any(k in name for k in keywords)
-    if not (name_signal or accessory_signal):
+
+def infer_bodyweight_progression_equipment_id(
+    exercise: Dict[str, Any],
+    equipment_candidates=None,
+    accessory_subset=None,
+) -> Optional[str]:
+    """
+    Infer progression equipment for loadable BODY_WEIGHT exercises.
+
+    Returns:
+        equipment_id when a clear appropriate option exists, otherwise None.
+    """
+    if not isinstance(exercise, dict):
+        return None
+    if exercise.get("exerciseType") != "BODY_WEIGHT":
+        return None
+    if exercise.get("equipmentId"):
+        return None
+    if not _is_loadable_bodyweight_exercise(exercise, accessory_subset=accessory_subset):
         return None
 
-    equipment_candidates = [e for e in (equipment_candidates or []) if isinstance(e, dict) and e.get("id")]
+    equipment_candidates = [
+        eq for eq in (equipment_candidates or [])
+        if isinstance(eq, dict) and eq.get("id")
+    ]
     if not equipment_candidates:
         return None
 
-    priority = ("DUMBBELL", "DUMBBELLS", "BARBELL", "PLATELOADEDCABLE")
-    for eq_type in priority:
-        for eq in equipment_candidates:
-            if (eq.get("type") or "").upper() == eq_type:
-                return eq.get("id")
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for eq in equipment_candidates:
+        eq_type = (eq.get("type") or "").upper()
+        by_type.setdefault(eq_type, []).append(eq)
 
-    return equipment_candidates[0].get("id")
+    # Clear, preferred progression option.
+    weight_vests = by_type.get("WEIGHTVEST", [])
+    if len(weight_vests) == 1:
+        return weight_vests[0].get("id")
+
+    # No appropriate progression equipment found: leave unassigned.
+    return None
+
 
 def validate_exercise_type_consistency(exercise):
     """

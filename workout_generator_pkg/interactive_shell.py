@@ -8,8 +8,53 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from .deps import resolve_shell_deps
+
+
+def _load_env_file(path: Path) -> None:
+    """Load simple KEY=VALUE pairs from a .env file into os.environ."""
+    if not path.exists() or not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and value:
+            os.environ.setdefault(key, value)
+
+
+def _resolve_api_key() -> str:
+    """Resolve API key from environment, optionally loading .env from common locations."""
+    repo_root = Path(__file__).resolve().parents[1]
+    env_candidates = [
+        Path.cwd() / ".env",
+        repo_root / ".env",
+    ]
+    seen = set()
+    for candidate in env_candidates:
+        key = str(candidate.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        _load_env_file(candidate)
+
+    api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if api_key:
+        return api_key
+
+    raise RuntimeError(
+        "Missing API key. Set DEEPSEEK_API_KEY (or OPENAI_API_KEY) in environment "
+        "or in a project .env file."
+    )
 
 def handle_function_call(
     client,
@@ -121,8 +166,17 @@ def main(deps=None):
         action="store_true",
         help="Use chat model for plan index/emitting without interactive prompt"
     )
+    reasoner_group.add_argument(
+        "--hybrid-fast",
+        action="store_true",
+        help="Use reasoner for plan index and chat model for emitters (faster overall)"
+    )
     args = parser.parse_args()
-    force_use_reasoner = True if args.use_reasoner else (False if args.no_reasoner else None)
+    force_use_reasoner = (
+        "hybrid"
+        if args.hybrid_fast
+        else (True if args.use_reasoner else (False if args.no_reasoner else None))
+    )
     
     try:
         script_dir = _default_script_dir()
@@ -142,7 +196,7 @@ def main(deps=None):
             print(f"Error loading equipment file: {e}", file=sys.stderr)
             sys.exit(1)
     
-    api_key = "sk-433a6d6bd5c542bea0a1e5be6685601c"
+    api_key = _resolve_api_key()
     # Configure timeout: 20 minutes (1200 seconds) to allow for:
     # - Up to 10 minutes wait before inference starts (DeepSeek API limit)
     # - Time for inference to complete
@@ -501,6 +555,11 @@ def main(deps=None):
                     )
                     
                     logger.log_response("tool result " + function_name, function_result.get("result", ""), truncate_at=8000)
+                    # Always surface tool result to the terminal (especially failures),
+                    # otherwise generation can appear to stop silently.
+                    tool_result_text = function_result.get("result", "")
+                    if tool_result_text:
+                        logger.log_print(tool_result_text)
                     # Add function result to conversation
                     messages.append({
                         "role": "tool",

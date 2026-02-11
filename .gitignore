@@ -61,3 +61,8 @@ WORKOUT_HISTORY_MISSING_RESEARCH.md
 .cursor/plans/calibration_containers_architecture.plan.md
 .cursor/plans/calibration_flag_propagation_wear_to_phone.plan.md
 .cursor/plans/unilateral_sets_aggregation.plan.md
+
+# Environment secrets
+.env
+.env.*
+!.env.example

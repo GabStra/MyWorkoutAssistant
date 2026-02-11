@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 import time
 import traceback
 import uuid
@@ -201,39 +202,69 @@ def execute_workout_generation(
         
         # Restore model preference from saved progress (or override via CLI when provided)
         use_reasoner_for_emitting = progress_data.get("use_reasoner_for_emitting", True)
+        use_reasoner_for_plan_index = progress_data.get("use_reasoner_for_plan_index", use_reasoner_for_emitting)
         if force_use_reasoner is not None:
-            use_reasoner_for_emitting = bool(force_use_reasoner)
-            _gen_print(f"Using CLI model preference override: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting")
+            if force_use_reasoner == "hybrid":
+                use_reasoner_for_plan_index = True
+                use_reasoner_for_emitting = False
+                _gen_print("Using CLI model preference override: hybrid-fast (reasoner for plan index, chat for emitting)")
+            else:
+                override_val = bool(force_use_reasoner)
+                use_reasoner_for_plan_index = override_val
+                use_reasoner_for_emitting = override_val
+                _gen_print(
+                    f"Using CLI model preference override: {'reasoner' if override_val else 'chat'} model for plan index and emitting"
+                )
         elif "use_reasoner_for_emitting" in progress_data:
-            _gen_print(f"Using saved model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting")
+            if use_reasoner_for_plan_index == use_reasoner_for_emitting:
+                _gen_print(
+                    f"Using saved model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting"
+                )
+            else:
+                _gen_print(
+                    "Using saved model preference: hybrid-fast (reasoner for plan index, chat for emitting)"
+                )
         
         current_step = progress_data.get("current_step", -1)
         _gen_print(f"Resuming from step {current_step + 1} (last completed: step {current_step})")
     else:
         current_step = -1
         if force_use_reasoner is not None:
-            use_reasoner_for_emitting = bool(force_use_reasoner)
-            _gen_print(f"Using CLI model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting")
+            if force_use_reasoner == "hybrid":
+                use_reasoner_for_plan_index = True
+                use_reasoner_for_emitting = False
+                _gen_print("Using CLI model preference: hybrid-fast (reasoner for plan index, chat for emitting)")
+            else:
+                use_reasoner_for_plan_index = bool(force_use_reasoner)
+                use_reasoner_for_emitting = use_reasoner_for_plan_index
+                _gen_print(
+                    f"Using CLI model preference: {'reasoner' if use_reasoner_for_emitting else 'chat'} model for plan index and emitting"
+                )
         else:
             # Prompt user for model preference
             while True:
                 user_input = input("Use reasoner model for plan index and emitting? (y/n, default: y): ").strip().lower()
                 if not user_input:
                     use_reasoner_for_emitting = True
+                    use_reasoner_for_plan_index = True
                     break
                 elif user_input in ('y', 'yes'):
                     use_reasoner_for_emitting = True
+                    use_reasoner_for_plan_index = True
                     break
                 elif user_input in ('n', 'no'):
                     use_reasoner_for_emitting = False
+                    use_reasoner_for_plan_index = False
                     break
                 else:
                     _gen_print("Please enter 'y' or 'n' (or press Enter for default)")
 
-        if use_reasoner_for_emitting:
+        if use_reasoner_for_plan_index and use_reasoner_for_emitting:
             _gen_print("Using reasoner model for plan index and emitting (slower but potentially higher quality)")
-        else:
+        elif (not use_reasoner_for_plan_index) and (not use_reasoner_for_emitting):
             _gen_print("Using chat model for plan index and emitting (faster)")
+        else:
+            _gen_print("Using hybrid-fast model selection (reasoner for plan index, chat for emitting)")
     
     # Track step data for saving progress
     step_data = {}
@@ -264,13 +295,39 @@ def execute_workout_generation(
         if current_step < 1:
             step_start_time = time.time()
             _gen_print("Step 1: Generating plan index...")
-            plan_index = generate_index(client, context_summary, custom_prompt, use_reasoner_for_emitting, provided_equipment, logger)
+            plan_index = generate_index(client, context_summary, custom_prompt, use_reasoner_for_plan_index, provided_equipment, logger)
             if plan_index is None:
                 return {"success": False, "filepath": None, "error": "Plan index generation cancelled"}
             try:
                 validate_plan_index_contract(plan_index)
             except ContractValidationError as e:
                 return {"success": False, "filepath": None, "error": str(e)}
+            # Canonicalize provided equipment fields in plan_index by ID.
+            # The model sometimes returns equivalent labels (e.g., "Cable machine")
+            # for existing provided IDs, which should not fail immutable checks.
+            if provided_equipment:
+                provided_eq_by_id = {
+                    eq.get("id"): eq
+                    for eq in provided_equipment.get("equipments", [])
+                    if isinstance(eq, dict) and eq.get("id")
+                }
+                provided_acc_by_id = {
+                    acc.get("id"): acc
+                    for acc in provided_equipment.get("accessoryEquipments", [])
+                    if isinstance(acc, dict) and acc.get("id")
+                }
+                for eq in plan_index.get("equipments", []):
+                    eq_id = eq.get("id")
+                    if eq_id in provided_eq_by_id:
+                        provided_eq = provided_eq_by_id[eq_id]
+                        eq["type"] = provided_eq.get("type")
+                        eq["name"] = provided_eq.get("name")
+                for acc in plan_index.get("accessoryEquipments", []):
+                    acc_id = acc.get("id")
+                    if acc_id in provided_acc_by_id:
+                        provided_acc = provided_acc_by_id[acc_id]
+                        acc["type"] = provided_acc.get("type")
+                        acc["name"] = provided_acc.get("name")
             # Collapse duplicate accessories: if plan_index lists same (type, name) as provided, use provided ID and remove duplicate
             if provided_equipment:
                 step_data["step_1_accessory_duplicate_map"] = deduplicate_plan_index_accessories(plan_index, provided_equipment)
@@ -527,19 +584,114 @@ def execute_workout_generation(
                         "logger": logger
                     }
                 ))
-            exercise_results, exercise_convs = parallel_emit_items(
-                exercise_items_list,
-                emit_exercise_definition,
-                "Step 3: Emitting exercises",
-                logger=logger
-            )
+            try:
+                exercise_results, exercise_convs = parallel_emit_items(
+                    exercise_items_list,
+                    emit_exercise_definition,
+                    "Step 3: Emitting exercises",
+                    logger=logger,
+                    fail_fast=True,
+                )
+            except Exception as e:
+                return {"success": False, "filepath": None, "error": str(e)}
             aggregated_emitter_conversations.extend(exercise_convs)
             # Filter out None results (cancelled/failed items)
             exercise_definitions = {k: v for k, v in exercise_results.items() if v is not None}
-            try:
-                validate_exercise_definitions_contract(plan_index, exercise_definitions)
-            except ContractValidationError as e:
-                return {"success": False, "filepath": None, "error": str(e)}
+
+            # LLM-only retry pass for failed/missing exercises (no deterministic auto-fix).
+            expected_exercise_ids = [ex.get("id") for ex in exercise_entries if ex.get("id")]
+            missing_exercise_ids = [ex_id for ex_id in expected_exercise_ids if ex_id not in exercise_definitions]
+            if missing_exercise_ids:
+                _gen_print(f"  → Retrying {len(missing_exercise_ids)} failed exercise(s) with LLM...")
+                exercise_entry_by_id = {ex.get("id"): ex for ex in exercise_entries if ex.get("id")}
+                for ex_id in missing_exercise_ids:
+                    ex_entry = exercise_entry_by_id.get(ex_id, {})
+                    equipment_id = ex_entry.get("equipmentId")
+                    equipment_subset = [equipment_items[equipment_id]] if equipment_id and equipment_id in equipment_items else []
+                    required_accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds", [])
+                    accessory_subset = [accessory_items[acc_id] for acc_id in required_accessory_ids if acc_id in accessory_items]
+                    try:
+                        retry_result, retry_conv = emit_exercise_definition(
+                            ex_id,
+                            client=client,
+                            context_summary=context_summary,
+                            plan_index=plan_index,
+                            equipment_subset=equipment_subset,
+                            accessory_subset=accessory_subset if accessory_subset else None,
+                            use_reasoner=use_reasoner_for_emitting,
+                            provided_equipment=provided_equipment,
+                            logger=logger,
+                        )
+                        if retry_conv is not None:
+                            aggregated_emitter_conversations.append(retry_conv)
+                        if retry_result is not None:
+                            exercise_definitions[ex_id] = retry_result
+                    except Exception:
+                        # Keep missing; contract validation below will report exact failures.
+                        pass
+            contract_retry_budget = 2
+            contract_retry_count = 0
+            while True:
+                try:
+                    validate_exercise_definitions_contract(plan_index, exercise_definitions)
+                    break
+                except ContractValidationError as e:
+                    if contract_retry_count >= contract_retry_budget:
+                        return {"success": False, "filepath": None, "error": str(e)}
+
+                    err_text = str(e)
+                    retry_ids = set()
+                    # Retry missing definitions and mismatch errors that identify an EXERCISE_X id.
+                    for match in re.finditer(r"Exercise '([^']+)'", err_text):
+                        ex_id = match.group(1)
+                        if isinstance(ex_id, str) and ex_id.startswith("EXERCISE_"):
+                            retry_ids.add(ex_id)
+                    for match in re.finditer(r"for '([^']+)'", err_text):
+                        ex_id = match.group(1)
+                        if isinstance(ex_id, str) and ex_id.startswith("EXERCISE_"):
+                            retry_ids.add(ex_id)
+
+                    if not retry_ids:
+                        return {"success": False, "filepath": None, "error": err_text}
+
+                    contract_retry_count += 1
+                    _gen_print(
+                        f"  → Contract retry {contract_retry_count}/{contract_retry_budget}: "
+                        f"re-emitting {len(retry_ids)} exercise(s) due to Step 3 mismatches..."
+                    )
+                    exercise_entry_by_id = {ex.get("id"): ex for ex in exercise_entries if ex.get("id")}
+                    for ex_id in sorted(retry_ids):
+                        ex_entry = exercise_entry_by_id.get(ex_id, {})
+                        per_ex_error_lines = [
+                            line.strip()
+                            for line in err_text.splitlines()
+                            if ex_id in line
+                        ]
+                        per_ex_error_context = "\n".join(per_ex_error_lines) if per_ex_error_lines else err_text
+                        equipment_id = ex_entry.get("equipmentId")
+                        equipment_subset = [equipment_items[equipment_id]] if equipment_id and equipment_id in equipment_items else []
+                        required_accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds", [])
+                        accessory_subset = [accessory_items[acc_id] for acc_id in required_accessory_ids if acc_id in accessory_items]
+                        try:
+                            retry_result, retry_conv = emit_exercise_definition(
+                                ex_id,
+                                client=client,
+                                context_summary=context_summary,
+                                plan_index=plan_index,
+                                equipment_subset=equipment_subset,
+                                accessory_subset=accessory_subset if accessory_subset else None,
+                                use_reasoner=use_reasoner_for_emitting,
+                                provided_equipment=provided_equipment,
+                                logger=logger,
+                                contract_error_context=per_ex_error_context,
+                            )
+                            if retry_conv is not None:
+                                aggregated_emitter_conversations.append(retry_conv)
+                            if retry_result is not None:
+                                exercise_definitions[ex_id] = retry_result
+                        except Exception:
+                            # Keep previous value; next contract validation reports unresolved issues.
+                            pass
             step_time = time.time() - step_start_time
             timing_data["step_times"][3] = step_time
             timing_data["total_time_seconds"] += step_time

@@ -12,6 +12,7 @@ import random
 import traceback
 import argparse
 import re
+from types import SimpleNamespace
 from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
@@ -1089,7 +1090,18 @@ def emit_accessory_equipment_item(accessory_id, client, context_summary, plan_in
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse accessory equipment JSON for {accessory_id}: {e}")
 
-def emit_exercise_definition(exercise_id, client, context_summary, plan_index, equipment_subset, accessory_subset=None, use_reasoner=True, provided_equipment=None, logger=None):
+def emit_exercise_definition(
+    exercise_id,
+    client,
+    context_summary,
+    plan_index,
+    equipment_subset,
+    accessory_subset=None,
+    use_reasoner=True,
+    provided_equipment=None,
+    logger=None,
+    contract_error_context=None,
+):
     """
     Emit a single exercise definition using either deepseek-reasoner @ 64K or deepseek-chat @ 8K.
     
@@ -1156,9 +1168,9 @@ def emit_exercise_definition(exercise_id, client, context_summary, plan_index, e
     plan_accessory_ids = exercise_entry.get("requiredAccessoryEquipmentIds", [])
     accessory_hint = ""
     if plan_accessory_ids:
-        accessory_hint = f"\nIMPORTANT: The plan entry specifies requiredAccessoryEquipmentIds: {plan_accessory_ids}. Include these ACCESSORY_X placeholder IDs in the exercise definition.\n"
+        accessory_hint = f"\nIMPORTANT: The plan entry specifies requiredAccessoryEquipmentIds: {plan_accessory_ids}. Copy this list exactly in the exercise definition (same IDs, no extras, no omissions).\n"
     elif accessory_subset:
-        accessory_hint = f"\nNote: Relevant accessory equipment is available. If this exercise requires any of these accessories, include them in requiredAccessoryEquipmentIds.\n"
+        accessory_hint = "\nIMPORTANT: The plan entry requiredAccessoryEquipmentIds is empty. Use an empty array [] for requiredAccessoryEquipmentIds.\n"
     
     # Build explicit instructions from plan entry (numWorkSets, restBetweenSetsSeconds, minReps, maxReps)
     plan_spec_lines = []
@@ -1175,9 +1187,18 @@ def emit_exercise_definition(exercise_id, client, context_summary, plan_index, e
     plan_spec_instructions = "\n".join(plan_spec_lines)
     if plan_spec_instructions:
         plan_spec_instructions = "CRITICAL - Follow these exact specifications from the plan:\n" + plan_spec_instructions + "\n\n"
+
+    valid_muscle_groups = (
+        JSON_SCHEMA.get("$defs", {})
+        .get("MuscleGroup", {})
+        .get("enum", [])
+    )
+    muscle_group_enum_text = ", ".join(valid_muscle_groups)
     
     user_content = (
-        "Preserve the exercise name from the plan entry, but do not add equipment/accessory or set/time details to the name.\n\n"
+        "CRITICAL: Use a movement-only exercise name. Remove equipment/accessory words and remove set/time details from the name.\n"
+        "Examples: 'Barbell Back Squat' -> 'Back Squat', 'DB Bulgarian Split Squat' -> 'Bulgarian Split Squat', "
+        "'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n\n"
         f"{plan_spec_instructions}"
         f"Plan entry for {exercise_id}:\n{exercise_entry_json}\n\n"
         f"Relevant equipment (id, type, name):\n{equipment_list_short}\n"
@@ -1187,84 +1208,303 @@ def emit_exercise_definition(exercise_id, client, context_summary, plan_index, e
         f"Output format should match $defs.Exercise from the schema. "
         f"Use placeholder ID: {exercise_id} for the exercise, SET_X for sets, "
         f"and reference equipment using EQUIPMENT_X placeholders.\n"
-        f"If the exercise requires accessory equipment (as specified in the plan entry or based on the exercise requirements), "
-        f"include requiredAccessoryEquipmentIds array with ACCESSORY_X placeholder references from the accessory equipment list above.\n"
-        f"If no accessory equipment is required, use an empty array [] for requiredAccessoryEquipmentIds.\n"
+        f"CRITICAL: muscleGroups must be a non-empty array using ONLY these valid enum values:\n"
+        f"{muscle_group_enum_text}\n"
+        f"Set requiredAccessoryEquipmentIds to EXACTLY match plan entry requiredAccessoryEquipmentIds.\n"
         f"{accessory_hint}"
         f"IMPORTANT: Set requiresLoadCalibration to true ONLY if the user explicitly requested calibration sets for this exercise. "
         f"Otherwise, default to false. Calibration sets are only applicable to WEIGHT exercises or BODY_WEIGHT exercises with equipment.\n"
         f"Output only the exercise object JSON, not a wrapper."
     )
     
-    messages = [
-        {"role": "system", "content": BASE_SYSTEM_PROMPT},
-        {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
-    ]
-    
-    if logger:
-        request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
-        trunc = user_content[:request_truncate] + (f"... [truncated, total {len(user_content)} chars]" if request_truncate and len(user_content) > request_truncate else "")
-        logger.log_request("emit_exercise " + exercise_id, trunc)
-    if use_reasoner:
-        content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
-    else:
-        content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
-    if content is None:
-        return (None, None)
-    
-    if not content:
-        raise ValueError(f"Model returned empty exercise JSON content for {exercise_id}")
-    
-    if logger:
-        logger.log_response("emit_exercise " + exercise_id, content, truncate_at=8000)
-    log_entry = None
-    if logger:
-        log_entry = {
-            "step": "exercise",
-            "item_id": exercise_id,
-            "request_messages": messages,
-            "response_content": content,
-        }
-    try:
-        data = json.loads(content)
-        # If it's wrapped in an "exercises" array, extract the first item
-        if "exercises" in data and isinstance(data["exercises"], list) and len(data["exercises"]) > 0:
-            exercise_item = data["exercises"][0]
-        elif "id" in data and data.get("type") == "Exercise":
-            # It's already a single exercise object
-            exercise_item = data
+    max_attempts = 4
+    attempt = 1
+    last_error = None
+    last_content = None
+
+    def _emit_log(msg):
+        if logger:
+            logger.log_print(msg)
         else:
-            raise ValueError(f"Invalid exercise JSON format for {exercise_id}: expected exercise object or exercises array")
-        
-        # Ensure the ID matches
-        if exercise_item.get("id") != exercise_id:
-            exercise_item["id"] = exercise_id
-        
-        # Normalize requiredAccessoryEquipmentIds to empty array if None
-        if exercise_item.get("requiredAccessoryEquipmentIds") is None:
-            exercise_item["requiredAccessoryEquipmentIds"] = []
-        
-        # Normalize requiresLoadCalibration: True for WEIGHT exercises and BODY_WEIGHT with equipment
-        if exercise_item.get("requiresLoadCalibration") is None:
-            exercise_type = exercise_item.get("exerciseType")
-            equipment_id = exercise_item.get("equipmentId")
-            if exercise_type == "WEIGHT" or (exercise_type == "BODY_WEIGHT" and equipment_id is not None):
-                exercise_item["requiresLoadCalibration"] = True
+            print(msg)
+
+    def _path_to_parts(path):
+        if not isinstance(path, str) or not path.startswith("/"):
+            return []
+        parts = []
+        for token in path.strip("/").split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            if token.isdigit():
+                parts.append(int(token))
             else:
-                exercise_item["requiresLoadCalibration"] = False
-        
-        # Finalize and validate this exercise before adding it to exercise_definitions.
-        normalized_item = finalize_and_validate_exercise_definition(
-            exercise_item,
-            equipment_subset=equipment_subset,
-            accessory_subset=accessory_subset,
-            all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
+                parts.append(token)
+        return parts
+
+    def _scoped_errors_from_validation_message(error_text):
+        if not error_text:
+            return []
+        segments = [seg.strip() for seg in str(error_text).split(" | ") if seg.strip()]
+        scoped = []
+
+        def add(path, message, validator="type"):
+            scoped.append(
+                SimpleNamespace(
+                    message=message,
+                    absolute_path=_path_to_parts(path),
+                    validator=validator,
+                )
+            )
+
+        for seg in segments:
+            lower = seg.lower()
+            if "empty musclegroups array" in lower or "invalid muscle group values" in lower:
+                add("/muscleGroups", seg, "minItems")
+            elif "invalid secondarymusclegroups values" in lower:
+                add("/secondaryMuscleGroups", seg, "minItems")
+            elif "contains set type" in lower or "set type" in lower or "weightset weights" in lower:
+                add("/sets", seg, "oneOf")
+            elif "minreps" in lower or "maxreps" in lower:
+                add("/minReps", seg, "minimum")
+                add("/maxReps", seg, "minimum")
+            elif "equipmentid" in lower and "references" in lower:
+                add("/equipmentId", seg, "enum")
+            elif "requiredaccessoryequipmentids" in lower:
+                add("/requiredAccessoryEquipmentIds", seg, "enum")
+            elif "minloadpercent" in lower or "maxloadpercent" in lower or "load percentages" in lower:
+                add("/minLoadPercent", seg, "minimum")
+                add("/maxLoadPercent", seg, "maximum")
+
+        return scoped
+
+    def _repair_exercise_with_json_patch(exercise_obj, validation_error_text):
+        scoped_errors = _scoped_errors_from_validation_message(validation_error_text)
+        if not scoped_errors:
+            raise ValueError("Cannot derive scoped error paths for exercise patch repair")
+
+        allowed_paths, allowed_descendant_paths = build_allowed_patch_scope(scoped_errors)
+        allowed_paths_list = sorted(normalize_json_pointer(p) for p in allowed_paths if p is not None)
+        allowed_descendant_paths_list = sorted(
+            normalize_json_pointer(p) for p in allowed_descendant_paths if p is not None
         )
-        
-        return (ExerciseDefinition(normalized_item), log_entry)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse exercise JSON for {exercise_id}: {e}")
+        exercise_schema_json = json.dumps(EXERCISE_SCHEMA, indent=2)
+        muscle_group_enum_text = ", ".join(valid_muscle_groups)
+        exercise_type_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseType", {}).get("enum", [])
+        exercise_category_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseCategory", {}).get("enum", [])
+        exercise_type_enum_text = ", ".join(exercise_type_enum)
+        exercise_category_enum_text = ", ".join(exercise_category_enum)
+        equipment_ids_text = ", ".join(
+            sorted(eq.get("id") for eq in (equipment_subset or []) if isinstance(eq, dict) and eq.get("id"))
+        ) or "(none)"
+        accessory_ids_text = ", ".join(
+            sorted(acc.get("id") for acc in (accessory_subset or []) if isinstance(acc, dict) and acc.get("id"))
+        ) or "(none)"
+        plan_entry_text = json.dumps(exercise_entry, indent=2)
+
+        errors_text = "\n".join(f"- {err.message}" for err in scoped_errors)
+        exercise_json_str = json.dumps(exercise_obj, indent=2)
+        patch_user_content = (
+            f"Context summary:\n{context_summary}\n\n"
+            f"Plan entry for this exercise:\n{plan_entry_text}\n\n"
+            f"Validation errors for this exercise:\n{errors_text}\n\n"
+            f"Exercise JSON (with errors):\n{exercise_json_str}\n\n"
+            f"Exercise schema ($defs.Exercise):\n{exercise_schema_json}\n\n"
+            f"Valid ExerciseType values: {exercise_type_enum_text}\n"
+            f"Valid ExerciseCategory values: {exercise_category_enum_text}\n"
+            f"Valid MuscleGroup enum values: {muscle_group_enum_text}\n"
+            f"Available equipment IDs for this exercise: {equipment_ids_text}\n"
+            f"Available accessory IDs for this exercise: {accessory_ids_text}\n\n"
+            "Generate a JSON Patch (RFC 6902) array for this exercise object only. "
+            "CRITICAL: JSON Pointer paths are relative to this exercise object root. "
+            "Do NOT use paths starting with /workouts, /exercises, /equipments, or any outer wrapper.\n"
+            f"Allowed exact patch paths: {allowed_paths_list}\n"
+            f"Allowed descendant patch roots: {allowed_descendant_paths_list}\n"
+            "Fix ONLY the highlighted validation issues. "
+            "Do NOT modify fields outside the failing paths. "
+            "Any value written to muscleGroups/secondaryMuscleGroups MUST use only valid MuscleGroup enum values above.\n"
+            "Output only the JSON Patch array."
+        )
+        patch_messages = [
+            {"role": "system", "content": BASE_SYSTEM_PROMPT},
+            {"role": "system", "content": JSON_PATCH_REPAIR_SYSTEM_PROMPT},
+            {"role": "user", "content": patch_user_content},
+        ]
+
+        if logger:
+            trunc = patch_user_content[:2000] + (f"... [truncated, total {len(patch_user_content)} chars]" if len(patch_user_content) > 2000 else "")
+            logger.log_request("repair_exercise_with_json_patch " + exercise_id, trunc)
+        patch_content = json_call_reasoner_only_with_loading(
+            client,
+            patch_messages,
+            "",
+            show_loading=False,
+            logger=logger,
+        )
+        if patch_content is None:
+            return None
+        if not patch_content:
+            raise ValueError("Model returned empty JSON Patch content for exercise repair")
+        if logger:
+            logger.log_response("repair_exercise_with_json_patch " + exercise_id, patch_content, truncate_at=8000)
+
+        patch = json.loads(patch_content)
+        if isinstance(patch, list):
+            patch_array = patch
+        elif isinstance(patch, dict) and isinstance(patch.get("patch"), list):
+            patch_array = patch["patch"]
+        else:
+            raise ValueError("Invalid JSON Patch format: expected array of patch operations")
+
+        validate_patch_operations_scope(patch_array, allowed_paths, allowed_descendant_paths)
+        repaired = apply_json_patch(exercise_obj, patch_array)
+        changed_paths = collect_changed_json_paths(exercise_obj, repaired)
+        validate_changed_paths_scope(changed_paths, allowed_paths, allowed_descendant_paths)
+        return repaired
+
+    while attempt <= max_attempts:
+        retry_context = ""
+        if attempt == 1 and contract_error_context:
+            retry_context = (
+                "\n\nCONTRACT RETRY CONTEXT:\n"
+                f"The previous emitted exercise failed Step 3 contract validation with:\n{contract_error_context}\n\n"
+                "Regenerate this exercise so it matches the plan entry exactly, while still satisfying schema constraints.\n"
+                "Output only valid exercise JSON.\n"
+            )
+        elif last_error:
+            previous_output = (last_content or "")[:3500]
+            retry_context = (
+                "\n\nAUTO-HEAL RETRY CONTEXT:\n"
+                f"Previous attempt failed validation/parsing with error:\n{last_error}\n\n"
+                "Regenerate the FULL exercise object and fix all issues.\n"
+                "CRITICAL: muscleGroups must be a non-empty array of valid enum values.\n"
+                "Do not return explanations. Return only valid exercise JSON.\n"
+                f"Previous invalid JSON snippet:\n{previous_output}\n"
+            )
+
+        retry_user_content = user_content + retry_context
+        messages = [
+            {"role": "system", "content": BASE_SYSTEM_PROMPT},
+            {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
+            {"role": "user", "content": retry_user_content}
+        ]
+
+        if logger:
+            request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
+            trunc = retry_user_content[:request_truncate] + (f"... [truncated, total {len(retry_user_content)} chars]" if request_truncate and len(retry_user_content) > request_truncate else "")
+            logger.log_request("emit_exercise " + exercise_id, trunc)
+        # Always use reasoner during auto-heal retries for higher repair quality.
+        use_reasoner_for_this_attempt = use_reasoner or bool(last_error) or bool(contract_error_context)
+        if use_reasoner_for_this_attempt:
+            content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
+        else:
+            content = json_call_chat_max_with_loading(client, messages, "", show_loading=False, logger=logger)
+        if content is None:
+            return (None, None)
+        if not content:
+            last_error = f"Model returned empty exercise JSON content for {exercise_id}"
+            last_content = content
+            if attempt >= max_attempts:
+                raise ValueError(
+                    f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
+                    f"Last error: {last_error}"
+                )
+            attempt += 1
+            _emit_log(f"  Retrying {exercise_id} with auto-heal (attempt {attempt})...")
+            continue
+
+        if logger:
+            logger.log_response("emit_exercise " + exercise_id, content, truncate_at=8000)
+        log_entry = None
+        if logger:
+            log_entry = {
+                "step": "exercise",
+                "item_id": exercise_id,
+                "request_messages": messages,
+                "response_content": content,
+            }
+
+        try:
+            data = json.loads(content)
+            # If it's wrapped in an "exercises" array, extract the first item
+            if "exercises" in data and isinstance(data["exercises"], list) and len(data["exercises"]) > 0:
+                exercise_item = data["exercises"][0]
+            elif "id" in data and data.get("type") == "Exercise":
+                # It's already a single exercise object
+                exercise_item = data
+            else:
+                raise ValueError(f"Invalid exercise JSON format for {exercise_id}: expected exercise object or exercises array")
+
+            # Ensure the ID matches
+            if exercise_item.get("id") != exercise_id:
+                exercise_item["id"] = exercise_id
+
+            # Normalize requiredAccessoryEquipmentIds to empty array if None
+            if exercise_item.get("requiredAccessoryEquipmentIds") is None:
+                exercise_item["requiredAccessoryEquipmentIds"] = []
+
+            # Normalize requiresLoadCalibration: True for WEIGHT exercises and BODY_WEIGHT with equipment
+            if exercise_item.get("requiresLoadCalibration") is None:
+                exercise_type = exercise_item.get("exerciseType")
+                equipment_id = exercise_item.get("equipmentId")
+                if exercise_type == "WEIGHT" or (exercise_type == "BODY_WEIGHT" and equipment_id is not None):
+                    exercise_item["requiresLoadCalibration"] = True
+                else:
+                    exercise_item["requiresLoadCalibration"] = False
+
+            # Finalize and validate this exercise before adding it to exercise_definitions.
+            normalized_item = finalize_and_validate_exercise_definition(
+                exercise_item,
+                equipment_subset=equipment_subset,
+                accessory_subset=accessory_subset,
+                all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
+            )
+
+            return (ExerciseDefinition(normalized_item), log_entry)
+        except Exception as e:
+            last_error = str(e)
+            last_content = content
+
+            # If exercise JSON parsed successfully, try scoped JSON Patch repair first.
+            try:
+                parsed = json.loads(content)
+                if "exercises" in parsed and isinstance(parsed["exercises"], list) and len(parsed["exercises"]) > 0:
+                    exercise_item = parsed["exercises"][0]
+                elif "id" in parsed and parsed.get("type") == "Exercise":
+                    exercise_item = parsed
+                else:
+                    exercise_item = None
+            except Exception:
+                exercise_item = None
+
+            if isinstance(exercise_item, dict):
+                try:
+                    if exercise_item.get("id") != exercise_id:
+                        exercise_item["id"] = exercise_id
+                    patched_item = _repair_exercise_with_json_patch(exercise_item, last_error)
+                    if patched_item is not None:
+                        normalized_item = finalize_and_validate_exercise_definition(
+                            patched_item,
+                            equipment_subset=equipment_subset,
+                            accessory_subset=accessory_subset,
+                            all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
+                        )
+                        _emit_log(f"  Patched {exercise_id} with scoped JSON Patch auto-heal.")
+                        return (ExerciseDefinition(normalized_item), log_entry)
+                except Exception as patch_error:
+                    last_error = f"{last_error} | JSON Patch repair failed: {patch_error}"
+
+            if attempt >= max_attempts:
+                raise ValueError(
+                    f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
+                    f"Last error: {last_error}"
+                )
+            attempt += 1
+            _emit_log(f"  Retrying {exercise_id} with auto-heal (attempt {attempt})...")
+            continue
+
+    raise ValueError(
+        f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
+        f"Last error: {last_error or 'unknown error'}"
+    )
 
 def emit_workout_structure(workout_id, client, context_summary, plan_index, exercise_index, use_reasoner=True, logger=None):
     """
@@ -1391,15 +1631,17 @@ def emit_workout_structure(workout_id, client, context_summary, plan_index, exer
         else:
             raise ValueError(f"Invalid workout structure JSON format for {workout_id}: expected workoutMetadata and workoutComponents")
         
-        # Ensure workout ID in metadata if present
-        if "id" not in workout_structure.get("workoutMetadata", {}):
-            workout_structure.setdefault("workoutMetadata", {})["id"] = workout_id
+        # Enforce plan contract for workout identity fields regardless of LLM drift.
+        metadata = workout_structure.setdefault("workoutMetadata", {})
+        metadata["id"] = workout_id
+        if workout_entry.get("name"):
+            metadata["name"] = workout_entry.get("name")
         
         return (WorkoutStructure(workout_structure), log_entry)
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse workout structure JSON for {workout_id}: {e}")
 
-def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, logger=None):
+def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, logger=None, fail_fast=False):
     """
     Execute emitter function for multiple items in parallel using ThreadPoolExecutor.
 
@@ -1412,6 +1654,7 @@ def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, 
         loading_message: Base message for progress indicator (e.g., "Generating equipment")
         max_workers: Maximum number of worker threads (default: min(32, len(items) + 4))
         logger: Optional ConversationLogger for debug logging (loading start/stop)
+        fail_fast: If True, stop/cancel remaining work when any item fails and raise.
 
     Returns:
         tuple: (results_dict, emitter_conversations_list) where results_dict maps item_id
@@ -1470,6 +1713,8 @@ def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, 
         except Exception as e:
             loading.increment()
             errors.append((item_id, str(e)))
+            if fail_fast:
+                cancelled.set()
             return (item_id, None)
 
     loading.start()
@@ -1515,6 +1760,11 @@ def parallel_emit_items(items, emitter_func, loading_message, max_workers=None, 
             _out(f"    - {item_id}: {error_msg}")
         if len(errors) > 5:
             _out(f"    ... and {len(errors) - 5} more error(s)")
+        if fail_fast:
+            first_item, first_error = errors[0]
+            raise RuntimeError(
+                f"{loading_message} failed (fail-fast) on '{first_item}': {first_error}"
+            )
 
     return (results, emitter_conversations)
 
@@ -1928,7 +2178,11 @@ def generate_index(client, context_summary, custom_request="", use_reasoner=True
             f"Ensure all equipmentId and requiredAccessoryEquipmentIds values match equipment/accessories from either the provided list OR newly created entries.\n\n"
         )
     
-    user_content += "Generate the PlanIndex based on this context. Output only the PlanIndex JSON."
+    user_content += (
+        "If workout/day names appear in both Context summary and Additional request with different formatting, "
+        "prefer the exact names from Context summary.\n\n"
+        "Generate the PlanIndex based on this context. Output only the PlanIndex JSON."
+    )
     
     messages = [
         {"role": "system", "content": BASE_SYSTEM_PROMPT},
