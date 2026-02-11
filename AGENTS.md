@@ -53,4 +53,3 @@
 - If build errors persist after attempts to fix them, clearly report the specific errors and their locations to the user rather than leaving the code in a broken state.
 - If Gradle fails with `gradle-*.zip.lck (Access is denied)`, rerun the same Gradle command with escalated permissions so wrapper lock access is available.
 - Use `read_lints` tool to check for linter errors after code changes and address any issues found.
-
