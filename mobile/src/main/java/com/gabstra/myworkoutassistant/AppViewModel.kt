@@ -656,12 +656,29 @@ class AppViewModel(
 
     /**
      * Reorders workouts within a plan (or unassigned when planId is null).
-     * Assigns order = index to each workout in newOrderedWorkouts and merges with workouts from other plans.
+     * Assigns order = index to each workout in newOrderedWorkouts.
+     * Preserves all other workouts (including inactive/versioned entries) to avoid dropping history chains.
      */
     fun reorderWorkoutsInPlan(planId: UUID?, newOrderedWorkouts: List<Workout>) {
-        val reordered = newOrderedWorkouts.mapIndexed { index, w -> w.copy(order = index) }
-        val otherWorkouts = workouts.filter { it.workoutPlanId != planId }
-        updateWorkouts(otherWorkouts + reordered)
+        if (newOrderedWorkouts.isEmpty()) {
+            return
+        }
+
+        val orderByWorkoutId = newOrderedWorkouts
+            .mapIndexed { index, workout -> workout.id to index }
+            .toMap()
+
+        val updatedWorkouts = workouts.map { workout ->
+            val isTargetPlan = workout.workoutPlanId == planId
+            val newOrder = orderByWorkoutId[workout.id]
+            if (isTargetPlan && newOrder != null) {
+                workout.copy(order = newOrder)
+            } else {
+                workout
+            }
+        }
+
+        updateWorkouts(updatedWorkouts)
     }
 
     fun deleteWorkoutsById(workoutIdsToDelete: kotlin.collections.Set<UUID>) {

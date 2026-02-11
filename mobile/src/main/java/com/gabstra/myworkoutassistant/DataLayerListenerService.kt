@@ -966,7 +966,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                     )
                                                     val db =
                                                         AppDatabase.getDatabase(this@DataLayerListenerService)
-                                                    saveWorkoutStoreToDownloads(
+                                                    saveWorkoutStoreToExternalStorage(
                                                         this@DataLayerListenerService,
                                                         updatedWorkoutStore,
                                                         db
