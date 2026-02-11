@@ -101,7 +101,7 @@ import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
-import com.gabstra.myworkoutassistant.shared.mapPercentageToZone
+import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -191,7 +191,7 @@ fun WorkoutHistoryScreen(
         DateTimeFormatter.ofPattern("HH:mm", currentLocale)
     }
 
-    var selectedRange by remember { mutableStateOf(FilterRange.LAST_30_DAYS) }
+    var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
 
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
 
@@ -355,13 +355,24 @@ fun WorkoutHistoryScreen(
     LaunchedEffect(workout) {
         isLoading = true
         withContext(Dispatchers.IO) {
+            val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
+                .mapNotNull { it.workoutHistoryId }
+                .toSet()
 
             workoutHistories = workoutVersions.flatMap { workoutVersion ->
                 workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
-            }.sortedBy { it.date }
+            }.filter { workoutHistoryIdsWithSets.contains(it.id) }
+                .sortedBy { it.date }
 
             if (workoutHistoryId == null) {
-                workoutHistories = workoutHistories.filter { it.isDone }
+                val completedHistories = workoutHistories.filter { it.isDone }
+                workoutHistories = if (completedHistories.isNotEmpty()) {
+                    completedHistories
+                } else {
+                    // If there are no completed sessions yet, surface incomplete ones
+                    // so users can still inspect the in-progress history.
+                    workoutHistories
+                }
             }
 
             if (workoutHistories.isEmpty()) {
@@ -413,7 +424,7 @@ fun WorkoutHistoryScreen(
                         measuredMaxHeartRate,
                         restingHeartRate
                     )
-                    val zone = mapPercentageToZone(percentage)
+                    val zone = getZoneFromPercentage(percentage)
                     if (zone == 0) continue
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }

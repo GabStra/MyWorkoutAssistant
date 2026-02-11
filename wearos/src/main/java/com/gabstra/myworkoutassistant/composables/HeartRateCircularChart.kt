@@ -891,25 +891,14 @@ private fun HeartRateView(
         if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
             val inBounds = remember(
                 hr,
+                mhrPercentage,
                 lowerBoundMaxHRPercent,
                 upperBoundMaxHRPercent,
                 screenState.userAge,
                 screenState.measuredMaxHeartRate,
                 screenState.restingHeartRate
             ) {
-                val lowTargetHr = getHeartRateFromPercentage(
-                    lowerBoundMaxHRPercent!!,
-                    screenState.userAge,
-                    screenState.measuredMaxHeartRate,
-                    screenState.restingHeartRate
-                )
-                val highTargetHr = getHeartRateFromPercentage(
-                    upperBoundMaxHRPercent!!,
-                    screenState.userAge,
-                    screenState.measuredMaxHeartRate,
-                    screenState.restingHeartRate
-                )
-                hr in lowTargetHr..highTargetHr
+                mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!!
             }
 
             TargetRangeArc(

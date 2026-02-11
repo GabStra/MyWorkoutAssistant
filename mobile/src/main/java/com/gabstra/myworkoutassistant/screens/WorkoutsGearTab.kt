@@ -1,7 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -118,7 +118,12 @@ fun WorkoutsGearTab(
                 },
                 onOrderChange = { },
                 itemContent = { it, onItemClick, onItemLongClick ->
-                    StyledCard(modifier = Modifier.clickable { onItemClick() }) {
+                    StyledCard(
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onItemClick() },
+                            onLongClick = { onItemLongClick() }
+                        )
+                    ) {
                         Text(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -215,7 +220,12 @@ fun WorkoutsGearTab(
                 },
                 onOrderChange = { },
                 itemContent = { it, onItemClick, onItemLongClick ->
-                    StyledCard(modifier = Modifier.clickable { onItemClick() }) {
+                    StyledCard(
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onItemClick() },
+                            onLongClick = { onItemLongClick() }
+                        )
+                    ) {
                         Text(
                             modifier = Modifier
                                 .fillMaxSize()

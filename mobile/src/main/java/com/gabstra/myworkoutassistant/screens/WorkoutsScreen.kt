@@ -576,6 +576,7 @@ fun WorkoutsScreen(
                                 selectedEquipments = selectedEquipments,
                                 equipments = equipments,
                                 appViewModel = appViewModel,
+                                context = context,
                                 onSelectionChange = { selectedEquipments = it },
                                 onSelectionModeChange = { isEquipmentSelectionModeActive = it },
                                 isSelectionModeActive = isEquipmentSelectionModeActive
@@ -584,6 +585,7 @@ fun WorkoutsScreen(
                                 selectedAccessories = selectedAccessories,
                                 accessories = accessories,
                                 appViewModel = appViewModel,
+                                context = context,
                                 onSelectionChange = { selectedAccessories = it },
                                 onSelectionModeChange = { isAccessorySelectionModeActive = it },
                                 isSelectionModeActive = isAccessorySelectionModeActive

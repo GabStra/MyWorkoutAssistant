@@ -28,6 +28,11 @@ sealed class ExerciseHistoryMarkdownResult {
     data class Failure(val message: String) : ExerciseHistoryMarkdownResult()
 }
 
+private data class ExerciseExportSession(
+    val workoutHistory: com.gabstra.myworkoutassistant.shared.WorkoutHistory,
+    val activeSetHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>
+)
+
 suspend fun buildExerciseHistoryMarkdown(
     exercise: Exercise,
     workoutHistoryDao: WorkoutHistoryDao,
@@ -50,13 +55,31 @@ suspend fun buildExerciseHistoryMarkdown(
         return ExerciseHistoryMarkdownResult.Failure("No workouts found containing this exercise")
     }
 
-    val allWorkoutHistories = workoutsContainingExercise
+    val completedWorkoutHistories = workoutsContainingExercise
         .flatMap { workout -> workoutHistoryDao.getWorkoutsByWorkoutId(workout.id) }
         .filter { it.isDone }
-        .sortedBy { it.date }
+        .sortedWith(compareBy({ it.date }, { it.time }))
 
-    if (allWorkoutHistories.isEmpty()) {
+    if (completedWorkoutHistories.isEmpty()) {
         return ExerciseHistoryMarkdownResult.Failure("No completed sessions found for this exercise")
+    }
+
+    val sessionsWithRecordedSets = completedWorkoutHistories.mapNotNull { workoutHistory ->
+        val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+            workoutHistory.id,
+            exercise.id
+        ).sortedBy { it.order }
+        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
+        if (activeSetHistories.isEmpty()) null else ExerciseExportSession(
+            workoutHistory = workoutHistory,
+            activeSetHistories = activeSetHistories
+        )
+    }
+
+    if (sessionsWithRecordedSets.isEmpty()) {
+        return ExerciseHistoryMarkdownResult.Failure(
+            "No completed sessions with recorded sets found for this exercise"
+        )
     }
 
     val userAge = Calendar.getInstance().get(Calendar.YEAR) - workoutStore.birthDateYear
@@ -92,26 +115,17 @@ suspend fun buildExerciseHistoryMarkdown(
     }
     markdown.append("\n\n")
 
-    val firstSession = allWorkoutHistories.first()
-    val lastSession = allWorkoutHistories.last()
+    val firstSession = sessionsWithRecordedSets.first().workoutHistory
+    val lastSession = sessionsWithRecordedSets.last().workoutHistory
     markdown.append(
-        "Sessions: ${allWorkoutHistories.size} | Range: ${firstSession.date} to ${lastSession.date}\n\n"
+        "Sessions: ${sessionsWithRecordedSets.size} | Range: ${firstSession.date} to ${lastSession.date}\n\n"
     )
 
-    for ((sessionIndex, workoutHistory) in allWorkoutHistories.withIndex()) {
+    for ((sessionIndex, session) in sessionsWithRecordedSets.withIndex()) {
+        val workoutHistory = session.workoutHistory
         val workout = workoutsContainingExercise.find { it.id == workoutHistory.workoutId }
         val workoutName = workout?.name ?: "Unknown Workout"
-        val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-            workoutHistory.id,
-            exercise.id
-        ).sortedBy { it.order }
-
-        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
-        
-        // Skip session if there are no active sets (only rest sets)
-        if (activeSetHistories.isEmpty()) {
-            continue
-        }
+        val activeSetHistories = session.activeSetHistories
 
         val progressionData = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(
             workoutHistory.id,

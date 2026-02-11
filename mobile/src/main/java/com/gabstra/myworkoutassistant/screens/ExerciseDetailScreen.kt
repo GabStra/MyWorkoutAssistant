@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -336,6 +335,24 @@ fun ExerciseDetailScreen(
         }
     }
 
+    fun exportExerciseHistory() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val db = AppDatabase.getDatabase(context)
+                val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+                exportExerciseHistoryToMarkdown(
+                    context = context,
+                    exercise = exercise,
+                    workoutHistoryDao = workoutHistoryDao,
+                    setHistoryDao = setHistoryDao,
+                    exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                    workouts = workouts,
+                    workoutStore = appViewModel.workoutStore
+                )
+            }
+        }
+    }
+
     LaunchedEffect(showRest) {
         selectedSetIds = emptySet()
     }
@@ -368,37 +385,6 @@ fun ExerciseDetailScreen(
                     },
 
                     actions = {
-                        val exportIconColors = IconButtonDefaults.iconButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onBackground,
-                            disabledContentColor = MaterialTheme.colorScheme.onBackground
-                        )
-                        IconButton(
-                            enabled = !exercise.doNotStoreHistory,
-                            onClick = {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        val db = AppDatabase.getDatabase(context)
-                                        val exerciseSessionProgressionDao =
-                                            db.exerciseSessionProgressionDao()
-                                        exportExerciseHistoryToMarkdown(
-                                            context = context,
-                                            exercise = exercise,
-                                            workoutHistoryDao = workoutHistoryDao,
-                                            setHistoryDao = setHistoryDao,
-                                            exerciseSessionProgressionDao = exerciseSessionProgressionDao,
-                                            workouts = workouts,
-                                            workoutStore = appViewModel.workoutStore
-                                        )
-                                    }
-                                }
-                            },
-                            colors = exportIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.FileDownload,
-                                contentDescription = "Export History",
-                            )
-                        }
                         IconButton(onClick = {
                             appViewModel.setScreenData(
                                 ScreenData.EditExercise(
@@ -792,6 +778,13 @@ fun ExerciseDetailScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 15.dp),
                 ) {
+                    FormPrimaryOutlinedButton(
+                        text = "Export as .md",
+                        enabled = !exercise.doNotStoreHistory,
+                        onClick = { exportExerciseHistory() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     if (sets.isEmpty()) {
                         Row(
                             modifier = Modifier
@@ -975,19 +968,23 @@ fun ExerciseDetailScreen(
                                                 isNotLast && nextItem != null && nextItem !is RestSet
 
                                             if (shouldShowButton) {
-                                                FormPrimaryOutlinedButton(
-                                                    text = "Add Rest",
-                                                    onClick = {
-                                                        appViewModel.setScreenData(
-                                                            ScreenData.InsertRestSetAfter(
-                                                                workout.id,
-                                                                exercise.id,
-                                                                it.id
+                                                Box(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    FormPrimaryOutlinedButton(
+                                                        text = "Add Rest",
+                                                        onClick = {
+                                                            appViewModel.setScreenData(
+                                                                ScreenData.InsertRestSetAfter(
+                                                                    workout.id,
+                                                                    exercise.id,
+                                                                    it.id
+                                                                )
                                                             )
-                                                        )
-                                                    },
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
+                                                        }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -1030,4 +1027,3 @@ fun ExerciseDetailScreen(
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
-

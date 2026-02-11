@@ -361,9 +361,17 @@ class AppViewModel(
             // #endregion
             try {
                 val grouped = withContext(Dispatchers.IO) {
-                    val dao = AppDatabase.getDatabase(getApplication<Application>()).workoutHistoryDao()
-                    val all = dao.getAllWorkoutHistories()
-                    val filtered = all.filter { h -> enabledWorkouts.any { it.id == h.workoutId } }
+                    val db = AppDatabase.getDatabase(getApplication<Application>())
+                    val workoutHistoryDao = db.workoutHistoryDao()
+                    val setHistoryDao = db.setHistoryDao()
+                    val all = workoutHistoryDao.getAllWorkoutHistories()
+                    val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
+                        .mapNotNull { it.workoutHistoryId }
+                        .toSet()
+                    val filtered = all.filter { history ->
+                        enabledWorkouts.any { it.id == history.workoutId } &&
+                                workoutHistoryIdsWithSets.contains(history.id)
+                    }
                     val groupedMap = filtered.groupBy { it.date }
                 // #region agent log
                 Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} enabledCount=${enabledWorkouts.size} groupedSize=${groupedMap.size}")

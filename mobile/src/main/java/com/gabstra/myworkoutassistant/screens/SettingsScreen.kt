@@ -65,6 +65,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val defaultRestingHeartRate = getEffectiveRestingHeartRate()
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
@@ -97,9 +98,11 @@ fun SettingsScreen(
                     loadRestingHeartRateWithMinimumLoadingTime()
                 if (historicalRestingHeartRate != null) {
                     restingHeartRateState.value = historicalRestingHeartRate.toString()
+                } else {
+                    restingHeartRateState.value = defaultRestingHeartRate.toString()
                 }
             } catch (_: Exception) {
-                // Keep manual entry flow on errors or missing permission.
+                restingHeartRateState.value = defaultRestingHeartRate.toString()
             } finally {
                 isLoadingRestingHeartRate = false
             }
@@ -249,16 +252,18 @@ fun SettingsScreen(
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } else {
+                                restingHeartRateState.value = defaultRestingHeartRate.toString()
                                 Toast.makeText(
                                     context,
-                                    "Unable to read historical resting HR",
+                                    "No resting HR found. Using default: $defaultRestingHeartRate bpm",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
                         } catch (_: Exception) {
+                            restingHeartRateState.value = defaultRestingHeartRate.toString()
                             Toast.makeText(
                                 context,
-                                "Unable to read historical resting HR",
+                                "Unable to read resting HR. Using default: $defaultRestingHeartRate bpm",
                                 Toast.LENGTH_SHORT
                             ).show()
                         } finally {

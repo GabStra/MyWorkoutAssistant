@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowForward
@@ -422,12 +421,14 @@ fun AccessoriesBottomBar(
     selectedAccessories: List<AccessoryEquipment>,
     accessories: List<AccessoryEquipment>,
     appViewModel: AppViewModel,
+    context: Context,
     onSelectionChange: (List<AccessoryEquipment>) -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember { mutableStateOf(false) }
+        val accessoryToDelete = selectedAccessories.singleOrNull()
         val deleteMessage = remember(selectedAccessories, appViewModel.workouts) {
             buildAccessoryDeleteConfirmationMessage(
                 selectedAccessories = selectedAccessories,
@@ -516,7 +517,9 @@ fun AccessoriesBottomBar(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.width(56.dp)
                         ) {
-                            IconButton(onClick = {
+                            IconButton(
+                                enabled = accessoryToDelete != null,
+                                onClick = {
                                 showDeleteConfirmation = true
                             }) {
                                 Icon(
@@ -537,11 +540,7 @@ fun AccessoriesBottomBar(
             if (showDeleteConfirmation) {
                 StandardDialog(
                     onDismissRequest = { showDeleteConfirmation = false },
-                    title = if (selectedAccessories.size == 1) {
-                        "Delete Accessory"
-                    } else {
-                        "Delete Accessories"
-                    },
+                    title = accessoryToDelete?.let { "Delete Accessory \"${it.name}\"?" } ?: "Delete Accessory",
                     body = {
                         val scrollState = rememberScrollState()
                         Box(
@@ -557,10 +556,12 @@ fun AccessoriesBottomBar(
                     },
                     confirmText = "Delete",
                     onConfirm = {
+                        val selectedAccessory = accessoryToDelete ?: return@StandardDialog
                         val newAccessories = accessories.filter { item ->
-                            selectedAccessories.none { it.id == item.id }
+                            item.id != selectedAccessory.id
                         }
                         appViewModel.updateAccessoryEquipments(newAccessories)
+                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
@@ -580,12 +581,14 @@ fun EquipmentsBottomBar(
     selectedEquipments: List<WeightLoadedEquipment>,
     equipments: List<WeightLoadedEquipment>,
     appViewModel: AppViewModel,
+    context: Context,
     onSelectionChange: (List<WeightLoadedEquipment>) -> Unit,
     onSelectionModeChange: (Boolean) -> Unit,
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
         var showDeleteConfirmation by remember { mutableStateOf(false) }
+        val equipmentToDelete = selectedEquipments.singleOrNull()
         val deleteMessage = remember(selectedEquipments, appViewModel.workouts) {
             buildEquipmentDeleteConfirmationMessage(
                 selectedEquipments = selectedEquipments,
@@ -722,7 +725,9 @@ fun EquipmentsBottomBar(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.width(56.dp)
                         ) {
-                            IconButton(onClick = {
+                            IconButton(
+                                enabled = equipmentToDelete != null,
+                                onClick = {
                                 showDeleteConfirmation = true
                             }) {
                                 Icon(
@@ -743,11 +748,7 @@ fun EquipmentsBottomBar(
             if (showDeleteConfirmation) {
                 StandardDialog(
                     onDismissRequest = { showDeleteConfirmation = false },
-                    title = if (selectedEquipments.size == 1) {
-                        "Delete Equipment"
-                    } else {
-                        "Delete Equipment"
-                    },
+                    title = equipmentToDelete?.let { "Delete Equipment \"${it.name}\"?" } ?: "Delete Equipment",
                     body = {
                         val scrollState = rememberScrollState()
                         Box(
@@ -763,10 +764,12 @@ fun EquipmentsBottomBar(
                     },
                     confirmText = "Delete",
                     onConfirm = {
+                        val selectedEquipment = equipmentToDelete ?: return@StandardDialog
                         val newEquipments = equipments.filter { item ->
-                            selectedEquipments.none { it.id == item.id }
+                            item.id != selectedEquipment.id
                         }
                         appViewModel.updateEquipments(newEquipments)
+                        appViewModel.scheduleWorkoutSave(context)
                         onSelectionChange(emptyList())
                         onSelectionModeChange(false)
                         showDeleteConfirmation = false
@@ -790,12 +793,6 @@ private fun buildAccessoryDeleteConfirmationMessage(
     selectedAccessories: List<AccessoryEquipment>,
     workouts: List<Workout>
 ): String {
-    val header = if (selectedAccessories.size == 1) {
-        "Delete accessory \"${selectedAccessories.first().name}\"?"
-    } else {
-        "Delete ${selectedAccessories.size} accessories?"
-    }
-
     val usageLines = selectedAccessories.mapNotNull { accessory ->
         val usages = findAccessoryUsages(workouts, accessory.id)
             .distinct()
@@ -803,7 +800,7 @@ private fun buildAccessoryDeleteConfirmationMessage(
         if (usages.isEmpty()) {
             null
         } else {
-            formatUsageLine(accessory.name, usages)
+            formatUsageLine(usages)
         }
     }
 
@@ -813,19 +810,13 @@ private fun buildAccessoryDeleteConfirmationMessage(
         "Used by:\n${usageLines.joinToString("\n")}"
     }
 
-    return "$header\n\n$usageText"
+    return usageText
 }
 
 private fun buildEquipmentDeleteConfirmationMessage(
     selectedEquipments: List<WeightLoadedEquipment>,
     workouts: List<Workout>
 ): String {
-    val header = if (selectedEquipments.size == 1) {
-        "Delete equipment \"${selectedEquipments.first().name}\"?"
-    } else {
-        "Delete ${selectedEquipments.size} equipment items?"
-    }
-
     val usageLines = selectedEquipments.mapNotNull { equipment ->
         val usages = findEquipmentUsages(workouts, equipment.id)
             .distinct()
@@ -833,7 +824,7 @@ private fun buildEquipmentDeleteConfirmationMessage(
         if (usages.isEmpty()) {
             null
         } else {
-            formatUsageLine(equipment.name, usages)
+            formatUsageLine(usages)
         }
     }
 
@@ -843,14 +834,14 @@ private fun buildEquipmentDeleteConfirmationMessage(
         "Used by:\n${usageLines.joinToString("\n")}"
     }
 
-    return "$header\n\n$usageText"
+    return usageText
 }
 
-private fun formatUsageLine(itemName: String, usages: List<ExerciseUsage>): String {
+private fun formatUsageLine(usages: List<ExerciseUsage>): String {
     val usageEntries = usages.joinToString("\n") { usage ->
         "    - ${usage.workoutName} > ${usage.exerciseName}"
     }
-    return "- $itemName:\n$usageEntries"
+    return usageEntries
 }
 
 private fun findEquipmentUsages(workouts: List<Workout>, equipmentId: UUID): List<ExerciseUsage> {
