@@ -69,7 +69,6 @@ import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
-import com.gabstra.myworkoutassistant.shared.export.extractEquipmentFromWorkoutPlan
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
@@ -728,7 +727,8 @@ suspend fun exportEquipmentToDownloads(
 ): String {
     return withContext(Dispatchers.IO) {
         try {
-            val (equipments, accessoryEquipments) = extractEquipmentFromWorkoutPlan(workoutStore, null)
+            val equipments = workoutStore.equipments
+            val accessoryEquipments = workoutStore.accessoryEquipments
             val jsonString = equipmentToJSON(equipments, accessoryEquipments)
             
             val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
