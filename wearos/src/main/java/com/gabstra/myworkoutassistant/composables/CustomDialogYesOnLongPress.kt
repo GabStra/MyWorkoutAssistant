@@ -171,7 +171,7 @@ fun CustomDialogYesOnLongPress(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(contentPadding)
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                            .padding(horizontal = 15.dp)
                             .verticalScroll(scrollState),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp)
