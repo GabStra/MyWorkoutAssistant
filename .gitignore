@@ -44,3 +44,4 @@ keystore.properties
 conversation_meta.json
 conversation_history.json
 squat.json
+.vscode/settings.json
