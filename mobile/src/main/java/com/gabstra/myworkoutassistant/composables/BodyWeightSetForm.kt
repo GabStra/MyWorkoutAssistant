@@ -28,12 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -51,46 +51,39 @@ fun BodyWeightSetForm(
     equipment: WeightLoadedEquipment?,
     exercise: Exercise
 ) {
-    // Mutable state for form fields
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }
     val additionalWeightState =
         remember { mutableStateOf(bodyWeightSet?.additionalWeight?.toString() ?: "0") }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         if (equipment != null) {
-            var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet())}
+            var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
 
             LaunchedEffect(Unit) {
                 withContext(Dispatchers.IO) {
                     val combinationsFromEquipment = equipment.getWeightsCombinationsWithLabels().toSet()
-                    val hasZeroWeightCombination = combinationsFromEquipment.any { it.first == 0.0 }
-
-                    possibleCombinations = if (hasZeroWeightCombination) {
-                        combinationsFromEquipment
-                    } else {
-                        combinationsFromEquipment + Pair(0.0, "None")
-                    }
+                    val nonZeroCombinations = combinationsFromEquipment.filter { it.first != 0.0 }.toSet()
+                    possibleCombinations = nonZeroCombinations + Pair(0.0, "BW")
                 }
-
             }
 
             val filterState = remember { mutableStateOf("") }
 
-            val filteredCombinations = remember(filterState.value,possibleCombinations) {
-                if( filterState.value.isEmpty()) {
-                    possibleCombinations
+            val filteredCombinations = remember(filterState.value, possibleCombinations) {
+                if (filterState.value.isEmpty()) {
+                    possibleCombinations.toList()
                 } else {
-                    possibleCombinations.filter { (_,label) ->
+                    possibleCombinations.filter { (_, label) ->
                         label.contains(filterState.value, ignoreCase = true)
                     }
                 }
             }
 
             val expandedWeights = remember { mutableStateOf(false) }
-            val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
+            val isCalibrationEnabled = exercise.requiresLoadCalibration
+            val selectedAdditionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
+            val additionalWeightLabel =
+                if (equipment is Barbell) "Total Additional Weight (KG)" else "Additional Weight (KG)"
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -101,15 +94,18 @@ fun BodyWeightSetForm(
                 Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
             }
 
-            if(possibleCombinations.isNotEmpty()){
-                Box{
-                    Box{
+            if (possibleCombinations.isNotEmpty()) {
+                Box {
+                    Box {
                         OutlinedTextField(
-                            value = equipment.formatWeight(additionalWeightState.value.toDouble()),
-                            readOnly = true,
-                            onValueChange = {
+                            value = if (selectedAdditionalWeight == 0.0) {
+                                "BW"
+                            } else {
+                                equipment.formatWeight(selectedAdditionalWeight)
                             },
-                            label = { Text("Additional Weight (KG)") },
+                            readOnly = true,
+                            onValueChange = {},
+                            label = { Text(additionalWeightLabel) },
                             enabled = !isCalibrationEnabled,
                             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                             modifier = Modifier
@@ -120,7 +116,7 @@ fun BodyWeightSetForm(
                         if (!isCalibrationEnabled) {
                             Box(
                                 modifier = Modifier
-                                    .matchParentSize()  // This makes the Box fill its parent size
+                                    .matchParentSize()
                                     .clickable { expandedWeights.value = true }
                             )
                         }
@@ -136,6 +132,13 @@ fun BodyWeightSetForm(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    if (selectedAdditionalWeight > 0.0) {
+                        EquipmentWeightCalculationInfo(
+                            equipment = equipment,
+                            totalWeight = selectedAdditionalWeight
                         )
                     }
 
@@ -161,9 +164,9 @@ fun BodyWeightSetForm(
                                     filterState.value = input
                                 },
                                 label = { Text("Filter") },
-                                modifier = Modifier
-                                    .fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
                             )
+
                             Column(
                                 modifier = Modifier
                                     .padding(top = 5.dp)
@@ -175,50 +178,50 @@ fun BodyWeightSetForm(
                                     .padding(horizontal = 15.dp),
                                 verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
-                                filteredCombinations.forEach { (combo,label) ->
-                                    StyledCard(
-                                        modifier = Modifier.clickable{
-                                            expandedWeights.value = false
-                                            additionalWeightState.value = combo.toString()
-                                        }) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(5.dp),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
+                                filteredCombinations
+                                    .sortedWith(compareBy<Pair<Double, String>> { it.first != 0.0 }.thenBy { it.first })
+                                    .forEach { (combo, label) ->
+                                        StyledCard(
+                                            modifier = Modifier.clickable {
+                                                expandedWeights.value = false
+                                                additionalWeightState.value = combo.toString()
+                                            }
                                         ) {
-                                            Text(
-                                                text = label
-                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(5.dp),
+                                                horizontalArrangement = Arrangement.Center,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(text = label)
+                                            }
                                         }
                                     }
-                                }
                             }
-
                         }
                     }
                 }
-            }else{
+            } else {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(8.dp),
                     contentAlignment = Alignment.Center
-                ){
+                ) {
                     CircularProgressIndicator(
                         modifier = Modifier.width(32.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MediumDarkGray,
+                        trackColor = MediumDarkGray
                     )
                 }
             }
         }
 
-        // Reps field
         OutlinedTextField(
             value = repsState.value,
             onValueChange = { input ->
-                if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                    // Update the state only if the input is empty or all characters are digits
+                if (input.isEmpty() || input.all { it.isDigit() }) {
                     repsState.value = input
                 }
             },
@@ -229,7 +232,6 @@ fun BodyWeightSetForm(
                 .padding(8.dp)
         )
 
-        // Submit button
         Button(
             colors = ButtonDefaults.buttonColors(
                 contentColor = MaterialTheme.colorScheme.background,
@@ -238,25 +240,27 @@ fun BodyWeightSetForm(
             onClick = {
                 val reps = repsState.value.toIntOrNull() ?: 0
                 var additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
-                if(equipment == null){
+                if (equipment == null) {
                     additionalWeight = 0.0
                 }
 
                 val newBodyWeightSet = BodyWeightSet(
                     id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
-                    additionalWeight = additionalWeight,
+                    additionalWeight = additionalWeight
                 )
 
-                // Call the callback to insert/update the exercise
                 onSetUpsert(newBodyWeightSet)
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (bodyWeightSet == null) Text("Insert Body Weight Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            if (bodyWeightSet == null) {
+                Text("Insert Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Text("Edit Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            }
         }
     }
 }
-

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -33,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,6 +39,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -57,11 +56,10 @@ fun WeightSetForm(
     equipment: WeightLoadedEquipment,
     exercise: Exercise
 ) {
-    // Mutable state for form fields
     val repsState = remember { mutableStateOf(weightSet?.reps?.toString() ?: "") }
     val weightState = remember { mutableStateOf(weightSet?.weight?.toString() ?: "0") }
 
-    var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet())}
+    var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -71,11 +69,11 @@ fun WeightSetForm(
 
     val filterState = remember { mutableStateOf("") }
 
-    val filteredCombinations = remember(filterState.value,possibleCombinations) {
-        if( filterState.value.isEmpty()) {
+    val filteredCombinations = remember(filterState.value, possibleCombinations) {
+        if (filterState.value.isEmpty()) {
             possibleCombinations
         } else {
-            possibleCombinations.filter { (_,label) ->
+            possibleCombinations.filter { (_, label) ->
                 label.contains(filterState.value, ignoreCase = true)
             }
         }
@@ -83,13 +81,13 @@ fun WeightSetForm(
 
     val expandedWeights = remember { mutableStateOf(false) }
     val isCalibrationEnabled = exercise.requiresLoadCalibration
+    val selectedWeight = weightState.value.toDoubleOrNull() ?: 0.0
+    val weightLabel = if (equipment is Barbell) "Total Weight (KG)" else "Weight (KG)"
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -99,14 +97,14 @@ fun WeightSetForm(
             Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
         }
 
-        if(possibleCombinations.isNotEmpty()){
-            Box{
+        if (possibleCombinations.isNotEmpty()) {
+            Box {
                 Box {
                     OutlinedTextField(
-                        value = equipment.formatWeight(weightState.value.toDouble()),
+                        value = equipment.formatWeight(selectedWeight),
                         readOnly = true,
                         onValueChange = {},
-                        label = { Text("Weight (KG)") },
+                        label = { Text(weightLabel) },
                         enabled = !isCalibrationEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -121,8 +119,6 @@ fun WeightSetForm(
                         )
                     }
                 }
-
-                val scrollState = rememberScrollState()
             }
 
             if (isCalibrationEnabled) {
@@ -136,13 +132,20 @@ fun WeightSetForm(
                 )
             }
 
+            EquipmentWeightCalculationInfo(
+                equipment = equipment,
+                totalWeight = selectedWeight
+            )
+
             if (expandedWeights.value) {
                 Popup(
                     onDismissRequest = { expandedWeights.value = false },
                     properties = PopupProperties(focusable = true)
                 ) {
                     Surface(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surface).requiredHeight(300.dp),
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surface)
+                            .requiredHeight(300.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(
@@ -162,8 +165,7 @@ fun WeightSetForm(
                                     filterState.value = input
                                 },
                                 label = { Text("Filter") },
-                                modifier = Modifier
-                                    .fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth()
                             )
 
                             LazyColumn(
@@ -171,22 +173,22 @@ fun WeightSetForm(
                                 verticalArrangement = Arrangement.spacedBy(5.dp),
                                 state = rememberLazyListState()
                             ) {
-                                filteredCombinations.forEach { (combo,label) ->
-                                    item(key =  combo.hashCode() xor label.hashCode()){
+                                filteredCombinations.forEach { (combo, label) ->
+                                    item(key = combo.hashCode() xor label.hashCode()) {
                                         StyledCard(
-                                            modifier = Modifier.clickable{
+                                            modifier = Modifier.clickable {
                                                 expandedWeights.value = false
                                                 weightState.value = combo.toString()
                                             }
                                         ) {
                                             Row(
-                                                modifier = Modifier.fillMaxWidth().padding(5.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(5.dp),
                                                 horizontalArrangement = Arrangement.Center,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text(
-                                                    text = label
-                                                )
+                                                Text(text = label)
                                             }
                                         }
                                     }
@@ -196,28 +198,25 @@ fun WeightSetForm(
                     }
                 }
             }
-        }else{
+        } else {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp),
                 contentAlignment = Alignment.Center
-            ){
+            ) {
                 CircularProgressIndicator(
                     modifier = Modifier.width(32.dp),
                     color = MaterialTheme.colorScheme.primary,
-                    trackColor = MediumDarkGray,
+                    trackColor = MediumDarkGray
                 )
             }
         }
 
-
-        // Reps field
         OutlinedTextField(
             value = repsState.value,
             onValueChange = { input ->
-                if (input.isEmpty() || input.all { it -> it.isDigit() }) {
-                    // Update the state only if the input is empty or all characters are digits
+                if (input.isEmpty() || input.all { it.isDigit() }) {
                     repsState.value = input
                 }
             },
@@ -228,7 +227,6 @@ fun WeightSetForm(
                 .padding(8.dp)
         )
 
-        // Submit button
         Button(
             colors = ButtonDefaults.buttonColors(
                 contentColor = MaterialTheme.colorScheme.background,
@@ -240,18 +238,20 @@ fun WeightSetForm(
                 val newWeightSet = WeightSet(
                     id = UUID.randomUUID(),
                     reps = if (reps >= 0) reps else 0,
-                    weight = if (weight >= 0.0) weight else 0.0,
+                    weight = if (weight >= 0.0) weight else 0.0
                 )
 
-                // Call the callback to insert/update the exercise
                 onSetUpsert(newWeightSet)
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (weightSet == null) Text("Insert Weight Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            if (weightSet == null) {
+                Text("Insert Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Text("Edit Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+            }
         }
     }
 }
-

@@ -44,19 +44,8 @@ class Barbell(
     }
 
     override fun getWeightsCombinationsWithLabels(): Set<Pair<Double, String>> {
-        val totals = getWeightsCombinations()
-        return totals.map { total ->
-            val plateWeight = total - barWeight
-            val barWeightFormatted = com.gabstra.myworkoutassistant.shared.formatWeight(barWeight)
-            val plateWeightFormatted = com.gabstra.myworkoutassistant.shared.formatWeight(plateWeight)
-            
-            val label = if (plateWeight == 0.0) {
-                "$barWeightFormatted kg"
-            } else {
-                "$barWeightFormatted + $plateWeightFormatted kg"
-            }
-            
-            Pair(total, label)
+        return getWeightsCombinations().map { total ->
+            Pair(total, "${com.gabstra.myworkoutassistant.shared.formatWeight(total)} kg total")
         }.toSet()
     }
 }
