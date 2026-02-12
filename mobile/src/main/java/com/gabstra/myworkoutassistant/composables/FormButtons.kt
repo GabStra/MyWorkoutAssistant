@@ -25,12 +25,16 @@ fun FormPrimaryButton(
         modifier = modifier.heightIn(min = 48.dp),
         colors = ButtonDefaults.buttonColors(
             contentColor = MaterialTheme.colorScheme.background,
-            disabledContentColor = DisabledContentGray
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
     ) {
         Text(
             text = text,
-            color = MaterialTheme.colorScheme.onPrimary,
+            color = if (enabled) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             style = MaterialTheme.typography.bodyLarge
         )
     }
