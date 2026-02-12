@@ -1,13 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -19,7 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import java.util.UUID
@@ -28,6 +27,7 @@ import java.util.UUID
 @Composable
 fun TimedDurationSetForm(
     onSetUpsert: (Set) -> Unit,
+    onCancel: () -> Unit,
     timedDurationSet: TimedDurationSet? = null,
 ) {
     val autoStartState = remember { mutableStateOf(timedDurationSet?.autoStart ?: false) }
@@ -92,28 +92,33 @@ fun TimedDurationSetForm(
         }
 
         // Submit button
-        Button(
-            colors = ButtonDefaults.buttonColors(
-                contentColor = MaterialTheme.colorScheme.background,
-                disabledContentColor = DisabledContentGray
-            ),
-            onClick = {
-                val newTimedDurationSet = TimedDurationSet(
-                    id = UUID.randomUUID(),
-                    timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)* 1000,
-                    autoStart = autoStartState.value,
-                    autoStop = autoStopState.value,
-                )
-
-                // Call the callback to insert/update the exercise
-                onSetUpsert(newTimedDurationSet)
-            },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Save", color = MaterialTheme.colorScheme.onPrimary)
+            FormSecondaryButton(
+                text = "Cancel",
+                onClick = onCancel,
+                modifier = Modifier.weight(1f)
+            )
+
+            FormPrimaryButton(
+                text = "Save",
+                onClick = {
+                    val newTimedDurationSet = TimedDurationSet(
+                        id = UUID.randomUUID(),
+                        timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds) * 1000,
+                        autoStart = autoStartState.value,
+                        autoStop = autoStopState.value,
+                    )
+
+                    onSetUpsert(newTimedDurationSet)
+                },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
-

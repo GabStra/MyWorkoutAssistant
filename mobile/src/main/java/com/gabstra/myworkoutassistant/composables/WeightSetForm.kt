@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -37,7 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -52,6 +50,7 @@ import java.util.UUID
 @Composable
 fun WeightSetForm(
     onSetUpsert: (Set) -> Unit,
+    onCancel: () -> Unit,
     weightSet: WeightSet? = null,
     equipment: WeightLoadedEquipment,
     exercise: Exercise
@@ -226,32 +225,34 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         )
-
-        Button(
-            colors = ButtonDefaults.buttonColors(
-                contentColor = MaterialTheme.colorScheme.background,
-                disabledContentColor = DisabledContentGray
-            ),
-            onClick = {
-                val reps = repsState.value.toIntOrNull() ?: 0
-                val weight = weightState.value.toDoubleOrNull() ?: 0.0
-                val newWeightSet = WeightSet(
-                    id = UUID.randomUUID(),
-                    reps = if (reps >= 0) reps else 0,
-                    weight = if (weight >= 0.0) weight else 0.0
-                )
-
-                onSetUpsert(newWeightSet)
-            },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (weightSet == null) {
-                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
-            } else {
-                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
-            }
+            FormSecondaryButton(
+                text = "Cancel",
+                onClick = onCancel,
+                modifier = Modifier.weight(1f)
+            )
+
+            FormPrimaryButton(
+                text = "Save",
+                onClick = {
+                    val reps = repsState.value.toIntOrNull() ?: 0
+                    val weight = weightState.value.toDoubleOrNull() ?: 0.0
+                    val newWeightSet = WeightSet(
+                        id = UUID.randomUUID(),
+                        reps = if (reps >= 0) reps else 0,
+                        weight = if (weight >= 0.0) weight else 0.0
+                    )
+
+                    onSetUpsert(newWeightSet)
+                },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

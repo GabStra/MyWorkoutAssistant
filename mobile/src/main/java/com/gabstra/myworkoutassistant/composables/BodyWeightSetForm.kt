@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -31,7 +29,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -47,6 +45,7 @@ import java.util.UUID
 @Composable
 fun BodyWeightSetForm(
     onSetUpsert: (Set) -> Unit,
+    onCancel: () -> Unit,
     bodyWeightSet: BodyWeightSet? = null,
     equipment: WeightLoadedEquipment?,
     exercise: Exercise
@@ -231,36 +230,38 @@ fun BodyWeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         )
-
-        Button(
-            colors = ButtonDefaults.buttonColors(
-                contentColor = MaterialTheme.colorScheme.background,
-                disabledContentColor = DisabledContentGray
-            ),
-            onClick = {
-                val reps = repsState.value.toIntOrNull() ?: 0
-                var additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
-                if (equipment == null) {
-                    additionalWeight = 0.0
-                }
-
-                val newBodyWeightSet = BodyWeightSet(
-                    id = UUID.randomUUID(),
-                    reps = if (reps >= 0) reps else 0,
-                    additionalWeight = additionalWeight
-                )
-
-                onSetUpsert(newBodyWeightSet)
-            },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (bodyWeightSet == null) {
-                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
-            } else {
-                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
-            }
+            FormSecondaryButton(
+                text = "Cancel",
+                onClick = onCancel,
+                modifier = Modifier.weight(1f)
+            )
+
+            FormPrimaryButton(
+                text = "Save",
+                onClick = {
+                    val reps = repsState.value.toIntOrNull() ?: 0
+                    var additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
+                    if (equipment == null) {
+                        additionalWeight = 0.0
+                    }
+
+                    val newBodyWeightSet = BodyWeightSet(
+                        id = UUID.randomUUID(),
+                        reps = if (reps >= 0) reps else 0,
+                        additionalWeight = additionalWeight
+                    )
+
+                    onSetUpsert(newBodyWeightSet)
+                },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
