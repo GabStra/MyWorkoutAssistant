@@ -622,14 +622,24 @@ fun ExerciseHistoryScreen(
                                     val hasTarget =
                                         exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
 
-                                    var targetCounter = 0
-                                    var targetTotal = 0
-
-                                    LaunchedEffect(hasTarget) {
-                                        if (hasTarget) {
-                                            targetCounter = 0
-
-                                            setHistories.filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
+                                    val (targetCounter, targetTotal) = remember(
+                                        hasTarget,
+                                        setHistories,
+                                        selectedWorkoutHistory?.id,
+                                        selectedWorkoutHistory?.heartBeatRecords,
+                                        exercise.lowerBoundMaxHRPercent,
+                                        exercise.upperBoundMaxHRPercent,
+                                        userAge,
+                                        measuredMaxHeartRate,
+                                        restingHeartRate
+                                    ) {
+                                        if (!hasTarget) {
+                                            0 to 0
+                                        } else {
+                                            var counter = 0
+                                            var total = 0
+                                            setHistories
+                                                .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
                                                 .forEach { setHistory ->
                                                     val hrTimeOffset = Duration.between(
                                                         selectedWorkoutHistory!!.startTime,
@@ -658,9 +668,10 @@ fun ExerciseHistoryScreen(
                                                             index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
                                                         }.size
 
-                                                    targetCounter += hrEntriesCount
-                                                    targetTotal += setDuration.toInt()
+                                                    counter += hrEntriesCount
+                                                    total += setDuration.toInt()
                                                 }
+                                            counter to total
                                         }
                                     }
 
@@ -752,3 +763,4 @@ fun ExerciseHistoryScreen(
         }
     }
 }
+
