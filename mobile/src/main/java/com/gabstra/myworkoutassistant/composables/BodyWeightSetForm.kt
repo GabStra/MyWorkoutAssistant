@@ -257,9 +257,9 @@ fun BodyWeightSetForm(
                 .padding(8.dp)
         ) {
             if (bodyWeightSet == null) {
-                Text("Insert Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
             } else {
-                Text("Edit Body Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }

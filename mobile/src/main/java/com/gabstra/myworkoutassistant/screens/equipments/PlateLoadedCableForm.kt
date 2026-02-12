@@ -229,7 +229,7 @@ fun PlateLoadedCableForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (plateLoadedCable == null) "Add Plate-Loaded Cable" else "Save",
+                    text = "Save",
                     onClick = {
                         val newPlateLoadedCable = PlateLoadedCable(
                             id = plateLoadedCable?.id ?: UUID.randomUUID(),

@@ -157,7 +157,7 @@ fun RestForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (rest == null) "Insert Rest" else "Save",
+                    text = "Save",
                     onClick = {
                         val newRest = Rest(
                             id = rest?.id ?: java.util.UUID.randomUUID(),

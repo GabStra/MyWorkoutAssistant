@@ -215,7 +215,7 @@ fun WeightVestForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (weightVest == null) "Add Weight Vest" else "Save",
+                    text = "Save",
                     onClick = {
                         val newMachine = WeightVest(
                             id = weightVest?.id ?: UUID.randomUUID(),

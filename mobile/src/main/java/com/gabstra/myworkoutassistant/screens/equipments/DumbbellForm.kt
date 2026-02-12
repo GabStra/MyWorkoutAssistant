@@ -286,7 +286,7 @@ fun DumbbellForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (dumbbell == null) "Add Dumbbell" else "Save",
+                    text = "Save",
                     onClick = {
                         val newDumbbell = Dumbbell(
                             id = dumbbell?.id ?: UUID.randomUUID(),

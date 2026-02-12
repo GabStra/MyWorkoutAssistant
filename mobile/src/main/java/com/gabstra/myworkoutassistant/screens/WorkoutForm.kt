@@ -354,7 +354,7 @@ fun WorkoutForm(
                     )
 
                     FormPrimaryButton(
-                        text = if (workout == null) "Insert" else "Save",
+                        text = "Save",
                         onClick = {
                             val newWorkout = Workout(
                                 id = workout?.id ?: UUID.randomUUID(),

@@ -242,7 +242,7 @@ fun BarbellForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (barbell == null) "Add Barbell" else "Save",
+                    text = "Save",
                     onClick = {
                         val newBarbell = Barbell(
                             id = barbell?.id ?: UUID.randomUUID(),

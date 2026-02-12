@@ -284,7 +284,7 @@ fun SupersetForm(
                     enabled = selectedExercises.size >= 2,
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text(if (superset == null) "Create Superset" else "Update Superset")
+                    Text("Save")
                 }
             }
 

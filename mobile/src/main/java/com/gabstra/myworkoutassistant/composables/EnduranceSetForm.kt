@@ -114,7 +114,7 @@ fun EnduranceSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (enduranceSet == null) Text("Insert Count-Up Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Count-Up Set", color = MaterialTheme.colorScheme.onPrimary)
+            Text("Save", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }

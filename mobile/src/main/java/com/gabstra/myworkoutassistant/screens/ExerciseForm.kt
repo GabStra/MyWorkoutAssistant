@@ -952,7 +952,7 @@ fun ExerciseForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (exercise == null) "Create" else "Save",
+                    text = "Save",
                     onClick = {
                         val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
                         val newExercise = Exercise(

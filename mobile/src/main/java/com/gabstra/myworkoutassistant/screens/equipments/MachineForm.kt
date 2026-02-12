@@ -290,7 +290,7 @@ fun MachineForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (machine == null) "Add Machine" else "Save",
+                    text = "Save",
                     onClick = {
                         val newMachine = Machine(
                             id = machine?.id ?: UUID.randomUUID(),

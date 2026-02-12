@@ -248,9 +248,9 @@ fun WeightSetForm(
                 .padding(8.dp)
         ) {
             if (weightSet == null) {
-                Text("Insert Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
             } else {
-                Text("Edit Weight Set", color = MaterialTheme.colorScheme.onPrimary)
+                Text("Save", color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }

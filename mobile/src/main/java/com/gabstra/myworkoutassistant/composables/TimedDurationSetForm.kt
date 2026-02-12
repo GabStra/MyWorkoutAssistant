@@ -112,7 +112,7 @@ fun TimedDurationSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
-            if (timedDurationSet == null) Text("Insert Count-Down Set", color = MaterialTheme.colorScheme.onPrimary) else Text("Edit Count-Down Set", color = MaterialTheme.colorScheme.onPrimary)
+            Text("Save", color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }

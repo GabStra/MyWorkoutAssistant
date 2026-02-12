@@ -130,7 +130,7 @@ fun AccessoryForm(
                 )
 
                 FormPrimaryButton(
-                    text = if (accessory == null) "Create" else "Save",
+                    text = "Save",
                     onClick = {
                         val newAccessory = AccessoryEquipment(
                             id = accessory?.id ?: UUID.randomUUID(),
