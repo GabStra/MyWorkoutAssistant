@@ -210,7 +210,7 @@ fun WorkoutsMenu(
 
 @Composable
 fun MenuSectionHeader(title: String, showDivider: Boolean = true) {
-    val dividerColor = LocalContentColor.current
+    val dividerColor = LocalContentColor.current.copy(alpha = 0.45f)
     if (showDivider) {
         HorizontalDivider(color = dividerColor)
     }
