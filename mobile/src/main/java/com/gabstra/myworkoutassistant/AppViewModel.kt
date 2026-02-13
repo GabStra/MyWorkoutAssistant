@@ -23,9 +23,13 @@ import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -456,14 +460,18 @@ class AppViewModel(
         return workouts.map { workout ->
             val adjustedWorkoutComponents = workout.workoutComponents.map { workoutComponent ->
                 when (workoutComponent) {
-                    is Exercise -> workoutComponent.copy(
-                        sets = ensureRestSeparatedBySets(workoutComponent.sets),
-                        requiredAccessoryEquipmentIds = workoutComponent.requiredAccessoryEquipmentIds ?: emptyList()
-                    )
+                    is Exercise -> {
+                        val normalizedExercise = normalizeCalibrationSubcategories(workoutComponent)
+                        normalizedExercise.copy(
+                            sets = ensureRestSeparatedBySets(normalizedExercise.sets),
+                            requiredAccessoryEquipmentIds = normalizedExercise.requiredAccessoryEquipmentIds ?: emptyList()
+                        )
+                    }
                     is Superset -> workoutComponent.copy(exercises = workoutComponent.exercises.map { exercise ->
-                        exercise.copy(
-                            sets = ensureRestSeparatedBySets(exercise.sets),
-                            requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList()
+                        val normalizedExercise = normalizeCalibrationSubcategories(exercise)
+                        normalizedExercise.copy(
+                            sets = ensureRestSeparatedBySets(normalizedExercise.sets),
+                            requiredAccessoryEquipmentIds = normalizedExercise.requiredAccessoryEquipmentIds ?: emptyList()
                         )
                     })
                     is Rest -> workoutComponent
@@ -472,6 +480,55 @@ class AppViewModel(
 
             workout.copy(workoutComponents = ensureRestSeparatedByExercises(adjustedWorkoutComponents))
         }
+    }
+
+    private fun normalizeCalibrationSubcategories(exercise: Exercise): Exercise {
+        val supportsCalibration = exercise.requiresLoadCalibration &&
+            CalibrationHelper.supportsCalibrationForExercise(exercise)
+
+        val normalizedSets = exercise.sets.map { set ->
+            when (set) {
+                is WeightSet -> {
+                    val normalizedSubCategory = when {
+                        set.subCategory == SetSubCategory.CalibrationSet && supportsCalibration ->
+                            SetSubCategory.CalibrationPendingSet
+                        set.subCategory == SetSubCategory.CalibrationSet ->
+                            SetSubCategory.WorkSet
+                        supportsCalibration && set.subCategory == SetSubCategory.WorkSet ->
+                            SetSubCategory.CalibrationPendingSet
+                        !supportsCalibration && set.subCategory == SetSubCategory.CalibrationPendingSet ->
+                            SetSubCategory.WorkSet
+                        else -> set.subCategory
+                    }
+                    if (normalizedSubCategory == set.subCategory) {
+                        set
+                    } else {
+                        set.copy(subCategory = normalizedSubCategory)
+                    }
+                }
+                is BodyWeightSet -> {
+                    val normalizedSubCategory = when {
+                        set.subCategory == SetSubCategory.CalibrationSet && supportsCalibration ->
+                            SetSubCategory.CalibrationPendingSet
+                        set.subCategory == SetSubCategory.CalibrationSet ->
+                            SetSubCategory.WorkSet
+                        supportsCalibration && set.subCategory == SetSubCategory.WorkSet ->
+                            SetSubCategory.CalibrationPendingSet
+                        !supportsCalibration && set.subCategory == SetSubCategory.CalibrationPendingSet ->
+                            SetSubCategory.WorkSet
+                        else -> set.subCategory
+                    }
+                    if (normalizedSubCategory == set.subCategory) {
+                        set
+                    } else {
+                        set.copy(subCategory = normalizedSubCategory)
+                    }
+                }
+                else -> set
+            }
+        }
+
+        return exercise.copy(sets = normalizedSets)
     }
 
     private fun normalizeWorkoutStore(newWorkoutStore: WorkoutStore): WorkoutStore {

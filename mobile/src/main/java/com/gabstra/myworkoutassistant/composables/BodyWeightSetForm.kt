@@ -6,12 +6,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -27,16 +24,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -53,7 +50,12 @@ fun BodyWeightSetForm(
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }
     val additionalWeightState =
         remember { mutableStateOf(bodyWeightSet?.additionalWeight?.toString() ?: "0") }
-
+    val isCalibrationExercise = exercise.requiresLoadCalibration &&
+        CalibrationHelper.supportsCalibrationForExercise(exercise)
+    val shouldLockAdditionalWeightSelection = (bodyWeightSet?.subCategory in setOf(
+        SetSubCategory.CalibrationPendingSet,
+        SetSubCategory.CalibrationSet
+    )) || (isCalibrationExercise && (bodyWeightSet == null || bodyWeightSet.subCategory == SetSubCategory.WorkSet))
     Column(modifier = Modifier.fillMaxWidth()) {
         if (equipment != null) {
             var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
@@ -79,7 +81,6 @@ fun BodyWeightSetForm(
             }
 
             val expandedWeights = remember { mutableStateOf(false) }
-            val isCalibrationEnabled = exercise.requiresLoadCalibration
             val selectedAdditionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
             val additionalWeightLabel =
                 if (equipment is Barbell) "Total Additional Weight (KG)" else "Additional Weight (KG)"
@@ -105,14 +106,14 @@ fun BodyWeightSetForm(
                             readOnly = true,
                             onValueChange = {},
                             label = { Text(additionalWeightLabel) },
-                            enabled = !isCalibrationEnabled,
+                            enabled = !shouldLockAdditionalWeightSelection,
                             keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
-                                .then(if (isCalibrationEnabled) Modifier.alpha(0.6f) else Modifier)
+                                .then(if (shouldLockAdditionalWeightSelection) Modifier.alpha(0.6f) else Modifier)
                         )
-                        if (!isCalibrationEnabled) {
+                        if (!shouldLockAdditionalWeightSelection) {
                             Box(
                                 modifier = Modifier
                                     .matchParentSize()
@@ -121,11 +122,9 @@ fun BodyWeightSetForm(
                         }
                     }
 
-                    val scrollState = rememberScrollState()
-
-                    if (isCalibrationEnabled) {
+                    if (shouldLockAdditionalWeightSelection) {
                         Text(
-                            text = "Additional weight will be determined by calibration set",
+                            text = "This exercise is waiting to be calibrated.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
@@ -141,64 +140,21 @@ fun BodyWeightSetForm(
                         )
                     }
 
-                    AppDropdownMenu(
-                        expanded = expandedWeights.value,
-                        onDismissRequest = { expandedWeights.value = false },
-                        modifier = Modifier.fillMaxWidth(.75f)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Available Weights",
-                                style = MaterialTheme.typography.titleMedium,
-                                textAlign = TextAlign.Center
-                            )
+                    if (expandedWeights.value) {
+                        val sortedFilteredCombinations = filteredCombinations
+                            .toList()
+                            .sortedWith(compareBy<Pair<Double, String>> { it.first != 0.0 }.thenBy { it.first })
 
-                            OutlinedTextField(
-                                value = filterState.value,
-                                onValueChange = { input ->
-                                    filterState.value = input
-                                },
-                                label = { Text("Filter") },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            Column(
-                                modifier = Modifier
-                                    .padding(top = 5.dp)
-                                    .padding(bottom = 5.dp)
-                                    .height(300.dp)
-                                    .fillMaxWidth()
-                                    .verticalColumnScrollbar(scrollState)
-                                    .verticalScroll(scrollState)
-                                    .padding(horizontal = 15.dp),
-                                verticalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                filteredCombinations
-                                    .sortedWith(compareBy<Pair<Double, String>> { it.first != 0.0 }.thenBy { it.first })
-                                    .forEach { (combo, label) ->
-                                        StyledCard(
-                                            modifier = Modifier.clickable {
-                                                expandedWeights.value = false
-                                                additionalWeightState.value = combo.toString()
-                                            }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(5.dp),
-                                                horizontalArrangement = Arrangement.Center,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(text = label)
-                                            }
-                                        }
-                                    }
+                        WeightPickerDialog(
+                            combinations = sortedFilteredCombinations,
+                            filter = filterState.value,
+                            selectedWeight = selectedAdditionalWeight,
+                            onFilterChange = { input -> filterState.value = input },
+                            onDismissRequest = { expandedWeights.value = false },
+                            onSelect = { selectedWeight ->
+                                additionalWeightState.value = selectedWeight.toString()
                             }
-                        }
+                        )
                     }
                 }
             } else {
@@ -248,14 +204,22 @@ fun BodyWeightSetForm(
                 onClick = {
                     val reps = repsState.value.toIntOrNull() ?: 0
                     var additionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
-                    if (equipment == null) {
+                    if (equipment == null || shouldLockAdditionalWeightSelection) {
                         additionalWeight = 0.0
                     }
 
                     val newBodyWeightSet = BodyWeightSet(
-                        id = UUID.randomUUID(),
+                        id = bodyWeightSet?.id ?: UUID.randomUUID(),
                         reps = if (reps >= 0) reps else 0,
-                        additionalWeight = additionalWeight
+                        additionalWeight = additionalWeight,
+                        subCategory = bodyWeightSet?.subCategory ?: if (
+                            exercise.requiresLoadCalibration &&
+                            CalibrationHelper.supportsCalibrationForExercise(exercise)
+                        ) {
+                            SetSubCategory.CalibrationPendingSet
+                        } else {
+                            SetSubCategory.WorkSet
+                        }
                     )
 
                     onSetUpsert(newBodyWeightSet)

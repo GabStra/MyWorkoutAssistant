@@ -1,25 +1,18 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,16 +24,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -79,7 +71,12 @@ fun WeightSetForm(
     }
 
     val expandedWeights = remember { mutableStateOf(false) }
-    val isCalibrationEnabled = exercise.requiresLoadCalibration
+    val isCalibrationExercise = exercise.requiresLoadCalibration &&
+        CalibrationHelper.supportsCalibrationForExercise(exercise)
+    val shouldLockWeightSelection = (weightSet?.subCategory in setOf(
+        SetSubCategory.CalibrationPendingSet,
+        SetSubCategory.CalibrationSet
+    )) || (isCalibrationExercise && (weightSet == null || weightSet.subCategory == SetSubCategory.WorkSet))
     val selectedWeight = weightState.value.toDoubleOrNull() ?: 0.0
     val weightLabel = if (equipment is Barbell) "Total Weight (KG)" else "Weight (KG)"
 
@@ -104,13 +101,13 @@ fun WeightSetForm(
                         readOnly = true,
                         onValueChange = {},
                         label = { Text(weightLabel) },
-                        enabled = !isCalibrationEnabled,
+                        enabled = !shouldLockWeightSelection,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(8.dp)
-                            .then(if (isCalibrationEnabled) Modifier.alpha(0.6f) else Modifier)
+                            .then(if (shouldLockWeightSelection) Modifier.alpha(0.6f) else Modifier)
                     )
-                    if (!isCalibrationEnabled) {
+                    if (!shouldLockWeightSelection) {
                         Box(
                             modifier = Modifier
                                 .matchParentSize()
@@ -120,9 +117,9 @@ fun WeightSetForm(
                 }
             }
 
-            if (isCalibrationEnabled) {
+            if (shouldLockWeightSelection) {
                 Text(
-                    text = "Weight will be determined by calibration set",
+                    text = "This exercise is waiting to be calibrated.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
@@ -131,71 +128,28 @@ fun WeightSetForm(
                 )
             }
 
-            EquipmentWeightCalculationInfo(
-                equipment = equipment,
-                totalWeight = selectedWeight
-            )
+            if (!shouldLockWeightSelection) {
+                EquipmentWeightCalculationInfo(
+                    equipment = equipment,
+                    totalWeight = selectedWeight
+                )
+            }
 
             if (expandedWeights.value) {
-                Popup(
+                val sortedFilteredCombinations = filteredCombinations
+                    .toList()
+                    .sortedBy { it.first }
+
+                WeightPickerDialog(
+                    combinations = sortedFilteredCombinations,
+                    filter = filterState.value,
+                    selectedWeight = selectedWeight,
+                    onFilterChange = { input -> filterState.value = input },
                     onDismissRequest = { expandedWeights.value = false },
-                    properties = PopupProperties(focusable = true)
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surface)
-                            .requiredHeight(300.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Available Weights",
-                                style = MaterialTheme.typography.titleMedium,
-                                textAlign = TextAlign.Center
-                            )
-
-                            OutlinedTextField(
-                                value = filterState.value,
-                                onValueChange = { input ->
-                                    filterState.value = input
-                                },
-                                label = { Text("Filter") },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
-                                state = rememberLazyListState()
-                            ) {
-                                filteredCombinations.forEach { (combo, label) ->
-                                    item(key = combo.hashCode() xor label.hashCode()) {
-                                        StyledCard(
-                                            modifier = Modifier.clickable {
-                                                expandedWeights.value = false
-                                                weightState.value = combo.toString()
-                                            }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(5.dp),
-                                                horizontalArrangement = Arrangement.Center,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(text = label)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    onSelect = { selectedWeight ->
+                        weightState.value = selectedWeight.toString()
                     }
-                }
+                )
             }
         } else {
             Box(
@@ -244,9 +198,23 @@ fun WeightSetForm(
                     val reps = repsState.value.toIntOrNull() ?: 0
                     val weight = weightState.value.toDoubleOrNull() ?: 0.0
                     val newWeightSet = WeightSet(
-                        id = UUID.randomUUID(),
+                        id = weightSet?.id ?: UUID.randomUUID(),
                         reps = if (reps >= 0) reps else 0,
-                        weight = if (weight >= 0.0) weight else 0.0
+                        weight = if (shouldLockWeightSelection) {
+                            0.0
+                        } else if (weight >= 0.0) {
+                            weight
+                        } else {
+                            0.0
+                        },
+                        subCategory = weightSet?.subCategory ?: if (
+                            exercise.requiresLoadCalibration &&
+                            CalibrationHelper.supportsCalibrationForExercise(exercise)
+                        ) {
+                            SetSubCategory.CalibrationPendingSet
+                        } else {
+                            SetSubCategory.WorkSet
+                        }
                     )
 
                     onSetUpsert(newWeightSet)

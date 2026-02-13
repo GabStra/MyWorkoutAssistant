@@ -28,6 +28,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 @Composable
@@ -173,9 +174,13 @@ fun ExerciseRenderer(
                                         )
                                         when (set) {
                                             is WeightSet -> {
-                                                val isCalibrationEnabled = exercise.requiresLoadCalibration
+                                                val isCalibrationManagedWorkSet =
+                                                    CalibrationHelper.isCalibrationManagedWorkSet(
+                                                        exercise = exercise,
+                                                        set = set
+                                                    )
                                                 
-                                                val weightText = if (isCalibrationEnabled) {
+                                                val weightText = if (isCalibrationManagedWorkSet) {
                                                     "Calibration"
                                                 } else {
                                                     equipment!!.formatWeight(set.weight)
@@ -197,11 +202,15 @@ fun ExerciseRenderer(
                                             }
 
                                             is BodyWeightSet -> {
-                                                val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
+                                                val isCalibrationManagedWorkSet =
+                                                    CalibrationHelper.isCalibrationManagedWorkSet(
+                                                        exercise = exercise,
+                                                        set = set
+                                                    )
                                                 
                                                 val weightText = when {
-                                                    isCalibrationEnabled && set.additionalWeight > 0 -> "Cal"
-                                                    isCalibrationEnabled -> "-"
+                                                    isCalibrationManagedWorkSet && set.additionalWeight > 0 -> "Cal"
+                                                    isCalibrationManagedWorkSet -> "-"
                                                     set.additionalWeight > 0 -> equipment!!.formatWeight(set.additionalWeight)
                                                     else -> "-"
                                                 }
@@ -273,4 +282,3 @@ fun ExerciseRenderer(
         )
     }
 }
-

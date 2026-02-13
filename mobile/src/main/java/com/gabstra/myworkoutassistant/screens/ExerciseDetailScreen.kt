@@ -3,9 +3,8 @@ package com.gabstra.myworkoutassistant.screens
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -16,12 +15,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
@@ -36,9 +36,7 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,14 +76,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
+import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
-import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
@@ -101,6 +101,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +110,45 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+
+@Composable
+private fun ExerciseDetailMenu(
+    onEditExercise: () -> Unit,
+    onExportExerciseHistory: () -> Unit,
+    isExportEnabled: Boolean
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.wrapContentSize(Alignment.TopEnd)) {
+        IconButton(onClick = { expanded = !expanded }) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = "More"
+            )
+        }
+
+        AppDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            AppDropdownMenuItem(
+                text = { Text("Edit Exercise") },
+                onClick = {
+                    onEditExercise()
+                    expanded = false
+                }
+            )
+            AppDropdownMenuItem(
+                text = { Text("Export as .md") },
+                enabled = isExportEnabled,
+                onClick = {
+                    onExportExerciseHistory()
+                    expanded = false
+                }
+            )
+        }
+    }
+}
 
 @Composable
 fun ComponentRenderer(
@@ -123,7 +163,10 @@ fun ComponentRenderer(
     when (set) {
         is WeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-            val isCalibrationEnabled = exercise.requiresLoadCalibration
+            val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
+                exercise = exercise,
+                set = set
+            )
 
             StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Column(
@@ -137,7 +180,7 @@ fun ComponentRenderer(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            if (!isCalibrationEnabled) {
+                            if (!isCalibrationManagedWorkSet) {
                                 Text(
                                     text = if (equipment != null) {
                                         "Weight (KG): ${equipment.formatWeight(set.weight)}"
@@ -169,7 +212,10 @@ fun ComponentRenderer(
 
         is BodyWeightSet -> {
             val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-            val isCalibrationEnabled = exercise.requiresLoadCalibration && equipment != null
+            val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
+                exercise = exercise,
+                set = set
+            )
 
             StyledCard(modifier = modifier, enabled = exercise.enabled) {
                 Column(
@@ -183,7 +229,7 @@ fun ComponentRenderer(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            if (!isCalibrationEnabled) {
+                            if (!isCalibrationManagedWorkSet) {
                                 if(set.additionalWeight != 0.0 && equipment != null) {
                                     Text(
                                         text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
@@ -368,11 +414,12 @@ fun ExerciseDetailScreen(
                         actionIconContentColor = MaterialTheme.colorScheme.onBackground
                     ),
                     title = {
-                        ScrollableTextColumn(
-                            text = exercise.name,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 2,
-                            textAlign = TextAlign.Center
+                        Text(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(),
+                            textAlign = TextAlign.Center,
+                            text = exercise.name
                         )
                     },
                     navigationIcon = {
@@ -385,19 +432,18 @@ fun ExerciseDetailScreen(
                     },
 
                     actions = {
-                        IconButton(onClick = {
-                            appViewModel.setScreenData(
-                                ScreenData.EditExercise(
-                                    workout.id,
-                                    exercise.id
+                        ExerciseDetailMenu(
+                            onEditExercise = {
+                                appViewModel.setScreenData(
+                                    ScreenData.EditExercise(
+                                        workout.id,
+                                        exercise.id
+                                    )
                                 )
-                            );
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings"
-                            )
-                        }
+                            },
+                            onExportExerciseHistory = { exportExerciseHistory() },
+                            isExportEnabled = !exercise.doNotStoreHistory
+                        )
                     }
                 )
             },
@@ -778,13 +824,6 @@ fun ExerciseDetailScreen(
                         .verticalScroll(scrollState)
                         .padding(horizontal = 15.dp),
                 ) {
-                    FormPrimaryOutlinedButton(
-                        text = "Export as .md",
-                        enabled = !exercise.doNotStoreHistory,
-                        onClick = { exportExerciseHistory() },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
                     if (sets.isEmpty()) {
                         Row(
                             modifier = Modifier
@@ -857,10 +896,9 @@ fun ExerciseDetailScreen(
                             }
                         }
 
-                        // Calibration badge - centered below tabs and labels
+                        // Calibration status text - centered below tabs and labels
                         if (exercise.requiresLoadCalibration &&
-                            (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.WEIGHT ||
-                                    (exercise.exerciseType == com.gabstra.myworkoutassistant.shared.ExerciseType.BODY_WEIGHT && exercise.equipmentId != null))
+                            CalibrationHelper.supportsCalibrationForExercise(exercise)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -869,18 +907,10 @@ fun ExerciseDetailScreen(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                AssistChip(
-                                    onClick = { },
-                                    label = {
-                                        Text(
-                                            "Calibration",
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    },
-                                    colors = AssistChipDefaults.assistChipColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
+                                Text(
+                                    text = "This exercise is waiting to be calibrated.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -936,7 +966,9 @@ fun ExerciseDetailScreen(
                                 Box(
                                     modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
                                 ) {
-                                    Column {
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                    ) {
                                         ComponentRenderer(
                                             it,
                                             appViewModel,

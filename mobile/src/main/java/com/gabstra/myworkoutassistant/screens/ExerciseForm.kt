@@ -72,6 +72,9 @@ import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -955,12 +958,50 @@ fun ExerciseForm(
                     text = "Save",
                     onClick = {
                         val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
+                        val supportsCalibrationForExercise =
+                            selectedExerciseType.value == ExerciseType.WEIGHT ||
+                                (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
+                        val normalizedSets = (exercise?.sets ?: emptyList()).map { set ->
+                            when (set) {
+                                is WeightSet -> when {
+                                    requiresLoadCalibration.value &&
+                                        supportsCalibrationForExercise &&
+                                        set.subCategory == SetSubCategory.WorkSet -> {
+                                        set.copy(subCategory = SetSubCategory.CalibrationPendingSet)
+                                    }
+
+                                    !requiresLoadCalibration.value &&
+                                        set.subCategory == SetSubCategory.CalibrationPendingSet -> {
+                                        set.copy(subCategory = SetSubCategory.WorkSet)
+                                    }
+
+                                    else -> set
+                                }
+
+                                is BodyWeightSet -> when {
+                                    requiresLoadCalibration.value &&
+                                        supportsCalibrationForExercise &&
+                                        set.subCategory == SetSubCategory.WorkSet -> {
+                                        set.copy(subCategory = SetSubCategory.CalibrationPendingSet)
+                                    }
+
+                                    !requiresLoadCalibration.value &&
+                                        set.subCategory == SetSubCategory.CalibrationPendingSet -> {
+                                        set.copy(subCategory = SetSubCategory.WorkSet)
+                                    }
+
+                                    else -> set
+                                }
+
+                                else -> set
+                            }
+                        }
                         val newExercise = Exercise(
                             id = exercise?.id ?: UUID.randomUUID(),
                             name = nameState.value.trim(),
                             doNotStoreHistory = doNotStoreHistory.value,
                             enabled = exercise?.enabled ?: true,
-                            sets = exercise?.sets ?: listOf(),
+                            sets = normalizedSets,
                             exerciseType = selectedExerciseType.value,
                             minLoadPercent = minLoadPercent.floatValue.toDouble().round(2),
                             maxLoadPercent = maxLoadPercent.floatValue.toDouble().round(2),
