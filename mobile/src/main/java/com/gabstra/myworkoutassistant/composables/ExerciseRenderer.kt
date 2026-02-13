@@ -29,6 +29,7 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
 @Composable
@@ -181,7 +182,7 @@ fun ExerciseRenderer(
                                                     )
                                                 
                                                 val weightText = if (isCalibrationManagedWorkSet) {
-                                                    "Calibration"
+                                                    CalibrationUiLabels.Tbd
                                                 } else {
                                                     equipment!!.formatWeight(set.weight)
                                                 }
@@ -209,8 +210,7 @@ fun ExerciseRenderer(
                                                     )
                                                 
                                                 val weightText = when {
-                                                    isCalibrationManagedWorkSet && set.additionalWeight > 0 -> "Cal"
-                                                    isCalibrationManagedWorkSet -> "-"
+                                                    isCalibrationManagedWorkSet -> CalibrationUiLabels.Tbd
                                                     set.additionalWeight > 0 -> equipment!!.formatWeight(set.additionalWeight)
                                                     else -> "-"
                                                 }

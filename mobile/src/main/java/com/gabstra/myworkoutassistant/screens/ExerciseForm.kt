@@ -877,14 +877,14 @@ fun ExerciseForm(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
 
-            // Requires load calibration (only for WEIGHT or BODY_WEIGHT with equipment)
+            // Calibration mode (only for WEIGHT or BODY_WEIGHT with equipment)
             if (selectedExerciseType.value == ExerciseType.WEIGHT || 
                 (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
                     headlineContent = {
                         Text(
-                            "Require load calibration",
+                            "Use Calibration mode",
                             style = MaterialTheme.typography.bodyLarge
                         )
                     },

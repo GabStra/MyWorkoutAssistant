@@ -102,6 +102,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.Dispatchers
@@ -190,9 +191,9 @@ fun ComponentRenderer(
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
-                            }else{
+                            } else {
                                 Text(
-                                    text = "Calibration",
+                                    text = CalibrationUiLabels.Tbd,
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
@@ -237,9 +238,9 @@ fun ComponentRenderer(
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
                                 }
-                            }else{
+                            } else {
                                 Text(
-                                    text = "Calibration",
+                                    text = CalibrationUiLabels.Tbd,
                                     color = MaterialTheme.colorScheme.onBackground,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
@@ -908,7 +909,7 @@ fun ExerciseDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "This exercise is waiting to be calibrated.",
+                                    text = "Waiting for calibration. Turn off \"Use Calibration mode\" to disable.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
