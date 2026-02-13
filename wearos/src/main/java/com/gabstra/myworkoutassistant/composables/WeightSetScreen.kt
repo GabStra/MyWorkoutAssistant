@@ -47,9 +47,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -84,14 +82,6 @@ fun WeightSetScreen(
         mutableStateOf(state.currentSetData as WeightSetData)
     }
 
-    val exercise = remember(state.exerciseId) {
-        viewModel.exercisesById[state.exerciseId]!!
-    }
-    
-    val isCalibrationSet = remember(state.set) {
-        (state.set as? WeightSet)?.subCategory == SetSubCategory.CalibrationSet
-    }
-
     val plateauReason = remember(state.exerciseId) {
         viewModel.plateauReasonByExerciseId[state.exerciseId]
     }
@@ -119,8 +109,8 @@ fun WeightSetScreen(
     }
 
     val equipment = state.equipment
-    val shouldLockCalibrationEdits = remember(state.isCalibrationSet, isCalibrationSet) {
-        state.isCalibrationSet && isCalibrationSet
+    val shouldLockCalibrationEdits = remember(state.isCalibrationSet) {
+        state.isCalibrationSet
     }
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 

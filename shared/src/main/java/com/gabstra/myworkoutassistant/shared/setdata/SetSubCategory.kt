@@ -5,6 +5,7 @@ enum class SetSubCategory {
     WarmupSet,
     RestPauseSet,
     BackOffSet,
+    CalibrationPendingSet,
     CalibrationSet
 }
 

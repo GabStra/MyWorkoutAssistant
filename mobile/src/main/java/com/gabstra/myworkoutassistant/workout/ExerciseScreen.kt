@@ -37,7 +37,6 @@ import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -321,14 +320,12 @@ fun ExerciseScreen(
                                         }
                                     }
                                     if (isCalibrationSet) {
-                                        Chip(backgroundColor = Green) {
-                                            Text(
-                                                text = "Calibration",
-                                                style = captionStyle,
-                                                color = Green,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
+                                        Text(
+                                            text = "This exercise is waiting to be calibrated.",
+                                            style = captionStyle,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = TextAlign.Center
+                                        )
                                     }
                                 }
                             }
@@ -423,4 +420,3 @@ fun ExerciseScreen(
         }
     }
 }
-

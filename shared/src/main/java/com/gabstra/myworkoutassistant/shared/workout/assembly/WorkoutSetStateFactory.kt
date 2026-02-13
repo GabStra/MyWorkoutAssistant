@@ -74,6 +74,7 @@ class WorkoutSetStateFactory {
         bodyWeightKg: Double,
         isUnilateral: Boolean,
         isCalibrationSet: Boolean,
+        isCalibrationManagedWorkSet: Boolean,
         getEquipmentById: (UUID) -> WeightLoadedEquipment?
     ): WorkoutState.Set {
         return WorkoutState.Set(
@@ -94,7 +95,8 @@ class WorkoutSetStateFactory {
             isWarmupSet = isWarmupSet,
             equipment = exercise.equipmentId?.let { getEquipmentById(it) },
             isUnilateral = isUnilateral,
-            isCalibrationSet = isCalibrationSet
+            isCalibrationSet = isCalibrationSet,
+            isCalibrationManagedWorkSet = isCalibrationManagedWorkSet
         )
     }
 

@@ -1890,6 +1890,11 @@ open class WorkoutViewModel(
 
                 val isWarmupSet = workoutSetStateFactory.isWarmupSet(set)
                 val isCalibrationSet = workoutSetStateFactory.isCalibrationSet(set)
+                val isCalibrationManagedWorkSet = hasCalibration && when (set) {
+                    is WeightSet -> set.subCategory == SetSubCategory.CalibrationPendingSet
+                    is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationPendingSet
+                    else -> false
+                }
                 
                 // For calibration sets: add CalibrationLoadSelection only.
                 // Calibration execution state is inserted after load confirmation (and after generated warmups).
@@ -1922,6 +1927,7 @@ open class WorkoutViewModel(
                         bodyWeightKg = bodyWeight.value,
                         isUnilateral = isUnilateralExercise,
                         isCalibrationSet = true,
+                        isCalibrationManagedWorkSet = false,
                         getEquipmentById = ::getEquipmentById
                     )
                     childItems.add(ExerciseChildItem.Normal(setState))
@@ -1940,6 +1946,7 @@ open class WorkoutViewModel(
                         bodyWeightKg = bodyWeight.value,
                         isUnilateral = isUnilateralExercise,
                         isCalibrationSet = false,
+                        isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
                         getEquipmentById = ::getEquipmentById
                     )
 

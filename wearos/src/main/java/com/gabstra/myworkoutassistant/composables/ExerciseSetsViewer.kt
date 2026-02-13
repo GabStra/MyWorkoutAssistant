@@ -78,21 +78,14 @@ fun SetTableRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipment
-    val exercise = viewModel.exercisesById[setState.exerciseId]
-    val isCalibrationEnabled = exercise?.requiresLoadCalibration ?: false
 
-    val isWarmupSet = CalibrationHelper.isWarmupSet(setState.set)
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
-        setState,
-        isCalibrationEnabled,
-        isWarmupSet,
-        isCalibrationSet,
+        setState = setState,
         hasUnconfirmedLoadSelectionForExercise
     )
     val shouldHideCalibrationExecutionWeight = CalibrationHelper.shouldHideCalibrationExecutionWeight(
         setState = setState,
-        isCalibrationSetBySubCategory = isCalibrationSet,
         hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
     )
 

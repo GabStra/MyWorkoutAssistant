@@ -116,6 +116,7 @@ sealed class WorkoutState {
         val intraSetTotal : UInt? = null,
         var intraSetCounter : UInt = 0u,
         val isCalibrationSet: Boolean = false, // Identifies if this Set is a calibration set execution
+        val isCalibrationManagedWorkSet: Boolean = false, // Normal work set under an exercise that requires calibration
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
     }

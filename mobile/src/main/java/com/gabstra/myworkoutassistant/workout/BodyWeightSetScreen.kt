@@ -27,8 +27,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Dispatchers
@@ -55,13 +53,9 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    val isCalibrationSet = remember(state.set) {
-        (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.CalibrationSet
-    }
-
     val equipment = state.equipment
-    val shouldLockCalibrationEdits = remember(state.isCalibrationSet, isCalibrationSet, equipment) {
-        state.isCalibrationSet && isCalibrationSet && equipment != null
+    val shouldLockCalibrationEdits = remember(state.isCalibrationSet, equipment) {
+        state.isCalibrationSet && equipment != null
     }
     var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
 

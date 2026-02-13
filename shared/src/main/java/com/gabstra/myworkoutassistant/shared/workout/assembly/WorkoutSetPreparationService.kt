@@ -123,8 +123,10 @@ class WorkoutSetPreparationService {
         val firstWorkSetIndex = exerciseAllSets.indexOfFirst { set ->
             when (set) {
                 is RestSet -> false
-                is BodyWeightSet -> set.subCategory == SetSubCategory.WorkSet
-                is WeightSet -> set.subCategory == SetSubCategory.WorkSet
+                is BodyWeightSet -> set.subCategory == SetSubCategory.WorkSet ||
+                    set.subCategory == SetSubCategory.CalibrationPendingSet
+                is WeightSet -> set.subCategory == SetSubCategory.WorkSet ||
+                    set.subCategory == SetSubCategory.CalibrationPendingSet
                 else -> false
             }
         }

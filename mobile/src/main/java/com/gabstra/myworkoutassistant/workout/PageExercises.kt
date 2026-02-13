@@ -197,14 +197,12 @@ fun PageExercises(
                                 }
                             }
                             if (isCalibrationSet) {
-                                Chip(backgroundColor = MaterialTheme.colorScheme.primary) {
-                                    Text(
-                                        text = "Calibration",
-                                        style = captionStyle,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
+                                Text(
+                                    text = "This exercise is waiting to be calibrated.",
+                                    style = captionStyle,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
                             }
                         }
                     }

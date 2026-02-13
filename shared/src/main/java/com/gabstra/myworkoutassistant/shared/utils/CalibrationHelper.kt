@@ -5,6 +5,8 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import java.util.UUID
 
 object CalibrationHelper {
@@ -18,6 +20,24 @@ object CalibrationHelper {
         is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
         is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
         else -> false
+    }
+
+    fun isCalibrationPendingSetBySubCategory(set: Set): Boolean = when (set) {
+        is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationPendingSet
+        is WeightSet -> set.subCategory == SetSubCategory.CalibrationPendingSet
+        else -> false
+    }
+
+    fun supportsCalibrationForExercise(exercise: Exercise): Boolean {
+        return exercise.exerciseType == ExerciseType.WEIGHT ||
+            (exercise.exerciseType == ExerciseType.BODY_WEIGHT && exercise.equipmentId != null)
+    }
+
+    fun isCalibrationManagedWorkSet(
+        exercise: Exercise,
+        set: Set
+    ): Boolean {
+        return isCalibrationPendingSetBySubCategory(set)
     }
 
     /**
@@ -81,24 +101,17 @@ object CalibrationHelper {
 
     fun shouldShowPendingCalibrationForWorkSet(
         setState: WorkoutState.Set,
-        isCalibrationEnabled: Boolean,
-        isWarmupSet: Boolean,
-        isCalibrationSetBySubCategory: Boolean,
         hasUnconfirmedLoadSelectionForExercise: Boolean = false
     ): Boolean {
-        return isCalibrationEnabled &&
-            !isWarmupSet &&
-            !isCalibrationSetBySubCategory &&
+        return setState.isCalibrationManagedWorkSet &&
             !setState.isCalibrationSet &&
             hasUnconfirmedLoadSelectionForExercise
     }
 
     fun shouldHideCalibrationExecutionWeight(
         setState: WorkoutState.Set,
-        isCalibrationSetBySubCategory: Boolean,
         hasUnconfirmedLoadSelectionForExercise: Boolean = false
-    ): Boolean = isCalibrationSetBySubCategory &&
-        setState.isCalibrationSet &&
+    ): Boolean = setState.isCalibrationSet &&
         hasUnconfirmedLoadSelectionForExercise
 
     fun hasUnconfirmedLoadSelectionForExercise(

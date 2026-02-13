@@ -79,15 +79,27 @@ private fun WorkoutViewModel.updateWorkSetsInExercise(
         val set = exercise.sets[i]
         when {
             set is RestSet -> continue
-            set is WeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+            set is WeightSet && (
+                set.subCategory == SetSubCategory.CalibrationPendingSet ||
+                    set.subCategory == SetSubCategory.WorkSet
+                ) -> {
                 val roundedWeight = roundToNearestAvailableWeight(adjustedWeight, availableWeights)
-                val updatedSet = set.copy(weight = roundedWeight)
+                val updatedSet = set.copy(
+                    weight = roundedWeight,
+                    subCategory = SetSubCategory.WorkSet
+                )
                 updatedSets[i] = updatedSet
                 setUpdates[set.id] = updatedSet
             }
-            set is BodyWeightSet && set.subCategory == SetSubCategory.WorkSet -> {
+            set is BodyWeightSet && (
+                set.subCategory == SetSubCategory.CalibrationPendingSet ||
+                    set.subCategory == SetSubCategory.WorkSet
+                ) -> {
                 val roundedWeight = roundToNearestAvailableWeight(adjustedWeight, availableWeights)
-                val updatedSet = set.copy(additionalWeight = roundedWeight)
+                val updatedSet = set.copy(
+                    additionalWeight = roundedWeight,
+                    subCategory = SetSubCategory.WorkSet
+                )
                 updatedSets[i] = updatedSet
                 setUpdates[set.id] = updatedSet
             }

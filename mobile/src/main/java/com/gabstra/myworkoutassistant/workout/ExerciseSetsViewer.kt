@@ -121,9 +121,6 @@ fun SetTableRow(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val exercise = viewModel.exercisesById[setState.exerciseId]
-            val isCalibrationEnabled = exercise?.requiresLoadCalibration ?: false
-            
             val isWarmupSet = when(val set = setState.set) {
                 is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
                 is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
@@ -142,9 +139,6 @@ fun SetTableRow(
             )
             val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
                 setState = setState,
-                isCalibrationEnabled = isCalibrationEnabled,
-                isWarmupSet = isWarmupSet,
-                isCalibrationSetBySubCategory = isCalibrationSet,
                 hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
             )
             
