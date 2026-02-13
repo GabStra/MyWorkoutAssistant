@@ -15,7 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +38,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -265,7 +265,7 @@ fun SupersetForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                Button(
+                FormPrimaryButton(
                     onClick = {
                         // Convert the H:M:S triples into a map of [UUID, Int] for total seconds
                         val restSecondsByExercise = selectedExercises.associate { ex ->
@@ -281,11 +281,10 @@ fun SupersetForm(
                         )
                         onSupersetUpsert(newOrUpdatedSuperset)
                     },
+                    text = "Save",
                     enabled = selectedExercises.size >= 2,
                     modifier = Modifier.weight(1f),
-                ) {
-                    Text("Save")
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))

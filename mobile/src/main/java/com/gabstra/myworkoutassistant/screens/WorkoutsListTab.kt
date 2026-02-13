@@ -97,7 +97,8 @@ fun WorkoutsListTab(
                 },
                 onOrderChange = { },
                 itemContent = { workout, onItemClick, onItemLongClick ->
-                    StyledCard(modifier = Modifier
+                    StyledCard(
+                        modifier = Modifier
                                 .combinedClickable(
                                     onClick = {
                                         onItemClick()
@@ -105,7 +106,8 @@ fun WorkoutsListTab(
                                     onLongClick = {
                                         onItemLongClick()
                                     }
-                                )
+                                ),
+                        enabled = workout.enabled
                     ) {
                         Column(
                             modifier = Modifier
