@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.e2e
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.data.WorkoutRecoveryCheckpointStore
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
@@ -133,8 +134,13 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         require(exerciseVisible) { "Timed exercise screen did not appear" }
 
         val initialSeconds = workoutDriver.readTimedDurationSeconds()
-        Thread.sleep(4_000)
-        val preKillSeconds = workoutDriver.readTimedDurationSeconds()
+        val progressDeadline = System.currentTimeMillis() + 15_000
+        var preKillSeconds = initialSeconds
+        while (System.currentTimeMillis() < progressDeadline) {
+            Thread.sleep(1_000)
+            preKillSeconds = workoutDriver.readTimedDurationSeconds()
+            if (preKillSeconds <= initialSeconds - 1) break
+        }
         require(preKillSeconds <= initialSeconds - 1) {
             "Timer did not progress before process death. initial=$initialSeconds, preKill=$preKillSeconds"
         }
@@ -168,12 +174,33 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         val exerciseVisibleAfterResume = device.wait(Until.hasObject(By.text("Timed Exercise")), 10_000)
         require(exerciseVisibleAfterResume) { "Timed exercise screen not visible after resume" }
 
-        val resumedSeconds = workoutDriver.readTimedDurationSeconds()
-        require(resumedSeconds < preKillSeconds) {
-            "Recovered timer was not restored as running. preKill=$preKillSeconds, resumed=$resumedSeconds"
+        val checkpoint = WorkoutRecoveryCheckpointStore(context).load()
+        val restoredStartEpochMs = checkpoint?.setStartEpochMs
+        require(restoredStartEpochMs != null) {
+            "Missing recovery checkpoint start time after resume."
+        }
+
+        val restoredStartTimerMs = 60_000L
+        val exactDeadline = System.currentTimeMillis() + 5_000L
+        var resumedSeconds = -1
+        var expectedSeconds = -1
+        var exactMatchFound = false
+        while (System.currentTimeMillis() < exactDeadline) {
+            resumedSeconds = workoutDriver.readTimedDurationSeconds()
+            val elapsedMs = (System.currentTimeMillis() - restoredStartEpochMs).coerceAtLeast(0L)
+            expectedSeconds = ((restoredStartTimerMs - elapsedMs).coerceAtLeast(0L) / 1000L).toInt()
+            if (resumedSeconds == expectedSeconds) {
+                exactMatchFound = true
+                break
+            }
+            Thread.sleep(250)
+        }
+
+        require(exactMatchFound) {
+            "Recovered timer is not exact. expected=$expectedSeconds, actual=$resumedSeconds, preKill=$preKillSeconds"
         }
         require(resumedSeconds > 0) {
-            "Recovered timer resumed at an invalid value. resumed=$resumedSeconds"
+            "Recovered timer resumed at an invalid value. resumed=$resumedSeconds, expected=$expectedSeconds"
         }
     }
 
