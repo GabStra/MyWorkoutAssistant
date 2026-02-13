@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.Job
@@ -356,8 +357,12 @@ fun ExerciseScreen(
 
         CustomDialogYesOnLongPress(
             show = showNextDialog,
-            title = if (state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!!) "Switch side" else "Complete Set",
-            message = "Do you want to proceed?",
+            title = when {
+                state.isCalibrationSet -> CalibrationUiLabels.CompleteCalibrationSet
+                state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
+                else -> "Complete Set"
+            },
+            message = if (state.isCalibrationSet) CalibrationUiLabels.RateRirAfterSet else "Do you want to proceed?",
             handleYesClick = {
 
                 if (state.intraSetTotal != null) {
@@ -366,9 +371,14 @@ fun ExerciseScreen(
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
-                viewModel.pushAndStoreWorkoutData(false, context) {
-                    viewModel.goToNextState()
+                if (state.isCalibrationSet) {
+                    viewModel.completeCalibrationSet()
                     viewModel.lightScreenUp()
+                } else {
+                    viewModel.pushAndStoreWorkoutData(false, context) {
+                        viewModel.goToNextState()
+                        viewModel.lightScreenUp()
+                    }
                 }
 
                 viewModel.closeCustomDialog()

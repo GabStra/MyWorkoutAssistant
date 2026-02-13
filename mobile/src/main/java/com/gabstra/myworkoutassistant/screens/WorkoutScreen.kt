@@ -45,6 +45,8 @@ import com.gabstra.myworkoutassistant.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
+import com.gabstra.myworkoutassistant.workout.CalibrationLoadScreen
+import com.gabstra.myworkoutassistant.workout.CalibrationRIRScreen
 import com.gabstra.myworkoutassistant.workout.ExerciseScreen
 import com.gabstra.myworkoutassistant.workout.KeepOn
 import com.gabstra.myworkoutassistant.workout.LoadingText
@@ -172,14 +174,18 @@ fun WorkoutScreen(
             ) { _ ->
                 when (val state = workoutState) {
                     is WorkoutState.CalibrationLoadSelection -> {
-                        // CalibrationLoadSelection is handled in wearos only
-                        // Mobile version doesn't support calibration flow
-                        Box(modifier = Modifier.fillMaxSize())
+                        CalibrationLoadScreen(
+                            viewModel = workoutViewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            state = state
+                        )
                     }
                     is WorkoutState.CalibrationRIRSelection -> {
-                        // CalibrationRIRSelection is handled in wearos only
-                        // Mobile version doesn't support calibration flow
-                        Box(modifier = Modifier.fillMaxSize())
+                        CalibrationRIRScreen(
+                            viewModel = workoutViewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            state = state
+                        )
                     }
                     is WorkoutState.Preparing -> {
                         var currentMillis by remember { mutableIntStateOf(0) }
@@ -295,5 +301,3 @@ fun WorkoutScreen(
         )
     }
 }
-
-
