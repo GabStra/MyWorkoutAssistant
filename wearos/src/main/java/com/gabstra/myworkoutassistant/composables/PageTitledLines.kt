@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -23,6 +20,7 @@ import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 /** A section with a title and a list of lines (e.g. "Equipment" / ["Barbell"] or "Accessories" / ["Bench", "Rings"]). */
 data class TitledLinesSection(val title: String, val lines: List<String>)
@@ -81,22 +79,15 @@ fun PageTitledLines(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(
-                    PaddingValues(
-                        start = contentPadding.calculateLeftPadding(LayoutDirection.Rtl),
-                        end = contentPadding.calculateRightPadding(LayoutDirection.Rtl)
-                    )
-                )
+                .padding(contentPadding)
                 .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 20.dp)
-                    .padding(horizontal = 25.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 sections.forEach { section ->

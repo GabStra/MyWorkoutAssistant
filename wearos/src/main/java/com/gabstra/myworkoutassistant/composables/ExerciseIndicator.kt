@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -155,46 +154,43 @@ fun ExerciseIndicator(
         else -> null
     }
 
-    // Calculate indicator progress
-    val indicatorProgressByExerciseId by remember(
-        exerciseIds,
-        selectedExerciseId,
-        currentExerciseId,
-        currentPositionIndex,
-        currentStateSet,
-        currentStateSetDataState
-    ) {
-        derivedStateOf {
-            exerciseIds.associateWith { id ->
-                val completed = completedSetsBeforeCurrent(id)
-                val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
+    fun timerProgressFromSetData(setData: Any?): Float? = when (setData) {
+        is EnduranceSetData -> (setData.endTimer / setData.startTimer.toFloat()).coerceIn(0f, 1f)
+        is TimedDurationSetData -> (1 - (setData.endTimer / setData.startTimer.toFloat())).coerceIn(0f, 1f)
+        else -> null
+    }
 
-                val timerSet: WorkoutState.Set? = when {
-                    selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
-                    else -> null
-                }
+    fun safeCurrentSetData(setState: WorkoutState.Set): Any? = runCatching { setState.currentSetData }.getOrNull()
+    fun safeCurrentSetData(setDataState: androidx.compose.runtime.MutableState<com.gabstra.myworkoutassistant.shared.setdata.SetData>): Any? =
+        runCatching { setDataState.value }.getOrNull()
 
-                val currentExerciseTimerProgress: Float? = when {
-                    id == currentExerciseId && total == 1 && currentStateSet != null && (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) && currentStateSetDataState != null -> {
-                        when (val d = currentStateSetDataState.value) {
-                            is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
-                            is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
-                            else -> null
-                        }
-                    }
-                    else -> null
-                }
+    // Calculate indicator progress.
+    // Avoid derivedStateOf + direct MutableState reads to prevent intermittent snapshot read crashes.
+    val indicatorProgressByExerciseId = exerciseIds.associateWith { id ->
+        val completed = completedSetsBeforeCurrent(id)
+        val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
 
-                when {
-                    currentExerciseTimerProgress != null -> currentExerciseTimerProgress
-                    timerSet != null -> when (val d = timerSet.currentSetDataState.value) {
-                        is EnduranceSetData -> (d.endTimer / d.startTimer.toFloat()).coerceIn(0f, 1f)
-                        is TimedDurationSetData -> (1 - (d.endTimer / d.startTimer.toFloat())).coerceIn(0f, 1f)
-                        else -> completed.toFloat() / total.toFloat()
-                    }
-                    else -> completed.toFloat() / total.toFloat()
-                }
+        val timerSet: WorkoutState.Set? = when {
+            selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
+            else -> null
+        }
+
+        val currentExerciseTimerProgress: Float? = when {
+            id == currentExerciseId &&
+                total == 1 &&
+                currentStateSet != null &&
+                (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) &&
+                currentStateSetDataState != null -> {
+                timerProgressFromSetData(safeCurrentSetData(currentStateSetDataState))
             }
+            else -> null
+        }
+
+        when {
+            currentExerciseTimerProgress != null -> currentExerciseTimerProgress
+            timerSet != null -> timerProgressFromSetData(safeCurrentSetData(timerSet))
+                ?: (completed.toFloat() / total.toFloat())
+            else -> completed.toFloat() / total.toFloat()
         }
     }
 
@@ -816,4 +812,3 @@ private fun SupersetBadge(
         }
     }
 }
-

@@ -203,7 +203,6 @@ fun WorkoutSelectionScreen(
     // Handle back button press to close the app
     BackHandler {
         hapticsViewModel.doGentleVibration()
-        Toast.makeText(context, "Closing app. See you soon.", Toast.LENGTH_SHORT).show()
         (context as? Activity)?.finish()
     }
     

@@ -413,9 +413,15 @@ private fun HeartRateDisplay(
                 colorsByZone[currentZone]
         )
 
+        val textWidth = if(displayMode == 0){
+            30.dp
+        }else{
+            50.dp
+        }
+
         Row{
             Text(
-                modifier = Modifier.alignByBaseline().width(30.dp),
+                modifier = Modifier.alignByBaseline().width(textWidth),
                 text = textToDisplay,
                 textAlign = TextAlign.End,
                 style = MaterialTheme.typography.labelMedium,
@@ -782,7 +788,11 @@ private fun HeartRateView(
         derivedStateOf {
             when (displayMode) {
                 0 -> hr.toString()
-                1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+                1 -> if(mhrPercentage < 100){
+                    "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+                }else{
+                    "100%"
+                }
                 else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
             }
         }
@@ -1032,6 +1042,7 @@ private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
 private fun HeartRateCircularChartPreview() {
+    previewAppViewModel.switchHrDisplayMode()
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { createPreviewHapticsViewModel(context) }
     MaterialTheme(
@@ -1043,7 +1054,7 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(74.9f, 30),
+            hr = getHeartRateFromPercentage(101f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 65f,
             upperBoundMaxHRPercent = 75f

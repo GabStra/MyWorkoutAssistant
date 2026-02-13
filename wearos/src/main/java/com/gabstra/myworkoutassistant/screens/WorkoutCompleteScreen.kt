@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,26 +18,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.navigation.NavController
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.presentation.theme.baseline
+import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import kotlinx.coroutines.Job
@@ -66,8 +71,6 @@ fun WorkoutCompleteScreen(
     var progressionDataCalculated by remember { mutableStateOf(false) }
     var progressionIsEmpty by remember { mutableStateOf<Boolean?>(null) }
     var completionSyncInitiated by remember { mutableStateOf(false) }
-
-    val headerStyle = MaterialTheme.typography.bodySmall
 
     val scope = rememberWearCoroutineScope()
     var closeJob by remember { mutableStateOf<Job?>(null) }
@@ -137,45 +140,22 @@ fun WorkoutCompleteScreen(
         }
     }
 
-    Column(
-        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(30.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 2.5.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
-        ) {
-            Text(
-                text = "Completed",
-                textAlign = TextAlign.Center,
-                style = headerStyle
-            )
-            ScalableText(
-                text = workout.name,
-                style = MaterialTheme.typography.titleLarge
+    WorkoutCompleteScreenContent(
+        workoutName = workout.name,
+        countDownSeconds = countDownTimer.intValue,
+        progressionContent = {
+            ProgressionSection(
+                modifier = Modifier.weight(1f),
+                viewModel = viewModel,
+                onProgressionDataCalculated = { isEmpty ->
+                    if (!progressionDataCalculated) {
+                        progressionDataCalculated = true
+                        progressionIsEmpty = isEmpty
+                    }
+                }
             )
         }
-        ProgressionSection(
-            modifier = Modifier.weight(1f),
-            viewModel = viewModel,
-            onProgressionDataCalculated = { isEmpty ->
-                if (!progressionDataCalculated) {
-                    progressionDataCalculated = true
-                    progressionIsEmpty = isEmpty
-                }
-            }
-        )
-        Text(
-            modifier = Modifier.padding(top = 2.5.dp),
-            text = "Closing in: ${countDownTimer.intValue}",
-            style = headerStyle,
-            textAlign = TextAlign.Center,
-        )
-    }
+    )
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
@@ -214,4 +194,75 @@ fun WorkoutCompleteScreen(
             }
         }
     )
+}
+
+@Composable
+private fun WorkoutCompleteScreenContent(
+    workoutName: String,
+    countDownSeconds: Int,
+    progressionContent: @Composable ColumnScope.() -> Unit
+) {
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 5.dp)
+            .padding(top = 25.dp, bottom = 25.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 2.5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        ) {
+            Text(
+                text = "COMPLETED",
+                textAlign = TextAlign.Center,
+                style = headerStyle
+            )
+            ScalableText(
+                modifier = Modifier.fillMaxWidth(),
+                textModifier = Modifier.fillMaxWidth(),
+                text = workoutName,
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        progressionContent()
+
+        Text(
+            modifier = Modifier.padding(top = 2.5.dp),
+            text = "CLOSING IN: $countDownSeconds",
+            style = headerStyle,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
+@Composable
+private fun WorkoutCompleteScreenPreview() {
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline,
+    ) {
+        WorkoutCompleteScreenContent(
+            workoutName = "Push Day",
+            countDownSeconds = 30,
+            progressionContent = {
+                Text(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    text = "Progression summary",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        )
+    }
 }

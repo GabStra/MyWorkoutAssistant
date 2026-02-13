@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -192,6 +193,7 @@ fun CustomDialogYesOnLongPress(
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Normal),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 60.dp)
                                 .padding(horizontal = 5.dp)
                         )
 
@@ -273,8 +275,8 @@ private fun CustomDialogYesOnLongPressHugeTextPreview() {
     ) {
         CustomDialogYesOnLongPress(
             show = true,
-            title = "THIS IS A VERY LARGE CONFIRMATION TITLE THAT SHOULD WRAP OVER MULTIPLE LINES",
-            message = "This dialog contains intentionally oversized content to verify wrapping, spacing, and full-column scroll behavior. Keep scrolling to confirm the action row remains reachable and text remains readable across line breaks and dense paragraphs.",
+            title = "Skip Rest",
+            message = "Do you want to skip the rest?",
             handleNoClick = {},
             handleYesClick = {},
             closeTimerInMillis = 0L,
