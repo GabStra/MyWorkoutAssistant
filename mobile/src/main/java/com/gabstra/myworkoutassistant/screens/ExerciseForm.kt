@@ -961,37 +961,31 @@ fun ExerciseForm(
                         val supportsCalibrationForExercise =
                             selectedExerciseType.value == ExerciseType.WEIGHT ||
                                 (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
+                        val shouldUseCalibrationSubcategories =
+                            requiresLoadCalibration.value && supportsCalibrationForExercise
+                        fun normalizeSetSubCategory(subCategory: SetSubCategory): SetSubCategory {
+                            return if (shouldUseCalibrationSubcategories) {
+                                when (subCategory) {
+                                    SetSubCategory.WorkSet,
+                                    SetSubCategory.CalibrationSet -> SetSubCategory.CalibrationPendingSet
+                                    else -> subCategory
+                                }
+                            } else {
+                                when (subCategory) {
+                                    SetSubCategory.CalibrationPendingSet,
+                                    SetSubCategory.CalibrationSet -> SetSubCategory.WorkSet
+                                    else -> subCategory
+                                }
+                            }
+                        }
                         val normalizedSets = (exercise?.sets ?: emptyList()).map { set ->
                             when (set) {
-                                is WeightSet -> when {
-                                    requiresLoadCalibration.value &&
-                                        supportsCalibrationForExercise &&
-                                        set.subCategory == SetSubCategory.WorkSet -> {
-                                        set.copy(subCategory = SetSubCategory.CalibrationPendingSet)
-                                    }
-
-                                    !requiresLoadCalibration.value &&
-                                        set.subCategory == SetSubCategory.CalibrationPendingSet -> {
-                                        set.copy(subCategory = SetSubCategory.WorkSet)
-                                    }
-
-                                    else -> set
-                                }
-
-                                is BodyWeightSet -> when {
-                                    requiresLoadCalibration.value &&
-                                        supportsCalibrationForExercise &&
-                                        set.subCategory == SetSubCategory.WorkSet -> {
-                                        set.copy(subCategory = SetSubCategory.CalibrationPendingSet)
-                                    }
-
-                                    !requiresLoadCalibration.value &&
-                                        set.subCategory == SetSubCategory.CalibrationPendingSet -> {
-                                        set.copy(subCategory = SetSubCategory.WorkSet)
-                                    }
-
-                                    else -> set
-                                }
+                                is WeightSet -> set.copy(
+                                    subCategory = normalizeSetSubCategory(set.subCategory)
+                                )
+                                is BodyWeightSet -> set.copy(
+                                    subCategory = normalizeSetSubCategory(set.subCategory)
+                                )
 
                                 else -> set
                             }
