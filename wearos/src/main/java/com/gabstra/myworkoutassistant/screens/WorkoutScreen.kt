@@ -263,6 +263,7 @@ fun WorkoutScreen(
     LifecycleObserver(
         onPaused = {
             try {
+                viewModel.workoutTimerService.pauseForBackground()
                 if(!selectedWorkout.usePolarDevice){
                     hrViewModel.stopMeasuringHeartRate()
                 }
@@ -281,6 +282,7 @@ fun WorkoutScreen(
         },
         onResumed = {
             try {
+                viewModel.workoutTimerService.resumeFromBackground()
                 if(!selectedWorkout.usePolarDevice){
                     hrViewModel.startMeasuringHeartRate()
                 }

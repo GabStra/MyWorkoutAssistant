@@ -288,8 +288,6 @@ fun TimedDurationSetScreen(
     fun TimedDurationRunningDisplay(initialMillis: Int) {
         val setData = state.currentSetData as? TimedDurationSetData
         val displayMillis = setData?.endTimer ?: initialMillis
-        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
-        val isDifferent = displayMillis != previousTimer
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -311,7 +309,7 @@ fun TimedDurationSetScreen(
                     .semantics { contentDescription = SetValueSemantics.TimedDurationValueDescription },
                 seconds = displayMillis / 1000,
                 style = itemStyle,
-                color = if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
     }

@@ -36,6 +36,7 @@ class WorkoutTimerService(
 
     private val activeTimers = mutableMapOf<UUID, ActiveTimer>()
     private var updateJob: Job? = null
+    private var backgroundPausedAt: LocalDateTime? = null
 
     /**
      * Register a timer to be tracked and updated by the service.
@@ -99,6 +100,36 @@ class WorkoutTimerService(
         return activeTimers.containsKey(setId)
     }
 
+    /**
+     * Freeze active timers when app moves to background.
+     */
+    fun pauseForBackground() {
+        if (backgroundPausedAt != null) return
+        val now = LocalDateTime.now()
+        backgroundPausedAt = now
+        activeTimers.values.forEach { timer ->
+            updateTimerProgress(timer, now)
+        }
+    }
+
+    /**
+     * Resume timers after app returns to foreground by compensating startTime
+     * for time spent in background.
+     */
+    fun resumeFromBackground() {
+        val pausedAt = backgroundPausedAt ?: return
+        backgroundPausedAt = null
+
+        val now = LocalDateTime.now()
+        val pausedDuration = Duration.between(pausedAt, now)
+        if (pausedDuration.isZero || pausedDuration.isNegative) return
+
+        activeTimers.values.forEach { timer ->
+            val startTime = timer.state.startTime ?: return@forEach
+            timer.state.startTime = startTime.plus(pausedDuration)
+        }
+    }
+
     private fun startUpdateLoop() {
         updateJob?.cancel()
         updateJob = viewModelScope.launch {
@@ -110,15 +141,16 @@ class WorkoutTimerService(
                 if (!isActive) break
 
                 // Skip updates if paused
-                if (isPaused()) {
+                if (isPaused() || backgroundPausedAt != null) {
                     delay(1000)
                     continue
                 }
 
                 // Update all active timers
+                val updateNow = LocalDateTime.now()
                 val timersToRemove = mutableListOf<UUID>()
                 activeTimers.values.forEach { timer ->
-                    val completed = updateTimerProgress(timer)
+                    val completed = updateTimerProgress(timer, now = updateNow)
                     if (completed) {
                         timersToRemove.add(timer.state.set.id)
                     }
@@ -143,11 +175,10 @@ class WorkoutTimerService(
      * Update timer progress for a single timer.
      * @return true if timer completed, false otherwise
      */
-    private fun updateTimerProgress(timer: ActiveTimer): Boolean {
+    private fun updateTimerProgress(timer: ActiveTimer, now: LocalDateTime): Boolean {
         val state = timer.state
         val startTime = state.startTime ?: return false
 
-        val now = LocalDateTime.now()
         val elapsedMillis = Duration.between(startTime, now).toMillis().toInt().coerceAtLeast(0)
 
         val currentSetData = state.currentSetData

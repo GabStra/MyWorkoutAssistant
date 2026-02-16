@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
@@ -90,24 +91,20 @@ private fun RestTimerBlock(
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
-    var currentSecondsFreeze by remember { mutableIntStateOf(0) }
-    var amountToWaitFreeze by remember { mutableIntStateOf(0) }
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
+    var isAppInBackground by remember { mutableStateOf(false) }
     val isPaused by viewModel.isPaused
 
     isEditModeState.value = isTimerInEditMode
 
     fun computeProgress(): Float {
-        return if (isTimerInEditMode) {
-            currentSecondsFreeze.toFloat() / amountToWaitFreeze.toFloat()
-        } else {
-            currentSeconds.toFloat() / amountToWait.toFloat()
-        }
+        if (amountToWait <= 0) return 0f
+        return currentSeconds.toFloat() / amountToWait.toFloat()
     }
     val indicatorProgress = remember { mutableFloatStateOf(computeProgress()) }
-    LaunchedEffect(currentSeconds, amountToWait, currentSecondsFreeze, amountToWaitFreeze, isTimerInEditMode) {
+    LaunchedEffect(currentSeconds, amountToWait) {
         indicatorProgress.floatValue = computeProgress()
     }
 
@@ -117,10 +114,9 @@ private fun RestTimerBlock(
         if (currentSeconds > 5) {
             val newTimerValue = currentSeconds - 5
             amountToWait -= 5
-            amountToWaitFreeze = amountToWait
             currentSeconds = newTimerValue
-            currentSecondsFreeze = newTimerValue
             hapticsViewModel.doGentleVibration()
+            currentSetData = currentSetData.copy(endTimer = currentSeconds)
         }
         updateInteractionTime()
     }
@@ -128,10 +124,9 @@ private fun RestTimerBlock(
     fun onPlusClick() {
         val newTimerValue = currentSeconds + 5
         amountToWait += 5
-        amountToWaitFreeze = amountToWait
         currentSeconds = newTimerValue
-        currentSecondsFreeze = newTimerValue
         hapticsViewModel.doGentleVibration()
+        currentSetData = currentSetData.copy(endTimer = currentSeconds)
         updateInteractionTime()
     }
 
@@ -153,34 +148,63 @@ private fun RestTimerBlock(
         if (!hasBeenStartedOnce) hasBeenStartedOnce = true
     }
 
+    fun setTimerEditMode(enabled: Boolean) {
+        if (isTimerInEditMode == enabled) return
+        isTimerInEditMode = enabled
+        if (enabled) {
+            currentSetData = currentSetData.copy(endTimer = currentSeconds)
+            state.currentSetData = currentSetData
+            timerJob?.takeIf { it.isActive }?.cancel()
+            updateInteractionTime()
+        }
+    }
+
     skipConfirmAction.value = {
         state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
         viewModel.closeCustomDialog()
         onTimerEnd()
     }
-    restartTimerAction.value = { startTimerJob() }
+    restartTimerAction.value = {
+        setTimerEditMode(false)
+        startTimerJob()
+    }
 
     LaunchedEffect(currentSetData) { state.currentSetData = currentSetData }
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
             if (System.currentTimeMillis() - lastInteractionTime > 5000) {
-                isTimerInEditMode = false
+                setTimerEditMode(false)
             }
             delay(1000)
         }
     }
     LaunchedEffect(set.id) {
         delay(500)
-        if (!isTimerInEditMode) {
+        if (!isTimerInEditMode && !isAppInBackground) {
             startTimerJob()
         }
         if (state.startTime == null) state.startTime = LocalDateTime.now()
     }
-    LaunchedEffect(isPaused, isTimerInEditMode) {
+    LaunchedEffect(isPaused, isTimerInEditMode, isAppInBackground) {
         if (!hasBeenStartedOnce) return@LaunchedEffect
-        if (isPaused || isTimerInEditMode) timerJob?.takeIf { it.isActive }?.cancel()
-        else if (timerJob?.isActive != true) startTimerJob()
+        if (isPaused || isTimerInEditMode || isAppInBackground) {
+            timerJob?.takeIf { it.isActive }?.cancel()
+        } else if (timerJob?.isActive != true && currentSeconds > 0) {
+            startTimerJob()
+        }
     }
+
+    LifecycleObserver(
+        onPaused = {
+            isAppInBackground = true
+            currentSetData = currentSetData.copy(endTimer = currentSeconds)
+            state.currentSetData = currentSetData
+            timerJob?.takeIf { it.isActive }?.cancel()
+        },
+        onResumed = {
+            isAppInBackground = false
+        }
+    )
 
     val timerTextStyle = MaterialTheme.typography.numeralSmall
 
@@ -195,11 +219,7 @@ private fun RestTimerBlock(
                 modifier = Modifier.combinedClickable(
                     onClick = {},
                     onLongClick = {
-                        currentSecondsFreeze = currentSeconds
-                        amountToWaitFreeze = amountToWait
-                        state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
-                        isTimerInEditMode = !isTimerInEditMode
-                        updateInteractionTime()
+                        setTimerEditMode(!isTimerInEditMode)
                         hapticsViewModel.doGentleVibration()
                     },
                     onDoubleClick = {}
@@ -227,8 +247,8 @@ private fun RestTimerBlock(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
-                    onCloseClick = { isTimerInEditMode = false },
-                    content = { textComposable(seconds = currentSecondsFreeze) }
+                    onCloseClick = { setTimerEditMode(false) },
+                    content = { textComposable(seconds = currentSeconds) }
                 )
             }
         } else {
@@ -254,7 +274,7 @@ private fun RestTimerBlock(
             endAngle = 230f,
         )
         textComposable(
-            seconds = if (isTimerInEditMode) currentSecondsFreeze else currentSeconds,
+            seconds = currentSeconds,
             modifier = Modifier.align(Alignment.BottomCenter),
             style = MaterialTheme.typography.labelMedium
         )
@@ -435,4 +455,3 @@ fun RestScreen(
         }
     )
 }
-

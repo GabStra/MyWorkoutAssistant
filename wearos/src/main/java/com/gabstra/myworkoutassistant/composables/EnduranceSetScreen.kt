@@ -245,8 +245,6 @@ fun EnduranceSetScreen (
     fun EnduranceRunningDisplay(initialMillis: Int) {
         val setData = state.currentSetData as? EnduranceSetData
         val displayMillis = setData?.endTimer ?: initialMillis
-        val previousTimer = previousSetStartTimer ?: (setData?.startTimer ?: initialMillis)
-        val isDifferent = displayMillis != previousTimer
         val overLimit = setData != null && displayMillis >= setData.startTimer && !set.autoStop
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -267,7 +265,7 @@ fun EnduranceSetScreen (
                 ),
                 seconds = displayMillis / 1000,
                 style = itemStyle,
-                color = if (overLimit) Green else if (isDifferent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                color = if (overLimit) Green else MaterialTheme.colorScheme.onBackground,
             )
         }
     }
