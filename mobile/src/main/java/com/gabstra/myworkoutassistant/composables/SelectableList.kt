@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
@@ -23,34 +21,19 @@ fun <T, K> SelectableList(
     modifier: Modifier,
     items: List<T>,
     selectedIds: Set<K>,
-    useLazyLayout: Boolean = true,
     keySelector: (T) -> K,
     itemContent: @Composable (T) -> Unit,
     onItemSelectionToggle: ((T) -> Unit)? = null,
 ) {
-    if (useLazyLayout) {
-        LazyColumn(modifier = modifier) {
-            items(items = items) { item ->
-                SelectableListRow(
-                    item = item,
-                    selectionMode = selectionMode,
-                    isSelected = selectedIds.contains(keySelector(item)),
-                    onItemSelectionToggle = onItemSelectionToggle,
-                    itemContent = itemContent
-                )
-            }
-        }
-    } else {
-        Column(modifier = modifier) {
-            for (item in items) {
-                SelectableListRow(
-                    item = item,
-                    selectionMode = selectionMode,
-                    isSelected = selectedIds.contains(keySelector(item)),
-                    onItemSelectionToggle = onItemSelectionToggle,
-                    itemContent = itemContent
-                )
-            }
+    Column(modifier = modifier) {
+        for (item in items) {
+            SelectableListRow(
+                item = item,
+                selectionMode = selectionMode,
+                isSelected = selectedIds.contains(keySelector(item)),
+                onItemSelectionToggle = onItemSelectionToggle,
+                itemContent = itemContent
+            )
         }
     }
 }
