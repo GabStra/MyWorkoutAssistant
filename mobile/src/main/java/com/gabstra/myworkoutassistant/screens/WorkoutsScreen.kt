@@ -366,6 +366,12 @@ fun WorkoutsScreen(
         }
     }
 
+    LaunchedEffect(updateMessage, allEnabledWorkouts.map { it.id }.toSet()) {
+        if (updateMessage != null && allEnabledWorkouts.isNotEmpty()) {
+            appViewModel.loadWorkoutHistories(allEnabledWorkouts)
+        }
+    }
+
     LaunchedEffect(groupedWorkoutsHistories) {
         // #region agent log
         Log.d(TAG, "observeGrouped H4 isNull=${groupedWorkoutsHistories == null} groupedSize=${groupedWorkoutsHistories?.size ?: -1}")
