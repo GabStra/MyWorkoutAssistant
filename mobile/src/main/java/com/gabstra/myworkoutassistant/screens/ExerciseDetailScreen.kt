@@ -49,7 +49,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -70,7 +69,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -298,29 +296,26 @@ fun ComponentRenderer(
         }
 
         is RestSet -> {
-            Surface(
+            StyledCard(
                 modifier = modifier.fillMaxWidth(),
-                shape = RectangleShape,
-                color = if (exercise.enabled) {
-                    MaterialTheme.colorScheme.surfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                }
+                backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                enabled = exercise.enabled
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
+                        modifier = Modifier.fillMaxWidth(),
                         text = "REST ${formatTime(set.timeInSeconds)}",
                         textAlign = TextAlign.Center,
                         color = if (exercise.enabled) {
-                            MaterialTheme.colorScheme.onBackground
-                        } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            DisabledContentGray
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )
