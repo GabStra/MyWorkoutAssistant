@@ -648,58 +648,6 @@ fun WorkoutsScreen(
                         }
                     }
 
-                    // Plan Selector
-                    if ((pagerState.currentPage == 1 || pagerState.currentPage == 3) && allPlans.size > 1) {
-                        var planSelectorExpanded by remember { mutableStateOf(false) }
-                        val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
-                        val dropdownBackground = DarkGray
-                        val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
-
-                        ExposedDropdownMenuBox(
-                            expanded = planSelectorExpanded,
-                            onExpandedChange = { planSelectorExpanded = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 15.dp, vertical = 8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = selectedPlan?.name ?: "Select Plan",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = {
-                                    Text(
-                                        "Workout Plan",
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(),
-                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-                            )
-
-                            ExposedDropdownMenu(
-                                expanded = planSelectorExpanded,
-                                modifier = Modifier.background(dropdownBackground),
-                                border = BorderStroke(1.dp, dropdownBorderColor),
-                                onDismissRequest = { planSelectorExpanded = false }
-                            ) {
-                                AppMenuContent {
-                                    allPlans.distinctBy { it.id }.forEach { plan ->
-                                        AppDropdownMenuItem(
-                                            text = { Text(plan.name) },
-                                            onClick = {
-                                                appViewModel.setSelectedWorkoutPlanId(plan.id)
-                                                planSelectorExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     HorizontalPager(
                         modifier = Modifier
                             .fillMaxSize()
@@ -747,22 +695,31 @@ fun WorkoutsScreen(
                                     }
 
                                     1 -> {
-                                        WorkoutsListTab(
-                                            workouts = activeWorkouts,
-                                            selectedWorkouts = selectedWorkouts,
-                                            isSelectionModeActive = isWorkoutSelectionModeActive,
-                                            appViewModel = appViewModel,
-                                            onWorkoutClick = { workout ->
-                                                appViewModel.setScreenData(
-                                                    ScreenData.WorkoutDetail(workout.id)
-                                                )
-                                            },
-                                            onSelectionChange = { selectedWorkouts = it },
-                                            onSelectionModeChange = {
-                                                isWorkoutSelectionModeActive = it
-                                            },
-                                            selectedPlanId = selectedPlanFilter
-                                        )
+                                        Column(modifier = Modifier.fillMaxSize()) {
+                                            WorkoutPlanFilterPicker(
+                                                allPlans = allPlans,
+                                                selectedPlanFilter = selectedPlanFilter,
+                                                onPlanSelected = { planId ->
+                                                    appViewModel.setSelectedWorkoutPlanId(planId)
+                                                }
+                                            )
+                                            WorkoutsListTab(
+                                                workouts = activeWorkouts,
+                                                selectedWorkouts = selectedWorkouts,
+                                                isSelectionModeActive = isWorkoutSelectionModeActive,
+                                                appViewModel = appViewModel,
+                                                onWorkoutClick = { workout ->
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.WorkoutDetail(workout.id)
+                                                    )
+                                                },
+                                                onSelectionChange = { selectedWorkouts = it },
+                                                onSelectionModeChange = {
+                                                    isWorkoutSelectionModeActive = it
+                                                },
+                                                selectedPlanId = selectedPlanFilter
+                                            )
+                                        }
                                     }
 
                                     2 -> {
@@ -790,14 +747,23 @@ fun WorkoutsScreen(
                                     }
 
                                     3 -> {
-                                        WorkoutsAlarmsTab(
-                                            workouts = filteredWorkouts,
-                                            enabledWorkouts = enabledWorkouts,
-                                            workoutScheduleDao = workoutScheduleDao,
-                                            scope = scope,
-                                            onSyncClick = onSyncClick,
-                                            updateMessage = updateMessage
-                                        )
+                                        Column(modifier = Modifier.fillMaxSize()) {
+                                            WorkoutPlanFilterPicker(
+                                                allPlans = allPlans,
+                                                selectedPlanFilter = selectedPlanFilter,
+                                                onPlanSelected = { planId ->
+                                                    appViewModel.setSelectedWorkoutPlanId(planId)
+                                                }
+                                            )
+                                            WorkoutsAlarmsTab(
+                                                workouts = filteredWorkouts,
+                                                enabledWorkouts = enabledWorkouts,
+                                                workoutScheduleDao = workoutScheduleDao,
+                                                scope = scope,
+                                                onSyncClick = onSyncClick,
+                                                updateMessage = updateMessage
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -896,5 +862,66 @@ fun WorkoutsScreen(
 
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
         LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkoutPlanFilterPicker(
+    allPlans: List<WorkoutPlan>,
+    selectedPlanFilter: UUID?,
+    onPlanSelected: (UUID) -> Unit
+) {
+    if (allPlans.size <= 1) {
+        return
+    }
+
+    var planSelectorExpanded by remember { mutableStateOf(false) }
+    val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
+    val dropdownBackground = DarkGray
+    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
+
+    ExposedDropdownMenuBox(
+        expanded = planSelectorExpanded,
+        onExpandedChange = { planSelectorExpanded = it },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 15.dp, vertical = 8.dp)
+    ) {
+        OutlinedTextField(
+            value = selectedPlan?.name ?: "Select Plan",
+            onValueChange = {},
+            readOnly = true,
+            label = {
+                Text(
+                    "Workout Plan",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(),
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+        )
+
+        ExposedDropdownMenu(
+            expanded = planSelectorExpanded,
+            modifier = Modifier.background(dropdownBackground),
+            border = BorderStroke(1.dp, dropdownBorderColor),
+            onDismissRequest = { planSelectorExpanded = false }
+        ) {
+            AppMenuContent {
+                allPlans.distinctBy { it.id }.forEach { plan ->
+                    AppDropdownMenuItem(
+                        text = { Text(plan.name) },
+                        onClick = {
+                            onPlanSelected(plan.id)
+                            planSelectorExpanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }

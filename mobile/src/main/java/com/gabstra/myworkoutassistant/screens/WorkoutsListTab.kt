@@ -110,7 +110,7 @@ fun WorkoutsListTab(
                         ) {
                             Column(
                                 modifier = Modifier
-                                    .fillMaxSize()
+                                    .fillMaxWidth()
                                     .padding(15.dp),
                                 verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
