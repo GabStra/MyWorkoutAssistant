@@ -35,8 +35,8 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -932,8 +932,8 @@ fun WorkoutHistoryScreen(
                                                                         )
                                                                     }) {
                                                                     Icon(
-                                                                        imageVector = Icons.Filled.Search,
-                                                                        contentDescription = "Details",
+                                                                        imageVector = Icons.Filled.Info,
+                                                                        contentDescription = "View details",
                                                                         tint = MaterialTheme.colorScheme.onBackground
                                                                     )
                                                                 }
@@ -971,8 +971,8 @@ fun WorkoutHistoryScreen(
                                                             )
                                                         }) {
                                                         Icon(
-                                                            imageVector = Icons.Filled.Search,
-                                                            contentDescription = "Details",
+                                                            imageVector = Icons.Filled.Info,
+                                                            contentDescription = "View details",
                                                             tint = MaterialTheme.colorScheme.onBackground
                                                         )
                                                     }
