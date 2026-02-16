@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
@@ -21,47 +23,72 @@ fun <T, K> SelectableList(
     modifier: Modifier,
     items: List<T>,
     selectedIds: Set<K>,
+    useLazyLayout: Boolean = true,
     keySelector: (T) -> K,
     itemContent: @Composable (T) -> Unit,
     onItemSelectionToggle: ((T) -> Unit)? = null,
 ) {
-    Column(
-        modifier = modifier
-    ) {
-        for (item in items) {
-            val isSelected = selectedIds.contains(keySelector(item))
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.sm),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Checkbox container - only allocated when selection mode is active
-                if (selectionMode) {
-                    Box(
-                        modifier = Modifier.width(Spacing.xl),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Checkbox(
-                            checked = isSelected,
-                            onCheckedChange = { onItemSelectionToggle?.invoke(item) },
-                            colors = CheckboxDefaults.colors().copy(
-                                checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                                uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(Spacing.sm))
-                }
-
-                // Item content
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    itemContent(item)
-                }
+    if (useLazyLayout) {
+        LazyColumn(modifier = modifier) {
+            items(items = items) { item ->
+                SelectableListRow(
+                    item = item,
+                    selectionMode = selectionMode,
+                    isSelected = selectedIds.contains(keySelector(item)),
+                    onItemSelectionToggle = onItemSelectionToggle,
+                    itemContent = itemContent
+                )
+            }
+        }
+    } else {
+        Column(modifier = modifier) {
+            for (item in items) {
+                SelectableListRow(
+                    item = item,
+                    selectionMode = selectionMode,
+                    isSelected = selectedIds.contains(keySelector(item)),
+                    onItemSelectionToggle = onItemSelectionToggle,
+                    itemContent = itemContent
+                )
             }
         }
     }
 }
 
+@Composable
+private fun <T> SelectableListRow(
+    item: T,
+    selectionMode: Boolean,
+    isSelected: Boolean,
+    onItemSelectionToggle: ((T) -> Unit)?,
+    itemContent: @Composable (T) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (selectionMode) {
+            Box(
+                modifier = Modifier.width(Spacing.xl),
+                contentAlignment = Alignment.Center
+            ) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onItemSelectionToggle?.invoke(item) },
+                    colors = CheckboxDefaults.colors().copy(
+                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.width(Spacing.sm))
+        }
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            itemContent(item)
+        }
+    }
+}

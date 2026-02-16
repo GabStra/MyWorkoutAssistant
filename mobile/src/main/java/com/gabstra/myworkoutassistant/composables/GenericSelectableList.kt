@@ -215,6 +215,7 @@ fun <T, K> GenericSelectableList(
             .padding(it ?: PaddingValues(0.dp)),
         items = items,
         selectedIds = selectedIds,
+        useLazyLayout = isDragDisabled,
         keySelector = keySelector,
         onItemSelectionToggle = { item ->
             val newSelection = toggleSelectionById(selectedItems, item, keySelector)
