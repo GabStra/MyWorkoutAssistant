@@ -10,8 +10,10 @@ import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -133,6 +135,13 @@ fun ExerciseDetail(
                 modifier = Modifier.fillMaxSize(),
                 state = updatedState,
                 onTimerEnd = {
+                    if (!MyApplication.isAppInForeground()) {
+                        showTimerCompletedNotification(
+                            context = context,
+                            title = "Set timer complete",
+                            message = "Time for the next set"
+                        )
+                    }
                     viewModel.storeSetData()
                     viewModel.pushAndStoreWorkoutData(false, context) {
                         viewModel.goToNextState()
@@ -153,6 +162,13 @@ fun ExerciseDetail(
             modifier = Modifier.fillMaxSize(),
             state = updatedState,
             onTimerEnd = {
+                if (!MyApplication.isAppInForeground()) {
+                    showTimerCompletedNotification(
+                        context = context,
+                        title = "Set timer complete",
+                        message = "Time for the next set"
+                    )
+                }
                 viewModel.storeSetData()
                 viewModel.pushAndStoreWorkoutData(false, context) {
                     viewModel.goToNextState()

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,7 +42,6 @@ import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
-import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
@@ -51,7 +49,6 @@ import com.gabstra.myworkoutassistant.composables.PagePlates
 import com.gabstra.myworkoutassistant.composables.PageProgressionComparison
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.composables.TimeViewer
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -60,14 +57,11 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import java.time.Duration
 import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
@@ -81,23 +75,40 @@ private fun RestTimerBlock(
     restartTimerAction: androidx.compose.runtime.MutableState<(() -> Unit)?>,
     isEditModeState: androidx.compose.runtime.MutableState<Boolean>,
 ) {
-    val scope = rememberWearCoroutineScope()
-    var timerJob by remember { mutableStateOf<Job?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose { timerJob?.cancel() }
-    }
-
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
     var isTimerInEditMode by remember { mutableStateOf(false) }
+    var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var hasBeenStartedOnce by remember { mutableStateOf(false) }
-    var isAppInBackground by remember { mutableStateOf(false) }
     val isPaused by viewModel.isPaused
 
     isEditModeState.value = isTimerInEditMode
+
+    fun registerRestTimer() {
+        if (state.startTime == null) {
+            state.startTime = LocalDateTime.now().minusSeconds((amountToWait - currentSeconds).coerceAtLeast(0).toLong())
+        }
+        if (!viewModel.workoutTimerService.isTimerRegistered(set.id) && currentSeconds > 0) {
+            viewModel.workoutTimerService.registerTimer(
+                state = state,
+                callbacks = WorkoutTimerService.TimerCallbacks(
+                    onTimerEnd = {
+                        hapticsViewModel.doHardVibrationWithBeep()
+                        onTimerEnd()
+                    },
+                    onTimerEnabled = {},
+                    onTimerDisabled = {}
+                )
+            )
+        }
+    }
+
+    fun unregisterRestTimer() {
+        if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
+            viewModel.workoutTimerService.unregisterTimer(set.id)
+        }
+    }
 
     fun computeProgress(): Float {
         if (amountToWait <= 0) return 0f
@@ -130,46 +141,49 @@ private fun RestTimerBlock(
         updateInteractionTime()
     }
 
-    fun startTimerJob() {
-        timerJob?.cancel()
-        timerJob = scope.launch {
-            while (currentSeconds > 0) {
-                val now = LocalDateTime.now()
-                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-                delay(Duration.between(now, nextSecond).toMillis())
-                currentSeconds -= 1
-                if (currentSeconds == 5) viewModel.lightScreenUp()
-                currentSetData = currentSetData.copy(endTimer = currentSeconds)
-            }
-            state.currentSetData = currentSetData.copy(endTimer = 0)
-            hapticsViewModel.doHardVibrationWithBeep()
-            onTimerEnd()
-        }
-        if (!hasBeenStartedOnce) hasBeenStartedOnce = true
-    }
-
     fun setTimerEditMode(enabled: Boolean) {
         if (isTimerInEditMode == enabled) return
         isTimerInEditMode = enabled
         if (enabled) {
-            currentSetData = currentSetData.copy(endTimer = currentSeconds)
+            wasTimerRunningBeforeEditMode = viewModel.workoutTimerService.isTimerRegistered(set.id)
+            currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
             state.currentSetData = currentSetData
-            timerJob?.takeIf { it.isActive }?.cancel()
+            unregisterRestTimer()
             updateInteractionTime()
+        } else if (!isPaused && wasTimerRunningBeforeEditMode && currentSeconds > 0) {
+            currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            state.currentSetData = currentSetData
+            state.startTime = LocalDateTime.now().minusSeconds((amountToWait - currentSeconds).coerceAtLeast(0).toLong())
+            registerRestTimer()
+            wasTimerRunningBeforeEditMode = false
         }
     }
 
     skipConfirmAction.value = {
+        unregisterRestTimer()
         state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
         viewModel.closeCustomDialog()
         onTimerEnd()
     }
     restartTimerAction.value = {
         setTimerEditMode(false)
-        startTimerJob()
+        if (!isPaused && currentSeconds > 0) {
+            state.startTime = LocalDateTime.now().minusSeconds((amountToWait - currentSeconds).coerceAtLeast(0).toLong())
+            registerRestTimer()
+        }
     }
 
-    LaunchedEffect(currentSetData) { state.currentSetData = currentSetData }
+    LaunchedEffect(state.currentSetData) {
+        val latest = state.currentSetData as? RestSetData ?: return@LaunchedEffect
+        currentSetData = latest
+        if (!isTimerInEditMode) {
+            currentSeconds = latest.endTimer
+            amountToWait = latest.startTimer
+        }
+        if (latest.endTimer == 5) {
+            viewModel.lightScreenUp()
+        }
+    }
     LaunchedEffect(isTimerInEditMode) {
         while (isTimerInEditMode) {
             if (System.currentTimeMillis() - lastInteractionTime > 5000) {
@@ -178,33 +192,14 @@ private fun RestTimerBlock(
             delay(1000)
         }
     }
-    LaunchedEffect(set.id) {
-        delay(500)
-        if (!isTimerInEditMode && !isAppInBackground) {
-            startTimerJob()
-        }
-        if (state.startTime == null) state.startTime = LocalDateTime.now()
-    }
-    LaunchedEffect(isPaused, isTimerInEditMode, isAppInBackground) {
-        if (!hasBeenStartedOnce) return@LaunchedEffect
-        if (isPaused || isTimerInEditMode || isAppInBackground) {
-            timerJob?.takeIf { it.isActive }?.cancel()
-        } else if (timerJob?.isActive != true && currentSeconds > 0) {
-            startTimerJob()
+    LaunchedEffect(set.id, isPaused, isTimerInEditMode, currentSeconds, amountToWait) {
+        if (isPaused || isTimerInEditMode || currentSeconds <= 0) {
+            unregisterRestTimer()
+        } else {
+            state.currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            registerRestTimer()
         }
     }
-
-    LifecycleObserver(
-        onPaused = {
-            isAppInBackground = true
-            currentSetData = currentSetData.copy(endTimer = currentSeconds)
-            state.currentSetData = currentSetData
-            timerJob?.takeIf { it.isActive }?.cancel()
-        },
-        onResumed = {
-            isAppInBackground = false
-        }
-    )
 
     val timerTextStyle = MaterialTheme.typography.numeralSmall
 

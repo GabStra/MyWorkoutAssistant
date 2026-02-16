@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.workout.timer
 
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +23,12 @@ class WorkoutTimerService(
     private val viewModelScope: CoroutineScope,
     private val isPaused: () -> Boolean
 ) {
+    private enum class TimerType {
+        ENDURANCE_SET,
+        TIMED_DURATION_SET,
+        REST
+    }
+
     data class TimerCallbacks(
         val onTimerEnd: () -> Unit,
         val onTimerEnabled: () -> Unit,
@@ -29,14 +36,14 @@ class WorkoutTimerService(
     )
 
     private data class ActiveTimer(
-        val state: WorkoutState.Set,
+        val setState: WorkoutState.Set? = null,
+        val restState: WorkoutState.Rest? = null,
         val callbacks: TimerCallbacks,
-        val isEndurance: Boolean // true for EnduranceSet, false for TimedDurationSet
+        val type: TimerType
     )
 
     private val activeTimers = mutableMapOf<UUID, ActiveTimer>()
     private var updateJob: Job? = null
-    private var backgroundPausedAt: LocalDateTime? = null
 
     /**
      * Register a timer to be tracked and updated by the service.
@@ -55,9 +62,9 @@ class WorkoutTimerService(
         }
 
         activeTimers[state.set.id] = ActiveTimer(
-            state = state,
+            setState = state,
             callbacks = callbacks,
-            isEndurance = isEndurance
+            type = if (isEndurance) TimerType.ENDURANCE_SET else TimerType.TIMED_DURATION_SET
         )
 
         // Start update loop if not already running
@@ -66,6 +73,33 @@ class WorkoutTimerService(
         }
 
         // Call onTimerEnabled when registering
+        callbacks.onTimerEnabled()
+    }
+
+    /**
+     * Register a rest timer to be tracked and updated by the service.
+     * The timer must have state.startTime set before calling this.
+     */
+    fun registerTimer(
+        state: WorkoutState.Rest,
+        callbacks: TimerCallbacks
+    ) {
+        val setData = state.currentSetData as? RestSetData ?: return
+        if (state.startTime == null || setData.endTimer <= 0) {
+            // Timer hasn't started yet or is already completed.
+            return
+        }
+
+        activeTimers[state.set.id] = ActiveTimer(
+            restState = state,
+            callbacks = callbacks,
+            type = TimerType.REST
+        )
+
+        if (updateJob?.isActive != true) {
+            startUpdateLoop()
+        }
+
         callbacks.onTimerEnabled()
     }
 
@@ -104,12 +138,7 @@ class WorkoutTimerService(
      * Freeze active timers when app moves to background.
      */
     fun pauseForBackground() {
-        if (backgroundPausedAt != null) return
-        val now = LocalDateTime.now()
-        backgroundPausedAt = now
-        activeTimers.values.forEach { timer ->
-            updateTimerProgress(timer, now)
-        }
+        // Keep timers running while backgrounded for workout UX consistency.
     }
 
     /**
@@ -117,17 +146,7 @@ class WorkoutTimerService(
      * for time spent in background.
      */
     fun resumeFromBackground() {
-        val pausedAt = backgroundPausedAt ?: return
-        backgroundPausedAt = null
-
-        val now = LocalDateTime.now()
-        val pausedDuration = Duration.between(pausedAt, now)
-        if (pausedDuration.isZero || pausedDuration.isNegative) return
-
-        activeTimers.values.forEach { timer ->
-            val startTime = timer.state.startTime ?: return@forEach
-            timer.state.startTime = startTime.plus(pausedDuration)
-        }
+        // No compensation needed because timers are not paused in background.
     }
 
     private fun startUpdateLoop() {
@@ -141,7 +160,7 @@ class WorkoutTimerService(
                 if (!isActive) break
 
                 // Skip updates if paused
-                if (isPaused() || backgroundPausedAt != null) {
+                if (isPaused()) {
                     delay(1000)
                     continue
                 }
@@ -152,7 +171,10 @@ class WorkoutTimerService(
                 activeTimers.values.forEach { timer ->
                     val completed = updateTimerProgress(timer, now = updateNow)
                     if (completed) {
-                        timersToRemove.add(timer.state.set.id)
+                        val timerId = timer.setState?.set?.id ?: timer.restState?.set?.id
+                        if (timerId != null) {
+                            timersToRemove.add(timerId)
+                        }
                     }
                 }
 
@@ -176,15 +198,12 @@ class WorkoutTimerService(
      * @return true if timer completed, false otherwise
      */
     private fun updateTimerProgress(timer: ActiveTimer, now: LocalDateTime): Boolean {
-        val state = timer.state
-        val startTime = state.startTime ?: return false
-
-        val elapsedMillis = Duration.between(startTime, now).toMillis().toInt().coerceAtLeast(0)
-
-        val currentSetData = state.currentSetData
-
-        when {
-            timer.isEndurance -> {
+        when (timer.type) {
+            TimerType.ENDURANCE_SET -> {
+                val state = timer.setState ?: return false
+                val startTime = state.startTime ?: return false
+                val elapsedMillis = Duration.between(startTime, now).toMillis().toInt().coerceAtLeast(0)
+                val currentSetData = state.currentSetData
                 // EnduranceSet: count up from 0
                 val setData = currentSetData as? EnduranceSetData ?: return false
                 val newEndTimer = elapsedMillis.coerceAtMost(setData.startTimer)
@@ -196,14 +215,18 @@ class WorkoutTimerService(
 
                 // Check if timer reached startTimer (for autoStop) or exceeded it
                 if (newEndTimer >= setData.startTimer) {
-                    if (timer.state.set.let { it is com.gabstra.myworkoutassistant.shared.sets.EnduranceSet && it.autoStop }) {
+                    if (state.set.let { it is com.gabstra.myworkoutassistant.shared.sets.EnduranceSet && it.autoStop }) {
                         state.currentSetData = setData.copy(endTimer = setData.startTimer)
                         return true
                     }
                 }
                 return false
             }
-            else -> {
+            TimerType.TIMED_DURATION_SET -> {
+                val state = timer.setState ?: return false
+                val startTime = state.startTime ?: return false
+                val elapsedMillis = Duration.between(startTime, now).toMillis().toInt().coerceAtLeast(0)
+                val currentSetData = state.currentSetData
                 // TimedDurationSet: count down from startTimer
                 val setData = currentSetData as? TimedDurationSetData ?: return false
                 val remainingMillis = (setData.startTimer - elapsedMillis).coerceAtLeast(0)
@@ -215,6 +238,24 @@ class WorkoutTimerService(
 
                 // Timer completed when it reaches 0
                 if (remainingMillis <= 0) {
+                    state.currentSetData = setData.copy(endTimer = 0)
+                    return true
+                }
+                return false
+            }
+            TimerType.REST -> {
+                val state = timer.restState ?: return false
+                val startTime = state.startTime ?: return false
+                val elapsedSeconds = Duration.between(startTime, now).seconds.toInt().coerceAtLeast(0)
+                val currentSetData = state.currentSetData
+                val setData = currentSetData as? RestSetData ?: return false
+                val remainingSeconds = (setData.startTimer - elapsedSeconds).coerceAtLeast(0)
+
+                if (setData.endTimer != remainingSeconds) {
+                    state.currentSetData = setData.copy(endTimer = remainingSeconds)
+                }
+
+                if (remainingSeconds <= 0) {
                     state.currentSetData = setData.copy(endTimer = 0)
                     return true
                 }

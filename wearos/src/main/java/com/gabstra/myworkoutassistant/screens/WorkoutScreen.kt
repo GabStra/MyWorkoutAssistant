@@ -42,8 +42,10 @@ import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
@@ -488,6 +490,13 @@ fun WorkoutScreen(
                                 hearthRateChart = { heartRateChartComposable() },
                                 onTimerEnd = {
                                     try {
+                                        if (!MyApplication.isAppInForeground()) {
+                                            showTimerCompletedNotification(
+                                                context = context,
+                                                title = "Rest complete",
+                                                message = "Time for the next set"
+                                            )
+                                        }
                                         viewModel.storeSetData()
                                         val isDone = viewModel.isNextStateCompleted()
                                         viewModel.pushAndStoreWorkoutData(isDone, context){

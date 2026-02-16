@@ -85,6 +85,52 @@ fun cancelWorkoutInProgressNotification(context: Context) {
 }
 
 @SuppressLint("MissingPermission")
+fun showTimerCompletedNotification(
+    context: Context,
+    title: String = "Timer completed",
+    message: String = "Tap to continue workout"
+) {
+    val channelId = "timer_completion_channel"
+    val notificationId = 3
+
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+    }
+    val pendingIntent = PendingIntent.getActivity(
+        context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val channel = NotificationChannel(
+        channelId,
+        "Timer Completion",
+        NotificationManager.IMPORTANCE_HIGH
+    ).apply {
+        description = "Notifications when workout timers complete"
+        enableVibration(true)
+    }
+    val notificationManager: NotificationManager =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    notificationManager.createNotificationChannel(channel)
+
+    val notification = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(R.drawable.ic_workout_icon)
+        .setContentTitle(title)
+        .setContentText(message)
+        .setContentIntent(pendingIntent)
+        .setAutoCancel(true)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setDefaults(NotificationCompat.DEFAULT_ALL)
+        .setCategory(NotificationCompat.CATEGORY_ALARM)
+        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        .setColor(ContextCompat.getColor(context, R.color.ic_launcher_background))
+        .build()
+
+    with(NotificationManagerCompat.from(context)) {
+        notify(notificationId, notification)
+    }
+}
+
+@SuppressLint("MissingPermission")
 fun showSyncCompleteNotification(context: Context) {
     val channelId = "sync_status_channel"
     val notificationId = 2
