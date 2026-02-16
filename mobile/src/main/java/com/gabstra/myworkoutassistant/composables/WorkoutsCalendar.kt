@@ -119,7 +119,12 @@ private fun Day(
                 )
                 .padding(3.dp)
         ) {
-            val textColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.onSurfaceVariant else if(shouldHighlight) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground
+            val textColor = when {
+                isOutOfBounds -> DisabledContentGray
+                isAfterToday -> MaterialTheme.colorScheme.onSurfaceVariant
+                shouldHighlight -> MaterialTheme.colorScheme.onPrimary
+                else -> MaterialTheme.colorScheme.onBackground
+            }
 
             val shape = if(shouldHighlight) CircleShape else null
 
