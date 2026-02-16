@@ -16,6 +16,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -400,71 +402,80 @@ private fun HeartRateDisplay(
     colorsByZone: Array<Color>,
     displayMode: Int
 ) {
+    val textWidth = if(displayMode == 0){
+        25.dp
+    }else{
+        50.dp
+    }
+
+    // Zone chip with black background, colored border, and colored text
+    val chipBorderColor = colorsByZone[currentZone]
+
+    val zoneText = "Z$currentZone"
+    val shape = RoundedCornerShape(12.dp)
+
+    val heartColor = if (bpm == 0)
+        MediumDarkGray
+    else
+        colorsByZone[currentZone]
+
+
     Row(
         modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(modifier = Modifier.weight(1f))
-        PulsingHeartWithBpm(
-            bpm = bpm,
-            tint = if (bpm == 0 || currentZone < 0 || currentZone >= colorsByZone.size)
-                MediumDarkGray
-            else
-                colorsByZone[currentZone]
-        )
-
-        val textWidth = if(displayMode == 0){
-            30.dp
-        }else{
-            50.dp
-        }
-
-        Row{
-            Text(
-                modifier = Modifier.alignByBaseline().width(textWidth),
-                text = textToDisplay,
-                textAlign = TextAlign.End,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ){
+            PulsingHeartWithBpm(
+                bpm = bpm,
+                tint = heartColor
             )
-            if (bpm != 0 && displayMode == 0) {
-                Spacer(modifier = Modifier.width(2.5.dp))
-                Text(
-                    modifier = Modifier.alignByBaseline(),
-                    text = "bpm",
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-            }
-        }
-        if(bpm != 0){
-            Spacer(modifier = Modifier.width(3.dp))
-            // Zone chip with black background, colored border, and colored text
-            val chipBorderColor = colorsByZone[currentZone]
 
-            val zoneText = "Z$currentZone"
-            val shape = RoundedCornerShape(12.dp)
-            Box(
-                modifier = Modifier
-                    .border(BorderStroke(1.dp, chipBorderColor), shape)
-                    .background(
-                        color = MaterialTheme.colorScheme.background,
-                        shape = shape
-                    )
-                    .width(30.dp)
-                    .padding(2.5.dp)
-                ,
-                contentAlignment = Alignment.Center
-            ) {
+            Row{
                 Text(
-                    text = zoneText,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
-                        includeFontPadding = false
-                    )
-                    ),
-                    color = chipBorderColor
+                    modifier = Modifier.alignByBaseline().widthIn(min = textWidth),
+                    text = textToDisplay,
+                    textAlign = TextAlign.End,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
                 )
+
+                if (bpm != 0 && displayMode == 0) {
+                    Spacer(modifier = Modifier.size(2.5.dp))
+                    Text(
+                        modifier = Modifier.alignByBaseline(),
+                        text = "bpm",
+                        style = MaterialTheme.typography.bodyExtraSmall,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+            if(bpm != 0){
+                Box(
+                    modifier = Modifier
+                        .border(BorderStroke(1.dp, chipBorderColor), shape)
+                        .background(
+                            color = MaterialTheme.colorScheme.background,
+                            shape = shape
+                        )
+                        .width(30.dp)
+
+                    ,
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        modifier = Modifier.padding(2.5.dp),
+                        text = zoneText,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
+                            includeFontPadding = false
+                        )
+                        ),
+                        color = chipBorderColor
+                    )
+                }
             }
         }
 
@@ -788,11 +799,7 @@ private fun HeartRateView(
         derivedStateOf {
             when (displayMode) {
                 0 -> hr.toString()
-                1 -> if(mhrPercentage < 100){
-                    "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
-                }else{
-                    "100%"
-                }
+                1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
                 else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
             }
         }
@@ -1042,7 +1049,7 @@ private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
 private fun HeartRateCircularChartPreview() {
-    previewAppViewModel.switchHrDisplayMode()
+    //previewAppViewModel.switchHrDisplayMode()
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { createPreviewHapticsViewModel(context) }
     MaterialTheme(
@@ -1054,7 +1061,7 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(101f, 30),
+            hr = getHeartRateFromPercentage(98f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 65f,
             upperBoundMaxHRPercent = 75f
