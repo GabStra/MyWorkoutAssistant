@@ -403,10 +403,10 @@ fun ExerciseSetsViewer(
             val rowModifier = Modifier
                 .height(27.5.dp)
                 .padding(bottom = 2.5.dp)
-                .clip(RoundedCornerShape(25))
+                .clip(MaterialTheme.shapes.extraLarge)
                 .then(
                     if (borderColor != null) {
-                        Modifier.border(BorderStroke(1.dp, borderColor), RoundedCornerShape(25))
+                        Modifier.border(BorderStroke(1.dp, borderColor), MaterialTheme.shapes.extraLarge)
                     } else {
                         Modifier
                     }

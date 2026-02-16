@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.clip
 
@@ -59,7 +58,7 @@ fun MoveExercisesToWorkoutDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(MaterialTheme.shapes.small)
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
                                     .clickable {
                                         onMove(targetWorkout)
@@ -84,4 +83,3 @@ fun MoveExercisesToWorkoutDialog(
         )
     }
 }
-

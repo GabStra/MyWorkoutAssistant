@@ -57,7 +57,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -79,7 +78,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -98,6 +96,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.SecondarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
@@ -190,28 +189,24 @@ fun WorkoutComponentRenderer(
         }
 
         is Rest -> {
-            Surface(
+            SecondarySurface(
                 modifier = modifier.fillMaxWidth().then(titleModifier),
-                shape = RectangleShape,
-                color = if (workoutComponent.enabled) {
-                    MaterialTheme.colorScheme.surfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                }
+                enabled = workoutComponent.enabled
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(15.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val restColor = if (workoutComponent.enabled) {
-                        MaterialTheme.colorScheme.onBackground
+                        MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         DisabledContentGray
                     }
                     Text(
+                        modifier = Modifier.fillMaxWidth(),
                         text = "REST ${formatTime(workoutComponent.timeInSeconds)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = restColor,
@@ -1502,5 +1497,4 @@ fun WorkoutDetailScreen(
         }
     }
 }
-
 

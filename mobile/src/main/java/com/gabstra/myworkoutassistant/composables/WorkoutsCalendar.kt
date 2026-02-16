@@ -121,7 +121,7 @@ private fun Day(
         ) {
             val textColor = when {
                 isOutOfBounds -> DisabledContentGray
-                isAfterToday -> MaterialTheme.colorScheme.onSurfaceVariant
+                isAfterToday -> DisabledContentGray
                 shouldHighlight -> MaterialTheme.colorScheme.onPrimary
                 else -> MaterialTheme.colorScheme.onBackground
             }

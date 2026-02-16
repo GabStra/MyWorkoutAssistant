@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -77,12 +76,11 @@ fun StandardDialog(
                 )
             }
         },
-        shape = RoundedCornerShape(4.dp),
+        shape = MaterialTheme.shapes.small,
         containerColor = DarkGray,
         titleContentColor = MaterialTheme.colorScheme.onSurface,
         textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         tonalElevation = 0.dp,
     )
 }
-
 

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
@@ -15,8 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
@@ -41,11 +38,11 @@ fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
 
 @Composable
 fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Modifier){
-    val roundedCornerShape: Shape = RoundedCornerShape(16.dp)
+    val progressShape = MaterialTheme.shapes.large
 
     Box(
         modifier = modifier // Padding around the entire progress bar
-            .clip(roundedCornerShape) // Clip the box to have rounded corners
+            .clip(progressShape) // Clip the box to have rounded corners
             .fillMaxWidth() // Make the progress bar fill the width of its parent
     ) {
         SimpleProgressIndicator(
@@ -55,7 +52,7 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
             modifier = Modifier
                 .fillMaxWidth()
                 .height(16.dp)
-                .clip(roundedCornerShape) // Clip the progress bar to the rounded shape
+                .clip(progressShape) // Clip the progress bar to the rounded shape
         )
     }
 }
@@ -77,4 +74,3 @@ fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
         }
     }
 }
-

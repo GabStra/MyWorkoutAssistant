@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -26,14 +25,14 @@ fun Chip(
         modifier = Modifier
             .then(
                 if(backgroundColor == null)
-                    Modifier.border(ButtonDefaults.outlinedButtonBorder(true),RoundedCornerShape(25))
+                    Modifier.border(ButtonDefaults.outlinedButtonBorder(true), MaterialTheme.shapes.extraLarge)
                 else
                     Modifier
-                        .background(MaterialTheme.colorScheme.background, RoundedCornerShape(25))
+                        .background(MaterialTheme.colorScheme.background, MaterialTheme.shapes.extraLarge)
                         .border(BorderStroke(
                             width = 1.dp,
                             color = backgroundColor
-                        ),RoundedCornerShape(25))
+                        ), MaterialTheme.shapes.extraLarge)
             ),
         contentAlignment = Alignment.Center
     ) {

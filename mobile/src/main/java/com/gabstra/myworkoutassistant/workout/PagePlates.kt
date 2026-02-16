@@ -113,7 +113,7 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(25))
+                                        .clip(MaterialTheme.shapes.extraLarge)
                                         .background(backgroundColor)
                                         .height(30.dp),
                                     verticalAlignment = Alignment.CenterVertically

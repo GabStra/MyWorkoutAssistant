@@ -82,6 +82,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.SecondarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -296,9 +297,8 @@ fun ComponentRenderer(
         }
 
         is RestSet -> {
-            StyledCard(
+            SecondarySurface(
                 modifier = modifier.fillMaxWidth(),
-                backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
                 enabled = exercise.enabled
             ) {
                 Row(

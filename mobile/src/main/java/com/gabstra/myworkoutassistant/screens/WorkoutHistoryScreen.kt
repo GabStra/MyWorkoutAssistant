@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -81,10 +80,10 @@ import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
+import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -530,7 +529,7 @@ fun WorkoutHistoryScreen(
             disabledContentColor = DisabledContentGray
         )
         
-        StyledCard(
+        PrimarySurface(
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -595,7 +594,7 @@ fun WorkoutHistoryScreen(
             workoutSelector()
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                StyledCard {
+                PrimarySurface {
                     ExpandableContainer(
                         isOpen = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -749,7 +748,7 @@ fun WorkoutHistoryScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(16.dp)
-                                                .clip(RoundedCornerShape(16.dp)),
+                                                .clip(MaterialTheme.shapes.large),
                                             progressBarColor = colorsByZone[zone],
                                         )
                                     }
@@ -845,7 +844,7 @@ fun WorkoutHistoryScreen(
                             // Create an exercise with the historical sets
                             val exerciseWithHistorySets = exercise.copy(sets = sets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
                             
-                            StyledCard {
+                            PrimarySurface {
                                 if (hasTarget) {
                                     Column {
                                                 Column(
@@ -903,7 +902,7 @@ fun WorkoutHistoryScreen(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .height(16.dp)
-                                                            .clip(RoundedCornerShape(16.dp)),
+                                                            .clip(MaterialTheme.shapes.large),
                                                         progressBarColor = Color.hsl(
                                                             113f,
                                                             0.79f,
@@ -1007,7 +1006,7 @@ fun WorkoutHistoryScreen(
             ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .clip(MaterialTheme.shapes.medium)
                     .then(
                         if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
                     ) // Apply background color only if enabled
@@ -1032,7 +1031,7 @@ fun WorkoutHistoryScreen(
 
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .clip(MaterialTheme.shapes.medium)
                     .then(
                         if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
                     ) // Apply background color only if enabled
@@ -1201,10 +1200,9 @@ fun WorkoutHistoryScreen(
                             .fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ){
-                        StyledCard(
+                        PrimarySurface(
                             modifier = Modifier
                                 .padding(15.dp),
-                            
                         ) {
                             Text(
                                 modifier = Modifier

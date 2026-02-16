@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,7 +47,7 @@ fun CustomButton(
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(50))
+            .clip(MaterialTheme.shapes.extraLarge)
             .background(
                 when {
                     !enabled -> MaterialTheme.colorScheme.scrim
@@ -73,4 +72,3 @@ fun CustomButton(
         )
     }
 }
-

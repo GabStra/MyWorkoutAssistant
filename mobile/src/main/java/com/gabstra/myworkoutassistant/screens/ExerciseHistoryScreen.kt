@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -67,7 +66,7 @@ import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
@@ -320,7 +319,7 @@ fun ExerciseHistoryScreen(
             disabledContentColor = DisabledContentGray
         )
         
-        StyledCard(
+        PrimarySurface(
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
@@ -387,7 +386,7 @@ fun ExerciseHistoryScreen(
             ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .clip(MaterialTheme.shapes.medium)
                     .then(
                         if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
                     ) // Apply background color only if enabled
@@ -412,7 +411,7 @@ fun ExerciseHistoryScreen(
 
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp)) // Apply rounded corners to the Box
+                    .clip(MaterialTheme.shapes.medium)
                     .then(
                         if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
                     ) // Apply background color only if enabled
@@ -544,7 +543,7 @@ fun ExerciseHistoryScreen(
                             .fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        StyledCard(
+                        PrimarySurface(
                             modifier = Modifier
                                 .padding(15.dp),
                             ) {
@@ -675,7 +674,7 @@ fun ExerciseHistoryScreen(
                                         }
                                     }
 
-                                    StyledCard {
+                                    PrimarySurface {
                                         if (hasTarget) {
                                             Column {
                                                 Column(
@@ -736,7 +735,7 @@ fun ExerciseHistoryScreen(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .height(16.dp)
-                                                            .clip(RoundedCornerShape(16.dp)),
+                                                            .clip(MaterialTheme.shapes.large),
                                                         progressBarColor = Color.hsl(
                                                             113f,
                                                             0.79f,
