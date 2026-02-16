@@ -443,7 +443,7 @@ private fun HeartRateDisplay(
                 )
 
                 if (bpm != 0 && displayMode == 0) {
-                    Spacer(modifier = Modifier.size(2.5.dp))
+                    Spacer(modifier = Modifier.size(5.dp))
                     Text(
                         modifier = Modifier.alignByBaseline(),
                         text = "bpm",
