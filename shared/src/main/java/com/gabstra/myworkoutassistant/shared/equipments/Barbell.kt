@@ -45,7 +45,7 @@ class Barbell(
 
     override fun getWeightsCombinationsWithLabels(): Set<Pair<Double, String>> {
         return getWeightsCombinations().map { total ->
-            Pair(total, "${com.gabstra.myworkoutassistant.shared.formatWeight(total)} kg total")
+            Pair(total, "${com.gabstra.myworkoutassistant.shared.formatWeight(total)}")
         }.toSet()
     }
 }
