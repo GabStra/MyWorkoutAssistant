@@ -121,6 +121,7 @@ fun WorkoutsListTab(
                                     text = workout.name,
                                     color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
                                     style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 2
                                 )
                                 if (workout.description.isNotEmpty()) {
                                     Text(

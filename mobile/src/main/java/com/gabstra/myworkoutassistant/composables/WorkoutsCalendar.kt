@@ -27,7 +27,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -196,21 +195,26 @@ fun SimpleCalendarTitle(
             contentColor = MaterialTheme.colorScheme.onBackground,
             disabledContentColor = DisabledContentGray
         )
-        IconButton(
-            enabled = canGoBack,
-            onClick = {
-                scope.launch {
-                    currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.previousMonth
-                    calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
-                }
-            },
-            colors = navIconColors
+        Box(
+            modifier = Modifier.size(48.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Filled.ArrowBack,
-                contentDescription = "Previous Month", // More descriptive
-                modifier = Modifier.alpha(if (canGoBack) 1f else 0f)
-            )
+            if (canGoBack) {
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.previousMonth
+                            calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.previousMonth)
+                        }
+                    },
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "Previous Month"
+                    )
+                }
+            }
         }
 
         Text(
@@ -221,21 +225,26 @@ fun SimpleCalendarTitle(
             color = MaterialTheme.colorScheme.onBackground
         )
 
-        IconButton(
-            enabled = canGoForward,
-            onClick = {
-                scope.launch {
-                    currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.nextMonth
-                    calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
-                }
-            },
-            colors = navIconColors
+        Box(
+            modifier = Modifier.size(48.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Filled.ArrowForward,
-                contentDescription = "Next Month", // More descriptive
-                modifier = Modifier.alpha(if (canGoForward) 1f else 0f)
-            )
+            if (canGoForward) {
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            currentVisibleMonthYearMonth = calendarState.firstVisibleMonth.yearMonth.nextMonth
+                            calendarState.scrollToMonth(calendarState.firstVisibleMonth.yearMonth.nextMonth)
+                        }
+                    },
+                    colors = navIconColors
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowForward,
+                        contentDescription = "Next Month"
+                    )
+                }
+            }
         }
     }
 

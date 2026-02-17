@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,19 +46,16 @@ fun RangeDropdown(
     )
     {
         Text("Date range:")
-        Spacer(Modifier.width(2.5.dp))
+        Spacer(Modifier.width(5.dp))
         Box {
-            TextButton(onClick = { expanded = true }) { Text(label) }
+            FormPrimaryOutlinedButton(
+                text = label,
+                onClick = { expanded = true }
+            )
             AppDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
             ) {
-                AppDropdownMenuItem(text = { Text("Last 7 days") }, onClick = {
-                    onSelectedRangeChange(FilterRange.LAST_7_DAYS); expanded = false
-                })
-                AppDropdownMenuItem(text = { Text("Last 30 days") }, onClick = {
-                    onSelectedRangeChange(FilterRange.LAST_30_DAYS); expanded = false
-                })
                 AppDropdownMenuItem(text = { Text("Last week") }, onClick = {
                     onSelectedRangeChange(FilterRange.LAST_WEEK); expanded = false
                 })
