@@ -171,9 +171,14 @@ fun ExerciseHistoryScreen(
         durations.clear()
         oneRepMaxes.clear()
 
+        volumeEntryModel = null
+        durationEntryModel = null
+        oneRepMaxEntryModel = null
         volumeMarkerTarget = null
         durationMarkerTarget = null
         oneRepMaxMarkerTarget = null
+        selectedWorkoutHistory = null
+        setHistoriesByWorkoutHistoryId = emptyMap()
 
         if(workoutHistories.isEmpty()) return
 
@@ -302,7 +307,17 @@ fun ExerciseHistoryScreen(
     }
 
     LaunchedEffect(historiesToShow) {
-        if (historiesToShow.isEmpty()) return@LaunchedEffect
+        if (historiesToShow.isEmpty()) {
+            volumeEntryModel = null
+            durationEntryModel = null
+            oneRepMaxEntryModel = null
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            oneRepMaxMarkerTarget = null
+            selectedWorkoutHistory = null
+            setHistoriesByWorkoutHistoryId = emptyMap()
+            return@LaunchedEffect
+        }
         setCharts(historiesToShow)
     }
 
@@ -328,21 +343,27 @@ fun ExerciseHistoryScreen(
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
+                Box(
                     modifier = Modifier.size(25.dp),
-                    onClick = {
-                        val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index > 0) {
-                            selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                        }
-                    },
-                    enabled = canGoBack,
-                    colors = navIconColors
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowBack,
-                        contentDescription = "Previous"
-                    )
+                    if (canGoBack) {
+                        IconButton(
+                            modifier = Modifier.size(25.dp),
+                            onClick = {
+                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                                if (index > 0) {
+                                    selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+                                }
+                            },
+                            colors = navIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowBack,
+                                contentDescription = "Previous"
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
@@ -354,21 +375,27 @@ fun ExerciseHistoryScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.width(10.dp))
-                IconButton(
+                Box(
                     modifier = Modifier.size(25.dp),
-                    onClick = {
-                        val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                            selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                        }
-                    },
-                    enabled = canGoForward,
-                    colors = navIconColors
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowForward,
-                        contentDescription = "Next"
-                    )
+                    if (canGoForward) {
+                        IconButton(
+                            modifier = Modifier.size(25.dp),
+                            onClick = {
+                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                                if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                                }
+                            },
+                            colors = navIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowForward,
+                                contentDescription = "Next"
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -579,6 +606,21 @@ fun ExerciseHistoryScreen(
                             when (updatedSelectedMode) {
                                 0 -> {
                                     RangeDropdown(selectedRange) { selectedRange = it }
+
+                                    if (setHistoriesByWorkoutHistoryId.isEmpty()) {
+                                        PrimarySurface(
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(15.dp),
+                                                text = "No history found for this range",
+                                                textAlign = TextAlign.Center,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                                            )
+                                        }
+                                    }
                                     if (volumeEntryModel != null) {
                                         StandardChart(
                                             cartesianChartModel = volumeEntryModel!!,
@@ -614,6 +656,21 @@ fun ExerciseHistoryScreen(
                                     }
                                 }
                                 1 -> {
+                                    if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
+                                        PrimarySurface(
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(15.dp),
+                                                text = "No history found for this range",
+                                                textAlign = TextAlign.Center,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                                            )
+                                        }
+                                        return@AnimatedContent
+                                    }
                                     workoutSelector()
                                     val setHistories =
                                         setHistoriesByWorkoutHistoryId[selectedWorkoutHistory!!.id]!!
@@ -743,10 +800,20 @@ fun ExerciseHistoryScreen(
                                                         ),
                                                     )
                                                 }
-                                                SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel, workout = workout)
+                                                SetHistoriesRenderer(
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                                    setHistories = setHistories,
+                                                    appViewModel = appViewModel,
+                                                    workout = workout
+                                                )
                                             }
                                         } else {
-                                            SetHistoriesRenderer(setHistories = setHistories, appViewModel = appViewModel, workout = workout)
+                                            SetHistoriesRenderer(
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                                setHistories = setHistories,
+                                                appViewModel = appViewModel,
+                                                workout = workout
+                                            )
                                         }
                                     }
                                 }
