@@ -482,6 +482,12 @@ fun WorkoutsScreen(
         pagerState.scrollToPage(selectedTabIndex)
     }
 
+    LaunchedEffect(pagerState.currentPage) {
+        if (selectedTabIndex != pagerState.currentPage) {
+            appViewModel.setHomeTab(pagerState.currentPage)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -626,6 +632,9 @@ fun WorkoutsScreen(
                                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
                                 selected = isSelected,
                                 onClick = {
+                                    scope.launch {
+                                        pagerState.animateScrollToPage(index)
+                                    }
                                     appViewModel.setHomeTab(index)
                                 },
                                 text = {
