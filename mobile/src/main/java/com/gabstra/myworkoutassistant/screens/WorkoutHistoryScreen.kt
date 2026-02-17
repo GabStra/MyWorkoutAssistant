@@ -470,17 +470,45 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(historiesToShow) {
-        if (historiesToShow.isEmpty()) return@LaunchedEffect
+        if (historiesToShow.isEmpty()) {
+            volumeEntryModel = null
+            durationEntryModel = null
+            workoutDurationEntryModel = null
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            workoutDurationMarkerTarget = null
+            return@LaunchedEffect
+        }
         setCharts(historiesToShow)
     }
 
     val graphsTabContent = @Composable {
+        val selectedHistoryMarkerPosition = selectedWorkoutHistory
+            ?.let { workoutHistory -> historiesToShow.indexOfFirst { it.id == workoutHistory.id } }
+            ?.takeIf { it >= 0 }
+            ?.toDouble()
+
         Column(
             modifier = Modifier
                 .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             RangeDropdown(selectedRange) { selectedRange = it }
+
+            if (historiesToShow.isEmpty()) {
+                PrimarySurface(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(15.dp),
+                        text = "No history found for this range",
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                    )
+                }
+            }
 
             if (volumeEntryModel != null) {
                 StandardChart(
@@ -491,7 +519,8 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    markerPosition = volumeMarkerTarget?.first?.toDouble()
+                    markerPosition = selectedHistoryMarkerPosition
+                        ?: volumeMarkerTarget?.first?.toDouble()
                 )
             }
             if (durationEntryModel != null) {
@@ -502,7 +531,8 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    markerPosition = durationMarkerTarget?.first?.toDouble()
+                    markerPosition = selectedHistoryMarkerPosition
+                        ?: durationMarkerTarget?.first?.toDouble()
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -514,7 +544,8 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    markerPosition = workoutDurationMarkerTarget?.first?.toDouble()
+                    markerPosition = selectedHistoryMarkerPosition
+                        ?: workoutDurationMarkerTarget?.first?.toDouble()
                 )
             }
         }
@@ -1182,19 +1213,39 @@ fun WorkoutHistoryScreen(
             }
 
             if(isLoading){
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ){
-                    CircularProgressIndicator(
-                        modifier = Modifier.width(32.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MediumDarkGray,
-                    )
+                if (selectedMode == 1 && selectedWorkoutHistory != null) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Top
+                    ) {
+                        workoutSelector()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.width(32.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MediumDarkGray,
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ){
+                        CircularProgressIndicator(
+                            modifier = Modifier.width(32.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MediumDarkGray,
+                        )
+                    }
                 }
             } else {
-                if (historiesToShow.isEmpty()) {
+                if (selectedWorkoutHistory == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize(),
@@ -1241,7 +1292,7 @@ fun WorkoutHistoryScreen(
                     }
                 }
             }
-            if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
+            if (selectedWorkoutHistory != null) {
                 customBottomBar()
             }
         }
