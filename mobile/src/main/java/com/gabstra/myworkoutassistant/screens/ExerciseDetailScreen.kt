@@ -82,7 +82,7 @@ import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MenuItem
-import com.gabstra.myworkoutassistant.composables.SecondarySurface
+import com.gabstra.myworkoutassistant.composables.SetRestRowCard
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -297,30 +297,11 @@ fun ComponentRenderer(
         }
 
         is RestSet -> {
-            SecondarySurface(
+            SetRestRowCard(
                 modifier = modifier.fillMaxWidth(),
-                enabled = exercise.enabled
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "REST ${formatTime(set.timeInSeconds)}",
-                        textAlign = TextAlign.Center,
-                        color = if (exercise.enabled) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            DisabledContentGray
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
+                enabled = exercise.enabled,
+                restText = "REST ${formatTime(set.timeInSeconds)}"
+            )
         }
 
     }
@@ -415,7 +396,10 @@ fun ExerciseDetailScreen(
                                 .fillMaxWidth()
                                 .basicMarquee(),
                             textAlign = TextAlign.Center,
-                            text = exercise.name
+                            text = exercise.name,
+                            maxLines = 2,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     },
                     navigationIcon = {
@@ -971,7 +955,13 @@ fun ExerciseDetailScreen(
                                             exercise,
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .heightIn(min = 48.dp)
+                                                .then(
+                                                    if (it is RestSet) {
+                                                        Modifier
+                                                    } else {
+                                                        Modifier.heightIn(min = 48.dp)
+                                                    }
+                                                )
                                                 .combinedClickable(
                                                     onClick = onItemClick,
                                                     onLongClick = onItemLongClick

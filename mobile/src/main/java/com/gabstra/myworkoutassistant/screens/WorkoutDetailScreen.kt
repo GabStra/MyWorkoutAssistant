@@ -96,7 +96,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
-import com.gabstra.myworkoutassistant.composables.SecondarySurface
+import com.gabstra.myworkoutassistant.composables.SetRestRowCard
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
@@ -189,31 +189,11 @@ fun WorkoutComponentRenderer(
         }
 
         is Rest -> {
-            SecondarySurface(
+            SetRestRowCard(
                 modifier = modifier.fillMaxWidth().then(titleModifier),
-                enabled = workoutComponent.enabled
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val restColor = if (workoutComponent.enabled) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        DisabledContentGray
-                    }
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "REST ${formatTime(workoutComponent.timeInSeconds)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = restColor,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
+                enabled = workoutComponent.enabled,
+                restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
+            )
         }
 
         is Superset -> {
@@ -966,7 +946,10 @@ fun WorkoutDetailScreen(
                                 .fillMaxWidth()
                                 .basicMarquee(),
                             textAlign = TextAlign.Center,
-                            text = workout.name
+                            text = workout.name,
+                            maxLines = 2,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
                     },
                     navigationIcon = {
