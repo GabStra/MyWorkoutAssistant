@@ -38,7 +38,9 @@ import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.fill
 import com.patrykandpatrick.vico.compose.common.shape.dashedShape
 import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.core.cartesian.CartesianMeasuringContext
 import com.patrykandpatrick.vico.core.cartesian.Zoom
+import com.patrykandpatrick.vico.core.cartesian.axis.Axis
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -52,17 +54,85 @@ import com.patrykandpatrick.vico.core.cartesian.marker.ColumnCartesianLayerMarke
 import com.patrykandpatrick.vico.core.cartesian.marker.DefaultCartesianMarker
 import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.core.common.Insets
+import com.patrykandpatrick.vico.core.common.Position
 import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
 @Composable
-private fun rememberHorizontalLine(color: Color, y: Double): HorizontalLine {
+private fun rememberHorizontalLine(
+    color: Color,
+    y: Double,
+): HorizontalLine {
     val fill = fill(color)
-    val line = rememberLineComponent(fill = fill, thickness = 1.dp, shape = dashedShape(),)
-    return remember {
+    val line = rememberLineComponent(fill = fill, thickness = 1.dp, shape = dashedShape())
+    return remember(y, color) {
         HorizontalLine(
             y = { y },
             line = line,
         )
+    }
+}
+
+private class FixedValuesVerticalAxisItemPlacer(
+    private val values: List<Double>,
+    private val delegate: VerticalAxis.ItemPlacer = VerticalAxis.ItemPlacer.step(step = { 10.0 }),
+) : VerticalAxis.ItemPlacer {
+    override fun getShiftTopLines(context: CartesianDrawingContext): Boolean =
+        delegate.getShiftTopLines(context)
+
+    override fun getLabelValues(
+        context: CartesianDrawingContext,
+        axisHeight: Float,
+        maxLabelHeight: Float,
+        position: Axis.Position.Vertical,
+    ): List<Double> = valuesInRange(context, position)
+
+    override fun getWidthMeasurementLabelValues(
+        context: CartesianMeasuringContext,
+        axisHeight: Float,
+        maxLabelHeight: Float,
+        position: Axis.Position.Vertical,
+    ): List<Double> = valuesInRange(context, position)
+
+    override fun getHeightMeasurementLabelValues(
+        context: CartesianMeasuringContext,
+        position: Axis.Position.Vertical,
+    ): List<Double> = valuesInRange(context, position)
+
+    override fun getLineValues(
+        context: CartesianDrawingContext,
+        axisHeight: Float,
+        maxLabelHeight: Float,
+        position: Axis.Position.Vertical,
+    ): List<Double> = valuesInRange(context, position)
+
+    override fun getTopLayerMargin(
+        context: CartesianMeasuringContext,
+        verticalLabelPosition: Position.Vertical,
+        maxLabelHeight: Float,
+        maxLineThickness: Float,
+    ): Float = delegate.getTopLayerMargin(context, verticalLabelPosition, maxLabelHeight, maxLineThickness)
+
+    override fun getBottomLayerMargin(
+        context: CartesianMeasuringContext,
+        verticalLabelPosition: Position.Vertical,
+        maxLabelHeight: Float,
+        maxLineThickness: Float,
+    ): Float = delegate.getBottomLayerMargin(context, verticalLabelPosition, maxLabelHeight, maxLineThickness)
+
+    private fun valuesInRange(
+        context: CartesianDrawingContext,
+        position: Axis.Position.Vertical,
+    ): List<Double> {
+        val yRange = context.ranges.getYRange(position)
+        return values.filter { it in yRange.minY..yRange.maxY }
+    }
+
+    private fun valuesInRange(
+        context: CartesianMeasuringContext,
+        position: Axis.Position.Vertical,
+    ): List<Double> {
+        val yRange = context.ranges.getYRange(position)
+        return values.filter { it in yRange.minY..yRange.maxY }
     }
 }
 
@@ -167,6 +237,7 @@ fun HeartRateChart(
     userAge: Int,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
+    minYPercentage: Double? = null,
     includeCard: Boolean = true,
 ) {
     val chartContent = @Composable {
@@ -176,6 +247,7 @@ fun HeartRateChart(
             userAge = userAge,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
+            minYPercentage = minYPercentage,
         )
     }
 
@@ -213,15 +285,24 @@ fun HeartRateChartContent(
     userAge: Int,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
+    minYPercentage: Double? = null,
 ) {
-    val startAxisValueFormatter =
-        CartesianValueFormatter { _, value, _ ->
+    val zoneThresholdPercentages = remember {
+        listOf(50.0, 60.0, 70.0, 80.0, 90.0, 100.0)
+    }
+    val percentageToBpmLabel = remember(userAge, measuredMaxHeartRate, restingHeartRate) {
+        { percentage: Double ->
             getHeartRateFromPercentage(
-                value.toFloat(),
+                percentage.toFloat(),
                 userAge,
                 measuredMaxHeartRate,
                 restingHeartRate
             ).toString()
+        }
+    }
+    val startAxisValueFormatter =
+        CartesianValueFormatter { _, value, _ ->
+            percentageToBpmLabel(value)
         }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
@@ -251,6 +332,7 @@ fun HeartRateChartContent(
         CartesianValueFormatter { _, value, _ ->
             formatTime((value).toInt())
         }
+    val effectiveMinY = minOf(minYPercentage ?: 40.0, zoneThresholdPercentages.first())
 
     CartesianChartHost(
         modifier = modifier.padding(10.dp),
@@ -279,24 +361,32 @@ fun HeartRateChartContent(
                 ),
 
                 rangeProvider = CartesianLayerRangeProvider.fixed(
-                    minY = 40.0,
+                    minY = effectiveMinY,
                     maxY = 105.0
                 ),
             ),
-            decorations = listOf(
-                rememberHorizontalLine(colorsByZone[1].copy(alpha = 0.75f), 50.0),
-                rememberHorizontalLine(colorsByZone[2].copy(alpha = 0.75f), 60.0),
-                rememberHorizontalLine(colorsByZone[3].copy(alpha = 0.75f), 70.0),
-                rememberHorizontalLine(colorsByZone[4].copy(alpha = 0.75f), 80.0),
-                rememberHorizontalLine(colorsByZone[5].copy(alpha = 0.75f), 90.0),
-                rememberHorizontalLine(Color.Black, 100.0),
-            ),
+            decorations = zoneThresholdPercentages.map { threshold ->
+                val zoneColor = when (threshold.toInt()) {
+                    50 -> colorsByZone[1]
+                    60 -> colorsByZone[2]
+                    70 -> colorsByZone[3]
+                    80 -> colorsByZone[4]
+                    90 -> colorsByZone[5]
+                    else -> Color.Black
+                }
+                rememberHorizontalLine(
+                    color = zoneColor.copy(alpha = 0.75f),
+                    y = threshold,
+                )
+            },
             startAxis = VerticalAxis.rememberStart(
                 line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                 tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                 guideline = null,
                 valueFormatter = startAxisValueFormatter,
-                itemPlacer = remember { VerticalAxis.ItemPlacer.step(step = { 10.0 }) }),
+                itemPlacer = remember(zoneThresholdPercentages) {
+                    FixedValuesVerticalAxisItemPlacer(zoneThresholdPercentages)
+                }),
             bottomAxis = HorizontalAxis.rememberBottom(
                 line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                 tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),

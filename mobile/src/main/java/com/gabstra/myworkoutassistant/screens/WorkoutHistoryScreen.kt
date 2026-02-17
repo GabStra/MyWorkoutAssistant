@@ -212,6 +212,7 @@ fun WorkoutHistoryScreen(
     var workoutDurationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
+    var heartRateMinYPercentage by remember { mutableStateOf<Double?>(null) }
 
     val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _->
@@ -401,12 +402,24 @@ fun WorkoutHistoryScreen(
 
         zoneCounter = null
         heartRateEntryModel = null
+        heartRateMinYPercentage = null
 
         withContext(Dispatchers.IO) {
 
             if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
+                val validHeartBeatRecords = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }
+                val minHeartBeat = validHeartBeatRecords.minOrNull()
+                val minHeartRatePercentage = minHeartBeat?.let {
+                    getMaxHearthRatePercentage(
+                        it,
+                        userAge,
+                        measuredMaxHeartRate,
+                        restingHeartRate
+                    )
+                }
+                heartRateMinYPercentage = minHeartRatePercentage?.toDouble()
 
-                selectedWorkoutHistory!!.heartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
+                validHeartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
                     // Create a pair of the index of the max heartbeat and the value itself
                     heartBeatMarkerTarget = Pair(
                         selectedWorkoutHistory!!.heartBeatRecords.indexOf(maxHeartBeat),
@@ -414,9 +427,9 @@ fun WorkoutHistoryScreen(
                     )
                 }
 
-                zoneCounter = mapOf(5 to 0, 4 to 0, 3 to 0, 2 to 0, 1 to 0)
+                zoneCounter = mapOf(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0, 5 to 0)
 
-                for (heartBeat in selectedWorkoutHistory!!.heartBeatRecords) {
+                for (heartBeat in validHeartBeatRecords) {
                     val percentage = getMaxHearthRatePercentage(
                         heartBeat,
                         userAge,
@@ -424,7 +437,6 @@ fun WorkoutHistoryScreen(
                         restingHeartRate
                     )
                     val zone = getZoneFromPercentage(percentage)
-                    if (zone == 0) continue
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }
 
@@ -432,12 +444,16 @@ fun WorkoutHistoryScreen(
                     CartesianChartModel(LineCartesianLayerModel.build {
                         series(
                             selectedWorkoutHistory!!.heartBeatRecords.map {
-                                getMaxHearthRatePercentage(
-                                    it,
-                                    userAge,
-                                    measuredMaxHeartRate,
-                                    restingHeartRate
-                                )
+                                if (it == 0 && minHeartRatePercentage != null) {
+                                    minHeartRatePercentage
+                                } else {
+                                    getMaxHearthRatePercentage(
+                                        it,
+                                        userAge,
+                                        measuredMaxHeartRate,
+                                        restingHeartRate
+                                    )
+                                }
                             }
                         )
                     })
@@ -569,22 +585,28 @@ fun WorkoutHistoryScreen(
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
+                Box(
                     modifier = Modifier.size(25.dp),
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index > 0) { // Check to avoid IndexOutOfBoundsException
-                            isLoading = true
-                            selectedWorkoutHistory = workoutHistories[index - 1]
-                        }
-                    },
-                    enabled = canGoBack,
-                    colors = navIconColors
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowBack,
-                        contentDescription = "Previous"
-                    )
+                    if (canGoBack) {
+                        IconButton(
+                            modifier = Modifier.size(25.dp),
+                            onClick = {
+                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                if (index > 0) { // Check to avoid IndexOutOfBoundsException
+                                    isLoading = true
+                                    selectedWorkoutHistory = workoutHistories[index - 1]
+                                }
+                            },
+                            colors = navIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowBack,
+                                contentDescription = "Previous"
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
@@ -596,22 +618,28 @@ fun WorkoutHistoryScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.width(10.dp))
-                IconButton(
+                Box(
                     modifier = Modifier.size(25.dp),
-                    onClick = {
-                        val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                        if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                            isLoading = true
-                            selectedWorkoutHistory = workoutHistories[index + 1]
-                        }
-                    },
-                    enabled = canGoForward,
-                    colors = navIconColors
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowForward,
-                        contentDescription = "Next"
-                    )
+                    if (canGoForward) {
+                        IconButton(
+                            modifier = Modifier.size(25.dp),
+                            onClick = {
+                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                                    isLoading = true
+                                    selectedWorkoutHistory = workoutHistories[index + 1]
+                                }
+                            },
+                            colors = navIconColors
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowForward,
+                                contentDescription = "Next"
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -646,6 +674,7 @@ fun WorkoutHistoryScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 cartesianChartModel = heartRateEntryModel!!,
                                 userAge = userAge,
+                                minYPercentage = heartRateMinYPercentage,
                             )
                             
                             Spacer(modifier = Modifier.height(15.dp))
@@ -1215,10 +1244,19 @@ fun WorkoutHistoryScreen(
             if(isLoading){
                 if (selectedMode == 1 && selectedWorkoutHistory != null) {
                     Column(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 10.dp)
+                            .padding(bottom = 10.dp)
+                            .padding(horizontal = 15.dp),
                         verticalArrangement = Arrangement.Top
                     ) {
-                        workoutSelector()
+                        Column(
+                            modifier = Modifier.padding(top = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            workoutSelector()
+                        }
                         Box(
                             modifier = Modifier
                                 .fillMaxSize(),
