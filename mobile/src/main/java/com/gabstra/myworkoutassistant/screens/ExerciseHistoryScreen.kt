@@ -127,8 +127,9 @@ fun ExerciseHistoryScreen(
     var oneRepMaxMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var oneRepMaxEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
+    var hasLoadedWorkoutHistories by remember { mutableStateOf(false) }
 
-    var selectedRange by remember { mutableStateOf(FilterRange.LAST_30_DAYS) }
+    var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
     }
@@ -317,24 +318,21 @@ fun ExerciseHistoryScreen(
     }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            workoutHistories = workouts.flatMap { workout ->
+        isLoading = true
+        val loadedWorkoutHistories = withContext(Dispatchers.IO) {
+            workouts.flatMap { workout ->
                 workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
             }.filter { it.isDone }.sortedBy { it.date }
-
-            if (workoutHistories.isEmpty()) {
-                delay(500)
-                isLoading = false
-                return@withContext
-            }
-
-
-            delay(500)
-            isLoading = false
         }
+        workoutHistories = loadedWorkoutHistories
+        hasLoadedWorkoutHistories = true
     }
 
-    LaunchedEffect(historiesToShow) {
+    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories) {
+        if (!hasLoadedWorkoutHistories) {
+            return@LaunchedEffect
+        }
+        isLoading = true
         if (historiesToShow.isEmpty()) {
             volumeEntryModel = null
             durationEntryModel = null
@@ -344,9 +342,13 @@ fun ExerciseHistoryScreen(
             oneRepMaxMarkerTarget = null
             selectedWorkoutHistory = null
             setHistoriesByWorkoutHistoryId = emptyMap()
+            delay(150)
+            isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
+        delay(150)
+        isLoading = false
     }
 
     val workoutSelector = @Composable {
@@ -875,4 +877,3 @@ fun ExerciseHistoryScreen(
         }
     }
 }
-
