@@ -46,6 +46,7 @@ import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
 private class FixedValuesHorizontalAxisItemPlacer(
     values: List<Double>,
+    private val maxVisibleLabelCount: Int = 15,
     private val delegate: HorizontalAxis.ItemPlacer = HorizontalAxis.ItemPlacer.aligned(),
 ) : HorizontalAxis.ItemPlacer {
     private val sortedValues = values.distinct().sorted()
@@ -68,7 +69,28 @@ private class FixedValuesHorizontalAxisItemPlacer(
         visibleXRange: ClosedFloatingPointRange<Double>,
         fullXRange: ClosedFloatingPointRange<Double>,
         maxLabelWidth: Float,
-    ): List<Double> = valuesInRange(visibleXRange)
+    ): List<Double> {
+        val visibleValues = valuesInRange(visibleXRange)
+        if (visibleValues.isEmpty()) return emptyList()
+        if (visibleValues.size <= 2) return visibleValues
+
+        val spacingPx = context.layerDimensions.xSpacing
+        val strideByWidth = if (spacingPx <= 0f) {
+            1
+        } else {
+            kotlin.math.ceil((maxLabelWidth / spacingPx).toDouble()).toInt().coerceAtLeast(1)
+        }
+        val strideByCount = kotlin.math.ceil(
+            visibleValues.size.toDouble() / maxVisibleLabelCount.coerceAtLeast(2)
+        ).toInt().coerceAtLeast(1)
+        val stride = maxOf(strideByWidth, strideByCount)
+
+        val labels = mutableListOf<Double>()
+        for (index in visibleValues.indices step stride) {
+            labels += visibleValues[index]
+        }
+        return labels
+    }
 
     override fun getWidthMeasurementLabelValues(
         context: CartesianMeasuringContext,
@@ -122,6 +144,7 @@ fun StandardChart(
     maxValue: Double? = null,
     markerPosition: Double? = null,
     xAxisTickValues: List<Double>? = null,
+    maxVisibleXLabels: Int = 16,
     markerTextFormatter: ((Double) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
@@ -226,11 +249,14 @@ fun StandardChart(
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
                             tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
-                            itemPlacer = remember(xAxisTickValues) {
+                            itemPlacer = remember(xAxisTickValues, maxVisibleXLabels) {
                                 if (xAxisTickValues.isNullOrEmpty()) {
                                     HorizontalAxis.ItemPlacer.aligned()
                                 } else {
-                                    FixedValuesHorizontalAxisItemPlacer(values = xAxisTickValues)
+                                    FixedValuesHorizontalAxisItemPlacer(
+                                        values = xAxisTickValues,
+                                        maxVisibleLabelCount = maxVisibleXLabels,
+                                    )
                                 }
                             },
                         ),
@@ -246,4 +272,3 @@ fun StandardChart(
         )
     }
 }
-

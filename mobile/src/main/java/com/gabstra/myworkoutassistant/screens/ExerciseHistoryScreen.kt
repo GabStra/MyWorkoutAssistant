@@ -127,6 +127,7 @@ fun ExerciseHistoryScreen(
     var oneRepMaxMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var oneRepMaxEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
+    var chartWorkoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
     var hasLoadedWorkoutHistories by remember { mutableStateOf(false) }
 
     var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
@@ -160,10 +161,10 @@ fun ExerciseHistoryScreen(
         formatTime(value.toInt()/1000)
     }
 
-    val horizontalAxisValueFormatter = remember(historiesToShow) {
+    val horizontalAxisValueFormatter = remember(chartWorkoutHistories) {
         CartesianValueFormatter { _, value, _->
-            if(value.toInt() < 0 || value.toInt() >= historiesToShow.size) return@CartesianValueFormatter "-"
-            val currentWorkoutHistory = historiesToShow[value.toInt()]
+            if(value.toInt() < 0 || value.toInt() >= chartWorkoutHistories.size) return@CartesianValueFormatter "-"
+            val currentWorkoutHistory = chartWorkoutHistories[value.toInt()]
             currentWorkoutHistory.date.format(dateFormatter)
         }
     }
@@ -201,10 +202,12 @@ fun ExerciseHistoryScreen(
         oneRepMaxMarkerTarget = null
         selectedWorkoutHistory = null
         setHistoriesByWorkoutHistoryId = emptyMap()
+        chartWorkoutHistories = emptyList()
 
         if(workoutHistories.isEmpty()) return
 
         val mutableMap = mutableMapOf<UUID, ExerciseHistoryDisplayData>()
+        val pointsWorkoutHistories = mutableListOf<WorkoutHistory>()
         val supersetByExerciseId = workout.workoutComponents
             .filterIsInstance<Superset>()
             .flatMap { superset -> superset.exercises.map { it.id to superset.id } }
@@ -253,6 +256,8 @@ fun ExerciseHistoryScreen(
                 renderSetHistories = if (supersetSetHistories.isNotEmpty()) supersetSetHistories else setHistories,
                 isSupersetSession = supersetSetHistories.isNotEmpty()
             )
+            pointsWorkoutHistories.add(workoutHistory)
+            val pointIndex = pointsWorkoutHistories.lastIndex
 
             for (setHistory in setHistories) {
                 if (setHistory.setData is WeightSetData) {
@@ -276,17 +281,18 @@ fun ExerciseHistoryScreen(
                 }
             }
 
-            volumes.add(Pair(workoutHistories.indexOf(workoutHistory), volume))
-            durations.add(Pair(workoutHistories.indexOf(workoutHistory), duration))
+            volumes.add(Pair(pointIndex, volume))
+            durations.add(Pair(pointIndex, duration))
 
-            oneRepMaxes.add(Pair(workoutHistories.indexOf(workoutHistory), oneRepMax.round(2)))
+            oneRepMaxes.add(Pair(pointIndex, oneRepMax.round(2)))
         }
 
         setHistoriesByWorkoutHistoryId = mutableMap
+        chartWorkoutHistories = pointsWorkoutHistories
 
         if(setHistoriesByWorkoutHistoryId.isEmpty()) return
 
-        selectedWorkoutHistory = workoutHistories.first { it.id == setHistoriesByWorkoutHistoryId.keys.last() }
+        selectedWorkoutHistory = chartWorkoutHistories.lastOrNull()
 
         if (volumes.any { it.second != 0.0 }) {
             if (volumes.count() == 1) {
@@ -354,6 +360,7 @@ fun ExerciseHistoryScreen(
             oneRepMaxMarkerTarget = null
             selectedWorkoutHistory = null
             setHistoriesByWorkoutHistoryId = emptyMap()
+            chartWorkoutHistories = emptyList()
             ensureMinimumLoadingDuration(loadingStartedAt)
             isLoading = false
             return@LaunchedEffect
@@ -673,6 +680,13 @@ fun ExerciseHistoryScreen(
                         ) {
                             when (updatedSelectedMode) {
                                 0 -> {
+                                    val selectedHistoryMarkerPosition = selectedWorkoutHistory
+                                        ?.let { workoutHistory ->
+                                            chartWorkoutHistories.indexOfFirst { it.id == workoutHistory.id }
+                                        }
+                                        ?.takeIf { it >= 0 }
+                                        ?.toDouble()
+
                                     RangeDropdown(selectedRange) { selectedRange = it }
 
                                     if (setHistoriesByWorkoutHistoryId.isEmpty()) {
@@ -697,7 +711,8 @@ fun ExerciseHistoryScreen(
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = volumes.map { it.first.toDouble() },
-                                            markerPosition = volumeMarkerTarget?.first?.toDouble()
+                                            markerPosition = selectedHistoryMarkerPosition
+                                                ?: volumeMarkerTarget?.first?.toDouble()
                                         )
                                     }
 
@@ -710,7 +725,8 @@ fun ExerciseHistoryScreen(
                                             },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
-                                            markerPosition = oneRepMaxMarkerTarget?.first?.toDouble()
+                                            markerPosition = selectedHistoryMarkerPosition
+                                                ?: oneRepMaxMarkerTarget?.first?.toDouble()
                                         )
                                     }
 
@@ -722,7 +738,8 @@ fun ExerciseHistoryScreen(
                                             startAxisValueFormatter = durationAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = durations.map { it.first.toDouble() },
-                                            markerPosition = durationMarkerTarget?.first?.toDouble()
+                                            markerPosition = selectedHistoryMarkerPosition
+                                                ?: durationMarkerTarget?.first?.toDouble()
                                         )
                                     }
                                 }
