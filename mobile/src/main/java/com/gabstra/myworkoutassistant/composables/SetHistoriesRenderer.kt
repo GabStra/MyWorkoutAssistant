@@ -55,6 +55,9 @@ fun SetHistoriesRenderer(
         setHistories.forEach { set ->
             val setData = set.setData
             if (setData is RestSetData) {
+                rows += SetTableRowUiModel.Rest(
+                    text = "REST ${formatTime(setData.startTimer)}"
+                )
                 return@forEach
             }
 
@@ -87,17 +90,11 @@ fun SetHistoriesRenderer(
                     } else {
                         "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
                     }
-                    val secondaryText = if (setData.endTimer == 0) {
-                        "Recorded duration"
-                    } else {
-                        "Start - end"
-                    }
                     rows += SetTableRowUiModel.Data(
                         identifier = index.toString(),
                         primaryValue = primaryTime,
                         secondaryValue = null,
                         monospacePrimary = true,
-                        secondaryText = secondaryText,
                     )
                 }
 
@@ -107,17 +104,11 @@ fun SetHistoriesRenderer(
                     } else {
                         "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
                     }
-                    val secondaryText = if (setData.endTimer == 0) {
-                        "Recorded duration"
-                    } else {
-                        "Start - end"
-                    }
                     rows += SetTableRowUiModel.Data(
                         identifier = index.toString(),
                         primaryValue = primaryTime,
                         secondaryValue = null,
                         monospacePrimary = true,
-                        secondaryText = secondaryText,
                     )
                 }
 

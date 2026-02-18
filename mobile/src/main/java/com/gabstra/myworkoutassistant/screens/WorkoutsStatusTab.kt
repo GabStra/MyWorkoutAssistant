@@ -1,11 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,11 +22,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
@@ -36,6 +34,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutsCalendar
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
@@ -50,7 +49,9 @@ fun WorkoutsStatusTab(
     isLoading: Boolean,
     hasObjectives: Boolean,
     selectedDate: CalendarDay,
-    selectedCalendarWorkouts: List<Pair<WorkoutHistory, Workout>>?,
+    selectedWeekStart: LocalDate,
+    selectedWeekEnd: LocalDate,
+    selectedWeekWorkoutsByDate: Map<LocalDate, List<Pair<WorkoutHistory, Workout>>>?,
     weeklyWorkoutsByActualTarget: Map<Workout, Pair<Int, Int>>?,
     objectiveProgress: Double,
     appViewModel: AppViewModel,
@@ -76,7 +77,10 @@ fun WorkoutsStatusTab(
     ) {
         StyledCard {
             WorkoutsCalendar(
+                //modifier = Modifier.padding(horizontal = 5.dp),
                 selectedDate = selectedDate,
+                selectedWeekStart = selectedWeekStart,
+                selectedWeekEnd = selectedWeekEnd,
                 onDayClicked = { calendarState, day ->
                     onDayClicked(calendarState, day)
                 },
@@ -184,106 +188,132 @@ fun WorkoutsStatusTab(
                         .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val currentDate = selectedDate.date
-                    val currentMonth =
-                        currentDate.format(DateTimeFormatter.ofPattern("MMM"))
+                    val currentWeekStartMonth = selectedWeekStart.format(DateTimeFormatter.ofPattern("MMM"))
+                    val currentWeekEndMonth = selectedWeekEnd.format(DateTimeFormatter.ofPattern("MMM"))
+                    val currentWeekText = if (currentWeekStartMonth == currentWeekEndMonth) {
+                        "${selectedWeekStart.dayOfMonth} - ${selectedWeekEnd.dayOfMonth} $currentWeekStartMonth"
+                    } else {
+                        "${selectedWeekStart.dayOfMonth} $currentWeekStartMonth - ${selectedWeekEnd.dayOfMonth} $currentWeekEndMonth"
+                    }
 
                     Text(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Workout Histories (${currentDate.dayOfMonth} ${currentMonth}):",
+                        text = "Workout Histories ($currentWeekText):",
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground
                     )
 
-                    if (selectedCalendarWorkouts.isNullOrEmpty()) {
+                    if (selectedWeekWorkoutsByDate.isNullOrEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 modifier = Modifier.padding(15.dp),
-                                text = "No workouts on this day",
+                                text = "No workouts in this week",
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
                     } else {
-                        selectedCalendarWorkouts!!
-                            .groupBy { it.second.id } // Group by workout.id
-                            .forEach { (workoutId, historyAndWorkoutList) ->
-                                val moreThanOneWorkout = historyAndWorkoutList.size > 1
-
-                                if (moreThanOneWorkout) {
-                                    val workout = historyAndWorkoutList[0].second
-                                    ExpandableContainer(
-                                        title = { modifier ->
-                                            Row(
-                                                modifier = modifier,
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(CircleShape)
-                                                        .size(30.dp)
-                                                        .background(MaterialTheme.colorScheme.primary),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        text = historyAndWorkoutList.size.toString(),
-                                                        color = MaterialTheme.colorScheme.background,
-                                                        textAlign = TextAlign.Center,
-                                                        style = MaterialTheme.typography.titleMedium
-                                                    )
-                                                }
-
-                                                Text(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .padding(start = 5.dp),
-                                                    text = workout.name,
-                                                    color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                                                    style = MaterialTheme.typography.bodyLarge,
-                                                )
-                                            }
-                                        },
-                                        content = {
-                                            DashedCard {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(10.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    historyAndWorkoutList.forEach { (workoutHistory, workout) ->
-                                                        WorkoutHistoryCard(
-                                                            workoutHistory = workoutHistory,
-                                                            workout = workout,
-                                                            appViewModel = appViewModel,
-                                                            timeFormatter = timeFormatter
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    )
-                                } else {
-                                    val workoutHistory = historyAndWorkoutList[0].first
-                                    val workout = historyAndWorkoutList[0].second
-
-                                    WorkoutHistoryCard(
-                                        workoutHistory = workoutHistory,
-                                        workout = workout,
-                                        appViewModel = appViewModel,
-                                        timeFormatter = timeFormatter
-                                    )
-                                }
+                        val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", currentLocale)
+                        selectedWeekWorkoutsByDate.entries
+                            .sortedBy { it.key }
+                            .forEach { (date, dayWorkouts) ->
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = date.format(dayFormatter),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    textAlign = TextAlign.Start,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                WorkoutHistoriesByWorkoutGroup(
+                                    dayWorkouts = dayWorkouts,
+                                    appViewModel = appViewModel,
+                                    timeFormatter = timeFormatter
+                                )
                             }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun WorkoutHistoriesByWorkoutGroup(
+    dayWorkouts: List<Pair<WorkoutHistory, Workout>>,
+    appViewModel: AppViewModel,
+    timeFormatter: DateTimeFormatter
+) {
+    dayWorkouts
+        .groupBy { it.second.id }
+        .forEach { (_, historyAndWorkoutList) ->
+            val moreThanOneWorkout = historyAndWorkoutList.size > 1
+            if (moreThanOneWorkout) {
+                val workout = historyAndWorkoutList[0].second
+                ExpandableContainer(
+                    title = { modifier ->
+                        Row(
+                            modifier = modifier,
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .size(30.dp)
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = historyAndWorkoutList.size.toString(),
+                                    color = MaterialTheme.colorScheme.background,
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            Text(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 5.dp),
+                                text = workout.name,
+                                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    },
+                    content = {
+                        DashedCard {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                historyAndWorkoutList.forEach { (workoutHistory, groupedWorkout) ->
+                                    WorkoutHistoryCard(
+                                        workoutHistory = workoutHistory,
+                                        workout = groupedWorkout,
+                                        appViewModel = appViewModel,
+                                        timeFormatter = timeFormatter
+                                    )
+                                }
+                            }
+                        }
+                    }
+                )
+            } else {
+                val workoutHistory = historyAndWorkoutList[0].first
+                val workout = historyAndWorkoutList[0].second
+                WorkoutHistoryCard(
+                    workoutHistory = workoutHistory,
+                    workout = workout,
+                    appViewModel = appViewModel,
+                    timeFormatter = timeFormatter
+                )
+            }
+        }
 }

@@ -22,7 +22,6 @@ sealed interface SetTableRowUiModel {
         val secondaryValue: String? = null,
         val monospacePrimary: Boolean = false,
         val onClick: (() -> Unit)? = null,
-        val secondaryText: String? = null,
     ) : SetTableRowUiModel
 
     data class Rest(
@@ -186,17 +185,6 @@ private fun SetTableDataRow(
             )
         }
 
-        if (!row.secondaryText.isNullOrBlank()) {
-            Text(
-                text = row.secondaryText,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 3.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = textColor,
-                textAlign = TextAlign.Start,
-            )
-        }
     }
 }
 
@@ -224,7 +212,6 @@ data class SetMetricUiModel(
 data class SetRowUiModel(
     val identifier: String,
     val metrics: List<SetMetricUiModel>,
-    val secondaryText: String? = null,
 )
 
 @Composable

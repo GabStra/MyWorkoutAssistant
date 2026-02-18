@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +47,6 @@ fun CustomButton(
 
     Box(
         modifier = modifier
-            .heightIn(min = 48.dp)
             .clip(MaterialTheme.shapes.extraLarge)
             .background(
                 when {
@@ -64,7 +64,7 @@ fun CustomButton(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            modifier = Modifier.padding(horizontal = 17.5.dp),
+            modifier = Modifier.fillMaxWidth(),
             text = text,
             color = displayColor,
             textAlign = TextAlign.Center,

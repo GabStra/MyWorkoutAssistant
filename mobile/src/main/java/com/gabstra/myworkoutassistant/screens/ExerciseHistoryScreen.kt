@@ -31,10 +31,10 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -62,14 +62,16 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.FilterRange
+import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
-import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
-import com.gabstra.myworkoutassistant.composables.PrimarySurface
+import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -78,14 +80,13 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
@@ -99,6 +100,12 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 
+private data class ExerciseHistoryDisplayData(
+    val selectedExerciseSetHistories: List<SetHistory>,
+    val renderSetHistories: List<SetHistory>,
+    val isSupersetSession: Boolean
+)
+
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -108,6 +115,7 @@ fun ExerciseHistoryScreen(
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
+    initialSelectedTabIndex: Int = 0,
     onGoBack: () -> Unit
 ) {
     var isLoading by remember { mutableStateOf(true) }
@@ -125,7 +133,9 @@ fun ExerciseHistoryScreen(
         workoutHistories.filterBy(selectedRange)
     }
 
-    var selectedMode by remember { mutableIntStateOf(0) }
+    var selectedMode by remember(initialSelectedTabIndex) {
+        mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 1))
+    }
 
     val userAge by appViewModel.userAge
     val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
@@ -164,7 +174,7 @@ fun ExerciseHistoryScreen(
     val oneRepMaxes = remember { mutableListOf<Pair<Int, Double>>() }
 
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
-    var setHistoriesByWorkoutHistoryId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
+    var setHistoriesByWorkoutHistoryId by remember { mutableStateOf<Map<UUID, ExerciseHistoryDisplayData>>(emptyMap()) }
 
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
@@ -182,10 +192,14 @@ fun ExerciseHistoryScreen(
 
         if(workoutHistories.isEmpty()) return
 
-        val mutableMap = mutableMapOf<UUID, List<SetHistory>>()
+        val mutableMap = mutableMapOf<UUID, ExerciseHistoryDisplayData>()
+        val supersetByExerciseId = workout.workoutComponents
+            .filterIsInstance<Superset>()
+            .flatMap { superset -> superset.exercises.map { it.id to superset.id } }
+            .toMap()
 
         for (workoutHistory in workoutHistories) {
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseIdOrdered(
                 workoutHistory.id,
                 exercise.id
             )
@@ -212,7 +226,21 @@ fun ExerciseHistoryScreen(
                 }
             }
 
-            mutableMap.put(workoutHistory.id, setHistories)
+            val selectedSupersetId = setHistories.firstNotNullOfOrNull { it.supersetId }
+                ?: supersetByExerciseId[exercise.id]
+            val supersetSetHistories = if (selectedSupersetId != null) {
+                setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndSupersetIdOrdered(
+                    workoutHistory.id,
+                    selectedSupersetId
+                )
+            } else {
+                emptyList()
+            }
+            mutableMap[workoutHistory.id] = ExerciseHistoryDisplayData(
+                selectedExerciseSetHistories = setHistories,
+                renderSetHistories = if (supersetSetHistories.isNotEmpty()) supersetSetHistories else setHistories,
+                isSupersetSession = supersetSetHistories.isNotEmpty()
+            )
 
             for (setHistory in setHistories) {
                 if (setHistory.setData is WeightSetData) {
@@ -474,11 +502,12 @@ fun ExerciseHistoryScreen(
                     actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 title = {
-                    ScrollableTextColumn(
-                        text = exercise.name,
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 2,
-                        textAlign = TextAlign.Center
+                    Text(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(iterations = Int.MAX_VALUE),
+                        textAlign = TextAlign.Center,
+                        text = exercise.name
                     )
                 },
                 navigationIcon = {
@@ -490,10 +519,11 @@ fun ExerciseHistoryScreen(
                     }
                 },
                 actions = {
-                    IconButton(modifier = Modifier.alpha(0f), onClick = {}) {
+                    // Invisible icon to balance the title correctly
+                    IconButton(modifier = Modifier.alpha(0f), onClick = { /* No-op */ }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = null
                         )
                     }
                 }
@@ -680,7 +710,7 @@ fun ExerciseHistoryScreen(
 
                                     val (targetCounter, targetTotal) = remember(
                                         hasTarget,
-                                        setHistories,
+                                        setHistories.selectedExerciseSetHistories,
                                         selectedWorkoutHistory?.id,
                                         selectedWorkoutHistory?.heartBeatRecords,
                                         exercise.lowerBoundMaxHRPercent,
@@ -694,7 +724,7 @@ fun ExerciseHistoryScreen(
                                         } else {
                                             var counter = 0
                                             var total = 0
-                                            setHistories
+                                            setHistories.selectedExerciseSetHistories
                                                 .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
                                                 .forEach { setHistory ->
                                                     val hrTimeOffset = Duration.between(
@@ -800,20 +830,36 @@ fun ExerciseHistoryScreen(
                                                         ),
                                                     )
                                                 }
+                                                if (setHistories.isSupersetSession) {
+                                                    SupersetSetHistoriesRenderer(
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                                        setHistories = setHistories.renderSetHistories,
+                                                        workout = workout
+                                                    )
+                                                } else {
+                                                    SetHistoriesRenderer(
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                                        setHistories = setHistories.renderSetHistories,
+                                                        appViewModel = appViewModel,
+                                                        workout = workout
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            if (setHistories.isSupersetSession) {
+                                                SupersetSetHistoriesRenderer(
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                                    setHistories = setHistories.renderSetHistories,
+                                                    workout = workout
+                                                )
+                                            } else {
                                                 SetHistoriesRenderer(
                                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                    setHistories = setHistories,
+                                                    setHistories = setHistories.renderSetHistories,
                                                     appViewModel = appViewModel,
                                                     workout = workout
                                                 )
                                             }
-                                        } else {
-                                            SetHistoriesRenderer(
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                setHistories = setHistories,
-                                                appViewModel = appViewModel,
-                                                workout = workout
-                                            )
                                         }
                                     }
                                 }

@@ -152,7 +152,6 @@ fun SupersetRenderer(
                                         secondaryValue = null,
                                         monospacePrimary = true,
                                         onClick = onClick,
-                                        secondaryText = "Recorded duration",
                                     )
                                 }
 
@@ -163,7 +162,6 @@ fun SupersetRenderer(
                                         secondaryValue = null,
                                         monospacePrimary = true,
                                         onClick = onClick,
-                                        secondaryText = "Recorded duration",
                                     )
                                 }
 

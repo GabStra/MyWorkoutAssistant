@@ -46,6 +46,7 @@ import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
+import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
 import com.patrykandpatrick.vico.core.cartesian.decoration.HorizontalLine
 import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.core.cartesian.marker.CandlestickCartesianLayerMarkerTarget
@@ -237,7 +238,9 @@ fun HeartRateChart(
     userAge: Int,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
-    minYPercentage: Double? = null,
+    minYBpm: Double? = null,
+    zoneTickValuesBpm: List<Double>? = null,
+    lineZoneIndices: List<Int>? = null,
     includeCard: Boolean = true,
 ) {
     val chartContent = @Composable {
@@ -247,7 +250,9 @@ fun HeartRateChart(
             userAge = userAge,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
-            minYPercentage = minYPercentage,
+            minYBpm = minYBpm,
+            zoneTickValuesBpm = zoneTickValuesBpm,
+            lineZoneIndices = lineZoneIndices,
         )
     }
 
@@ -285,24 +290,27 @@ fun HeartRateChartContent(
     userAge: Int,
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
-    minYPercentage: Double? = null,
+    minYBpm: Double? = null,
+    zoneTickValuesBpm: List<Double>? = null,
+    lineZoneIndices: List<Int>? = null,
 ) {
-    val zoneThresholdPercentages = remember {
-        listOf(50.0, 60.0, 70.0, 80.0, 90.0, 100.0)
-    }
-    val percentageToBpmLabel = remember(userAge, measuredMaxHeartRate, restingHeartRate) {
-        { percentage: Double ->
+    val zoneAxisValues = remember(userAge, measuredMaxHeartRate, restingHeartRate, zoneTickValuesBpm) {
+        zoneTickValuesBpm ?: listOf(50f, 60f, 70f, 80f, 90f, 100f).map {
             getHeartRateFromPercentage(
-                percentage.toFloat(),
+                it,
                 userAge,
                 measuredMaxHeartRate,
                 restingHeartRate
-            ).toString()
-        }
+            ).toDouble()
+        }.distinct().sorted()
     }
+    val zoneStartAxisValues = remember(zoneAxisValues) {
+        if (zoneAxisValues.size > 1) zoneAxisValues.dropLast(1) else zoneAxisValues
+    }
+
     val startAxisValueFormatter =
         CartesianValueFormatter { _, value, _ ->
-            percentageToBpmLabel(value)
+            value.toInt().toString()
         }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
@@ -310,12 +318,7 @@ fun HeartRateChartContent(
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
-                getHeartRateFromPercentage(
-                    it.toFloat(),
-                    userAge,
-                    measuredMaxHeartRate,
-                    restingHeartRate
-                ).toString()
+                it.toInt().toString()
             }, textColor)
         },
         label = rememberTextComponent(
@@ -332,7 +335,48 @@ fun HeartRateChartContent(
         CartesianValueFormatter { _, value, _ ->
             formatTime((value).toInt())
         }
-    val effectiveMinY = minOf(minYPercentage ?: 40.0, zoneThresholdPercentages.first())
+
+    val firstModel = cartesianChartModel.models.firstOrNull()
+    val modelMaxY = firstModel?.maxY ?: 1.0
+    val effectiveMinY = minOf(minYBpm ?: modelMaxY, zoneAxisValues.firstOrNull() ?: modelMaxY) - 2.0
+    val effectiveMaxY = maxOf(modelMaxY, (zoneAxisValues.lastOrNull() ?: modelMaxY) + 2.0)
+
+    val modelSeriesCount = (cartesianChartModel.models.firstOrNull() as? LineCartesianLayerModel)?.series?.size ?: 0
+    val effectiveLineZoneIndices = if (
+        lineZoneIndices != null &&
+        modelSeriesCount > 0 &&
+        lineZoneIndices.size == modelSeriesCount
+    ) {
+        lineZoneIndices
+    } else {
+        null
+    }
+
+    val lines = if (effectiveLineZoneIndices != null) {
+        effectiveLineZoneIndices.map { zoneIndex ->
+            LineCartesianLayer.rememberLine(
+                fill = LineCartesianLayer.LineFill.single(fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])),
+                areaFill = null,
+                pointProvider = null,
+                pointConnector = LineCartesianLayer.PointConnector.Sharp,
+            )
+        }
+    } else {
+        listOf(
+            LineCartesianLayer.rememberLine(
+                fill = LineCartesianLayer.LineFill.single(
+                    fill(
+                        Color(
+                            0xFFff6700
+                        )
+                    )
+                ),
+                areaFill = null,
+                pointProvider = null,
+                pointConnector = LineCartesianLayer.PointConnector.cubic(),
+            )
+        )
+    }
 
     CartesianChartHost(
         modifier = modifier.padding(10.dp),
@@ -343,37 +387,15 @@ fun HeartRateChartContent(
         scrollState = rememberVicoScrollState(scrollEnabled = true),
         chart = rememberCartesianChart(
             rememberLineCartesianLayer(
-                LineCartesianLayer.LineProvider.series(
-                    listOf(
-                        LineCartesianLayer.rememberLine(
-                            fill = LineCartesianLayer.LineFill.single(
-                                fill(
-                                    Color(
-                                        0xFFff6700
-                                    )
-                                )
-                            ),
-                            areaFill = null,
-                            pointProvider = null,
-                            pointConnector = LineCartesianLayer.PointConnector.cubic(),
-                        )
-                    )
-                ),
+                LineCartesianLayer.LineProvider.series(lines),
 
                 rangeProvider = CartesianLayerRangeProvider.fixed(
                     minY = effectiveMinY,
-                    maxY = 105.0
+                    maxY = effectiveMaxY
                 ),
             ),
-            decorations = zoneThresholdPercentages.map { threshold ->
-                val zoneColor = when (threshold.toInt()) {
-                    50 -> colorsByZone[1]
-                    60 -> colorsByZone[2]
-                    70 -> colorsByZone[3]
-                    80 -> colorsByZone[4]
-                    90 -> colorsByZone[5]
-                    else -> Color.Black
-                }
+            decorations = zoneStartAxisValues.mapIndexed { index, threshold ->
+                val zoneColor = colorsByZone[(index + 1).coerceIn(0, colorsByZone.lastIndex)]
                 rememberHorizontalLine(
                     color = zoneColor.copy(alpha = 0.75f),
                     y = threshold,
@@ -384,8 +406,8 @@ fun HeartRateChartContent(
                 tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
                 guideline = null,
                 valueFormatter = startAxisValueFormatter,
-                itemPlacer = remember(zoneThresholdPercentages) {
-                    FixedValuesVerticalAxisItemPlacer(zoneThresholdPercentages)
+                itemPlacer = remember(zoneAxisValues) {
+                    FixedValuesVerticalAxisItemPlacer(zoneAxisValues)
                 }),
             bottomAxis = HorizontalAxis.rememberBottom(
                 line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),

@@ -154,7 +154,6 @@ fun ExerciseRenderer(
                                     primaryValue = formatTime(set.timeInMillis / 1000),
                                     secondaryValue = null,
                                     monospacePrimary = true,
-                                    secondaryText = "Recorded duration",
                                 )
                             }
 
@@ -165,7 +164,6 @@ fun ExerciseRenderer(
                                     primaryValue = formatTime(set.timeInMillis / 1000),
                                     secondaryValue = null,
                                     monospacePrimary = true,
-                                    secondaryText = "Recorded duration",
                                 )
                             }
                         }

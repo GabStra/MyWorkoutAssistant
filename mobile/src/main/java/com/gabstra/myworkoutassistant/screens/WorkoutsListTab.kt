@@ -4,13 +4,14 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -29,6 +30,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -43,10 +45,14 @@ fun WorkoutsListTab(
     onSelectionModeChange: (Boolean) -> Unit,
     selectedPlanId: UUID? = null
 ) {
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(vertical = 10.dp)
+            .verticalColumnScrollbar(scrollState)
+            .verticalScroll(scrollState)
             .padding(horizontal = 15.dp)
     ) {
         Text(
@@ -58,12 +64,12 @@ fun WorkoutsListTab(
         )
 
         if (workouts.isEmpty()) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .weight(1f)
                     .fillMaxWidth()
                     .padding(15.dp),
-                contentAlignment = Alignment.Center
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "No workouts in this plan",
@@ -72,72 +78,66 @@ fun WorkoutsListTab(
                 )
             }
         } else {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                GenericSelectableList(
-                    it = PaddingValues(0.dp, 10.dp),
-                    items = workouts,
-                    selectedItems = selectedWorkouts,
-                    isSelectionModeActive = isSelectionModeActive,
-                    onItemClick = { workout ->
-                        onWorkoutClick(workout)
-                    },
-                    onEnableSelection = {
-                        onSelectionModeChange(true)
-                    },
-                    onDisableSelection = {
-                        onSelectionModeChange(false)
-                    },
-                    onSelectionChange = { newSelection ->
-                        onSelectionChange(newSelection)
-                    },
-                    onOrderChange = { },
-                    itemContent = { workout, onItemClick, onItemLongClick ->
-                        StyledCard(
+            GenericSelectableList(
+                it = PaddingValues(0.dp, 10.dp),
+                items = workouts,
+                selectedItems = selectedWorkouts,
+                isSelectionModeActive = isSelectionModeActive,
+                onItemClick = { workout ->
+                    onWorkoutClick(workout)
+                },
+                onEnableSelection = {
+                    onSelectionModeChange(true)
+                },
+                onDisableSelection = {
+                    onSelectionModeChange(false)
+                },
+                onSelectionChange = { newSelection ->
+                    onSelectionChange(newSelection)
+                },
+                onOrderChange = { },
+                itemContent = { workout, onItemClick, onItemLongClick ->
+                    StyledCard(
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = {
+                                    onItemClick()
+                                },
+                                onLongClick = {
+                                    onItemLongClick()
+                                }
+                            ),
+                        enabled = workout.enabled
+                    ) {
+                        Column(
                             modifier = Modifier
-                                .combinedClickable(
-                                    onClick = {
-                                        onItemClick()
-                                    },
-                                    onLongClick = {
-                                        onItemLongClick()
-                                    }
-                                ),
-                            enabled = workout.enabled
+                                .fillMaxWidth()
+                                .padding(15.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Column(
+                            Text(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(15.dp),
-                                verticalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
+                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                text = workout.name,
+                                color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2
+                            )
+                            if (workout.description.isNotEmpty()) {
                                 Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .basicMarquee(iterations = Int.MAX_VALUE),
-                                    text = workout.name,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = workout.description,
                                     color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 2
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
-                                if (workout.description.isNotEmpty()) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = workout.description,
-                                        color = if (workout.enabled) Color.White.copy(alpha = .87f) else DisabledContentGray,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
                             }
                         }
-                    },
-                    isDragDisabled = true,
-                    keySelector = { workout -> workout.id }
-                )
-            }
+                    }
+                },
+                isDragDisabled = true,
+                keySelector = { workout -> workout.id }
+            )
         }
         
         Row(

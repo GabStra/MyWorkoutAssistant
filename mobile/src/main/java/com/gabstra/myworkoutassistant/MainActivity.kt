@@ -100,6 +100,7 @@ import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.determineBackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
+import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -725,10 +726,11 @@ fun MyWorkoutAssistantNavHost(
                             workoutHistoryDao.insertAll(*chunk.toTypedArray())
                         }
 
-                        val validSetHistories =
+                        val validSetHistories = sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise(
                             (appBackup.SetHistories ?: emptyList()).filter { setHistory ->
                                 validWorkoutHistories.any { workoutHistory -> workoutHistory.id == setHistory.workoutHistoryId }
                             }
+                        )
 
                         validSetHistories.chunked(BATCH_SIZE).forEach { chunk ->
                             setHistoryDao.insertAll(*chunk.toTypedArray())
@@ -1542,62 +1544,101 @@ fun MyWorkoutAssistantNavHost(
                     is ScreenData.ExerciseDetail -> {
                         val screenData = currentScreen as ScreenData.ExerciseDetail
                         val workouts by appViewModel.workoutsFlow.collectAsState()
+                        val requestedWorkout = workouts.find { it.id == screenData.workoutId }
+                        if (requestedWorkout == null) {
+                            LaunchedEffect(screenData.workoutId) { appViewModel.goBack() }
+                        } else {
+                            val workoutCandidates = buildList {
+                                add(requestedWorkout)
+                                addAll(
+                                    workouts.filter {
+                                        it.id != requestedWorkout.id &&
+                                            it.globalId == requestedWorkout.globalId
+                                    }
+                                )
+                            }
 
-                        var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
-                        var currentWorkout = selectedWorkout
+                            val selectedWorkout = workoutCandidates.firstOrNull {
+                                findWorkoutComponentByIdInWorkout(
+                                    it,
+                                    screenData.selectedExerciseId
+                                ) is Exercise
+                            } ?: requestedWorkout
 
-                        while (!currentWorkout.isActive) {
-                            val nextWorkout =
-                                workouts.find { it.id == currentWorkout.nextVersionId }!!
-                            currentWorkout = nextWorkout
-                        }
+                            val selectedExercise = findWorkoutComponentByIdInWorkout(
+                                selectedWorkout,
+                                screenData.selectedExerciseId
+                            ) as? Exercise
 
-                        selectedWorkout = currentWorkout
-
-                        val selectedExercise = findWorkoutComponentByIdInWorkout(
-                            selectedWorkout,
-                            screenData.selectedExerciseId
-                        ) as Exercise
-
-                        ExerciseDetailScreen(
-                            appViewModel,
-                            selectedWorkout,
-                            workoutHistoryDao,
-                            setHistoryDao,
-                            selectedExercise
-                        ) {
-                            appViewModel.goBack()
+                            if (selectedExercise == null) {
+                                LaunchedEffect(
+                                    screenData.workoutId,
+                                    screenData.selectedExerciseId
+                                ) {
+                                    appViewModel.goBack()
+                                }
+                            } else {
+                                ExerciseDetailScreen(
+                                    appViewModel,
+                                    selectedWorkout,
+                                    workoutHistoryDao,
+                                    setHistoryDao,
+                                    selectedExercise
+                                ) {
+                                    appViewModel.goBack()
+                                }
+                            }
                         }
                     }
 
                     is ScreenData.ExerciseHistory -> {
                         val screenData = currentScreen as ScreenData.ExerciseHistory
                         val workouts by appViewModel.workoutsFlow.collectAsState()
-                        var selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
+                        val requestedWorkout = workouts.find { it.id == screenData.workoutId }
+                        if (requestedWorkout == null) {
+                            LaunchedEffect(screenData.workoutId) { appViewModel.goBack() }
+                        } else {
+                            val workoutCandidates = buildList {
+                                add(requestedWorkout)
+                                addAll(
+                                    workouts.filter {
+                                        it.id != requestedWorkout.id &&
+                                            it.globalId == requestedWorkout.globalId
+                                    }
+                                )
+                            }
 
-                        var currentWorkout = selectedWorkout
+                            val selectedWorkout = workoutCandidates.firstOrNull {
+                                findWorkoutComponentByIdInWorkout(
+                                    it,
+                                    screenData.selectedExerciseId
+                                ) is Exercise
+                            } ?: requestedWorkout
 
-                        while (!currentWorkout.isActive) {
-                            val nextWorkout =
-                                workouts.find { it.id == currentWorkout.nextVersionId }!!
-                            currentWorkout = nextWorkout
-                        }
+                            val selectedExercise = findWorkoutComponentByIdInWorkout(
+                                selectedWorkout,
+                                screenData.selectedExerciseId
+                            ) as? Exercise
 
-                        selectedWorkout = currentWorkout
-
-                        val selectedExercise = findWorkoutComponentByIdInWorkout(
-                            selectedWorkout,
-                            screenData.selectedExerciseId
-                        ) as Exercise
-
-                        ExerciseHistoryScreen(
-                            appViewModel,
-                            selectedWorkout,
-                            workoutHistoryDao,
-                            setHistoryDao,
-                            selectedExercise
-                        ) {
-                            appViewModel.goBack()
+                            if (selectedExercise == null) {
+                                LaunchedEffect(
+                                    screenData.workoutId,
+                                    screenData.selectedExerciseId
+                                ) {
+                                    appViewModel.goBack()
+                                }
+                            } else {
+                                ExerciseHistoryScreen(
+                                    appViewModel,
+                                    selectedWorkout,
+                                    workoutHistoryDao,
+                                    setHistoryDao,
+                                    selectedExercise,
+                                    screenData.selectedTabIndex
+                                ) {
+                                    appViewModel.goBack()
+                                }
+                            }
                         }
                     }
 

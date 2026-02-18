@@ -78,12 +78,12 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.FilterRange
-import com.gabstra.myworkoutassistant.composables.HeartRateChart
 import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
+import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -98,9 +98,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
-import com.gabstra.myworkoutassistant.shared.getMaxHearthRatePercentage
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
-import com.gabstra.myworkoutassistant.shared.getZoneFromPercentage
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -127,6 +125,166 @@ import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.abs
+import kotlin.math.roundToLong
+
+private data class HeartRateZoneSegment(
+    val zoneIndex: Int,
+    val xValues: List<Double>,
+    val yValues: List<Double>,
+)
+
+private fun roundXToSupportedPrecision(value: Double): Double {
+    return (value * 10_000.0).roundToLong() / 10_000.0
+}
+
+private fun getHeartRateZoneTickValues(
+    userAge: Int,
+    measuredMaxHeartRate: Int?,
+    restingHeartRate: Int?,
+): List<Double> {
+    val zoneBounds = getHeartRateZoneBounds(
+        userAge = userAge,
+        measuredMaxHeartRate = measuredMaxHeartRate,
+        restingHeartRate = restingHeartRate,
+    )
+    return (zoneBounds.drop(1).map { it.first.toDouble() } + zoneBounds.last().last.toDouble())
+        .distinct().sorted()
+}
+
+private fun getHeartRateZoneThresholdValues(
+    userAge: Int,
+    measuredMaxHeartRate: Int?,
+    restingHeartRate: Int?,
+): List<Double> {
+    val zoneBounds = getHeartRateZoneBounds(
+        userAge = userAge,
+        measuredMaxHeartRate = measuredMaxHeartRate,
+        restingHeartRate = restingHeartRate,
+    )
+    return zoneBounds.drop(1).dropLast(1).map { it.first.toDouble() }
+}
+
+private fun getHeartRateZoneBounds(
+    userAge: Int,
+    measuredMaxHeartRate: Int?,
+    restingHeartRate: Int?,
+): List<IntRange> {
+    val zoneStarts = zoneRanges.map { (lowerBoundPercent, _) ->
+        getHeartRateFromPercentage(
+            lowerBoundPercent,
+            userAge,
+            measuredMaxHeartRate,
+            restingHeartRate,
+        )
+    }
+    val absoluteMax = getHeartRateFromPercentage(
+        zoneRanges.last().second,
+        userAge,
+        measuredMaxHeartRate,
+        restingHeartRate,
+    )
+
+    return zoneStarts.indices.map { zoneIndex ->
+        val lowerBound = zoneStarts[zoneIndex]
+        val upperBound = if (zoneIndex < zoneStarts.lastIndex) {
+            zoneStarts[zoneIndex + 1] - 1
+        } else {
+            absoluteMax
+        }
+        lowerBound..maxOf(lowerBound, upperBound)
+    }
+}
+
+private fun getZoneFromHeartRate(
+    heartRate: Double,
+    userAge: Int,
+    measuredMaxHeartRate: Int?,
+    restingHeartRate: Int?,
+): Int {
+    val zoneBounds = getHeartRateZoneBounds(userAge, measuredMaxHeartRate, restingHeartRate)
+    for (zoneIndex in zoneBounds.indices.reversed()) {
+        val zoneRange = zoneBounds[zoneIndex]
+        if (heartRate in zoneRange.first.toDouble()..zoneRange.last.toDouble()) {
+            return zoneIndex
+        }
+    }
+
+    return when {
+        heartRate < zoneBounds.first().first.toDouble() -> 0
+        heartRate > zoneBounds.last().last.toDouble() -> zoneBounds.lastIndex
+        else -> 0
+    }
+}
+
+private fun buildHeartRateZoneSegments(
+    values: List<Double>,
+    thresholds: List<Double>,
+    zoneFromValue: (Double) -> Int,
+): List<HeartRateZoneSegment> {
+    if (values.size < 2) return emptyList()
+
+    val segments = mutableListOf<HeartRateZoneSegment>()
+    var currentX = mutableListOf(0.0)
+    var currentY = mutableListOf(values.first())
+    var currentZone = zoneFromValue(values.first())
+
+    fun closeCurrentSegment() {
+        if (currentX.size >= 2 && currentY.size >= 2) {
+            segments += HeartRateZoneSegment(
+                zoneIndex = currentZone,
+                xValues = currentX.toList(),
+                yValues = currentY.toList(),
+            )
+        }
+    }
+
+    for (index in 0 until values.lastIndex) {
+        val x1 = index.toDouble()
+        val x2 = (index + 1).toDouble()
+        val y1 = values[index]
+        val y2 = values[index + 1]
+
+        if (abs(y2 - y1) < 1e-9) {
+            currentX.add(x2)
+            currentY.add(y2)
+            continue
+        }
+
+        val minY = minOf(y1, y2)
+        val maxY = maxOf(y1, y2)
+        val isAscending = y2 > y1
+        val crossings = thresholds
+            .filter { it > minY && it < maxY }
+            .sortedBy { if (isAscending) it else -it }
+
+        if (crossings.isEmpty()) {
+            currentX.add(x2)
+            currentY.add(y2)
+            continue
+        }
+
+        for (threshold in crossings) {
+            val t = (threshold - y1) / (y2 - y1)
+            val crossingX = roundXToSupportedPrecision(x1 + (x2 - x1) * t)
+
+            currentX.add(crossingX)
+            currentY.add(threshold)
+            closeCurrentSegment()
+
+            val epsilon = if (isAscending) 1e-4 else -1e-4
+            currentZone = zoneFromValue(threshold + epsilon)
+            currentX = mutableListOf(crossingX)
+            currentY = mutableListOf(threshold)
+        }
+
+        currentX.add(x2)
+        currentY.add(y2)
+    }
+
+    closeCurrentSegment()
+    return segments
+}
 
 @Composable
 fun Menu(
@@ -212,7 +370,7 @@ fun WorkoutHistoryScreen(
     var workoutDurationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
-    var heartRateMinYPercentage by remember { mutableStateOf<Double?>(null) }
+    var heartRateMinY by remember { mutableStateOf<Double?>(null) }
 
     val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _->
@@ -240,6 +398,9 @@ fun WorkoutHistoryScreen(
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val selectedWorkout = workouts.find { it.id == workout.id }!!
+    val supersetsById = remember(selectedWorkout) {
+        selectedWorkout.workoutComponents.filterIsInstance<Superset>().associateBy { it.id }
+    }
 
     val exerciseById = remember(workouts) {
         workouts.flatMap { workout ->
@@ -249,6 +410,13 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
+    val heartRateZoneBounds = remember(userAge, measuredMaxHeartRate, restingHeartRate) {
+        getHeartRateZoneBounds(
+            userAge = userAge,
+            measuredMaxHeartRate = measuredMaxHeartRate,
+            restingHeartRate = restingHeartRate,
+        )
+    }
 
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
@@ -402,22 +570,14 @@ fun WorkoutHistoryScreen(
 
         zoneCounter = null
         heartRateEntryModel = null
-        heartRateMinYPercentage = null
+        heartRateMinY = null
 
         withContext(Dispatchers.IO) {
 
             if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
                 val validHeartBeatRecords = selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }
                 val minHeartBeat = validHeartBeatRecords.minOrNull()
-                val minHeartRatePercentage = minHeartBeat?.let {
-                    getMaxHearthRatePercentage(
-                        it,
-                        userAge,
-                        measuredMaxHeartRate,
-                        restingHeartRate
-                    )
-                }
-                heartRateMinYPercentage = minHeartRatePercentage?.toDouble()
+                heartRateMinY = minHeartBeat?.toDouble()
 
                 validHeartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
                     // Create a pair of the index of the max heartbeat and the value itself
@@ -430,39 +590,56 @@ fun WorkoutHistoryScreen(
                 zoneCounter = mapOf(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0, 5 to 0)
 
                 for (heartBeat in validHeartBeatRecords) {
-                    val percentage = getMaxHearthRatePercentage(
-                        heartBeat,
-                        userAge,
-                        measuredMaxHeartRate,
-                        restingHeartRate
+                    val zone = getZoneFromHeartRate(
+                        heartRate = heartBeat.toDouble(),
+                        userAge = userAge,
+                        measuredMaxHeartRate = measuredMaxHeartRate,
+                        restingHeartRate = restingHeartRate,
                     )
-                    val zone = getZoneFromPercentage(percentage)
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }
 
-                heartRateEntryModel =
-                    CartesianChartModel(LineCartesianLayerModel.build {
-                        series(
-                            selectedWorkoutHistory!!.heartBeatRecords.map {
-                                if (it == 0 && minHeartRatePercentage != null) {
-                                    minHeartRatePercentage
-                                } else {
-                                    getMaxHearthRatePercentage(
-                                        it,
-                                        userAge,
-                                        measuredMaxHeartRate,
-                                        restingHeartRate
-                                    )
-                                }
-                            }
-                        )
-                    })
+                val heartRateSeries = selectedWorkoutHistory!!.heartBeatRecords.map {
+                    if (it == 0 && minHeartBeat != null) {
+                        minHeartBeat.toDouble()
+                    } else {
+                        it.toDouble()
+                    }
+                }
+
+                heartRateEntryModel = CartesianChartModel(
+                    LineCartesianLayerModel.build {
+                        series(heartRateSeries)
+                    }
+                )
             }
 
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(selectedWorkoutHistory!!.id)
-            setHistoriesByExerciseId = setHistories
-                .filter { it.exerciseId != null }
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistory!!.id)
+            val sectionMap = linkedMapOf<UUID, List<SetHistory>>()
+            val consumedHistoryIds = mutableSetOf<UUID>()
+
+            for (superset in selectedWorkout.workoutComponents.filterIsInstance<Superset>()) {
+                val supersetSetHistories = setHistories
+                    .filter { it.supersetId == superset.id }
+                    .sortedWith(
+                        compareBy<SetHistory>(
+                            { it.executionSequence == null },
+                            { it.executionSequence ?: UInt.MAX_VALUE },
+                            { it.startTime },
+                            { it.order }
+                        )
+                    )
+                if (supersetSetHistories.isNotEmpty()) {
+                    sectionMap[superset.id] = supersetSetHistories
+                    consumedHistoryIds.addAll(supersetSetHistories.map { it.id })
+                }
+            }
+
+            val remainingByExerciseId = setHistories
+                .filter { it.exerciseId != null && it.id !in consumedHistoryIds }
                 .groupBy { it.exerciseId!! }
+            sectionMap.putAll(remainingByExerciseId)
+            setHistoriesByExerciseId = sectionMap
 
 
 
@@ -674,7 +851,14 @@ fun WorkoutHistoryScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 cartesianChartModel = heartRateEntryModel!!,
                                 userAge = userAge,
-                                minYPercentage = heartRateMinYPercentage,
+                                measuredMaxHeartRate = measuredMaxHeartRate,
+                                restingHeartRate = restingHeartRate,
+                                minYBpm = heartRateMinY,
+                                zoneTickValuesBpm = getHeartRateZoneTickValues(
+                                    userAge = userAge,
+                                    measuredMaxHeartRate = measuredMaxHeartRate,
+                                    restingHeartRate = restingHeartRate,
+                                ),
                             )
                             
                             Spacer(modifier = Modifier.height(15.dp))
@@ -771,23 +955,13 @@ fun WorkoutHistoryScreen(
                                         )
                                         Spacer(Modifier.height(5.dp))
                                         Row(modifier = Modifier.fillMaxWidth()) {
-                                            val (lowerBound, upperBound) = zoneRanges[zone]
-                                            val lowHr =
-                                                getHeartRateFromPercentage(
-                                                    lowerBound,
-                                                    userAge,
-                                                    measuredMaxHeartRate,
-                                                    restingHeartRate
-                                                )
-                                            val highHr =
-                                                getHeartRateFromPercentage(
-                                                    upperBound,
-                                                    userAge,
-                                                    measuredMaxHeartRate,
-                                                    restingHeartRate
-                                                )
+                                            val zoneRange = heartRateZoneBounds[zone]
                                             Text(
-                                                text = "$lowHr - $highHr bpm",
+                                                text = if (zone == 0) {
+                                                    "< ${heartRateZoneBounds[1].first} bpm"
+                                                } else {
+                                                    "${zoneRange.first} - ${zoneRange.last} bpm"
+                                                },
                                                 modifier = Modifier.weight(1f),
                                                 color = MaterialTheme.colorScheme.onBackground,
                                                 style = MaterialTheme.typography.bodySmall,
@@ -821,7 +995,7 @@ fun WorkoutHistoryScreen(
             Column {
                 Text(
                     modifier = Modifier.fillMaxWidth().padding(vertical= 10.dp),
-                    text = "Exercise Histories",
+                    text = "Exercise & Superset Histories",
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -837,8 +1011,31 @@ fun WorkoutHistoryScreen(
                                 .minOrNull() ?: LocalDateTime.MAX
                         }
                         .forEach() { key ->
-                            val exercise = exerciseById[key]!!
                             val setHistories = setHistoriesByExerciseId[key]!!
+                            val superset = supersetsById[key]
+                            if (superset != null) {
+                                PrimarySurface {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Superset: ${superset.exercises.joinToString(" ↔ ") { it.name }}",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        SupersetSetHistoriesRenderer(
+                                            setHistories = setHistories,
+                                            workout = selectedWorkout
+                                        )
+                                    }
+                                }
+                                return@forEach
+                            }
+
+                            val exercise = exerciseById[key] ?: return@forEach
 
                             val hasTarget =
                                 exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
@@ -985,8 +1182,10 @@ fun WorkoutHistoryScreen(
                                                                     onClick = {
                                                                         appViewModel.setScreenData(
                                                                             ScreenData.ExerciseHistory(
-                                                                                workout.id,
-                                                                                exercise.id
+                                                                                selectedWorkoutHistory?.workoutId
+                                                                                    ?: workout.id,
+                                                                                exercise.id,
+                                                                                1
                                                                             )
                                                                         )
                                                                     }) {
@@ -1024,8 +1223,10 @@ fun WorkoutHistoryScreen(
                                                         onClick = {
                                                             appViewModel.setScreenData(
                                                                 ScreenData.ExerciseHistory(
-                                                                    workout.id,
-                                                                    exercise.id
+                                                                    selectedWorkoutHistory?.workoutId
+                                                                        ?: workout.id,
+                                                                    exercise.id,
+                                                                    1
                                                                 )
                                                             )
                                                         }) {

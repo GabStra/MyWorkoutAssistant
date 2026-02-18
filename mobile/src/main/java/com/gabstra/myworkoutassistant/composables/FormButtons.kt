@@ -22,7 +22,7 @@ fun FormPrimaryButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 35.dp),
         colors = ButtonDefaults.buttonColors(
             contentColor = MaterialTheme.colorScheme.background,
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -51,7 +51,7 @@ fun FormPrimaryOutlinedButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 35.dp),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = MaterialTheme.colorScheme.primary,
             disabledContentColor = DisabledContentGray
@@ -81,7 +81,7 @@ fun FormSecondaryButton(
     modifier: Modifier = Modifier
 ) {
     CustomButton(
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 35.dp),
         text = text,
         onClick = onClick,
         enabled = enabled

@@ -6,7 +6,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.Interaction
@@ -23,14 +22,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -58,14 +54,14 @@ import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
 import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsMenu
@@ -89,6 +85,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import java.time.LocalDate
 import android.util.Log
 import java.time.format.DateTimeFormatter
@@ -229,7 +226,7 @@ fun WorkoutsScreen(
 
     var objectiveProgress by remember { mutableStateOf(0.0) }
 
-    var selectedDay by remember {
+    var selectedWeekAnchorDate by remember {
         mutableStateOf<LocalDate>(LocalDate.now())
     }
 
@@ -242,16 +239,25 @@ fun WorkoutsScreen(
         )
     }
 
-    val selectedCalendarWorkouts = remember(groupedWorkoutsHistories, selectedDay, workoutById) {
-        val workoutHistories = groupedWorkoutsHistories?.get(selectedDay)
-        val byId = workoutById
-        if (byId == null) null
-        else try {
-            workoutHistories?.map { wh -> Pair(wh, byId[wh.workoutId]!!) } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
+    val selectedWeekStart = remember(selectedWeekAnchorDate) { getStartOfWeek(selectedWeekAnchorDate) }
+    val selectedWeekEnd = remember(selectedWeekAnchorDate) { getEndOfWeek(selectedWeekAnchorDate) }
+
+    val selectedWeekWorkoutsByDate =
+        remember(groupedWorkoutsHistories, selectedWeekStart, selectedWeekEnd, workoutById) {
+            val byId = workoutById ?: return@remember null
+            try {
+                generateSequence(selectedWeekStart) { current ->
+                    current.plusDays(1).takeIf { !it.isAfter(selectedWeekEnd) }
+                }.mapNotNull { date ->
+                    val dayWorkouts = groupedWorkoutsHistories?.get(date)
+                        ?.map { history -> Pair(history, byId[history.workoutId]!!) }
+                        .orEmpty()
+                    if (dayWorkouts.isEmpty()) null else (date to dayWorkouts)
+                }.toMap(LinkedHashMap())
+            } catch (e: Exception) {
+                emptyMap()
+            }
         }
-    }
 
     var isCardExpanded by remember {
         mutableStateOf(false)
@@ -392,10 +398,13 @@ fun WorkoutsScreen(
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
         scope.launch(Dispatchers.Main) {
             if (groupedWorkoutsHistories == null || workoutById == null) return@launch
+            val willChangeSelection = selectedDate != day || selectedWeekAnchorDate != day.date
+            if (!willChangeSelection) return@launch
+
             isLoading = true
-            selectedDay = day.date
+            selectedWeekAnchorDate = day.date
             if (day.position != DayPosition.MonthDate) {
-                calendarState.scrollToMonth(selectedDay.yearMonth)
+                calendarState.scrollToMonth(day.date.yearMonth)
                 selectedDate = day
                 return@launch
             }
@@ -479,7 +488,15 @@ fun WorkoutsScreen(
     )
 
     LaunchedEffect(selectedTabIndex) {
-        pagerState.scrollToPage(selectedTabIndex)
+        if (selectedTabIndex == pagerState.currentPage) {
+            return@LaunchedEffect
+        }
+        val pageDistance = abs(selectedTabIndex - pagerState.currentPage)
+        if (pageDistance > 1) {
+            pagerState.scrollToPage(selectedTabIndex)
+        } else {
+            pagerState.animateScrollToPage(selectedTabIndex)
+        }
     }
 
     LaunchedEffect(pagerState.currentPage) {
@@ -632,9 +649,6 @@ fun WorkoutsScreen(
                                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
                                 selected = isSelected,
                                 onClick = {
-                                    scope.launch {
-                                        pagerState.animateScrollToPage(index)
-                                    }
                                     appViewModel.setHomeTab(index)
                                 },
                                 text = {
@@ -688,7 +702,9 @@ fun WorkoutsScreen(
                                             isLoading = isLoading,
                                             hasObjectives = hasObjectives,
                                             selectedDate = selectedDate,
-                                            selectedCalendarWorkouts = selectedCalendarWorkouts,
+                                            selectedWeekStart = selectedWeekStart,
+                                            selectedWeekEnd = selectedWeekEnd,
+                                            selectedWeekWorkoutsByDate = selectedWeekWorkoutsByDate,
                                             weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
                                             objectiveProgress = objectiveProgress,
                                             appViewModel = appViewModel,
@@ -885,52 +901,27 @@ private fun WorkoutPlanFilterPicker(
         return
     }
 
-    var planSelectorExpanded by remember { mutableStateOf(false) }
-    val selectedPlan = allPlans.find { it.id == selectedPlanFilter }
-    val dropdownBackground = DarkGray
-    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
+    val planItems = remember(allPlans) {
+        allPlans
+            .distinctBy { it.id }
+            .map { StandardFilterDropdownItem(value = it.id, label = it.name) }
+    }
+    val selectedPlanLabel = remember(planItems, selectedPlanFilter) {
+        planItems
+            .firstOrNull { it.value == selectedPlanFilter }
+            ?.label
+            ?: planItems.firstOrNull()?.label
+            ?: "Workout Plan"
+    }
 
-    ExposedDropdownMenuBox(
-        expanded = planSelectorExpanded,
-        onExpandedChange = { planSelectorExpanded = it },
+    StandardFilterDropdown(
+        label = "Workout Plan:",
+        selectedText = selectedPlanLabel,
+        items = planItems,
+        onItemSelected = onPlanSelected,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 15.dp, vertical = 8.dp)
-    ) {
-        OutlinedTextField(
-            value = selectedPlan?.name ?: "Select Plan",
-            onValueChange = {},
-            readOnly = true,
-            label = {
-                Text(
-                    "Workout Plan",
-                    style = MaterialTheme.typography.labelMedium
-                )
-            },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = planSelectorExpanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(),
-            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
-        )
-
-        ExposedDropdownMenu(
-            expanded = planSelectorExpanded,
-            modifier = Modifier.background(dropdownBackground),
-            border = BorderStroke(1.dp, dropdownBorderColor),
-            onDismissRequest = { planSelectorExpanded = false }
-        ) {
-            AppMenuContent {
-                allPlans.distinctBy { it.id }.forEach { plan ->
-                    AppDropdownMenuItem(
-                        text = { Text(plan.name) },
-                        onClick = {
-                            onPlanSelected(plan.id)
-                            planSelectorExpanded = false
-                        }
-                    )
-                }
-            }
-        }
-    }
+            .padding(horizontal = 15.dp, vertical = 8.dp),
+        isItemSelected = { it == selectedPlanFilter }
+    )
 }

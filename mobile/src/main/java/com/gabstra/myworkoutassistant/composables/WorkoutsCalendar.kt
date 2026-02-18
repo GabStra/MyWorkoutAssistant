@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -27,6 +26,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -88,30 +89,103 @@ fun MonthHeader(
 private fun Day(
     day: CalendarDay,
     currentDate: LocalDate,
-    currentMonth: YearMonth,
-    isSelected: Boolean = false,
+    isInSelectedWeek: Boolean = false,
+    isSelectedWeekStart: Boolean = false,
+    isSelectedWeekEnd: Boolean = false,
     shouldHighlight: Boolean = false,
     onClick: (CalendarDay) -> Unit = {},
 ) {
     val isToday = remember(day) { day.date == currentDate }
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.secondary
 
     val isOutOfBounds = day.position in listOf(DayPosition.InDate, DayPosition.OutDate)
     val isAfterToday = remember(day) { day.date > currentDate }
+    val currentWeekStart = remember(currentDate) { currentDate.minusDays(currentDate.dayOfWeek.value.toLong() - 1L) }
+    val currentWeekEnd = remember(currentDate) { currentWeekStart.plusDays(6) }
+    val isFutureInCurrentWeek = remember(day, currentWeekStart, currentWeekEnd, currentDate) {
+        day.date.isAfter(currentDate) && !day.date.isBefore(currentWeekStart) && !day.date.isAfter(currentWeekEnd)
+    }
+    val isClickEnabled = !isAfterToday || isFutureInCurrentWeek
 
     Box(
         Modifier
-            .padding(horizontal = 5.dp, vertical = 2.dp)
-            .border(
-                width = if (isSelected || isToday) 1.dp else 0.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.onBackground else (if (isToday) MaterialTheme.colorScheme.secondary else Color.Transparent),
+            .fillMaxWidth()
+            .padding(
+                horizontal = if (isInSelectedWeek) 0.dp else 5.dp,
+                vertical = 2.dp
             )
-    ){
+            .drawBehind {
+                if (isInSelectedWeek) {
+                    val strokeWidth = 1.dp.toPx()
+                    val borderColor = primaryColor
+                    val backgroundColor = primaryColor.copy(alpha = 0.16f)
+
+                    drawRect(color = backgroundColor)
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = strokeWidth
+                    )
+                    if (isSelectedWeekStart) {
+                        drawLine(
+                            color = borderColor,
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+                    if (isSelectedWeekEnd) {
+                        drawLine(
+                            color = borderColor,
+                            start = Offset(size.width, 0f),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = strokeWidth
+                        )
+                    }
+                } else if (isToday) {
+                    val strokeWidth = 1.dp.toPx()
+                    val borderColor = secondaryColor
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = strokeWidth
+                    )
+                    drawLine(
+                        color = borderColor,
+                        start = Offset(size.width, 0f),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = strokeWidth
+                    )
+                }
+            }
+    , contentAlignment = Alignment.Center) {
         Box(
             modifier = Modifier
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    enabled = !isAfterToday,
+                    enabled = isClickEnabled,
                     onClick = {
                         onClick(day)
                     },
@@ -255,6 +329,8 @@ fun SimpleCalendarTitle(
 fun WorkoutsCalendar(
     modifier: Modifier = Modifier,
     selectedDate: CalendarDay,
+    selectedWeekStart: LocalDate,
+    selectedWeekEnd: LocalDate,
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
     shouldHighlight: (CalendarDay) -> Boolean,
     groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
@@ -296,7 +372,7 @@ fun WorkoutsCalendar(
             endMonth = endMonth
         )
         HorizontalCalendar(
-            modifier = Modifier.padding(5.dp),
+            modifier = Modifier.padding(5.dp).padding(horizontal = 5.dp),
             state = calendarState,
             calendarScrollPaged = false,
             userScrollEnabled = false,
@@ -304,8 +380,9 @@ fun WorkoutsCalendar(
                 Day(
                     day = day,
                     currentDate = currentDate,
-                    currentMonth = currentMonth,
-                    isSelected = selectedDate.date == day.date,
+                    isInSelectedWeek = !day.date.isBefore(selectedWeekStart) && !day.date.isAfter(selectedWeekEnd),
+                    isSelectedWeekStart = day.date == selectedWeekStart,
+                    isSelectedWeekEnd = day.date == selectedWeekEnd,
                     shouldHighlight = shouldHighlight(day),
                 ) { selectedCalendarDay ->
                     onDayClicked(calendarState,selectedCalendarDay)

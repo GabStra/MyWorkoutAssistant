@@ -1,20 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 
 enum class FilterRange {
     LAST_WEEK,
@@ -29,49 +18,28 @@ fun RangeDropdown(
     selectedRange: FilterRange,
     onSelectedRangeChange: (FilterRange) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val label = when (selectedRange) {
-        FilterRange.LAST_WEEK     -> "Last week"
-        FilterRange.THIS_MONTH    -> "This month"
-        FilterRange.LAST_3_MONTHS -> "Last 3 months"
-        FilterRange.ALL           -> "All"
-        FilterRange.LAST_7_DAYS -> "Last 7 days"
-        FilterRange.LAST_30_DAYS -> "Last 30 days"
+    val items = remember {
+        listOf(
+            StandardFilterDropdownItem(FilterRange.LAST_WEEK, "Last week"),
+            //StandardFilterDropdownItem(FilterRange.LAST_7_DAYS, "Last 7 days"),
+            //StandardFilterDropdownItem(FilterRange.LAST_30_DAYS, "Last 30 days"),
+            StandardFilterDropdownItem(FilterRange.THIS_MONTH, "This month"),
+            StandardFilterDropdownItem(FilterRange.LAST_3_MONTHS, "Last 3 months"),
+            StandardFilterDropdownItem(FilterRange.ALL, "All")
+        )
     }
 
-    Row(
+    val selectedLabel = remember(selectedRange) {
+        items.firstOrNull { it.value == selectedRange }?.label ?: "All"
+    }
+
+    StandardFilterDropdown(
+        label = "Date range:",
+        selectedText = selectedLabel,
+        items = items,
+        onItemSelected = onSelectedRangeChange,
         modifier = Modifier
-        .fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+            .fillMaxWidth(),
+        isItemSelected = { it == selectedRange }
     )
-    {
-        Text("Date range:")
-        Spacer(Modifier.width(5.dp))
-        Box {
-            FormPrimaryOutlinedButton(
-                text = label,
-                onClick = { expanded = true }
-            )
-            AppDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false }
-            ) {
-                AppDropdownMenuItem(text = { Text("Last week") }, onClick = {
-                    onSelectedRangeChange(FilterRange.LAST_WEEK); expanded = false
-                })
-                AppDropdownMenuItem(text = { Text("Last month") }, onClick = {
-                    onSelectedRangeChange(FilterRange.THIS_MONTH); expanded = false
-                })
-                AppDropdownMenuItem(text = { Text("Last three months") }, onClick = {
-                    onSelectedRangeChange(FilterRange.LAST_3_MONTHS); expanded = false
-                })
-                AppDropdownMenuItem(text = { Text("All") }, onClick = {
-                    onSelectedRangeChange(FilterRange.ALL); expanded = false
-                })
-            }
-        }
-    }
-
-
 }
-
