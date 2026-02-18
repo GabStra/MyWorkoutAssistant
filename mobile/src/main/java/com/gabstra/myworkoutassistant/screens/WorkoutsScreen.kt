@@ -56,7 +56,6 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AccessoriesBottomBar
 import com.gabstra.myworkoutassistant.composables.EditPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.EquipmentsBottomBar
-import com.gabstra.myworkoutassistant.composables.HealthConnectHandler
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.MoveWorkoutDialog
@@ -250,7 +249,11 @@ fun WorkoutsScreen(
                     current.plusDays(1).takeIf { !it.isAfter(selectedWeekEnd) }
                 }.mapNotNull { date ->
                     val dayWorkouts = groupedWorkoutsHistories?.get(date)
-                        ?.map { history -> Pair(history, byId[history.workoutId]!!) }
+                        ?.mapNotNull { history ->
+                            byId[history.workoutId]?.let { workout ->
+                                Pair(history, workout)
+                            }
+                        }
                         .orEmpty()
                     if (dayWorkouts.isEmpty()) null else (date to dayWorkouts)
                 }.toMap(LinkedHashMap())
@@ -306,14 +309,16 @@ fun WorkoutsScreen(
                 .filter { it.isDone }
                 .toList()
 
-        // Fast lookup of eligible workouts and DE-DUPE by workout id
-        val eligibleById = allEnabledWorkouts
+        val objectiveEligibleByGlobalId = allEnabledWorkouts
             .filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
-            .associateBy { it.id }
+            .groupBy { it.globalId }
+            .mapValues { (_, workoutsForGlobalId) ->
+                workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
+            }
 
         val weeklyWorkouts = workoutHistoriesInAWeek
-            .mapNotNull { eligibleById[it.workoutId] }
-            .distinctBy { it.id }   // <<< FIX 1
+            .mapNotNull { history -> objectiveEligibleByGlobalId[history.globalId] }
+            .distinctBy { it.id }
 
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.toSet()
 
@@ -323,8 +328,10 @@ fun WorkoutsScreen(
                 }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
-        val actualCountsByWorkoutId =
-            workoutHistoriesInAWeek.groupingBy { it.workoutId }.eachCount()
+        val actualCountsByWorkoutId = workoutHistoriesInAWeek
+            .mapNotNull { history -> objectiveEligibleByGlobalId[history.globalId] }
+            .groupingBy { it.id }
+            .eachCount()
 
         data class Fam(
             val active: Workout,
@@ -354,7 +361,6 @@ fun WorkoutsScreen(
             Fam(activeWorkout, countedActual, totalTarget, progress)
         }
 
-        // <<< FIX 2: add tiebreaker so different keys don't collide when 'order' is equal
         weeklyWorkoutsByActualTarget = families
             .associate { it.active to (it.countedActual to it.totalTarget) }
             .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id })
@@ -683,8 +689,6 @@ fun WorkoutsScreen(
                                 .background(MaterialTheme.colorScheme.background),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            HealthConnectHandler(appViewModel, healthConnectClient)
-
                             AnimatedContent(
                                 modifier = Modifier.background(MaterialTheme.colorScheme.background),
                                 targetState = pageIndex,

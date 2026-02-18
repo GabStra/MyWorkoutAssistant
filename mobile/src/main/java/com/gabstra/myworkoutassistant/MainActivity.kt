@@ -45,6 +45,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.RestingHeartRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -183,8 +191,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    private val showFilePermissionDialog = mutableStateOf(false)
-
     override fun onStart() {
         super.onStart()
     }
@@ -278,9 +284,6 @@ class MainActivity : ComponentActivity() {
         requestBackupCleanup()
 
         setContent {
-            val context = LocalContext.current
-            val showDialog by showFilePermissionDialog
-            
             MyWorkoutAssistantTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -294,16 +297,6 @@ class MainActivity : ComponentActivity() {
                         workoutStoreRepository,
                         db,
                         healthConnectClient
-                    )
-                    
-                    FilePermissionDialog(
-                        show = showDialog,
-                        onDismiss = { showFilePermissionDialog.value = false },
-                        onConfirm = {
-                            showFilePermissionDialog.value = false
-                            launchAllFilesAccessSettings()
-                        },
-                        context = context
                     )
                 }
             }
@@ -324,7 +317,7 @@ class MainActivity : ComponentActivity() {
             )
         ) {
             BackupCleanupAction.RUN_CLEANUP -> runBackupCleanup()
-            BackupCleanupAction.SHOW_ALL_FILES_RATIONALE -> showAllFilesAccessRationale()
+            BackupCleanupAction.SHOW_ALL_FILES_RATIONALE -> Unit
             BackupCleanupAction.REQUEST_READ_STORAGE_PERMISSION -> {
                 readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
@@ -349,8 +342,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showAllFilesAccessRationale() {
-        showFilePermissionDialog.value = true
+    internal fun requestDownloadsAccess() {
+        launchAllFilesAccessSettings()
     }
 
     private fun launchAllFilesAccessSettings() {
@@ -366,38 +359,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-}
-
-@Composable
-fun FilePermissionDialog(
-    show: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-    context: Context
-) {
-    if (show) {
-        StandardDialog(
-            onDismissRequest = onDismiss,
-            title = "Allow access to Downloads",
-            body = {
-                Text(
-                    "To clean duplicate backup files in Downloads, the app needs all files access " +
-                        "so it can list and delete old backup copies."
-                )
-            },
-            confirmText = "Continue",
-            onConfirm = onConfirm,
-            dismissText = "Not now",
-            onDismissButton = {
-                Toast.makeText(
-                    context,
-                    "All files access not granted; backup cleanup skipped",
-                    Toast.LENGTH_SHORT
-                ).show()
-                onDismiss()
-            }
-        )
-    }
 }
 
 @OptIn(FlowPreview::class)
@@ -458,15 +419,75 @@ fun MyWorkoutAssistantNavHost(
     val updateMobileSignal by updateMobileFlow.collectAsState()
 
     val initialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState(initial = false)
+    val scope = rememberCoroutineScope()
+    val requiredHealthPermissions = remember {
+        setOf(
+            HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+            HealthPermission.getWritePermission(HeartRateRecord::class),
+            HealthPermission.getReadPermission(ExerciseSessionRecord::class),
+            HealthPermission.getReadPermission(HeartRateRecord::class),
+            HealthPermission.getReadPermission(RestingHeartRateRecord::class),
+            HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
+            HealthPermission.getWritePermission(WeightRecord::class),
+            HealthPermission.getReadPermission(SleepSessionRecord::class),
+        )
+    }
+
     var downloadsAccessGranted by remember {
         mutableStateOf((context as? MainActivity)?.hasDownloadsAccess() ?: false)
+    }
+    var hasHealthPermissions by remember { mutableStateOf(false) }
+    var showPrerequisitesDialog by remember { mutableStateOf(false) }
+    var prerequisitesMessage by remember { mutableStateOf("") }
+
+    suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
+        downloadsAccessGranted = (context as? MainActivity)?.hasDownloadsAccess() ?: false
+
+        val grantedPermissions = try {
+            healthConnectClient.permissionController.getGrantedPermissions()
+        } catch (_: Exception) {
+            emptySet()
+        }
+        val missingPermissions = requiredHealthPermissions - grantedPermissions
+        hasHealthPermissions = missingPermissions.isEmpty()
+        appViewModel.setHealthPermissions(hasHealthPermissions)
+        appViewModel.setHealthPermissionsChecked()
+
+        if (showDialogWhenMissing) {
+            val missingRequirements = buildList {
+                if (!downloadsAccessGranted) add("Downloads folder access")
+                if (!hasHealthPermissions) add("Health Connect permissions")
+            }
+
+            if (missingRequirements.isEmpty()) {
+                showPrerequisitesDialog = false
+                prerequisitesMessage = ""
+            } else {
+                prerequisitesMessage = buildString {
+                    append("To use the app, grant the following permissions:")
+                    missingRequirements.forEach { requirement ->
+                        append("\n• $requirement")
+                    }
+                }
+                showPrerequisitesDialog = true
+            }
+        }
+    }
+
+    val healthPermissionLauncher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) {
+        scope.launch {
+            refreshPermissionState(showDialogWhenMissing = true)
+        }
     }
 
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                downloadsAccessGranted =
-                    (context as? MainActivity)?.hasDownloadsAccess() ?: false
+                scope.launch {
+                    refreshPermissionState(showDialogWhenMissing = true)
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -479,6 +500,10 @@ fun MyWorkoutAssistantNavHost(
         if (updateMobileSignal != null) {
             workoutViewModel.updateWorkoutStore(appViewModel.workoutStore)
         }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshPermissionState(showDialogWhenMissing = true)
     }
 
     // Sync WorkoutViewModel when initial load has completed, then run incomplete workouts check
@@ -498,7 +523,6 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    val scope = rememberCoroutineScope()
     val firstBackHandlerRegistrationTime = remember { System.currentTimeMillis() }
 
     BackHandler(enabled = true) {
@@ -526,6 +550,40 @@ fun MyWorkoutAssistantNavHost(
     }
 
     var isSyncing by remember { mutableStateOf(false) }
+
+    if (showPrerequisitesDialog) {
+        StandardDialog(
+            onDismissRequest = {},
+            title = "Permissions required",
+            body = {
+                Text(prerequisitesMessage)
+            },
+            confirmText = "Continue",
+            onConfirm = {
+                showPrerequisitesDialog = false
+                when {
+                    !downloadsAccessGranted -> {
+                        (context as? MainActivity)?.requestDownloadsAccess()
+                    }
+                    !hasHealthPermissions -> {
+                        try {
+                            healthPermissionLauncher.launch(requiredHealthPermissions)
+                        } catch (e: Exception) {
+                            Toast.makeText(
+                                context,
+                                "Failed to request Health Connect permissions: ${e.message}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            scope.launch {
+                                refreshPermissionState(showDialogWhenMissing = true)
+                            }
+                        }
+                    }
+                }
+            },
+            showDismiss = false
+        )
+    }
     
     // Timeout mechanism to clear stuck sync state after 10 seconds
     LaunchedEffect(isSyncing) {
@@ -539,6 +597,7 @@ fun MyWorkoutAssistantNavHost(
     }
     
     var showPlanNameDialog by remember { mutableStateOf(false) }
+    var importPlanResultMessage by remember { mutableStateOf<String?>(null) }
     var pendingImportedWorkoutStore by remember {
         mutableStateOf<com.gabstra.myworkoutassistant.shared.WorkoutStore?>(
             null
@@ -641,11 +700,7 @@ fun MyWorkoutAssistantNavHost(
                         if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
                     }
 
-                    Toast.makeText(
-                        context,
-                        message,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    importPlanResultMessage = message
                 } catch (e: Exception) {
                     Toast.makeText(
                         context,
@@ -656,6 +711,17 @@ fun MyWorkoutAssistantNavHost(
             }
         }
     )
+
+    importPlanResultMessage?.let { message ->
+        StandardDialog(
+            onDismissRequest = { importPlanResultMessage = null },
+            title = "Workout plan imported",
+            body = { Text(message) },
+            confirmText = "OK",
+            onConfirm = { importPlanResultMessage = null },
+            showDismiss = false
+        )
+    }
 
     /**
      * Helper function to restore from an AppBackup.

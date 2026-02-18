@@ -373,12 +373,17 @@ class AppViewModel(
                     val workoutHistoryDao = db.workoutHistoryDao()
                     val setHistoryDao = db.setHistoryDao()
                     val all = workoutHistoryDao.getAllWorkoutHistories()
+                    val preferredEnabledWorkoutByGlobalId = enabledWorkouts
+                        .groupBy { it.globalId }
+                        .mapValues { (_, workoutsForGlobalId) ->
+                            workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
+                        }
                     val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
                         .mapNotNull { it.workoutHistoryId }
                         .toSet()
                     val filtered = all.filter { history ->
-                        enabledWorkouts.any { it.id == history.workoutId } &&
-                                workoutHistoryIdsWithSets.contains(history.id)
+                        workoutHistoryIdsWithSets.contains(history.id) &&
+                            history.globalId in preferredEnabledWorkoutByGlobalId
                     }
                     val groupedMap = filtered.groupBy { it.date }
                 // #region agent log
@@ -386,7 +391,21 @@ class AppViewModel(
                 // #endregion
                     groupedMap
                 }
-                val byId = enabledWorkouts.associateBy { it.id }
+                val byId = enabledWorkouts.associateBy { it.id }.toMutableMap()
+                val preferredEnabledWorkoutByGlobalId = enabledWorkouts
+                    .groupBy { it.globalId }
+                    .mapValues { (_, workoutsForGlobalId) ->
+                        workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
+                    }
+
+                grouped.values.asSequence()
+                    .flatten()
+                    .forEach { history ->
+                        val resolvedWorkout = preferredEnabledWorkoutByGlobalId[history.globalId]
+                        if (resolvedWorkout != null) {
+                            byId.putIfAbsent(history.workoutId, resolvedWorkout)
+                        }
+                    }
                 _groupedWorkoutHistories.value = grouped
                 _workoutByIdForHistories.value = byId
                 // #region agent log
