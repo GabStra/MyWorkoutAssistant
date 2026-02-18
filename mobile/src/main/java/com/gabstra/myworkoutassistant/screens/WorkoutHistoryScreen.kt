@@ -941,7 +941,10 @@ fun WorkoutHistoryScreen(
                                 modifier = Modifier.padding(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                zoneCounter!!.forEach { (zone, count) ->
+                                zoneCounter!!
+                                    .toList()
+                                    .asReversed()
+                                    .forEach { (zone, count) ->
                                     Column(modifier = Modifier.fillMaxWidth()) {
                                         val total = zoneCounter!!.values.sum()
                                         var progress = count.toFloat() / total
