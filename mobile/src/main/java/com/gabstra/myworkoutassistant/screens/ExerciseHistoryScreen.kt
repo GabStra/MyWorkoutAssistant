@@ -177,6 +177,17 @@ fun ExerciseHistoryScreen(
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
     var setHistoriesByWorkoutHistoryId by remember { mutableStateOf<Map<UUID, ExerciseHistoryDisplayData>>(emptyMap()) }
 
+    suspend fun ensureMinimumLoadingDuration(
+        startedAtMillis: Long,
+        minimumDurationMillis: Long = 1_000L,
+    ) {
+        val elapsed = System.currentTimeMillis() - startedAtMillis
+        val remaining = minimumDurationMillis - elapsed
+        if (remaining > 0) {
+            delay(remaining)
+        }
+    }
+
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
         durations.clear()
@@ -332,6 +343,7 @@ fun ExerciseHistoryScreen(
         if (!hasLoadedWorkoutHistories) {
             return@LaunchedEffect
         }
+        val loadingStartedAt = System.currentTimeMillis()
         isLoading = true
         if (historiesToShow.isEmpty()) {
             volumeEntryModel = null
@@ -342,12 +354,12 @@ fun ExerciseHistoryScreen(
             oneRepMaxMarkerTarget = null
             selectedWorkoutHistory = null
             setHistoriesByWorkoutHistoryId = emptyMap()
-            delay(150)
+            ensureMinimumLoadingDuration(loadingStartedAt)
             isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
-        delay(150)
+        ensureMinimumLoadingDuration(loadingStartedAt)
         isLoading = false
     }
 
@@ -584,16 +596,40 @@ fun ExerciseHistoryScreen(
             }
 
             if(isLoading){
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ){
-                    CircularProgressIndicator(
-                        modifier = Modifier.width(32.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MediumDarkGray,
-                    )
+                if (selectedMode == 0) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 10.dp)
+                            .padding(bottom = 10.dp)
+                            .padding(horizontal = 15.dp),
+                        verticalArrangement = Arrangement.Top
+                    ) {
+                        RangeDropdown(selectedRange) { selectedRange = it }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.width(32.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MediumDarkGray,
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ){
+                        CircularProgressIndicator(
+                            modifier = Modifier.width(32.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MediumDarkGray,
+                        )
+                    }
                 }
             } else {
                 if (historiesToShow.isEmpty()) {

@@ -424,6 +424,17 @@ fun WorkoutHistoryScreen(
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
     val workoutDurations = remember { mutableListOf<Pair<Int, Float>>() }
 
+    suspend fun ensureMinimumLoadingDuration(
+        startedAtMillis: Long,
+        minimumDurationMillis: Long = 1_000L,
+    ) {
+        val elapsed = System.currentTimeMillis() - startedAtMillis
+        val remaining = minimumDurationMillis - elapsed
+        if (remaining > 0) {
+            delay(remaining)
+        }
+    }
+
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>){
         volumes.clear()
         durations.clear()
@@ -663,6 +674,8 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(historiesToShow) {
+        val loadingStartedAt = System.currentTimeMillis()
+        isLoading = true
         if (historiesToShow.isEmpty()) {
             volumeEntryModel = null
             durationEntryModel = null
@@ -670,9 +683,13 @@ fun WorkoutHistoryScreen(
             volumeMarkerTarget = null
             durationMarkerTarget = null
             workoutDurationMarkerTarget = null
+            ensureMinimumLoadingDuration(loadingStartedAt)
+            isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
+        ensureMinimumLoadingDuration(loadingStartedAt)
+        isLoading = false
     }
 
     val graphsTabContent = @Composable {
@@ -1449,7 +1466,29 @@ fun WorkoutHistoryScreen(
             }
 
             if(isLoading){
-                if (selectedMode == 1 && selectedWorkoutHistory != null) {
+                if (selectedMode == 0) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = 10.dp)
+                            .padding(bottom = 10.dp)
+                            .padding(horizontal = 15.dp),
+                        verticalArrangement = Arrangement.Top
+                    ) {
+                        RangeDropdown(selectedRange) { selectedRange = it }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.width(32.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MediumDarkGray,
+                            )
+                        }
+                    }
+                } else if (selectedMode == 1 && selectedWorkoutHistory != null) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
