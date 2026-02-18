@@ -36,8 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
@@ -148,7 +148,7 @@ fun RestForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = {
                         onCancel()
@@ -156,7 +156,7 @@ fun RestForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                AppPrimaryButton(
                     text = "Save",
                     onClick = {
                         val newRest = Rest(
@@ -175,4 +175,5 @@ fun RestForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 

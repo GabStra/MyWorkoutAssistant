@@ -1,7 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +19,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,18 +54,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.AppMenuContent
 import com.gabstra.myworkoutassistant.composables.BodyView
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
@@ -92,12 +88,6 @@ private fun ExerciseType.toReadableString(): String {
 
 private fun getExerciseTypeDescriptions(): List<String> {
     return ExerciseType.values().map { it.toReadableString() }
-}
-
-private fun stringToExerciseType(value: String): ExerciseType? {
-    return ExerciseType.values().firstOrNull {
-        it.name.equals(value.replace(' ', '_').uppercase(Locale.ROOT), ignoreCase = true)
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,7 +114,14 @@ fun ExerciseForm(
 
     val exerciseTypeDescriptions = rememberSaveable { getExerciseTypeDescriptions() }
     val selectedExerciseType = rememberSaveable { mutableStateOf(exercise?.exerciseType ?: ExerciseType.WEIGHT) }
-    var exerciseTypeExpanded by rememberSaveable { mutableStateOf(false) }
+    val exerciseTypeItems = remember(exerciseTypeDescriptions) {
+        ExerciseType.values().zip(exerciseTypeDescriptions).map { (type, label) ->
+            StandardFilterDropdownItem(
+                value = type,
+                label = label
+            )
+        }
+    }
 
     val minLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.minLoadPercent?.toFloat() ?: 65f) }
     val maxLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.maxLoadPercent?.toFloat() ?: 85f) }
@@ -180,7 +177,11 @@ fun ExerciseForm(
         )
     }
 
-    var hrZoneExpanded by rememberSaveable { mutableStateOf(false) }
+    val heartRateZoneItems = remember(heartRateZones) {
+        heartRateZones.mapIndexed { index, label ->
+            StandardFilterDropdownItem(value = index, label = label)
+        }
+    }
     val showCustomTargetZone = selectedTargetZone.value == -1
 
     val selectedEquipmentId = rememberSaveable { 
@@ -188,7 +189,29 @@ fun ExerciseForm(
             exercise?.equipmentId ?: (if (exercise?.exerciseType == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null)
         )
     }
-    var equipmentExpanded by rememberSaveable { mutableStateOf(false) }
+    val equipmentItems: List<StandardFilterDropdownItem<UUID?>> = remember(equipments) {
+        listOf(StandardFilterDropdownItem<UUID?>(value = null, label = "None")) +
+            equipments.map { equipment ->
+                StandardFilterDropdownItem(value = equipment.id, label = equipment.name)
+            }
+    }
+    val exerciseCategoryOptions: List<StandardFilterDropdownItem<ExerciseCategory?>> = remember {
+        listOf(
+            StandardFilterDropdownItem<ExerciseCategory?>(null, "Not set"),
+            StandardFilterDropdownItem(
+                ExerciseCategory.HEAVY_COMPOUND,
+                "Heavy compound (squat, deadlift, bench, OHP, rows)"
+            ),
+            StandardFilterDropdownItem(
+                ExerciseCategory.MODERATE_COMPOUND,
+                "Moderate compound (lunges, pull-ups, machine presses)"
+            ),
+            StandardFilterDropdownItem(
+                ExerciseCategory.ISOLATION,
+                "Isolation (curls, lateral raises, calf raises)"
+            )
+        )
+    }
     
     // Validate equipment ID exists whenever equipments list changes
     LaunchedEffect(equipments, exercise?.id) {
@@ -218,8 +241,6 @@ fun ExerciseForm(
     val scrollState = rememberScrollState()
 
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
-    val dropdownBackground = DarkGray
-    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -289,42 +310,18 @@ fun ExerciseForm(
 
             // Exercise type (create only)
             if (exercise == null) {
-                ExposedDropdownMenuBox(
-                    expanded = exerciseTypeExpanded,
-                    onExpandedChange = { exerciseTypeExpanded = it }
-                ) {
-                    OutlinedTextField(
-                        value = selectedExerciseType.value.toReadableString(),
-                        label = { Text("Exercise type", style = MaterialTheme.typography.labelLarge) },
-                        onValueChange = {},
-                        readOnly = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = exerciseTypeExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = exerciseTypeExpanded,
-                        modifier = Modifier.background(dropdownBackground),
-                        border = BorderStroke(1.dp, dropdownBorderColor),
-                        onDismissRequest = { exerciseTypeExpanded = false }
-                    ) {
-                        AppMenuContent {
-                            exerciseTypeDescriptions.forEach { desc ->
-                                AppDropdownMenuItem(
-                                    text = { Text(desc) },
-                                    onClick = {
-                                        selectedExerciseType.value = stringToExerciseType(desc)!!
-                                        selectedEquipmentId.value =
-                                            if (selectedExerciseType.value == ExerciseType.WEIGHT) viewModel.GENERIC_ID
-                                            else null
-                                        exerciseTypeExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
+                StandardFilterDropdown(
+                    label = "Exercise type",
+                    selectedText = selectedExerciseType.value.toReadableString(),
+                    items = exerciseTypeItems,
+                    onItemSelected = { type ->
+                        selectedExerciseType.value = type
+                        selectedEquipmentId.value =
+                            if (type == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isItemSelected = { it == selectedExerciseType.value }
+                )
                 Spacer(Modifier.height(Spacing.lg))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
@@ -360,51 +357,17 @@ fun ExerciseForm(
                 Spacer(Modifier.height(Spacing.lg))
 
                 // Equipment picker
-                Text(
-                    text = "Equipment",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = Spacing.sm)
-                )
-                ExposedDropdownMenuBox(
-                    expanded = equipmentExpanded,
-                    onExpandedChange = { equipmentExpanded = it }
-                ) {
-                    val selectedEquipment = equipments.find { it.id == selectedEquipmentId.value }
-                    OutlinedTextField(
-                        value = selectedEquipment?.name ?: "None",
-                        onValueChange = {},
-                        readOnly = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(equipmentExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = equipmentExpanded,
-                        modifier = Modifier.background(dropdownBackground),
-                        border = BorderStroke(1.dp, dropdownBorderColor),
-                        onDismissRequest = { equipmentExpanded = false }
-                    ) {
-                        AppMenuContent {
-                            AppDropdownMenuItem(
-                                text = { Text("None") },
-                                onClick = {
-                                    selectedEquipmentId.value = null
-                                    equipmentExpanded = false
-                                }
-                            )
-                            equipments.forEach { equipment ->
-                                AppDropdownMenuItem(
-                                    text = { Text(equipment.name) },
-                                    onClick = {
-                                        selectedEquipmentId.value = equipment.id
-                                        equipmentExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
+                    equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
                 }
+                StandardFilterDropdown<UUID?>(
+                    label = "Equipment",
+                    selectedText = selectedEquipmentName,
+                    items = equipmentItems,
+                    onItemSelected = { selectedEquipmentId.value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    isItemSelected = { it == selectedEquipmentId.value }
+                )
 
                 // Accessories selection
                 Spacer(Modifier.height(Spacing.lg))
@@ -643,43 +606,20 @@ fun ExerciseForm(
                 )
 
                 // Exercise category (determines warm-up volume: heavy / moderate / isolation)
-                var exerciseCategoryExpanded by rememberSaveable { mutableStateOf(false) }
-                val exerciseCategoryOptions = listOf(
-                    null to "Not set",
-                    ExerciseCategory.HEAVY_COMPOUND to "Heavy compound (squat, deadlift, bench, OHP, rows)",
-                    ExerciseCategory.MODERATE_COMPOUND to "Moderate compound (lunges, pull-ups, machine presses)",
-                    ExerciseCategory.ISOLATION to "Isolation (curls, lateral raises, calf raises)"
-                )
-                ExposedDropdownMenuBox(
-                    expanded = exerciseCategoryExpanded,
-                    onExpandedChange = { exerciseCategoryExpanded = it },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    OutlinedTextField(
-                        value = exerciseCategoryOptions.firstOrNull { it.first == selectedExerciseCategory.value }?.second ?: "Not set",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Exercise category", style = MaterialTheme.typography.labelLarge) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = exerciseCategoryExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = exerciseCategoryExpanded,
-                        onDismissRequest = { exerciseCategoryExpanded = false }
-                    ) {
-                        exerciseCategoryOptions.forEach { (category, label) ->
-                            AppDropdownMenuItem(
-                                text = { Text(label) },
-                                onClick = {
-                                    selectedExerciseCategory.value = category
-                                    exerciseCategoryExpanded = false
-                                }
-                            )
-                        }
+                val selectedExerciseCategoryLabel =
+                    remember(exerciseCategoryOptions, selectedExerciseCategory.value) {
+                        exerciseCategoryOptions.firstOrNull {
+                            it.value == selectedExerciseCategory.value
+                        }?.label ?: "Not set"
                     }
-                }
+                StandardFilterDropdown<ExerciseCategory?>(
+                    label = "Exercise category",
+                    selectedText = selectedExerciseCategoryLabel,
+                    items = exerciseCategoryOptions,
+                    onItemSelected = { selectedExerciseCategory.value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    isItemSelected = { it == selectedExerciseCategory.value }
+                )
                 Spacer(Modifier.height(Spacing.sm))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -797,65 +737,38 @@ fun ExerciseForm(
                 }
             } else {
                 // Cardio HR target zone
-                Text(
-                    text = "Target heart-rate zone",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = Spacing.sm)
-                )
-                ExposedDropdownMenuBox(
-                    expanded = hrZoneExpanded,
-                    onExpandedChange = { hrZoneExpanded = it }
-                ) {
-                    val zoneText = when (selectedTargetZone.value) {
-                        null -> heartRateZones[0]
-                        -1 -> heartRateZones[5]
-                        else -> heartRateZones[selectedTargetZone.value!! + 1] // 1..4 -> Zone 2..5
-                    }
-                    OutlinedTextField(
-                        value = zoneText,
-                        onValueChange = {},
-                        readOnly = true,
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(hrZoneExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = hrZoneExpanded,
-                        modifier = Modifier.background(dropdownBackground),
-                        border = BorderStroke(1.dp, dropdownBorderColor),
-                        onDismissRequest = { hrZoneExpanded = false }
-                    ) {
-                        AppMenuContent {
-                            heartRateZones.forEachIndexed { index, zoneLabel ->
-                                AppDropdownMenuItem(
-                                    text = { Text(zoneLabel) },
-                                    onClick = {
-                                        when (index) {
-                                            0 -> { // None
-                                                selectedLowerBoundMaxHRPercent.value = null
-                                                selectedUpperBoundMaxHRPercent.value = null
-                                                selectedTargetZone.value = null
-                                            }
-                                            in 1..4 -> { // Zone 2..5
-                                                val (lower, upper) = zoneRanges[index + 1] // align with your table
-                                                selectedLowerBoundMaxHRPercent.value = lower
-                                                selectedUpperBoundMaxHRPercent.value = upper
-                                                selectedTargetZone.value = index
-                                            }
-                                            5 -> { // Custom
-                                                selectedLowerBoundMaxHRPercent.value = 50f
-                                                selectedUpperBoundMaxHRPercent.value = 60f
-                                                selectedTargetZone.value = -1
-                                            }
-                                        }
-                                        hrZoneExpanded = false
-                                    }
-                                )
+                val selectedHeartRateZoneIndex = when (selectedTargetZone.value) {
+                    null -> 0
+                    -1 -> 5
+                    else -> selectedTargetZone.value!! + 1 // 1..4 -> Zone 2..5
+                }
+                StandardFilterDropdown(
+                    label = "Target heart-rate zone",
+                    selectedText = heartRateZones[selectedHeartRateZoneIndex],
+                    items = heartRateZoneItems,
+                    onItemSelected = { index ->
+                        when (index) {
+                            0 -> { // None
+                                selectedLowerBoundMaxHRPercent.value = null
+                                selectedUpperBoundMaxHRPercent.value = null
+                                selectedTargetZone.value = null
+                            }
+                            in 1..4 -> { // Zone 2..5
+                                val (lower, upper) = zoneRanges[index + 1]
+                                selectedLowerBoundMaxHRPercent.value = lower
+                                selectedUpperBoundMaxHRPercent.value = upper
+                                selectedTargetZone.value = index
+                            }
+                            5 -> { // Custom
+                                selectedLowerBoundMaxHRPercent.value = 50f
+                                selectedUpperBoundMaxHRPercent.value = 60f
+                                selectedTargetZone.value = -1
                             }
                         }
-                    }
-                }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isItemSelected = { it == selectedHeartRateZoneIndex }
+                )
 
                 if (showCustomTargetZone) {
                     Spacer(Modifier.height(Spacing.lg))
@@ -948,13 +861,13 @@ fun ExerciseForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                AppPrimaryButton(
                     text = "Save",
                     onClick = {
                         val bodyWeightPercentageValue = bodyWeightPercentage.value.toDoubleOrNull()?.round(2)
@@ -1037,4 +950,5 @@ fun ExerciseForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 

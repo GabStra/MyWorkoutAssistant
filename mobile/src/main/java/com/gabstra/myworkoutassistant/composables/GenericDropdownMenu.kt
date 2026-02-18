@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,9 +19,10 @@ fun <T> GenericDropdownMenu(
     var showMenu by remember { mutableStateOf(false) }
 
     Column {
-        Button(onClick = { showMenu = true }) {
-            Text(itemLabel(selectedItem))
-        }
+        AppPrimaryButton(
+            text = itemLabel(selectedItem),
+            onClick = { showMenu = true }
+        )
 
         AppDropdownMenu(
             expanded = showMenu,

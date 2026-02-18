@@ -99,13 +99,13 @@ fun TimedDurationSetForm(
             horizontalArrangement = Arrangement.spacedBy(Spacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FormSecondaryButton(
+            AppSecondaryButton(
                 text = "Cancel",
                 onClick = onCancel,
                 modifier = Modifier.weight(1f)
             )
 
-            FormPrimaryButton(
+            AppPrimaryButton(
                 text = "Save",
                 onClick = {
                     val newTimedDurationSet = TimedDurationSet(

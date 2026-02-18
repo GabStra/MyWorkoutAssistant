@@ -1,9 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.BorderStroke
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -19,20 +21,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -41,7 +39,6 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TimePickerState
 import androidx.compose.material3.TopAppBar
@@ -49,47 +46,39 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.interaction.Interaction
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.AppMenuContent
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.DialogTextButton
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
-import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
-import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.WorkoutTypes
-import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
+import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
-import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,7 +97,15 @@ fun WorkoutForm(
     val usePolarDeviceState = rememberSaveable { mutableStateOf(workout?.usePolarDevice ?: false) }
 
     val selectedWorkoutType = rememberSaveable { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
-    var workoutTypeExpanded by rememberSaveable { mutableStateOf(false) }
+    val workoutTypeItems = remember {
+        WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.entries.map { entry ->
+            StandardFilterDropdownItem(
+                value = entry.value,
+                label = entry.key.replace('_', ' ').lowercase(Locale.ROOT)
+                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+            )
+        }
+    }
 
     val schedules = remember(existingSchedules) { mutableStateOf(existingSchedules.toMutableList()) }
     val showScheduleDialog = remember { mutableStateOf(false) }
@@ -120,8 +117,6 @@ fun WorkoutForm(
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-    val dropdownBackground = DarkGray
-    val dropdownBorderColor = MaterialTheme.colorScheme.outlineVariant
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -202,52 +197,17 @@ fun WorkoutForm(
 
             Spacer(Modifier.height(Spacing.lg))
 
-            ExposedDropdownMenuBox(
-                expanded = workoutTypeExpanded,
-                onExpandedChange = { workoutTypeExpanded = it }
-            ) {
-                val typeLabel = remember(selectedWorkoutType.value) {
-                    WorkoutTypes.GetNameFromInt(selectedWorkoutType.value)
-                    .replace('_', ' ')
-                    .lowercase(Locale.ROOT)
-                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-                }
-
-                OutlinedTextField(
-                    value = typeLabel,
-                    label = { Text("Workout type", style = MaterialTheme.typography.labelLarge) },
-                    onValueChange = {},
-                    readOnly = true,
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(workoutTypeExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
-                )
-
-                ExposedDropdownMenu(
-                    expanded = workoutTypeExpanded,
-                    modifier = Modifier.background(dropdownBackground),
-                    border = BorderStroke(1.dp, dropdownBorderColor),
-                    onDismissRequest = { workoutTypeExpanded = false }
-                ) {
-                    AppMenuContent {
-                        WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP.keys.forEach { key ->
-                            AppDropdownMenuItem(
-                                text = {
-                                    Text(
-                                        key.replace('_', ' ').lowercase(Locale.ROOT)
-                                            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-                                    )
-                                },
-                                onClick = {
-                                    selectedWorkoutType.value = WorkoutTypes.WORKOUT_TYPE_STRING_TO_INT_MAP[key]!!
-                                    workoutTypeExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
+            val typeLabel = remember(workoutTypeItems, selectedWorkoutType.value) {
+                workoutTypeItems.firstOrNull { it.value == selectedWorkoutType.value }?.label ?: ""
             }
+            StandardFilterDropdown(
+                label = "Workout type",
+                selectedText = typeLabel,
+                items = workoutTypeItems,
+                onItemSelected = { selectedWorkoutType.value = it },
+                modifier = Modifier.fillMaxWidth(),
+                isItemSelected = { it == selectedWorkoutType.value }
+            )
 
             // Target sessions per week
             Spacer(Modifier.height(Spacing.lg))
@@ -317,7 +277,7 @@ fun WorkoutForm(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
-                FormPrimaryOutlinedButton(
+                AppPrimaryOutlinedButton(
                     text = "Add Single",
                     onClick = {
                         currentEditingSchedule.value = null
@@ -326,7 +286,7 @@ fun WorkoutForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryOutlinedButton(
+                AppPrimaryOutlinedButton(
                     text = "Add Multiple",
                     onClick = { showBatchScheduleDialog.value = true },
                     modifier = Modifier.weight(1f)
@@ -346,14 +306,14 @@ fun WorkoutForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                    FormSecondaryButton(
+                    AppSecondaryButton(
                         text = "Cancel",
                         onClick = onCancel,
                         enabled = !isSaving,
                         modifier = Modifier.weight(1f)
                     )
 
-                    FormPrimaryButton(
+                    AppPrimaryButton(
                         text = "Save",
                         onClick = {
                             val newWorkout = Workout(
@@ -473,7 +433,9 @@ fun ScheduleDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 420.dp)
                     .padding(Spacing.sm)
+                    .verticalScroll(rememberScrollState())
             ) {
                 OutlinedTextField(
                     value = labelState.value,
@@ -483,18 +445,13 @@ fun ScheduleDialog(
                 )
 
                 Spacer(Modifier.height(Spacing.lg))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Time", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.width(Spacing.md))
-                    OutlinedButton(onClick = { showTimePicker.value = true }) {
-                        Text("${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}")
-                    }
-                }
-
-                Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
+                Text("Time", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                AppPrimaryOutlinedButton(
+                    text = "${hourState.intValue}:${minuteState.intValue.toString().padStart(2, '0')}",
+                    onClick = { showTimePicker.value = true },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
@@ -515,11 +472,13 @@ fun ScheduleDialog(
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     } ?: LocalDate.now()
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Date", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.width(Spacing.md))
-                        Button(onClick = { showDatePicker.value = true }) { Text(date.toString()) }
-                    }
+                    Text("Date", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    AppPrimaryOutlinedButton(
+                        text = date.toString(),
+                        onClick = { showDatePicker.value = true },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 } else {
                     Text("Days of week", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(Spacing.sm))
@@ -538,7 +497,6 @@ fun ScheduleDialog(
 
                 Spacer(Modifier.height(Spacing.lg))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
 
                 ListItem(
                     colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
@@ -763,6 +721,7 @@ fun BatchScheduleDialog(
 
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
     val showDatePicker = remember { mutableStateOf(false) }
+    val formScrollState = rememberScrollState()
 
     StandardDialog(
         onDismissRequest = onDismiss,
@@ -774,7 +733,9 @@ fun BatchScheduleDialog(
                     .padding(Spacing.sm)
             ) {
                 TabRow(
-                    contentColor = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.onBackground,
                     selectedTabIndex = selectedTabIndex.value,
                     indicator = { tabPositions ->
                         TabRowDefaults.Indicator(
@@ -785,138 +746,145 @@ fun BatchScheduleDialog(
                     }
                 ) {
                     Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = selectedTabIndex.value == 0,
                         onClick = { selectedTabIndex.value = 0 },
-                        text = { Text("Recurring") },
+                        text = { Text(text = "One-time", style = MaterialTheme.typography.bodyMedium) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
-
-                            override fun tryEmit(interaction: Interaction): Boolean = true
-                        }
                     )
                     Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
                         selected = selectedTabIndex.value == 1,
                         onClick = { selectedTabIndex.value = 1 },
-                        text = { Text("One-time") },
+                        text = { Text(text = "Recurring", style = MaterialTheme.typography.bodyMedium) },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
                         unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
+                    )
+                }
 
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
+                Spacer(Modifier.height(Spacing.lg))
 
-                            override fun tryEmit(interaction: Interaction): Boolean = true
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(formScrollState)
+                ) {
+                    OutlinedTextField(
+                        value = labelPrefixState.value,
+                        onValueChange = { labelPrefixState.value = it },
+                        label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(Spacing.lg))
+
+                    Text("Time range", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("From", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(Spacing.xs))
+                            AppPrimaryOutlinedButton(
+                                text = "${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}",
+                                onClick = {
+                                    timePickerState.hour = startHourState.intValue
+                                    timePickerState.minute = startMinuteState.intValue
+                                    currentPickerMode.value = "start"
+                                    showTimePicker.value = true
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("To", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(Spacing.xs))
+                            AppPrimaryOutlinedButton(
+                                text = "${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}",
+                                onClick = {
+                                    timePickerState.hour = endHourState.intValue
+                                    timePickerState.minute = endMinuteState.intValue
+                                    currentPickerMode.value = "end"
+                                    showTimePicker.value = true
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(Spacing.lg))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(Modifier.height(Spacing.lg))
+
+                    Text("Interval", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = intervalHoursState.value,
+                            onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
+                            label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(Spacing.md))
+                        OutlinedTextField(
+                            value = intervalMinutesState.value,
+                            onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
+                            label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(Modifier.height(Spacing.lg))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(Modifier.height(Spacing.lg))
+
+                    if (selectedTabIndex.value == 0) {
+                        val date = datePickerState.selectedDateMillis?.let {
+                            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                        } ?: LocalDate.now()
+                        Text("Date", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(Spacing.sm))
+                        AppPrimaryOutlinedButton(
+                            text = date.toString(),
+                            onClick = { showDatePicker.value = true },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(Spacing.sm))
+                        WeekdaySelectionRow(
+                            days = listOf("Mon", "Tue", "Wed", "Thu"),
+                            bitValues = listOf(2, 4, 8, 16),
+                            daysOfWeekState = daysOfWeekState
+                        )
+                        WeekdaySelectionRow(
+                            days = listOf("Fri", "Sat", "Sun", ""),
+                            bitValues = listOf(32, 64, 1, 0),
+                            daysOfWeekState = daysOfWeekState,
+                            showLastCheckbox = false
+                        )
+                    }
+
+                    Spacer(Modifier.height(Spacing.lg))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    ListItem(
+                        colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                        headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
+                        trailingContent = {
+                            Switch(
+                                checked = isEnabledState.value,
+                                onCheckedChange = { isEnabledState.value = it }
+                            )
                         }
                     )
                 }
-
-                Spacer(Modifier.height(Spacing.lg))
-
-                OutlinedTextField(
-                    value = labelPrefixState.value,
-                    onValueChange = { labelPrefixState.value = it },
-                    label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(Spacing.lg))
-
-                Text("Time range", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(Spacing.sm))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("From")
-                    Spacer(Modifier.width(Spacing.sm))
-                    OutlinedButton(onClick = {
-                        timePickerState.hour = startHourState.intValue
-                        timePickerState.minute = startMinuteState.intValue
-                        currentPickerMode.value = "start"
-                        showTimePicker.value = true
-                    }) { Text("${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}") }
-
-                    Spacer(Modifier.width(Spacing.lg))
-
-                    Text("To")
-                    Spacer(Modifier.width(Spacing.sm))
-                    OutlinedButton(onClick = {
-                        timePickerState.hour = endHourState.intValue
-                        timePickerState.minute = endMinuteState.intValue
-                        currentPickerMode.value = "end"
-                        showTimePicker.value = true
-                    }) { Text("${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}") }
-                }
-
-                Spacer(Modifier.height(Spacing.lg))
-
-                Text("Interval", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(Spacing.sm))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = intervalHoursState.value,
-                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
-                        label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(Spacing.md))
-                    OutlinedTextField(
-                        value = intervalMinutesState.value,
-                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
-                        label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Spacer(Modifier.height(Spacing.lg))
-
-                if (selectedTabIndex.value == 1) {
-                    val date = datePickerState.selectedDateMillis?.let {
-                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                    } ?: LocalDate.now()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Date", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.width(Spacing.md))
-                        Button(onClick = { showDatePicker.value = true }) { Text(date.toString()) }
-                    }
-                } else {
-                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(Spacing.sm))
-                    WeekdaySelectionRow(
-                        days = listOf("Mon", "Tue", "Wed", "Thu"),
-                        bitValues = listOf(2, 4, 8, 16),
-                        daysOfWeekState = daysOfWeekState
-                    )
-                    WeekdaySelectionRow(
-                        days = listOf("Fri", "Sat", "Sun", ""),
-                        bitValues = listOf(32, 64, 1, 0),
-                        daysOfWeekState = daysOfWeekState,
-                        showLastCheckbox = false
-                    )
-                }
-
-                Spacer(Modifier.height(Spacing.lg))
-
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
-                    trailingContent = {
-                        Switch(
-                            checked = isEnabledState.value,
-                            onCheckedChange = { isEnabledState.value = it }
-                        )
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
         confirmText = "Save",
@@ -932,7 +900,7 @@ fun BatchScheduleDialog(
             while (t <= endTotal) {
                 val hour = t / 60
                 val minute = t % 60
-                val specificDate = if (selectedTabIndex.value == 1) {
+                val specificDate = if (selectedTabIndex.value == 0) {
                     datePickerState.selectedDateMillis?.let {
                         Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
                     }
@@ -946,7 +914,7 @@ fun BatchScheduleDialog(
                         hour = hour,
                         minute = minute,
                         isEnabled = isEnabledState.value,
-                        daysOfWeek = if (selectedTabIndex.value == 0) daysOfWeekState.intValue else 0,
+                        daysOfWeek = if (selectedTabIndex.value == 1) daysOfWeekState.intValue else 0,
                         specificDate = specificDate,
                         hasExecuted = false
                     )
@@ -1008,4 +976,5 @@ fun BatchScheduleDialog(
         ) { DatePicker(state = datePickerState) }
     }
 }
+
 

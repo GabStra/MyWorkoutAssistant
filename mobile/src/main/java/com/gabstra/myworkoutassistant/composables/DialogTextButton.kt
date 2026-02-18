@@ -1,11 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun DialogTextButton(
@@ -13,15 +9,11 @@ fun DialogTextButton(
     onClick: () -> Unit,
     enabled: Boolean = true
 ) {
-    TextButton(
+    AppPrimaryOutlinedButton(
+        text = text,
         onClick = onClick,
         enabled = enabled,
-        colors = ButtonDefaults.textButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            disabledContentColor = DisabledContentGray
-        )
-    ) {
-        Text(text)
-    }
+        minHeight = 32.dp
+    )
 }
 

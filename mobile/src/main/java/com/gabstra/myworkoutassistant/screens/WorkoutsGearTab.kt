@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -182,18 +183,14 @@ fun WorkoutsGearTab(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
+                AppPrimaryButton(
+                    text = "Add Accessory",
                     onClick = {
                         appViewModel.setScreenData(
                             ScreenData.NewEquipment(EquipmentType.ACCESSORY)
                         )
                     }
-                ) {
-                    Text(
-                        "Add Accessory",
-                        color = MaterialTheme.colorScheme.background
-                    )
-                }
+                )
             }
         } else {
             GenericSelectableList(

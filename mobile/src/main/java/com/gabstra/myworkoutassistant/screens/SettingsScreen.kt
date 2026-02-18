@@ -13,13 +13,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,12 +40,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
-import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -234,10 +232,15 @@ fun SettingsScreen(
                     .padding(8.dp)
             )
 
-            OutlinedButton(
+            AppPrimaryOutlinedButton(
+                text = if (isLoadingRestingHeartRate) {
+                    "Loading Resting HR..."
+                } else {
+                    "Use Health Connect Resting HR"
+                },
                 onClick = {
                     if (isLoadingRestingHeartRate) {
-                        return@OutlinedButton
+                        return@AppPrimaryOutlinedButton
                     }
                     coroutineScope.launch {
                         isLoadingRestingHeartRate = true
@@ -274,15 +277,7 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
-            ) {
-                Text(
-                    text = if (isLoadingRestingHeartRate) {
-                        "Loading Resting HR..."
-                    } else {
-                        "Use Health Connect Resting HR"
-                    }
-                )
-            }
+            )
 
             Row(
                 modifier = Modifier
@@ -290,31 +285,27 @@ fun SettingsScreen(
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = onCancel,
                     enabled = !isSaving,
                     modifier = Modifier.weight(1f)
                 )
 
-                Button(
-                    colors = ButtonDefaults.buttonColors(
-                        contentColor = MaterialTheme.colorScheme.background,
-                        disabledContentColor = DisabledContentGray
-                    ),
+                AppPrimaryButton(
                     onClick = {
                         val birthDateYear = birthDateYearState.value.toIntOrNull()
                         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
                         if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
                             Toast.makeText(context, "Invalid birth year", Toast.LENGTH_SHORT).show()
-                            return@Button
+                            return@AppPrimaryButton
                         }
 
                         val weight = weightState.value.toDoubleOrNull()
                         if (weight == null || weight <= 0) {
                             Toast.makeText(context, "Invalid weight", Toast.LENGTH_SHORT).show()
-                            return@Button
+                            return@AppPrimaryButton
                         }
 
                         val measuredMaxHeartRate = measuredMaxHeartRateState.value.toIntOrNull()
@@ -322,14 +313,14 @@ fun SettingsScreen(
                             (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
                         ) {
                             Toast.makeText(context, "Invalid measured max HR", Toast.LENGTH_SHORT).show()
-                            return@Button
+                            return@AppPrimaryButton
                         }
 
                         val restingHeartRate = restingHeartRateState.value.toIntOrNull()
                             ?: getEffectiveRestingHeartRate()
                         if (restingHeartRate !in 30..120) {
                             Toast.makeText(context, "Invalid resting HR", Toast.LENGTH_SHORT).show()
-                            return@Button
+                            return@AppPrimaryButton
                         }
 
                         val newWorkoutStore = workoutStore.copy(
@@ -341,13 +332,13 @@ fun SettingsScreen(
                         )
                         onSave(newWorkoutStore)
                     },
+                    text = "Save",
                     modifier = Modifier.weight(1f)
-                ) {
-                    Text("Save", color = MaterialTheme.colorScheme.onPrimary)
-                }
+                )
             }
         }
     }
 
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }
+

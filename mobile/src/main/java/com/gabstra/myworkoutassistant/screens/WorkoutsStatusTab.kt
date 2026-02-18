@@ -211,7 +211,7 @@ fun WorkoutsStatusTab(
                         ) {
                             Text(
                                 modifier = Modifier.padding(15.dp),
-                                text = "No workouts in this week",
+                                text = "No workouts this week",
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )

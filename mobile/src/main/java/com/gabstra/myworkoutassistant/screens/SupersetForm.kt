@@ -38,9 +38,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -259,13 +259,13 @@ fun SupersetForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = onCancel,
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                AppPrimaryButton(
                     onClick = {
                         // Convert the H:M:S triples into a map of [UUID, Int] for total seconds
                         val restSecondsByExercise = selectedExercises.associate { ex ->
@@ -293,3 +293,4 @@ fun SupersetForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+

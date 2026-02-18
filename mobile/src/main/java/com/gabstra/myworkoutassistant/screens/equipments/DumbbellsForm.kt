@@ -44,8 +44,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
@@ -278,7 +278,7 @@ fun DumbbellsForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = {
                         onCancel()
@@ -286,7 +286,7 @@ fun DumbbellsForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                AppPrimaryButton(
                     text = "Save",
                     onClick = {
                         val newDumbbells = Dumbbells(
@@ -375,5 +375,6 @@ fun DumbbellsForm(
         )
     }
 }
+
 
 

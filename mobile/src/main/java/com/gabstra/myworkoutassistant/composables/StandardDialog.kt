@@ -1,17 +1,23 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.gabstra.myworkoutassistant.shared.DarkGray
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
 fun StandardDialog(
@@ -27,60 +33,68 @@ fun StandardDialog(
     showDismiss: Boolean = true,
     confirmEnabled: Boolean = true,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = {
-            when {
-                titleContent != null -> titleContent()
-                title != null -> Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-        },
-        text = {
-            ProvideTextStyle(
-                value = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+    val hasConfirmButton = showConfirm && confirmText != null && onConfirm != null
+    val hasDismissButton = showDismiss && dismissText != null
+
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp),
+            shape = MaterialTheme.shapes.small,
+            color = DarkGray,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                body()
-            }
-        },
-        confirmButton = {
-            if (showConfirm && confirmText != null && onConfirm != null) {
-                Button(
-                    onClick = onConfirm,
-                    enabled = confirmEnabled,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        contentColor = MaterialTheme.colorScheme.background,
-                        disabledContentColor = DisabledContentGray
-                    )
-                ) {
-                    Text(
-                        text = confirmText,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        style = MaterialTheme.typography.bodyLarge
+                when {
+                    titleContent != null -> titleContent()
+                    title != null -> Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-            }
-        },
-        dismissButton = {
-            if (showDismiss && dismissText != null) {
-                CustomButton(
-                    text = dismissText,
-                    onClick = onDismissButton ?: onDismissRequest,
-                    modifier = Modifier.heightIn(min = 48.dp)
-                )
-            }
-        },
-        shape = MaterialTheme.shapes.small,
-        containerColor = DarkGray,
-        titleContentColor = MaterialTheme.colorScheme.onSurface,
-        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        tonalElevation = 0.dp,
-    )
-}
 
+                ProvideTextStyle(
+                    value = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        body()
+                    }
+                }
+
+                if (hasConfirmButton || hasDismissButton) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                    ){
+                        if (hasDismissButton) {
+                            AppSecondaryButton(
+                                text = dismissText!!,
+                                onClick = onDismissButton ?: onDismissRequest,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                minHeight = 48.dp
+                            )
+                        }
+                        if (hasConfirmButton) {
+                            AppPrimaryButton(
+                                text = confirmText!!,
+                                onClick = onConfirm!!,
+                                enabled = confirmEnabled,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                minHeight = 48.dp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

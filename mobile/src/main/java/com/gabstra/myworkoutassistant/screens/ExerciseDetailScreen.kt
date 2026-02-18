@@ -38,8 +38,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,7 +75,8 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -812,19 +811,14 @@ fun ExerciseDetailScreen(
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Button(
-                                colors = ButtonDefaults.buttonColors(
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                    disabledContentColor = DisabledContentGray
-                                ),
+                            AppPrimaryButton(
+                                text = "Add Set",
                                 onClick = {
                                     appViewModel.setScreenData(
                                         ScreenData.NewSet(workout.id, exercise.id)
                                     );
                                 },
-                            ) {
-                                Text("Add Set", color = MaterialTheme.colorScheme.onPrimary)
-                            }
+                            )
                         }
                     } else {
                         Row(
@@ -990,7 +984,7 @@ fun ExerciseDetailScreen(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    FormPrimaryOutlinedButton(
+                                                    AppPrimaryOutlinedButton(
                                                         text = "Add Rest",
                                                         onClick = {
                                                             appViewModel.setScreenData(
@@ -1045,3 +1039,4 @@ fun ExerciseDetailScreen(
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+

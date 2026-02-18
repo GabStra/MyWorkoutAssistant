@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -61,11 +60,12 @@ fun <T> StandardFilterDropdown(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Box(modifier = Modifier.weight(1f)) {
-            FormPrimaryOutlinedButton(
+        Box {
+            AppPrimaryOutlinedButton(
                 text = selectedText,
                 onClick = { expanded = true },
                 enabled = enabled,
+                minHeight = 30.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .onGloballyPositioned { coordinates ->
@@ -112,3 +112,4 @@ fun <T> StandardFilterDropdown(
         }
     }
 }
+

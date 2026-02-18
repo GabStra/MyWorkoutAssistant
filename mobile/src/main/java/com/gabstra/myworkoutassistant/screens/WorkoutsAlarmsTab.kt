@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -26,8 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
@@ -127,7 +125,8 @@ fun WorkoutsAlarmsTab(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts
-            Button(
+            AppPrimaryButton(
+                text = if (hasBulkDisabledSchedules) "Restore All Alarms" else "Disable All Alarms",
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     scope.launch(Dispatchers.IO) {
@@ -166,18 +165,8 @@ fun WorkoutsAlarmsTab(
                             onSyncClick()
                         }
                     }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                )
-            ) {
-                Text(
-                    text = if (hasBulkDisabledSchedules) "Restore All Alarms" else "Disable All Alarms",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
+                }
+            )
 
             schedulesByWorkout.forEach { (workoutGlobalId, schedules) ->
                 val workout = workouts.find { it.globalId == workoutGlobalId && it.isActive }

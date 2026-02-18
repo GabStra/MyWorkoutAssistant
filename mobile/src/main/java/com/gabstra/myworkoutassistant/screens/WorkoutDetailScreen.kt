@@ -47,7 +47,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
 import androidx.compose.material3.BottomAppBar
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -89,8 +88,9 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
-import com.gabstra.myworkoutassistant.composables.FormPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -1114,7 +1114,8 @@ fun WorkoutDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
-                                Button(
+                                AppPrimaryButton(
+                                    text = "Start Workout",
                                     onClick = {
                                         if (hasWorkoutRecord) {
                                             showStartConfirmationDialog = true
@@ -1122,14 +1123,7 @@ fun WorkoutDetailScreen(
                                             startWorkoutDirectly()
                                         }
                                     },
-                                ) {
-                                    Text(
-                                        text = "Start Workout",
-                                        textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.background
-                                    )
-                                }
+                                )
                             }
 
                             // Only show resume/delete buttons after check completes and if there's a workout record
@@ -1141,18 +1135,12 @@ fun WorkoutDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
                                 ) {
-                                    Button(
+                                    AppPrimaryButton(
+                                        text = "Resume",
                                         onClick = {
                                             resumeWorkoutDirectly()
                                         },
-                                    ) {
-                                        Text(
-                                            text = "Resume",
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = MaterialTheme.colorScheme.background
-                                        )
-                                    }
+                                    )
                                 }
                                 Spacer(Modifier.height(Spacing.sm))
                                 Row(
@@ -1161,18 +1149,12 @@ fun WorkoutDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.Center
                                 ) {
-                                    Button(
+                                    AppPrimaryButton(
+                                        text = "Delete paused workout",
                                         onClick = {
                                             showDeleteDialog = true
                                         },
-                                    ) {
-                                        Text(
-                                            text = "Delete paused workout",
-                                            textAlign = TextAlign.Center,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = MaterialTheme.colorScheme.background
-                                        )
-                                    }
+                                    )
                                 }
                             }
 
@@ -1352,7 +1334,7 @@ fun WorkoutDetailScreen(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    FormPrimaryOutlinedButton(
+                                                    AppPrimaryOutlinedButton(
                                                         text = "Add Rest",
                                                         onClick = {
                                                             appViewModel.setScreenData(
@@ -1480,4 +1462,5 @@ fun WorkoutDetailScreen(
         }
     }
 }
+
 

@@ -33,8 +33,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.FormPrimaryButton
-import com.gabstra.myworkoutassistant.composables.FormSecondaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.UUID
@@ -121,7 +121,7 @@ fun AccessoryForm(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FormSecondaryButton(
+                AppSecondaryButton(
                     text = "Cancel",
                     onClick = {
                         onCancel()
@@ -129,7 +129,7 @@ fun AccessoryForm(
                     modifier = Modifier.weight(1f)
                 )
 
-                FormPrimaryButton(
+                AppPrimaryButton(
                     text = "Save",
                     onClick = {
                         val newAccessory = AccessoryEquipment(
@@ -145,3 +145,4 @@ fun AccessoryForm(
         }
     }
 }
+
