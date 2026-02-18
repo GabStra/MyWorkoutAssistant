@@ -19,7 +19,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 @Database(
     entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class, ExerciseSessionProgression::class, ErrorLog::class],
-    version = 54,
+    version = 55,
     exportSchema = false
 )
 @TypeConverters(

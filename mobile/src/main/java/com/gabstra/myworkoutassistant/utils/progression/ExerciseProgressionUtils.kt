@@ -77,6 +77,7 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -237,9 +238,7 @@ suspend fun backfillExerciseSessionProgressions(
                 }
 
                 // Filter out rest sets and rest pause sets
-                val currentSession = exerciseSetHistories
-                    .dropWhile { it.setData is RestSetData }
-                    .dropLastWhile { it.setData is RestSetData }
+                val currentSession = sanitizeRestPlacementInSetHistories(exerciseSetHistories)
                     .filter {
                         when (val setData = it.setData) {
                             is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet

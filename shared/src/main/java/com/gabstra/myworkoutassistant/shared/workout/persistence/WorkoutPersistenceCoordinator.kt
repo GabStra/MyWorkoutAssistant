@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -69,7 +70,9 @@ internal class WorkoutPersistenceCoordinator(
 
     fun captureSetHistorySnapshot(
         currentState: WorkoutState,
-        exercisesById: Map<UUID, Exercise>
+        exercisesById: Map<UUID, Exercise>,
+        supersetIdByExerciseId: Map<UUID, UUID>,
+        exercisesBySupersetId: Map<UUID, List<Exercise>>
     ): SetHistorySnapshot? {
         val historyIdentity = WorkoutStateQueries.stateHistoryIdentity(currentState) ?: return null
         if (WorkoutSetHistoryOps.shouldSkipPersistingState(currentState, exercisesById)) return null
@@ -96,6 +99,15 @@ internal class WorkoutPersistenceCoordinator(
         }
 
         val skipped = (currentState as? WorkoutState.Set)?.skipped ?: false
+        val supersetMetadata = resolveSupersetMetadata(
+            exerciseId = historyIdentity.exerciseId,
+            order = historyIdentity.order,
+            supersetIdByExerciseId = supersetIdByExerciseId,
+            exercisesBySupersetId = exercisesBySupersetId
+        )
+        val nextExecutionSequence = (
+            executedSetStore.executedSets.value.maxOfOrNull { it.executionSequence?.toLong() ?: 0L } ?: 0L
+        ) + 1L
         val newSetHistory = SetHistory(
             id = UUID.randomUUID(),
             setId = historyIdentity.setId,
@@ -104,7 +116,11 @@ internal class WorkoutPersistenceCoordinator(
             skipped = skipped,
             exerciseId = historyIdentity.exerciseId,
             startTime = startTime,
-            endTime = LocalDateTime.now()
+            endTime = LocalDateTime.now(),
+            supersetId = supersetMetadata?.supersetId,
+            supersetRound = supersetMetadata?.supersetRound,
+            supersetExerciseIndex = supersetMetadata?.supersetExerciseIndex,
+            executionSequence = nextExecutionSequence.toUInt()
         )
 
         return SetHistorySnapshot(
@@ -124,7 +140,13 @@ internal class WorkoutPersistenceCoordinator(
                 snapshot.exerciseId
             )
         }
-        executedSetStore.upsert(snapshot.setHistory, key)
+        val existing = executedSetStore.executedSets.value.firstOrNull(key)
+        val normalizedSnapshot = if (existing?.executionSequence != null) {
+            snapshot.setHistory.copy(executionSequence = existing.executionSequence)
+        } else {
+            snapshot.setHistory
+        }
+        executedSetStore.upsert(normalizedSnapshot, key)
     }
 
     fun capturePushWorkoutDataSnapshot(
@@ -220,9 +242,7 @@ internal class WorkoutPersistenceCoordinator(
                 val isDeloadSession = progressionState == ProgressionState.DELOAD
                 val exerciseHistories = entry.value
 
-                val currentSession = exerciseHistories
-                    .dropWhile { it.setData is RestSetData }
-                    .dropLastWhile { it.setData is RestSetData }
+                val currentSession = sanitizeRestPlacementInSetHistories(exerciseHistories)
                     .filter {
                         when (val sd = it.setData) {
                             is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
@@ -473,9 +493,7 @@ internal class WorkoutPersistenceCoordinator(
                 val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
 
                 workoutComponents = removeSetsFromExerciseRecursively(workoutComponents, exercise)
-                val validSetHistories = setHistories
-                    .dropWhile { it.setData is RestSetData }
-                    .dropLastWhile { it.setData is RestSetData }
+                val validSetHistories = sanitizeRestPlacementInSetHistories(setHistories)
                     .filter {
                         when (val setData = it.setData) {
                             is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
@@ -545,9 +563,7 @@ internal class WorkoutPersistenceCoordinator(
             )
 
             if (setHistories.isNotEmpty()) {
-                val processedSession = setHistories
-                    .dropWhile { it.setData is RestSetData }
-                    .dropLastWhile { it.setData is RestSetData }
+                val processedSession = sanitizeRestPlacementInSetHistories(setHistories)
                     .filter {
                         when (val sd = it.setData) {
                             is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
@@ -573,6 +589,32 @@ internal class WorkoutPersistenceCoordinator(
     private fun flattenExercises(workout: Workout): List<Exercise> {
         return workout.workoutComponents.filterIsInstance<Exercise>() +
             workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+    }
+
+    private data class SupersetMetadata(
+        val supersetId: UUID,
+        val supersetRound: UInt,
+        val supersetExerciseIndex: UInt
+    )
+
+    private fun resolveSupersetMetadata(
+        exerciseId: UUID?,
+        order: UInt,
+        supersetIdByExerciseId: Map<UUID, UUID>,
+        exercisesBySupersetId: Map<UUID, List<Exercise>>
+    ): SupersetMetadata? {
+        val resolvedExerciseId = exerciseId ?: return null
+        val resolvedSupersetId = supersetIdByExerciseId[resolvedExerciseId] ?: return null
+        val exerciseIndex = exercisesBySupersetId[resolvedSupersetId]
+            ?.indexOfFirst { it.id == resolvedExerciseId }
+            ?.takeIf { it >= 0 }
+            ?: return null
+
+        return SupersetMetadata(
+            supersetId = resolvedSupersetId,
+            supersetRound = order,
+            supersetExerciseIndex = exerciseIndex.toUInt()
+        )
     }
 }
 

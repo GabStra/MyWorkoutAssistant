@@ -18,6 +18,19 @@ interface SetHistoryDao {
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun getSetHistoriesByWorkoutHistoryId(workoutHistoryId: UUID): List<SetHistory>
 
+    @Query(
+        """
+        SELECT * FROM set_history 
+        WHERE workoutHistoryId = :workoutHistoryId 
+        ORDER BY
+            CASE WHEN executionSequence IS NULL THEN 1 ELSE 0 END,
+            executionSequence ASC,
+            startTime ASC,
+            "order" ASC
+        """
+    )
+    suspend fun getSetHistoriesByWorkoutHistoryIdOrdered(workoutHistoryId: UUID): List<SetHistory>
+
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId AND setId = :setId")
     suspend fun getSetHistoryByWorkoutHistoryIdAndSetId(workoutHistoryId: UUID, setId: UUID): SetHistory?
 
@@ -26,6 +39,38 @@ interface SetHistoryDao {
 
     @Query("SELECT * FROM set_history WHERE workoutHistoryId = :workoutHistoryId AND exerciseId = :exerciseId")
     suspend fun getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistoryId: UUID,exerciseId: UUID): List<SetHistory>
+
+    @Query(
+        """
+        SELECT * FROM set_history
+        WHERE workoutHistoryId = :workoutHistoryId AND exerciseId = :exerciseId
+        ORDER BY
+            CASE WHEN executionSequence IS NULL THEN 1 ELSE 0 END,
+            executionSequence ASC,
+            startTime ASC,
+            "order" ASC
+        """
+    )
+    suspend fun getSetHistoriesByWorkoutHistoryIdAndExerciseIdOrdered(
+        workoutHistoryId: UUID,
+        exerciseId: UUID
+    ): List<SetHistory>
+
+    @Query(
+        """
+        SELECT * FROM set_history
+        WHERE workoutHistoryId = :workoutHistoryId AND supersetId = :supersetId
+        ORDER BY
+            CASE WHEN executionSequence IS NULL THEN 1 ELSE 0 END,
+            executionSequence ASC,
+            startTime ASC,
+            "order" ASC
+        """
+    )
+    suspend fun getSetHistoriesByWorkoutHistoryIdAndSupersetIdOrdered(
+        workoutHistoryId: UUID,
+        supersetId: UUID
+    ): List<SetHistory>
 
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

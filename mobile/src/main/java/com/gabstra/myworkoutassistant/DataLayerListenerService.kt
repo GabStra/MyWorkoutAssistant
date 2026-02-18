@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -910,9 +911,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                                 updatedExercise
                                                             )
 
-                                                        val validSetHistories = setHistories
-                                                            .dropWhile { it.setData is RestSetData }
-                                                            .dropLastWhile { it.setData is RestSetData }
+                                                        val validSetHistories = sanitizeRestPlacementInSetHistories(setHistories)
                                                             .filter { it ->
                                                                 when (val setData = it.setData) {
                                                                     is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet

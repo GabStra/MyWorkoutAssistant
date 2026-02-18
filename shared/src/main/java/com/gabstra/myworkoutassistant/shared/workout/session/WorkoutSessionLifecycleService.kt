@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -34,9 +35,11 @@ internal class WorkoutSessionLifecycleService(
         val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
         val allSetHistories = mutableListOf<SetHistory>()
         exercises.forEach { exercise ->
-            val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                workoutHistoryId,
-                exercise.id
+            val setHistories = sanitizeRestPlacementInSetHistories(
+                setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                    workoutHistoryId,
+                    exercise.id
+                ).sortedBy { it.order }
             )
             allSetHistories.addAll(setHistories)
         }
@@ -64,7 +67,7 @@ internal class WorkoutSessionLifecycleService(
                     exercise.id
                 )
                 setHistoriesFound.clear()
-                setHistoriesFound.addAll(setHistories)
+                setHistoriesFound.addAll(sanitizeRestPlacementInSetHistories(setHistories.sortedBy { it.order }))
 
                 if (setHistories.isNotEmpty()) {
                     break
@@ -104,9 +107,11 @@ internal class WorkoutSessionLifecycleService(
         }
 
         val lastCompletedWorkoutHistory = workoutHistories.first()
-        val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-            lastCompletedWorkoutHistory.id,
-            exerciseId
+        val setHistories = sanitizeRestPlacementInSetHistories(
+            setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
+                lastCompletedWorkoutHistory.id,
+                exerciseId
+            ).sortedBy { it.order }
         )
 
         if (setHistories.isEmpty()) {

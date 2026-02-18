@@ -19,7 +19,12 @@ import java.util.UUID
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("workoutHistoryId")]
+    indices = [
+        Index("workoutHistoryId"),
+        Index(value = ["workoutHistoryId", "executionSequence"]),
+        Index(value = ["workoutHistoryId", "exerciseId", "executionSequence"]),
+        Index(value = ["workoutHistoryId", "supersetId", "supersetRound", "supersetExerciseIndex"])
+    ]
 )
 
 data class SetHistory(
@@ -33,5 +38,9 @@ data class SetHistory(
     val endTime: LocalDateTime?,
     val setData: SetData,
     val skipped: Boolean,
+    val supersetId: UUID? = null,
+    val supersetRound: UInt? = null,
+    val supersetExerciseIndex: UInt? = null,
+    val executionSequence: UInt? = null,
     val version: UInt = 0u
 )

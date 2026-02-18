@@ -207,7 +207,9 @@ open class WorkoutViewModel(
         val snapshot = withContext(dispatchers.main) {
             workoutPersistenceCoordinator.captureSetHistorySnapshot(
                 currentState = _workoutState.value,
-                exercisesById = exercisesById
+                exercisesById = exercisesById,
+                supersetIdByExerciseId = supersetIdByExerciseId,
+                exercisesBySupersetId = exercisesBySupersetId
             )
         }
         withContext(dispatchers.io) {
@@ -1592,7 +1594,9 @@ open class WorkoutViewModel(
     fun storeSetData() {
         val snapshot = workoutPersistenceCoordinator.captureSetHistorySnapshot(
             currentState = _workoutState.value,
-            exercisesById = exercisesById
+            exercisesById = exercisesById,
+            supersetIdByExerciseId = supersetIdByExerciseId,
+            exercisesBySupersetId = exercisesBySupersetId
         )
         val previousJob = storeSetDataJob
         val newJob = launchIO {
