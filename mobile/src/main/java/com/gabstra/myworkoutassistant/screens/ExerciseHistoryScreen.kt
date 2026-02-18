@@ -660,6 +660,7 @@ fun ExerciseHistoryScreen(
                                             markerTextFormatter = { formatNumber(it) },
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            xAxisTickValues = volumes.map { it.first.toDouble() },
                                             markerPosition = volumeMarkerTarget?.first?.toDouble()
                                         )
                                     }
@@ -672,6 +673,7 @@ fun ExerciseHistoryScreen(
                                                 value.round(2).toString()
                                             },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
                                             markerPosition = oneRepMaxMarkerTarget?.first?.toDouble()
                                         )
                                     }
@@ -683,6 +685,7 @@ fun ExerciseHistoryScreen(
                                             markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
                                             startAxisValueFormatter = durationAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                            xAxisTickValues = durations.map { it.first.toDouble() },
                                             markerPosition = durationMarkerTarget?.first?.toDouble()
                                         )
                                     }

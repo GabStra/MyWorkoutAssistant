@@ -31,6 +31,8 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.fill
+import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.core.cartesian.CartesianMeasuringContext
 import com.patrykandpatrick.vico.core.cartesian.Zoom
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
@@ -42,6 +44,74 @@ import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerT
 import com.patrykandpatrick.vico.core.common.Insets
 import com.patrykandpatrick.vico.core.common.shape.CorneredShape
 
+private class FixedValuesHorizontalAxisItemPlacer(
+    values: List<Double>,
+    private val delegate: HorizontalAxis.ItemPlacer = HorizontalAxis.ItemPlacer.aligned(),
+) : HorizontalAxis.ItemPlacer {
+    private val sortedValues = values.distinct().sorted()
+
+    override fun getShiftExtremeLines(context: CartesianDrawingContext): Boolean =
+        delegate.getShiftExtremeLines(context)
+
+    override fun getFirstLabelValue(
+        context: CartesianMeasuringContext,
+        maxLabelWidth: Float,
+    ): Double? = sortedValues.firstOrNull()
+
+    override fun getLastLabelValue(
+        context: CartesianMeasuringContext,
+        maxLabelWidth: Float,
+    ): Double? = sortedValues.lastOrNull()
+
+    override fun getLabelValues(
+        context: CartesianDrawingContext,
+        visibleXRange: ClosedFloatingPointRange<Double>,
+        fullXRange: ClosedFloatingPointRange<Double>,
+        maxLabelWidth: Float,
+    ): List<Double> = valuesInRange(visibleXRange)
+
+    override fun getWidthMeasurementLabelValues(
+        context: CartesianMeasuringContext,
+        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        fullXRange: ClosedFloatingPointRange<Double>,
+    ): List<Double> = valuesInRange(fullXRange)
+
+    override fun getHeightMeasurementLabelValues(
+        context: CartesianMeasuringContext,
+        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        fullXRange: ClosedFloatingPointRange<Double>,
+        maxLabelWidth: Float,
+    ): List<Double> = valuesInRange(fullXRange)
+
+    override fun getLineValues(
+        context: CartesianDrawingContext,
+        visibleXRange: ClosedFloatingPointRange<Double>,
+        fullXRange: ClosedFloatingPointRange<Double>,
+        maxLabelWidth: Float,
+    ): List<Double> = valuesInRange(visibleXRange)
+
+    override fun getStartLayerMargin(
+        context: CartesianMeasuringContext,
+        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        tickThickness: Float,
+        maxLabelWidth: Float,
+    ): Float = delegate.getStartLayerMargin(context, layerDimensions, tickThickness, maxLabelWidth)
+
+    override fun getEndLayerMargin(
+        context: CartesianMeasuringContext,
+        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        tickThickness: Float,
+        maxLabelWidth: Float,
+    ): Float = delegate.getEndLayerMargin(context, layerDimensions, tickThickness, maxLabelWidth)
+
+    private fun valuesInRange(range: ClosedFloatingPointRange<Double>): List<Double> {
+        if (sortedValues.isEmpty()) return emptyList()
+        val start = range.start
+        val end = range.endInclusive
+        return sortedValues.filter { it in start..end }
+    }
+}
+
 @Composable
 fun StandardChart(
     modifier: Modifier = Modifier,
@@ -51,6 +121,7 @@ fun StandardChart(
     minValue: Double? = null,
     maxValue: Double? = null,
     markerPosition: Double? = null,
+    xAxisTickValues: List<Double>? = null,
     markerTextFormatter: ((Double) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
     bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
@@ -155,8 +226,14 @@ fun StandardChart(
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
                             tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
-
-                            ),
+                            itemPlacer = remember(xAxisTickValues) {
+                                if (xAxisTickValues.isNullOrEmpty()) {
+                                    HorizontalAxis.ItemPlacer.aligned()
+                                } else {
+                                    FixedValuesHorizontalAxisItemPlacer(values = xAxisTickValues)
+                                }
+                            },
+                        ),
                         persistentMarkers = if (markerPosition != null)  { _ ->
                             marker at markerPosition
                         } else null,

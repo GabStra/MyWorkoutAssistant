@@ -712,6 +712,7 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    xAxisTickValues = volumes.map { it.first.toDouble() },
                     markerPosition = selectedHistoryMarkerPosition
                         ?: volumeMarkerTarget?.first?.toDouble()
                 )
@@ -724,6 +725,7 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTime(it.toInt() / 1000) },
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    xAxisTickValues = durations.map { it.first.toDouble() },
                     markerPosition = selectedHistoryMarkerPosition
                         ?: durationMarkerTarget?.first?.toDouble()
                 )
@@ -737,6 +739,7 @@ fun WorkoutHistoryScreen(
                     markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                    xAxisTickValues = workoutDurations.map { it.first.toDouble() },
                     markerPosition = selectedHistoryMarkerPosition
                         ?: workoutDurationMarkerTarget?.first?.toDouble()
                 )
