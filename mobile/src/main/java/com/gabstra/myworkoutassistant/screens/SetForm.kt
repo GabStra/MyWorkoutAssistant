@@ -206,6 +206,12 @@ fun SetForm(
             }
         }
 
-        LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+        LoadingOverlay(
+            isVisible = rememberDebouncedSavingVisible(
+                isSaving = isSaving,
+                minVisibleMs = 1_000L,
+            ),
+            text = "Saving..."
+        )
     }
 }

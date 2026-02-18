@@ -17,23 +17,59 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.os.SystemClock
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
 
 @Composable
-fun rememberDebouncedSavingVisible(isSaving: Boolean, delayMs: Long = 400L): Boolean {
+fun rememberMinimumLoadingVisibility(
+    isLoading: Boolean,
+    minVisibleMs: Long = 1_000L,
+    showDelayMs: Long = 0L,
+): Boolean {
     var show by remember { mutableStateOf(false) }
-    LaunchedEffect(isSaving) {
-        if (!isSaving) {
-            show = false
+    var visibleSinceMs by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(isLoading) {
+        if (isLoading) {
+            if (showDelayMs > 0) {
+                delay(showDelayMs)
+            }
+            if (!show) {
+                show = true
+                visibleSinceMs = SystemClock.elapsedRealtime()
+            }
             return@LaunchedEffect
         }
-        delay(delayMs)
-        show = true
+
+        if (!show) {
+            return@LaunchedEffect
+        }
+
+        val elapsedMs = SystemClock.elapsedRealtime() - visibleSinceMs
+        val remainingMs = (minVisibleMs - elapsedMs).coerceAtLeast(0L)
+        if (remainingMs > 0) {
+            delay(remainingMs)
+        }
+        show = false
     }
+
     return show
+}
+
+@Composable
+fun rememberDebouncedSavingVisible(
+    isSaving: Boolean,
+    delayMs: Long = 400L,
+    minVisibleMs: Long = 0L,
+): Boolean {
+    return rememberMinimumLoadingVisibility(
+        isLoading = isSaving,
+        minVisibleMs = minVisibleMs,
+        showDelayMs = delayMs,
+    )
 }
 
 @Composable

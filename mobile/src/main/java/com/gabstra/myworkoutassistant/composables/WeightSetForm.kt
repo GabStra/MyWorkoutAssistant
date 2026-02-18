@@ -51,12 +51,15 @@ fun WeightSetForm(
     val weightState = remember { mutableStateOf(weightSet?.weight?.toString() ?: "0") }
 
     var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
+    var isLoadingCombinations by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             possibleCombinations = equipment.getWeightsCombinationsWithLabels()
         }
+        isLoadingCombinations = false
     }
+    val showCombinationsLoading = rememberMinimumLoadingVisibility(isLoadingCombinations)
 
     val filterState = remember { mutableStateOf("") }
 
@@ -93,7 +96,7 @@ fun WeightSetForm(
             Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
         }
 
-        if (possibleCombinations.isNotEmpty()) {
+        if (!showCombinationsLoading) {
             Box {
                 Box {
                     OutlinedTextField(

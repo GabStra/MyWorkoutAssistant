@@ -59,6 +59,7 @@ fun BodyWeightSetForm(
     Column(modifier = Modifier.fillMaxWidth()) {
         if (equipment != null) {
             var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
+            var isLoadingCombinations by remember { mutableStateOf(true) }
 
             LaunchedEffect(Unit) {
                 withContext(Dispatchers.IO) {
@@ -66,7 +67,9 @@ fun BodyWeightSetForm(
                     val nonZeroCombinations = combinationsFromEquipment.filter { it.first != 0.0 }.toSet()
                     possibleCombinations = nonZeroCombinations + Pair(0.0, "BW")
                 }
+                isLoadingCombinations = false
             }
+            val showCombinationsLoading = rememberMinimumLoadingVisibility(isLoadingCombinations)
 
             val filterState = remember { mutableStateOf("") }
 
@@ -94,7 +97,7 @@ fun BodyWeightSetForm(
                 Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
             }
 
-            if (possibleCombinations.isNotEmpty()) {
+            if (!showCombinationsLoading) {
                 Box {
                     Box {
                         OutlinedTextField(
