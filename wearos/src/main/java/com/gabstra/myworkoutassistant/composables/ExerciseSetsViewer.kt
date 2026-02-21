@@ -179,7 +179,7 @@ fun SetTableRow(
     ){
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(1.dp),
+                .padding(2.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ScalableFadingText(
@@ -329,7 +329,7 @@ private fun CenteredLabelRow(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(1.dp),
+            .padding(2.5.dp),
         contentAlignment = Alignment.Center
     ) {
         ScalableFadingText(
@@ -466,7 +466,7 @@ fun ExerciseSetsViewer(
                 )
                 is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
                     modifier = rowModifier,
-                    text = "Select Load",
+                    text = "SET LOAD",
                     textColor = textColor
                 )
                 is ExerciseSetDisplayRow.RestRow -> CenteredLabelRow(
@@ -476,7 +476,7 @@ fun ExerciseSetsViewer(
                 )
                 is ExerciseSetDisplayRow.CalibrationRIRRow -> CenteredLabelRow(
                     modifier = rowModifier,
-                    text = "Set RIR",
+                    text = "SET RIR",
                     textColor = textColor
                 )
             }
@@ -498,7 +498,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 12.5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -544,7 +544,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 12.5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(

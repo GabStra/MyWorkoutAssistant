@@ -176,8 +176,8 @@ fun CustomDialogYesOnLongPress(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(contentPadding)
-                            .padding(horizontal = 15.dp)
+                            .padding(top = contentPadding.calculateTopPadding())
+                            .padding(horizontal = 25.dp)
                             .padding(top = 10.dp)
                             .verticalScroll(scrollState),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -199,7 +199,7 @@ fun CustomDialogYesOnLongPress(
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Normal),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 60.dp)
+                                .heightIn(min = 40.dp)
                                 .padding(horizontal = 5.dp)
                         )
 
@@ -282,8 +282,8 @@ private fun CustomDialogYesOnLongPressHugeTextPreview() {
     ) {
         CustomDialogYesOnLongPress(
             show = true,
-            title = "Skip Rest",
-            message = "Do you want to skip the rest?",
+            title = "Complete Calibration Set",
+            message = "Rate your RIR after completing this set.",
             handleNoClick = {},
             handleYesClick = {},
             closeTimerInMillis = 0L,

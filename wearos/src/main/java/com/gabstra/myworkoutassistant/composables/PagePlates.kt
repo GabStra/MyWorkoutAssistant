@@ -165,7 +165,7 @@ fun PagePlates(
                 .fillMaxWidth()
                 .padding(horizontal = 30.dp),
             text = "Loading Guide",
-            style = MaterialTheme.typography.titleMedium,
+            style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 

@@ -33,7 +33,7 @@ private fun TitledLinesSectionItem(
         Text(
             text = section.title,
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleMedium,
+            style = workoutPagerTitleTextStyle(),
             fontWeight = FontWeight.Bold,
             color = LighterGray,
             textAlign = TextAlign.Center
@@ -73,11 +73,11 @@ fun PageTitledLines(
                 )
             )
         }
-    ) { contentPadding ->
+    ) { _ ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(contentPadding)
+                .padding(horizontal = 5.dp)
                 .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

@@ -858,7 +858,7 @@ private fun HeartRateView(
                     modifier = Modifier
                         .size(15.dp)
                         .offset(x = readoutHorizontalOffset)
-                        .offset(y = (-20).dp)
+                        .offset(y = (-15).dp)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
                 )
@@ -868,7 +868,7 @@ private fun HeartRateView(
                         .width(120.dp)
                         .height(25.dp)
                         .offset(x = readoutHorizontalOffset)
-                        .offset(y = (-20).dp)
+                        .offset(y = (-15).dp)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
                     bpm = hr,

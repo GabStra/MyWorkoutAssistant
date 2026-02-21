@@ -9,7 +9,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -25,7 +24,7 @@ fun PageNotes(notes: String) {
         Text(
             modifier = Modifier.fillMaxSize(),
             text = "Notes",
-            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+            style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 

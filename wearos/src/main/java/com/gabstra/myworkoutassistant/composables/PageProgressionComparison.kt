@@ -401,9 +401,7 @@ fun PageProgressionComparison(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 5.dp),
             text = "Session Comparison",
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontWeight = FontWeight.Bold
-            ),
+            style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 

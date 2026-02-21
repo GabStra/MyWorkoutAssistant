@@ -17,7 +17,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -96,9 +95,7 @@ fun PageExercises(
                     .clickable {
                         hapticsViewModel.doGentleVibration()
                     },
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.SemiBold
-                ),
+                style = workoutPagerTitleTextStyle(),
                 textAlign = TextAlign.Center
             )
 
