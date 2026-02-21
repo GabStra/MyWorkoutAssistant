@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -30,8 +31,10 @@ import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -334,35 +337,45 @@ fun ExerciseIndicator(
                         else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
                     }
 
-                    HeightLockedCircularProgressIndicator(
+                    CircularProgressIndicator(
                         progress = { indicatorProgress },
                         modifier = Modifier.fillMaxSize(),
-                        indicatorColor = indicatorColor,
-                        trackColor = MediumDarkGray,
+                        colors = ProgressIndicatorDefaults.colors(
+                            indicatorColor = indicatorColor,
+                            trackColor = MediumDarkGray
+                        ),
                         strokeWidth = 4.dp,
                         startAngle = startA,
                         endAngle = endA
                     )
 
                     if (isCurrent && progressLayer.completedOverlayProgress != null && progressLayer.completedOverlayProgress != 0.0f) {
-                        HeightLockedCircularProgressIndicator(
+                        Log.d("OVERLAY", "progressLayer.completedOverlayProgress: ${progressLayer.completedOverlayProgress}")
+
+                        CircularProgressIndicator(
                             progress = { progressLayer.completedOverlayProgress + 0.1f  },
                             modifier = Modifier.fillMaxSize(),
-                            indicatorColor = MaterialTheme.colorScheme.background,
-                            trackColor = Color.Transparent,
+                            colors = ProgressIndicatorDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.background,
+                                trackColor = Color.Transparent
+                            ),
                             strokeWidth = 4.dp,
                             startAngle = startA,
-                            endAngle = endA
+                            endAngle = endA,
+                            gapSize = 0.dp
                         )
 
-                        HeightLockedCircularProgressIndicator(
+                        CircularProgressIndicator(
                             progress = { progressLayer.completedOverlayProgress },
                             modifier = Modifier.fillMaxSize(),
-                            indicatorColor = MaterialTheme.colorScheme.onBackground,
-                            trackColor = Color.Transparent,
+                            colors = ProgressIndicatorDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.onBackground,
+                                trackColor = Color.Transparent
+                            ),
                             strokeWidth = 4.dp,
                             startAngle = startA,
-                            endAngle = endA
+                            endAngle = endA,
+                            gapSize = 0.dp
                         )
                     }
                 }
@@ -454,7 +467,7 @@ private fun ExerciseIndicatorPreview() {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = null,
+            equipmentId = null,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u

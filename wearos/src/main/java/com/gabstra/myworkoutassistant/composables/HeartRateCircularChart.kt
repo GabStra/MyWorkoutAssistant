@@ -64,8 +64,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -273,7 +275,6 @@ fun HeartRateCircularChart(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     centerReadoutOnScreen: Boolean = false,
-    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val mhrPercentage = remember(hr, age, measuredMaxHeartRate, restingHeartRate) {
@@ -394,9 +395,7 @@ fun HeartRateCircularChart(
         lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent,
         zoneSegmentsModifier,
-        heartRateDisplayModifier,
-        centerReadoutOnScreen,
-        readoutAnchorOffsetX
+        heartRateDisplayModifier
     )
 }
 
@@ -689,14 +688,15 @@ private fun ZoneSegment(
         }
     }
 
-
-    HeightLockedCircularProgressIndicator(
+    CircularProgressIndicator(
         progress = {
             progressState.floatValue
         },
         modifier = modifier,
-        indicatorColor = colorsByZone[index],
-        trackColor = trackColor,
+        colors = ProgressIndicatorDefaults.colors(
+            indicatorColor = colorsByZone[index],
+            trackColor = trackColor
+        ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
         endAngle = endAngle
@@ -797,9 +797,7 @@ private fun HeartRateView(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     zoneSegmentsModifier: Modifier,
-    heartRateDisplayModifier: Modifier,
-    centerReadoutOnScreen: Boolean,
-    readoutAnchorOffsetX: Dp,
+    heartRateDisplayModifier: Modifier
 ) {
     val screenState by appViewModel.screenState.collectAsState()
     val displayMode = screenState.hrDisplayMode
@@ -840,16 +838,10 @@ private fun HeartRateView(
     }
 
     Box(modifier = modifier) {
-        BoxWithConstraints(
+        Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.BottomCenter
         ) {
-            val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-            val readoutHorizontalOffset = if (centerReadoutOnScreen) {
-                ((screenWidth - maxWidth) / 2f) - readoutAnchorOffsetX
-            } else {
-                0.dp
-            }
 
             if (hr == 0) {
                 Icon(
@@ -857,7 +849,6 @@ private fun HeartRateView(
                     contentDescription = "Disconnected",
                     modifier = Modifier
                         .size(15.dp)
-                        .offset(x = readoutHorizontalOffset)
                         .offset(y = (-15).dp)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
@@ -867,7 +858,6 @@ private fun HeartRateView(
                     modifier = Modifier
                         .width(120.dp)
                         .height(25.dp)
-                        .offset(x = readoutHorizontalOffset)
                         .offset(y = (-15).dp)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
@@ -1024,7 +1014,6 @@ fun HeartRateStandard(
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
         centerReadoutOnScreen = centerReadoutOnScreen,
-        readoutAnchorOffsetX = readoutAnchorOffsetX,
         onHrStatusChange = onHrStatusChange
     )
 }
@@ -1044,7 +1033,6 @@ fun HeartRatePolar(
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
     centerReadoutOnScreen: Boolean = false,
-    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val hrData by polarViewModel.hrBpm.collectAsState()
@@ -1072,7 +1060,6 @@ fun HeartRatePolar(
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
         centerReadoutOnScreen = centerReadoutOnScreen,
-        readoutAnchorOffsetX = readoutAnchorOffsetX,
         onHrStatusChange = onHrStatusChange
     )
 }

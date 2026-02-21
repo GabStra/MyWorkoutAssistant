@@ -14,12 +14,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavController
+import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.HeartRatePolar
@@ -37,6 +37,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -46,13 +47,12 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
-import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 
@@ -136,7 +136,6 @@ fun WorkoutScreen(
                 upperBoundMaxHRPercent = upperBoundMaxHRPercent,
                 zoneSegmentsModifier = Modifier.overlayVisualScale(WorkoutPagerLayoutTokens.HeartRateZoneVisualScale),
                 centerReadoutOnScreen = true,
-                readoutAnchorOffsetX = WorkoutPagerLayoutTokens.HeartRateReadoutAnchorOffsetX,
                 onHrStatusChange = { status -> hrStatus = status }
             )
         }else{
@@ -153,7 +152,6 @@ fun WorkoutScreen(
                 upperBoundMaxHRPercent = upperBoundMaxHRPercent,
                 zoneSegmentsModifier = Modifier.overlayVisualScale(WorkoutPagerLayoutTokens.HeartRateZoneVisualScale),
                 centerReadoutOnScreen = true,
-                readoutAnchorOffsetX = WorkoutPagerLayoutTokens.HeartRateReadoutAnchorOffsetX,
                 onHrStatusChange = { status -> hrStatus = status }
             )
         }
