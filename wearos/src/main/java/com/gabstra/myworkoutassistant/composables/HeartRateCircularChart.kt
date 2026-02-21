@@ -55,7 +55,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -699,7 +698,8 @@ private fun ZoneSegment(
         ),
         strokeWidth = 4.dp,
         startAngle = startAngle,
-        endAngle = endAngle
+        endAngle = endAngle,
+
     )
 }
 
