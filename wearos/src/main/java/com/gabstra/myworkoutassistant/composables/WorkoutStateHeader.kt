@@ -24,7 +24,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -68,7 +67,6 @@ fun WorkoutStateHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .zIndex(1f)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
