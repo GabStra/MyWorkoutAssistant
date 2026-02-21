@@ -62,27 +62,55 @@ abstract class WearBaseE2ETest {
         TestWorkoutStoreSeeder.seedWorkoutStore(context)
     }
 
+    /**
+     * Launches the app from home and waits until the main screen is ready.
+     * Uses (1) retry if the window doesn't appear, and (2) a readiness condition (selection screen
+     * visible) so we don't proceed on a raw window timeout.
+     */
     protected fun launchAppFromHome() {
-        device.pressHome()
-
         val pkg = context.packageName
         val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             ?: error("Launch intent for package $pkg not found")
-
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        context.startActivity(launchIntent)
 
-        val appeared = device.wait(Until.hasObject(By.pkg(pkg).depth(0)), defaultTimeoutMs)
-        require(appeared) { "Timed out waiting for app ($pkg) to appear on screen" }
+        val windowSelector = By.pkg(pkg).depth(0)
+        var windowAppeared = false
+        repeat(2) { attempt ->
+            device.pressHome()
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            context.startActivity(launchIntent)
+            windowAppeared = device.wait(
+                Until.hasObject(windowSelector),
+                E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS
+            )
+            if (windowAppeared) return@repeat
+        }
+        require(windowAppeared) { "Timed out waiting for app ($pkg) to appear on screen after 2 launch attempts" }
 
-        // Wait a bit for the app to fully initialize and potentially show tutorial
+        // Wait for app to settle and optionally show tutorial
         device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
-        
-        // Dismiss tutorial overlay if present (shown after app launch on WorkoutSelectionScreen)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION)
-        
-        // Wait for UI to settle after tutorial dismissal
+
+        // Readiness: proceed when either selection screen or recovery dialog is visible (relaunch may show recovery first)
+        val deadline = System.currentTimeMillis() + E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS
+        var ready = false
+        while (System.currentTimeMillis() < deadline) {
+            if (device.hasObject(By.text("My Workout Assistant")) || isRecoveryDialogVisible()) {
+                ready = true
+                break
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        require(ready) {
+            "App window appeared but neither main screen (My Workout Assistant) nor recovery dialog became visible in time"
+        }
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
+    private fun isRecoveryDialogVisible(): Boolean {
+        return device.hasObject(By.desc("Recovery resume action")) ||
+            device.hasObject(By.desc("Recovery discard action")) ||
+            device.hasObject(By.text("Resume or discard this interrupted workout."))
     }
 
     protected fun createWorkoutDriver(): WearWorkoutDriver = interactionDriver
