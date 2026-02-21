@@ -171,7 +171,7 @@ class WorkoutViewModelDatabaseTest {
     }
 
     private fun createTestWorkout(): Workout {
-        val equipment = createTestBarbell()
+        val equipmentId = createTestBarbell()
         
         val exercise1 = Exercise(
             id = testExercise1Id,
@@ -251,7 +251,7 @@ class WorkoutViewModelDatabaseTest {
 
     private fun createTestWorkoutStore(): WorkoutStore {
         val workout = createTestWorkout()
-        val equipment = createTestBarbell()
+        val equipmentId = createTestBarbell()
         
         return WorkoutStore(
             workouts = listOf(workout),
@@ -793,7 +793,7 @@ class WorkoutViewModelDatabaseTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = null
+            equipmentId = null
         )
         @Suppress("UNCHECKED_CAST")
         val workoutStateFlow = workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>
@@ -816,4 +816,3 @@ class WorkoutViewModelDatabaseTest {
         assertEquals("Stored set should match the active state set id", set.id, storedSetHistories.first().setId)
     }
 }
-

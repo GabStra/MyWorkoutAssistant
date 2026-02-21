@@ -46,7 +46,7 @@ class WorkoutStateMachineTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = null,
+            equipmentId = null,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u
@@ -468,4 +468,3 @@ class WorkoutStateMachineTest {
         assertEquals(set2, rest1.nextState)
     }
 }
-

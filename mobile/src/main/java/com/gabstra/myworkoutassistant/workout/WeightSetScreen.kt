@@ -56,11 +56,11 @@ fun WeightSetScreen(
     val previousSetData = state.previousSetData as WeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as WeightSetData) }
 
-    val equipment = state.equipment
+    val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet) {
         state.isCalibrationSet
     }
-    var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
+    var availableWeights by remember(state.equipmentId) { mutableStateOf<Set<Double>>(emptySet()) }
 
     LaunchedEffect(equipment) {
         availableWeights = viewModel.getWeightByEquipment(equipment)

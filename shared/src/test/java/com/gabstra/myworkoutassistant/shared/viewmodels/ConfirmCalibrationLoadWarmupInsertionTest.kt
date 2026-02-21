@@ -190,7 +190,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             setIndex = 0u,
             previousSetData = null,
             currentSetDataState = mutableStateOf(WeightSetData(8, selectedWeight, selectedWeight * 8)),
-            equipment = barbell,
+            equipmentId = barbell,
             currentBodyWeight = 75.0
         )
 
@@ -210,7 +210,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -238,7 +238,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -404,7 +404,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             setIndex = 0u,
             previousSetData = null,
             currentSetDataState = mutableStateOf(WeightSetData(8, selectedWeight, selectedWeight * 8)),
-            equipment = barbell,
+            equipmentId = barbell,
             currentBodyWeight = 75.0
         )
 
@@ -429,7 +429,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -452,7 +452,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -560,7 +560,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             setIndex = 0u,
             previousSetData = null,
             currentSetDataState = mutableStateOf(WeightSetData(8, selectedWeight, selectedWeight * 8)),
-            equipment = barbell,
+            equipmentId = barbell,
             currentBodyWeight = 75.0
         )
 
@@ -585,7 +585,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -608,7 +608,7 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,

@@ -52,7 +52,7 @@ class WorkoutSetStateFactory {
             setIndex = setIndex.toUInt(),
             previousSetData = previousSetData,
             currentSetDataState = mutableStateOf(currentSetData),
-            equipment = exercise.equipmentId?.let { getEquipmentById(it) },
+            equipmentId = exercise.equipmentId,
             lowerBoundMaxHRPercent = exercise.lowerBoundMaxHRPercent,
             upperBoundMaxHRPercent = exercise.upperBoundMaxHRPercent,
             currentBodyWeight = bodyWeightKg,
@@ -93,7 +93,7 @@ class WorkoutSetStateFactory {
             streak = exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
             progressionState = progressionState,
             isWarmupSet = isWarmupSet,
-            equipment = exercise.equipmentId?.let { getEquipmentById(it) },
+            equipmentId = exercise.equipmentId,
             isUnilateral = isUnilateral,
             isCalibrationSet = isCalibrationSet,
             isCalibrationManagedWorkSet = isCalibrationManagedWorkSet

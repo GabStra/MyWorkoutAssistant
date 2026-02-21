@@ -163,7 +163,7 @@ fun SetTableRow(
 ){
     val itemStyle = MaterialTheme.typography.numeralSmall
 
-    val equipment = setState.equipment
+    val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState = setState,
@@ -179,7 +179,7 @@ fun SetTableRow(
     ){
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(2.5.dp),
+                .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ScalableFadingText(
@@ -207,7 +207,7 @@ fun SetTableRow(
                         else -> Green
                     }
 
-                    val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
+                    val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
                         shouldHideCalibrationExecutionWeight -> "TBD"
                         isCalibrationSet && setState.isCalibrationSet -> weightText
@@ -236,14 +236,14 @@ fun SetTableRow(
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
                     val previousBodyWeightSetData = (setState.previousSetData as BodyWeightSetData)
 
-                    val baseWeightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
-                        setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
+                    val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
+                        equipment.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
                         "BW"
                     }
                     val displayWeightText = when {
                         shouldHideCalibrationExecutionWeight -> "TBD"
-                        isCalibrationSet && setState.isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
+                        isCalibrationSet && setState.isCalibrationSet && equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
                         isPendingCalibration -> "TBD"
                         else -> baseWeightText
                     }
@@ -329,7 +329,7 @@ private fun CenteredLabelRow(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(2.5.dp),
+            .padding(2.dp),
         contentAlignment = Alignment.Center
     ) {
         ScalableFadingText(
@@ -492,13 +492,13 @@ fun ExerciseSetsViewer(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.5.dp),
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -544,7 +544,7 @@ fun ExerciseSetsViewer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.5.dp),
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(

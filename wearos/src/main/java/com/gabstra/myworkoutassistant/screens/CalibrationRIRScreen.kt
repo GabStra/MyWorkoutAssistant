@@ -184,7 +184,7 @@ fun CalibrationRIRScreen(
                                     streak = 0,
                                     progressionState = null,
                                     isWarmupSet = false,
-                                    equipment = state.equipment,
+                                    equipmentId = state.equipmentId,
                                     isUnilateral = false,
                                     intraSetTotal = null,
                                     intraSetCounter = 0u,

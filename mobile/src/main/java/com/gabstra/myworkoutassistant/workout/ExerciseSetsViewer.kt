@@ -111,7 +111,7 @@ fun SetTableRow(
     hasUnconfirmedLoadSelectionForExercise: Boolean = false,
 ){
     val captionStyle = MaterialTheme.typography.titleSmall
-    val equipment = setState.equipment
+    val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
 
     val typography = MaterialTheme.typography
     val itemStyle = remember(typography) { typography.displayLarge.copy(fontWeight = FontWeight.Bold) }
@@ -166,7 +166,7 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
-                    val weightText = equipment!!.formatWeight(weightSetData.actualWeight)
+                    val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
                         shouldHideCalibrationExecutionWeight -> CalibrationUiLabels.Tbd
                         isCalibrationSet -> weightText
@@ -192,14 +192,14 @@ fun SetTableRow(
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                    val baseWeightText = if(setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
-                        setState.equipment!!.formatWeight(bodyWeightSetData.additionalWeight)
+                    val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
+                        equipment.formatWeight(bodyWeightSetData.additionalWeight)
                     }else {
                         "-"
                     }
                     val weightText = when {
                         shouldHideCalibrationExecutionWeight -> CalibrationUiLabels.Tbd
-                        isCalibrationSet && setState.equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
+                        isCalibrationSet && equipment != null && bodyWeightSetData.additionalWeight != 0.0 -> baseWeightText
                         isPendingCalibration -> CalibrationUiLabels.Tbd
                         else -> baseWeightText
                     }

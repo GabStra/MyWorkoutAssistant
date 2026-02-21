@@ -190,7 +190,7 @@ fun CalibrationLoadScreen(
                                     streak = 0,
                                     progressionState = null,
                                     isWarmupSet = false,
-                                    equipment = state.equipment,
+                                    equipmentId = state.equipmentId,
                                     isUnilateral = state.isUnilateral,
                                     intraSetTotal = null,
                                     intraSetCounter = 0u,

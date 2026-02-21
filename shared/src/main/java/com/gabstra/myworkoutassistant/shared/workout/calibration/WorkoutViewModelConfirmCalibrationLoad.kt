@@ -184,7 +184,7 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
             streak = exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
             progressionState = progressionState,
             isWarmupSet = true,
-            equipment = equipment,
+            equipmentId = exercise.equipmentId,
             isUnilateral = false,
             isCalibrationSet = false
         )
@@ -247,7 +247,7 @@ private suspend fun WorkoutViewModel.createCalibrationSetExecutionState(
         streak = exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
         progressionState = progressionState,
         isWarmupSet = false,
-        equipment = equipment,
+        equipmentId = currentState.equipmentId,
         isUnilateral = currentState.isUnilateral,
         intraSetTotal = null,
         intraSetCounter = 0u,
@@ -331,7 +331,7 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
         val selectedWeight = extractSelectedWeight(currentState) ?: return@launchIO
         val updatedSet = updateCalibrationSetWithWeight(currentState, selectedWeight) ?: return@launchIO
         val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
-        val equipment = currentState.equipment
+        val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
 
         val warmupStates = generateWarmupStates(exercise, equipment, currentState, selectedWeight)
         val calibrationSetExecutionState = createCalibrationSetExecutionState(
@@ -447,4 +447,3 @@ fun WorkoutViewModel.confirmCalibrationLoad() {
         }
     }
 }
-

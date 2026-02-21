@@ -485,12 +485,14 @@ fun PageProgressionComparison(
             }
         }
 
-        val differenceText by remember(beforeSetData, afterSetData, afterSetState?.equipment, beforeSetState?.equipment) {
+        val differenceText by remember(beforeSetData, afterSetData, afterSetState?.equipmentId, beforeSetState?.equipmentId) {
             derivedStateOf {
+                val afterEquipment = afterSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
+                val beforeEquipment = beforeSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
                 calculateSetDifference(
                     beforeSetData,
                     afterSetData,
-                    afterSetState?.equipment ?: beforeSetState?.equipment
+                    afterEquipment ?: beforeEquipment
                 )
             }
         }

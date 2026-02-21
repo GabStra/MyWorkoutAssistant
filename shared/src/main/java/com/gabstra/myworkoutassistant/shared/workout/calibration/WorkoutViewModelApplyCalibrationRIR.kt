@@ -289,7 +289,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         
         // Find all remaining work sets in the exercise
         val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
-        val equipment = currentState.equipment
+        val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
         val availableWeights = getWeightByEquipment(equipment)
         
         // Update all work sets in the exercise

@@ -53,11 +53,11 @@ fun BodyWeightSetScreen(
     val previousSetData = state.previousSetData as BodyWeightSetData
     var currentSetData by remember { mutableStateOf(state.currentSetData as BodyWeightSetData) }
 
-    val equipment = state.equipment
+    val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet, equipment) {
         state.isCalibrationSet && equipment != null
     }
-    var availableWeights by remember(state.equipment) { mutableStateOf<Set<Double>>(emptySet()) }
+    var availableWeights by remember(state.equipmentId) { mutableStateOf<Set<Double>>(emptySet()) }
 
     var closestWeight by remember(state.set.id) { mutableStateOf<Double?>(null) }
     var closestWeightIndex by remember(state.set.id) { mutableStateOf<Int?>(null) }

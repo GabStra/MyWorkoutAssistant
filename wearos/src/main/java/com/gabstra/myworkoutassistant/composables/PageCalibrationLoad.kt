@@ -55,7 +55,7 @@ fun PageCalibrationLoad(
     val currentSetData = state.currentSetData
     val isWeightSet = currentSetData is WeightSetData
     val isBodyWeightSet = currentSetData is BodyWeightSetData
-    val equipment = state.equipment
+    val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     
     var availableWeights by remember(equipment) { mutableStateOf<Set<Double>>(emptySet()) }
     var selectedWeightIndex by remember(state.calibrationSet.id) { mutableIntStateOf(0) }
@@ -247,7 +247,7 @@ fun PageCalibrationLoad(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 15.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
             ) {
@@ -278,8 +278,8 @@ fun PageCalibrationLoad(
                 }
 
                 Text(
-                    text = "Select load for $reps reps at 1-2 RIR",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                    text = "Set load for $reps reps\nat 1-2 RIR",
+                    style = MaterialTheme.typography.bodyLarge,
                     color = MediumLighterGray,
                     textAlign = TextAlign.Center,
                     modifier = Modifier

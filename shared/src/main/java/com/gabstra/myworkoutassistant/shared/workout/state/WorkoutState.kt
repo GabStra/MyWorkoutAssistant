@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.shared.workout.state
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import java.time.LocalDateTime
@@ -111,7 +110,7 @@ sealed class WorkoutState {
         val streak: Int,
         val progressionState: ProgressionState?,
         val isWarmupSet: Boolean,
-        val equipment: WeightLoadedEquipment?,
+        val equipmentId: UUID?,
         val isUnilateral: Boolean = false,
         val intraSetTotal : UInt? = null,
         var intraSetCounter : UInt = 0u,
@@ -127,7 +126,7 @@ sealed class WorkoutState {
         val setIndex: UInt,
         val previousSetData: SetData?,
         val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
-        val equipment: WeightLoadedEquipment?,
+        val equipmentId: UUID?,
         val lowerBoundMaxHRPercent: Float? = null,
         val upperBoundMaxHRPercent: Float? = null,
         val currentBodyWeight: Double,
@@ -142,7 +141,7 @@ sealed class WorkoutState {
         val calibrationSet: com.gabstra.myworkoutassistant.shared.sets.Set, // The calibration set that was just executed
         val setIndex: UInt,
         val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
-        val equipment: WeightLoadedEquipment?,
+        val equipmentId: UUID?,
         val lowerBoundMaxHRPercent: Float? = null,
         val upperBoundMaxHRPercent: Float? = null,
         val currentBodyWeight: Double

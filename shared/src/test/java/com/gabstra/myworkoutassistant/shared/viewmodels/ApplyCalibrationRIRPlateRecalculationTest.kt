@@ -135,7 +135,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u
@@ -156,7 +156,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u
@@ -192,7 +192,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             exerciseId = exerciseId,
             firstWorkSetStateIndex = 1,
             weights = listOf(totalWeight, totalWeight),
-            equipment = barbell
+            equipmentId = barbell
         )
         advanceUntilIdle()
 
@@ -285,7 +285,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             currentSetDataState = mutableStateOf(
                 WeightSetData(8, calibrationSelectedWeight, calibrationSelectedWeight * 8)
             ),
-            equipment = barbell,
+            equipmentId = barbell,
             currentBodyWeight = 75.0,
             isLoadConfirmed = true
         )
@@ -313,7 +313,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -327,7 +327,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             currentSetDataState = mutableStateOf(
                 WeightSetData(8, calibrationSelectedWeight, calibrationSelectedWeight * 8)
             ),
-            equipment = barbell,
+            equipmentId = barbell,
             lowerBoundMaxHRPercent = null,
             upperBoundMaxHRPercent = null,
             currentBodyWeight = 75.0
@@ -349,7 +349,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -382,7 +382,7 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = barbell,
+            equipmentId = barbell,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -488,4 +488,3 @@ class ApplyCalibrationRIRPlateRecalculationTest {
         return barbell.barWeight + (sideWeight * 2)
     }
 }
-

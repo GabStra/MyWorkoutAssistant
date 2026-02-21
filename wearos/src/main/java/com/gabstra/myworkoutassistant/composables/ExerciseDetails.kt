@@ -86,7 +86,7 @@ fun ExerciseDetail(
             WeightInfoDialog(
                 show = showWeightInfoDialog,
                 weight = weightSetData.getWeight(),
-                equipment = updatedState.equipment,
+                equipment = updatedState.equipmentId?.let { viewModel.getEquipmentById(it) },
                 onClick = {
                     openDialogJob?.cancel()
                     viewModel.reEvaluateDimmingForCurrentState()
@@ -120,7 +120,7 @@ fun ExerciseDetail(
             WeightInfoDialog(
                 show = showWeightInfoDialog,
                 weight = bodyWeightSetData.additionalWeight,
-                equipment = updatedState.equipment,
+                equipment = updatedState.equipmentId?.let { viewModel.getEquipmentById(it) },
                 onClick = {
                     openDialogJob?.cancel()
                     showWeightInfoDialog = false

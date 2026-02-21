@@ -40,7 +40,7 @@ fun CalibrationLoadScreen(
     state: WorkoutState.CalibrationLoadSelection,
 ) {
     val exercise = remember(state.exerciseId) { viewModel.exercisesById[state.exerciseId]!! }
-    val equipment = state.equipment
+    val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     val currentData = state.currentSetData
     val isBodyWeightSet = currentData is BodyWeightSetData
 

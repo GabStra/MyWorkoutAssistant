@@ -70,7 +70,7 @@ class GetSetCounterForExerciseTest {
             streak = 0,
             progressionState = null,
             isWarmupSet = false,
-            equipment = null,
+            equipmentId = null,
             isUnilateral = false,
             intraSetTotal = null,
             intraSetCounter = 0u,
@@ -85,7 +85,7 @@ class GetSetCounterForExerciseTest {
             setIndex = 2u,
             previousSetData = null,
             currentSetDataState = mutableStateOf(WeightSetData(8, 80.0, 800.0)),
-            equipment = null,
+            equipmentId = null,
             currentBodyWeight = 70.0
         )
     }
@@ -96,7 +96,7 @@ class GetSetCounterForExerciseTest {
             calibrationSet = WeightSet(calibrationSetId, 8, 80.0),
             setIndex = 2u,
             currentSetDataState = mutableStateOf(WeightSetData(8, 80.0, 800.0)),
-            equipment = null,
+            equipmentId = null,
             currentBodyWeight = 70.0
         )
     }
@@ -305,4 +305,3 @@ class GetSetCounterForExerciseTest {
         assertEquals(0, viewModel.getTotalSetCountForExercise(exerciseId))
     }
 }
-

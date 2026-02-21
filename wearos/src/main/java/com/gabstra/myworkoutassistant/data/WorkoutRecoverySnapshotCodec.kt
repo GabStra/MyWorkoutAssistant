@@ -81,6 +81,7 @@ internal data class StateDto(
     val intraSetCounter: Int? = null,
     val isCalibrationSet: Boolean? = null,
     val isCalibrationManagedWorkSet: Boolean? = null,
+    val equipmentId: String? = null,
     val isIntraSetRest: Boolean? = null,
     val isLoadConfirmed: Boolean? = null
 )
@@ -202,7 +203,8 @@ internal object WorkoutRecoverySnapshotCodec {
             intraSetTotal = intraSetTotal?.toInt(),
             intraSetCounter = intraSetCounter.toInt(),
             isCalibrationSet = isCalibrationSet,
-            isCalibrationManagedWorkSet = isCalibrationManagedWorkSet
+            isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
+            equipmentId = equipmentId?.toString()
         )
         is WorkoutState.CalibrationLoadSelection -> StateDto(
             type = "CALIBRATION_LOAD",
@@ -215,7 +217,8 @@ internal object WorkoutRecoverySnapshotCodec {
             upperBoundMaxHRPercent = upperBoundMaxHRPercent,
             currentBodyWeight = currentBodyWeight,
             isUnilateral = isUnilateral,
-            isLoadConfirmed = isLoadConfirmed
+            isLoadConfirmed = isLoadConfirmed,
+            equipmentId = equipmentId?.toString()
         )
         is WorkoutState.CalibrationRIRSelection -> StateDto(
             type = "CALIBRATION_RIR",
@@ -225,7 +228,8 @@ internal object WorkoutRecoverySnapshotCodec {
             currentSetDataJson = setDataConverter.fromSetData(copySetData(currentSetData)),
             lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
             upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-            currentBodyWeight = currentBodyWeight
+            currentBodyWeight = currentBodyWeight,
+            equipmentId = equipmentId?.toString()
         )
         is WorkoutState.Rest -> StateDto(
             type = "REST",
@@ -300,7 +304,7 @@ internal object WorkoutRecoverySnapshotCodec {
                     streak = streak ?: 0,
                     progressionState = progressionState?.let { runCatching { ProgressionState.valueOf(it) }.getOrNull() },
                     isWarmupSet = isWarmupSet ?: false,
-                    equipment = null,
+                    equipmentId = equipmentId?.toUuidOrNull(),
                     isUnilateral = isUnilateral ?: false,
                     intraSetTotal = intraSetTotal?.toUInt(),
                     intraSetCounter = (intraSetCounter ?: 0).toUInt(),
@@ -319,7 +323,7 @@ internal object WorkoutRecoverySnapshotCodec {
                     setIndex = (setIndex ?: return null).toUInt(),
                     previousSetData = previousData,
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
-                    equipment = null,
+                    equipmentId = equipmentId?.toUuidOrNull(),
                     lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
                     upperBoundMaxHRPercent = upperBoundMaxHRPercent,
                     currentBodyWeight = currentBodyWeight ?: 0.0,
@@ -336,7 +340,7 @@ internal object WorkoutRecoverySnapshotCodec {
                     calibrationSet = parsedSet,
                     setIndex = (setIndex ?: return null).toUInt(),
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
-                    equipment = null,
+                    equipmentId = equipmentId?.toUuidOrNull(),
                     lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
                     upperBoundMaxHRPercent = upperBoundMaxHRPercent,
                     currentBodyWeight = currentBodyWeight ?: 0.0
