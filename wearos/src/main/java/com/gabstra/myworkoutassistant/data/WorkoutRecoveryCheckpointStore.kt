@@ -2,28 +2,9 @@ package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryStateType
+import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoveryCheckpoint
 import java.util.UUID
-
-internal enum class RecoveryStateType {
-    SET,
-    REST,
-    CALIBRATION_LOAD,
-    CALIBRATION_RIR,
-    UNKNOWN
-}
-
-internal data class WorkoutRecoveryCheckpoint(
-    val workoutId: UUID,
-    val workoutHistoryId: UUID?,
-    val stateType: RecoveryStateType,
-    val isCalibrationSetExecution: Boolean = false,
-    val exerciseId: UUID?,
-    val setId: UUID?,
-    val setIndex: UInt?,
-    val restOrder: UInt?,
-    val setStartEpochMs: Long?,
-    val updatedAtEpochMs: Long
-)
 
 internal class WorkoutRecoveryCheckpointStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -103,6 +84,12 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
 
     fun loadRuntimeSnapshotJson(): String? {
         return prefs.getString(KEY_RUNTIME_SNAPSHOT_JSON, null)
+    }
+
+    fun clearRuntimeSnapshot(synchronous: Boolean = false) {
+        prefs.edit(commit = synchronous) {
+            remove(KEY_RUNTIME_SNAPSHOT_JSON)
+        }
     }
 
     private fun String.toUuidOrNull(): UUID? = runCatching { UUID.fromString(this) }.getOrNull()

@@ -327,16 +327,16 @@ fun WearApp(
                 val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
                 val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
                 try {
-                    val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
-                    if (incompleteWorkouts.isNotEmpty()) {
+                    val interruptedWorkouts = appViewModel.getInterruptedWorkouts()
+                    if (interruptedWorkouts.isNotEmpty()) {
                         val checkpoint = if (isWorkoutInProgress) {
                             appViewModel.getSavedRecoveryCheckpoint()
                         } else {
                             null
                         }
                         val candidate = checkpoint?.let { recoveryCheckpoint ->
-                            incompleteWorkouts.firstOrNull { it.workoutId == recoveryCheckpoint.workoutId }
-                        } ?: incompleteWorkouts.maxByOrNull { it.workoutHistory.startTime }
+                            interruptedWorkouts.firstOrNull { it.workoutId == recoveryCheckpoint.workoutId }
+                        } ?: interruptedWorkouts.maxByOrNull { it.workoutHistory.startTime }
 
                         if (candidate != null) {
                             appViewModel.showRecoveryPrompt(candidate, checkpoint)
@@ -350,7 +350,7 @@ fun WearApp(
                         }
                     }
                 } catch (exception: Exception) {
-                    Log.e("MainActivity", "Error checking for incomplete workouts", exception)
+                    Log.e("MainActivity", "Error checking for interrupted workouts", exception)
                 }
 
                 val now = System.currentTimeMillis()
@@ -642,16 +642,16 @@ fun WearApp(
                     hapticsViewModel.doGentleVibration()
                     appViewModel.hideRecoveryPrompt()
                 },
-                onResume = { incompleteWorkout, recoveryOptions ->
+                onResume = { interruptedWorkout, recoveryOptions ->
                     hapticsViewModel.doGentleVibration()
                     appViewModel.hideRecoveryPrompt()
                     appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
-                    appViewModel.prepareResumeWorkout(incompleteWorkout)
+                    appViewModel.prepareResumeWorkout(interruptedWorkout)
                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                 },
-                onDiscard = { incompleteWorkout ->
+                onDiscard = { interruptedWorkout ->
                     hapticsViewModel.doGentleVibration()
-                    appViewModel.discardIncompleteWorkout(incompleteWorkout)
+                    appViewModel.discardInterruptedWorkout(interruptedWorkout)
                     appViewModel.clearWorkoutInProgressFlag()
                     appViewModel.clearRecoveryCheckpoint()
                     appViewModel.hideRecoveryPrompt()

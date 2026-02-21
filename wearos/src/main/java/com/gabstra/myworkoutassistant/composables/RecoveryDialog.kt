@@ -32,24 +32,24 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
-import com.gabstra.myworkoutassistant.data.CalibrationRecoveryChoice
-import com.gabstra.myworkoutassistant.data.RecoveryPromptUiState
-import com.gabstra.myworkoutassistant.data.RecoveryResumeOptions
-import com.gabstra.myworkoutassistant.data.TimerRecoveryChoice
+import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
+import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
+import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
+import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
 @Composable
 internal fun RecoveryDialog(
     show: Boolean,
-    workout: WorkoutViewModel.IncompleteWorkout?,
+    workout: InterruptedWorkout?,
     uiState: RecoveryPromptUiState,
     onDismiss: () -> Unit,
-    onResume: (WorkoutViewModel.IncompleteWorkout, RecoveryResumeOptions) -> Unit,
-    onDiscard: (WorkoutViewModel.IncompleteWorkout) -> Unit
+    onResume: (InterruptedWorkout, RecoveryResumeOptions) -> Unit,
+    onDiscard: (InterruptedWorkout) -> Unit
 ) {
     if (!show || workout == null) return
 

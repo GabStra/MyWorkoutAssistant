@@ -30,7 +30,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
@@ -38,11 +38,11 @@ import java.time.format.DateTimeFormatter
 fun ResumeWorkoutDialog(
     show: Boolean,
     hapticsViewModel: HapticsViewModel,
-    incompleteWorkouts: List<WorkoutViewModel.IncompleteWorkout>,
+    interruptedWorkouts: List<InterruptedWorkout>,
     onDismiss: () -> Unit,
-    onResumeWorkout: (WorkoutViewModel.IncompleteWorkout) -> Unit
+    onResumeWorkout: (InterruptedWorkout) -> Unit
 ) {
-    if (show && incompleteWorkouts.isNotEmpty()) {
+    if (show && interruptedWorkouts.isNotEmpty()) {
         Dialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(
@@ -101,14 +101,14 @@ fun ResumeWorkoutDialog(
                             )
                         }
 
-                        items(incompleteWorkouts) { incompleteWorkout ->
+                        items(interruptedWorkouts) { interruptedWorkout ->
                             Button(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec).animateItem(),
                                 transformation = SurfaceTransformation(spec),
                                 onClick = {
-                                    onResumeWorkout(incompleteWorkout)
+                                    onResumeWorkout(interruptedWorkout)
                                 }
                             ) {
                                 Column(
@@ -117,7 +117,7 @@ fun ResumeWorkoutDialog(
                                 ) {
                                     Text(
                                         modifier = Modifier.fillMaxWidth(),
-                                        text = incompleteWorkout.workoutName,
+                                        text = interruptedWorkout.workoutName,
                                         textAlign = TextAlign.Center,
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onPrimary
@@ -127,7 +127,7 @@ fun ResumeWorkoutDialog(
 
                                     Text(
                                         modifier = Modifier.fillMaxWidth(),
-                                        text = incompleteWorkout.workoutHistory.startTime.format(
+                                        text = interruptedWorkout.workoutHistory.startTime.format(
                                             DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
                                         ),
                                         textAlign = TextAlign.Center,

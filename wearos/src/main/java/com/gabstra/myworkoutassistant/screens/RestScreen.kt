@@ -183,6 +183,7 @@ private fun RestTimerBlock(
         }
     }
 
+    // Sync from state so recovery RESTART (endTimer = startTimer) is reflected in UI.
     LaunchedEffect(state.currentSetData) {
         val latest = state.currentSetData as? RestSetData ?: return@LaunchedEffect
         currentSetData = latest
