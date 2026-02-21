@@ -1383,6 +1383,90 @@ open class WorkoutViewModel(
         return true
     }
 
+    /**
+     * Rebinds runtime equipment references from stable IDs after state restoration.
+     *
+     * Recovery snapshots intentionally persist IDs/state data, not equipment objects.
+     * This pass reconstructs equipment on set-like states from exerciseId -> exercise.equipmentId.
+     */
+    protected fun rebindEquipmentInCurrentStateMachine() {
+        val machine = stateMachine ?: return
+        val currentIndex = machine.currentIndex
+        val sequenceSnapshot = machine.sequenceSnapshot()
+
+        fun resolveEquipment(exerciseId: UUID): com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment? {
+            val exercise = exercisesById[exerciseId] ?: return null
+            val equipmentId = exercise.equipmentId ?: return null
+            return getEquipmentById(equipmentId)
+        }
+
+        fun rebindState(state: WorkoutState): WorkoutState {
+            return when (state) {
+                is WorkoutState.Set -> state.copy(
+                    equipment = resolveEquipment(state.exerciseId)
+                )
+                is WorkoutState.CalibrationLoadSelection -> state.copy(
+                    equipment = resolveEquipment(state.exerciseId)
+                )
+                is WorkoutState.CalibrationRIRSelection -> state.copy(
+                    equipment = resolveEquipment(state.exerciseId)
+                )
+                else -> state
+            }
+        }
+
+        fun rebindExerciseChildItem(item: ExerciseChildItem): ExerciseChildItem {
+            return when (item) {
+                is ExerciseChildItem.Normal -> ExerciseChildItem.Normal(rebindState(item.state))
+                is ExerciseChildItem.CalibrationExecutionBlock -> {
+                    ExerciseChildItem.CalibrationExecutionBlock(
+                        item.childStates.map(::rebindState).toMutableList()
+                    )
+                }
+                is ExerciseChildItem.LoadSelectionBlock -> {
+                    ExerciseChildItem.LoadSelectionBlock(
+                        item.childStates.map(::rebindState).toMutableList()
+                    )
+                }
+                is ExerciseChildItem.UnilateralSetBlock -> {
+                    ExerciseChildItem.UnilateralSetBlock(
+                        item.childStates.map(::rebindState).toMutableList()
+                    )
+                }
+            }
+        }
+
+        val reboundSequence = sequenceSnapshot.map { sequenceItem ->
+            when (sequenceItem) {
+                is WorkoutStateSequenceItem.Container -> {
+                    val reboundContainer = when (val container = sequenceItem.container) {
+                        is WorkoutStateContainer.ExerciseState -> container.copy(
+                            childItems = container.childItems.map(::rebindExerciseChildItem).toMutableList()
+                        )
+                        is WorkoutStateContainer.SupersetState -> container.copy(
+                            childStates = container.childStates.map(::rebindState).toMutableList()
+                        )
+                    }
+                    WorkoutStateSequenceItem.Container(reboundContainer)
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> {
+                    WorkoutStateSequenceItem.RestBetweenExercises(
+                        rest = rebindState(sequenceItem.rest) as WorkoutState.Rest
+                    )
+                }
+            }
+        }
+
+        val reboundMachine = runCatching {
+            WorkoutStateMachine.fromSequence(reboundSequence, { LocalDateTime.now() }, currentIndex)
+        }.getOrNull() ?: return
+
+        populateNextStateForRest(reboundMachine)
+        stateMachine = reboundMachine
+        populateNextStateSets()
+        updateStateFlowsFromMachine()
+    }
+
     private suspend fun resetWorkoutRuntimeState() {
         stateMachine = null
         setStates.clear()

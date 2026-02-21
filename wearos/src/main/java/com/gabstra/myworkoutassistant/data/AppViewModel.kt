@@ -786,6 +786,7 @@ open class AppViewModel : WorkoutViewModel() {
             }
 
             if (recoveryApplied) {
+                rebindEquipmentInCurrentStateMachine()
                 if (shouldRestartCalibration) {
                     resetCurrentCalibrationLoadSelectionState()
                 }
