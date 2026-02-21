@@ -32,13 +32,13 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
@@ -148,26 +148,6 @@ internal fun RecoveryDialog(
                                     color = MediumLighterGray
                                 )
                             }
-                        }
-                    }
-
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 5.dp)
-                                .transformedHeight(this, spec)
-                                .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                        ) {
-                            Text(
-                                text = "Resume or discard this interrupted workout.",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } }
-                            )
                         }
                     }
 
