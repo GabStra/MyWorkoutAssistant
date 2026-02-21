@@ -41,8 +41,8 @@ private fun TitledLinesSectionItem(
         section.lines.forEach { line ->
             Text(
                 text = line,
-                modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Normal),
+                modifier = Modifier.padding(top = 5.dp).fillMaxWidth(),
+                style = MaterialTheme.typography.bodyLarge,
                 color = MediumLighterGray,
                 textAlign = TextAlign.Center
             )

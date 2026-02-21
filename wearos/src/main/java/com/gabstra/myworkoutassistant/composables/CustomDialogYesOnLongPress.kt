@@ -30,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -177,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = contentPadding.calculateTopPadding())
-                            .padding(horizontal = 25.dp)
+                            .padding(horizontal = 30.dp)
                             .padding(top = 10.dp)
                             .verticalScroll(scrollState),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -196,7 +195,7 @@ fun CustomDialogYesOnLongPress(
                             text = message,
                             textAlign = TextAlign.Center,
                             color = MediumLighterGray,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Normal),
+                            style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 40.dp)

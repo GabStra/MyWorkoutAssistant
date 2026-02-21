@@ -55,7 +55,7 @@ fun PageMuscles(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.5.dp),
-            text = "Muscles",
+            text = "Muscles Groups",
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )

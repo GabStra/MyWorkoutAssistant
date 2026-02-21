@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -25,12 +24,13 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.LighterGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -68,6 +68,7 @@ fun WorkoutStateHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .zIndex(1f)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null

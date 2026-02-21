@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 
 internal data class TopOverlayEntry(
     val owner: String,
@@ -72,7 +73,10 @@ fun TopOverlayHost(
                 .fillMaxSize()
                 .consumeAllPointerInput()
         )
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier
+            .fillMaxSize()
+            .zIndex(2f)
+        ) {
             currentEntry.content.invoke(this)
         }
     }

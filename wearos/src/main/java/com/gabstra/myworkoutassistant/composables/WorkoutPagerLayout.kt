@@ -10,21 +10,20 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 
 object WorkoutPagerLayoutTokens {
-    val WorkoutHeaderTopPadding = 7.5.dp
+    val WorkoutHeaderTopPadding = 5.dp
     val WorkoutHeaderHeight = 27.5.dp
     val HorizontalPagerBottomContentPadding = 27.5.dp
     val ExerciseTitleHorizontalPadding = 22.5.dp
-    val OverlayContentHorizontalPadding = 14.dp
+    val OverlayContentHorizontalPadding = 15.dp
     val HeartRateZoneVisualScale = 1f
     val ExerciseIndicatorVisualScale = 1f
-    val HeartRateReadoutAnchorOffsetX = 0.dp
 }
 
 val WorkoutPagerHeaderReservedHeight =
     WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding + WorkoutPagerLayoutTokens.WorkoutHeaderHeight
 
 val WorkoutPagerPageSafeAreaPadding = PaddingValues(
-    top = WorkoutPagerHeaderReservedHeight,
+    top = WorkoutPagerHeaderReservedHeight + 2.5.dp,
     bottom = WorkoutPagerLayoutTokens.HorizontalPagerBottomContentPadding
 )
 
