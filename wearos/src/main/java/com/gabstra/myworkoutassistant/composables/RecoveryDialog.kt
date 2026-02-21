@@ -8,9 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -29,17 +35,35 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.data.CalibrationRecoveryChoice
+import com.gabstra.myworkoutassistant.data.RecoveryResumeOptions
+import com.gabstra.myworkoutassistant.data.TimerRecoveryChoice
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun RecoveryDialog(
+internal fun RecoveryDialog(
     show: Boolean,
     workout: WorkoutViewModel.IncompleteWorkout?,
+    hasCalibrationState: Boolean,
     onDismiss: () -> Unit,
-    onResume: (WorkoutViewModel.IncompleteWorkout) -> Unit,
+    onResume: (WorkoutViewModel.IncompleteWorkout, RecoveryResumeOptions) -> Unit,
     onDiscard: (WorkoutViewModel.IncompleteWorkout) -> Unit
 ) {
     if (!show || workout == null) return
+
+    val showCalibrationChoice = hasCalibrationState
+    var timerChoice by remember(workout.workoutHistory.id) { mutableStateOf(TimerRecoveryChoice.CONTINUE) }
+    var calibrationChoice by remember(workout.workoutHistory.id) { mutableStateOf(CalibrationRecoveryChoice.CONTINUE) }
+    val resumeWithChoices: (TimerRecoveryChoice, CalibrationRecoveryChoice) -> Unit = { timer, calibration ->
+        onResume(
+            workout,
+            RecoveryResumeOptions(
+                timerChoice = timer,
+                calibrationChoice = calibration
+            )
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -81,7 +105,7 @@ fun RecoveryDialog(
                             transformation = SurfaceTransformation(spec)
                         ) {
                             Text(
-                                text = "Workout interrupted",
+                                text = InterruptedWorkoutCopy.SINGULAR,
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -92,10 +116,19 @@ fun RecoveryDialog(
                     item {
                         Button(
                             modifier = Modifier
+                                .semantics { contentDescription = "Recovery workout card" }
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec).animateItem(),
                             transformation = SurfaceTransformation(spec),
-                            onClick = { onResume(workout) }
+                            onClick = {
+                                onResume(
+                                    workout,
+                                    RecoveryResumeOptions(
+                                        timerChoice = timerChoice,
+                                        calibrationChoice = calibrationChoice
+                                    )
+                                )
+                            }
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -126,7 +159,7 @@ fun RecoveryDialog(
 
                     item {
                         Text(
-                            text = "Resume or discard this workout.",
+                            text = "Resume or discard this interrupted workout.",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -137,19 +170,109 @@ fun RecoveryDialog(
                     }
 
                     item {
-                        ButtonWithText(
+                        Text(
+                            text = "Timer recovery",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
-                            transformation = SurfaceTransformation(spec),
-                            text = "Resume",
-                            onClick = { onResume(workout) }
+                                .padding(vertical = 2.dp)
                         )
                     }
 
                     item {
                         ButtonWithText(
                             modifier = Modifier
+                                .semantics { contentDescription = "Recovery timer continue option" }
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec).animateItem(),
+                            transformation = SurfaceTransformation(spec),
+                            text = if (timerChoice == TimerRecoveryChoice.CONTINUE) "Continue timer (selected)" else "Continue timer",
+                            onClick = {
+                                timerChoice = TimerRecoveryChoice.CONTINUE
+                                if (!showCalibrationChoice) {
+                                    resumeWithChoices(TimerRecoveryChoice.CONTINUE, calibrationChoice)
+                                }
+                            }
+                        )
+                    }
+
+                    item {
+                        ButtonWithText(
+                            modifier = Modifier
+                                .semantics { contentDescription = "Recovery timer restart option" }
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec).animateItem(),
+                            transformation = SurfaceTransformation(spec),
+                            text = if (timerChoice == TimerRecoveryChoice.RESTART) "Restart timer (selected)" else "Restart timer",
+                            onClick = {
+                                timerChoice = TimerRecoveryChoice.RESTART
+                                if (!showCalibrationChoice) {
+                                    resumeWithChoices(TimerRecoveryChoice.RESTART, calibrationChoice)
+                                }
+                            }
+                        )
+                    }
+
+                    if (showCalibrationChoice) {
+                        item {
+                            Text(
+                                text = "Calibration recovery",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                            )
+                        }
+
+                        item {
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .semantics { contentDescription = "Recovery calibration continue option" }
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec).animateItem(),
+                                transformation = SurfaceTransformation(spec),
+                                text = if (calibrationChoice == CalibrationRecoveryChoice.CONTINUE) "Continue calibration (selected)" else "Continue calibration",
+                                onClick = { calibrationChoice = CalibrationRecoveryChoice.CONTINUE }
+                            )
+                        }
+
+                        item {
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .semantics { contentDescription = "Recovery calibration restart option" }
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec).animateItem(),
+                                transformation = SurfaceTransformation(spec),
+                                text = if (calibrationChoice == CalibrationRecoveryChoice.RESTART) "Restart calibration (selected)" else "Restart calibration",
+                                onClick = { calibrationChoice = CalibrationRecoveryChoice.RESTART }
+                            )
+                        }
+                    }
+
+                    if (showCalibrationChoice) {
+                        item {
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .semantics { contentDescription = "Recovery resume action" }
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec).animateItem(),
+                                transformation = SurfaceTransformation(spec),
+                                text = "Resume",
+                                onClick = {
+                                    resumeWithChoices(timerChoice, calibrationChoice)
+                                }
+                            )
+                        }
+                    }
+
+                    item {
+                        ButtonWithText(
+                            modifier = Modifier
+                                .semantics { contentDescription = "Recovery discard action" }
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec).animateItem(),
                             transformation = SurfaceTransformation(spec),
@@ -161,6 +284,7 @@ fun RecoveryDialog(
                     item {
                         ButtonWithText(
                             modifier = Modifier
+                                .semantics { contentDescription = "Recovery dismiss action" }
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec).animateItem(),
                             transformation = SurfaceTransformation(spec),

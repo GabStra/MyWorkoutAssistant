@@ -1,14 +1,11 @@
 package com.gabstra.myworkoutassistant.screens
 
-import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -21,7 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.edit
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -35,7 +32,9 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
+import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -116,35 +115,42 @@ fun WorkoutScreen(
 
     @Composable
     fun heartRateChartComposable(
+        modifier: Modifier = Modifier,
         lowerBoundMaxHRPercent: Float? = null,
         upperBoundMaxHRPercent: Float? = null
     ){
         if(selectedWorkout.usePolarDevice){
             HeartRatePolar(
-                modifier = Modifier.fillMaxSize(),
-                viewModel,
-                hapticsViewModel,
-                heartRateChangeViewModel,
-                polarViewModel,
-                userAge,
-                measuredMaxHeartRate,
-                restingHeartRate,
-                lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent,
+                modifier = modifier,
+                appViewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
+                heartRateChangeViewModel = heartRateChangeViewModel,
+                polarViewModel = polarViewModel,
+                userAge = userAge,
+                measuredMaxHeartRate = measuredMaxHeartRate,
+                restingHeartRate = restingHeartRate,
+                lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+                zoneSegmentsModifier = Modifier.overlayVisualScale(WorkoutPagerLayoutTokens.HeartRateZoneVisualScale),
+                centerReadoutOnScreen = true,
+                readoutAnchorOffsetX = WorkoutPagerLayoutTokens.HeartRateReadoutAnchorOffsetX,
                 onHrStatusChange = { status -> hrStatus = status }
             )
         }else{
             HeartRateStandard(
-                modifier = Modifier.fillMaxSize(),
-                viewModel,
-                hapticsViewModel,
-                heartRateChangeViewModel,
-                hrViewModel,
-                userAge,
-                measuredMaxHeartRate,
-                restingHeartRate,
-                lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent,
+                modifier = modifier,
+                appViewModel = viewModel,
+                hapticsViewModel = hapticsViewModel,
+                heartRateChangeViewModel = heartRateChangeViewModel,
+                hrViewModel = hrViewModel,
+                userAge = userAge,
+                measuredMaxHeartRate = measuredMaxHeartRate,
+                restingHeartRate = restingHeartRate,
+                lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+                zoneSegmentsModifier = Modifier.overlayVisualScale(WorkoutPagerLayoutTokens.HeartRateZoneVisualScale),
+                centerReadoutOnScreen = true,
+                readoutAnchorOffsetX = WorkoutPagerLayoutTokens.HeartRateReadoutAnchorOffsetX,
                 onHrStatusChange = { status -> hrStatus = status }
             )
         }
@@ -155,10 +161,6 @@ fun WorkoutScreen(
         title = "Workout in progress",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            prefs.edit { putBoolean("isWorkoutInProgress", false) }
-            viewModel.clearRecoveryCheckpoint()
 
             //viewModel.pushAndStoreWorkoutData(false,context)
             try {
@@ -274,6 +276,9 @@ fun WorkoutScreen(
                 scope.launch {
                     try {
                         viewModel.flushTimerState()
+                        // Persist a fresh recovery snapshot after timer flush so process-death
+                        // recovery uses the exact paused timer value.
+                        viewModel.persistRecoverySnapshotNow(synchronous = true)
                     } catch (exception: Exception) {
                         android.util.Log.e("WorkoutScreen", "Error flushing timer state", exception)
                     }
@@ -342,189 +347,212 @@ fun WorkoutScreen(
                 }
             }
 
-            @Suppress("UnusedContentLambdaTargetStateParameter")
-            AnimatedContent(
-                targetState = stateTypeKey,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                }, label = "",
-                contentAlignment = Alignment.TopCenter
-            ) { _ ->
-                // Note: We use workoutState directly (which changes when stateTypeKey changes) instead of the lambda parameter
-                // The content correctly uses workoutState which changes when stateTypeKey changes
-                WorkoutStateHeader(workoutState,viewModel,hapticsViewModel)
-
-                when(workoutState){
-                    is WorkoutState.Preparing -> {
-                        val state = workoutState
-                        if(!selectedWorkout.usePolarDevice)
-                            PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
-                        else
-                            PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
-                    }
-                    is WorkoutState.CalibrationLoadSelection -> {
-                        val state = workoutState
-                        CalibrationLoadScreen(
+            key(stateTypeKey) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .zIndex(1f)
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding)
+                            .height(WorkoutPagerLayoutTokens.WorkoutHeaderHeight),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        WorkoutStateHeader(
+                            workoutState = workoutState,
                             viewModel = viewModel,
-                            hapticsViewModel = hapticsViewModel,
-                            state = state,
-                            navController = navController,
-                            onBeforeGoHome = onBeforeGoHome,
-                            hearthRateChart = {
-                                heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
-                            },
-                            onWeightSelected = { selectedWeight ->
-                                // Update set data with selected weight
-                                val newSetData = when (val currentData = state.currentSetData) {
-                                    is WeightSetData -> currentData.copy(actualWeight = selectedWeight)
-                                    is BodyWeightSetData -> currentData.copy(additionalWeight = selectedWeight)
-                                    else -> currentData
-                                }
-                                val updatedSetData = when (newSetData) {
-                                    is WeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
-                                    is BodyWeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
-                                    else -> newSetData
-                                }
-                                state.currentSetData = updatedSetData
-                                // Move directly to set execution (or warmups if enabled)
-                                viewModel.confirmCalibrationLoad()
-                            }
+                            hapticsViewModel = hapticsViewModel
                         )
                     }
-                    is WorkoutState.CalibrationRIRSelection -> {
-                        val state = workoutState as WorkoutState.CalibrationRIRSelection
-                        CalibrationRIRScreen(
-                            viewModel = viewModel,
-                            hapticsViewModel = hapticsViewModel,
-                            state = state,
-                            navController = navController,
-                            onBeforeGoHome = onBeforeGoHome,
-                            hearthRateChart = {
-                                heartRateChartComposable(state.lowerBoundMaxHRPercent, state.upperBoundMaxHRPercent)
-                            },
-                            onRIRConfirmed = { rir, formBreaks ->
-                                // Apply calibration RIR adjustments
-                                viewModel.applyCalibrationRIR(rir, formBreaks)
-                            }
-                        )
-                    }
-                    is WorkoutState.Set -> {
-                        val state = workoutState as WorkoutState.Set
-                        LaunchedEffect(state) {
-                            try {
-                                heartRateChangeViewModel.reset()
-                            } catch (exception: Exception) {
-                                android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
-                            }
-                        }
 
-                        if (showSetScreenTutorial) {
-                            TutorialOverlay(
-                                visible = true,
-                                steps = listOf(
-                                    TutorialStep("Navigate pages", "Swipe left or right to move between views."),
-                                    TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
-                                    TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
-                                    TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
-                                ),
-                                onDismiss = onDismissSetScreenTutorial,
-                                hapticsViewModel = hapticsViewModel,
-                                onVisibilityChange = { isVisible ->
-                                    if (isVisible) {
-                                        viewModel.setDimming(false)
-                                    } else {
-                                        viewModel.reEvaluateDimmingForCurrentState()
-                                    }
-                                }
-                            )
-                        } else {
-                            key(state.exerciseId) {
-                                ExerciseScreen(
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                    ) {
+                        when(workoutState){
+                            is WorkoutState.Preparing -> {
+                                val state = workoutState
+                                if(!selectedWorkout.usePolarDevice)
+                                    PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,state)
+                                else
+                                    PreparingPolarScreen(viewModel,hapticsViewModel,navController,polarViewModel,state)
+                            }
+                            is WorkoutState.CalibrationLoadSelection -> {
+                                val state = workoutState
+                                CalibrationLoadScreen(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
                                     state = state,
-                                    hearthRateChart = {
-                                        heartRateChartComposable(state.lowerBoundMaxHRPercent,state.upperBoundMaxHRPercent)
-                                    },
                                     navController = navController,
                                     onBeforeGoHome = onBeforeGoHome,
+                                    hearthRateChart = { modifier ->
+                                        heartRateChartComposable(
+                                            modifier = modifier,
+                                            lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                            upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                        )
+                                    },
+                                    onWeightSelected = { selectedWeight ->
+                                        // Update set data with selected weight
+                                        val newSetData = when (val currentData = state.currentSetData) {
+                                            is WeightSetData -> currentData.copy(actualWeight = selectedWeight)
+                                            is BodyWeightSetData -> currentData.copy(additionalWeight = selectedWeight)
+                                            else -> currentData
+                                        }
+                                        val updatedSetData = when (newSetData) {
+                                            is WeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
+                                            is BodyWeightSetData -> newSetData.copy(volume = newSetData.calculateVolume())
+                                            else -> newSetData
+                                        }
+                                        state.currentSetData = updatedSetData
+                                        // Move directly to set execution (or warmups if enabled)
+                                        viewModel.confirmCalibrationLoad()
+                                    }
+                                )
+                            }
+                            is WorkoutState.CalibrationRIRSelection -> {
+                                val state = workoutState as WorkoutState.CalibrationRIRSelection
+                                CalibrationRIRScreen(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    state = state,
+                                    navController = navController,
+                                    onBeforeGoHome = onBeforeGoHome,
+                                    hearthRateChart = { modifier ->
+                                        heartRateChartComposable(
+                                            modifier = modifier,
+                                            lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                            upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                        )
+                                    },
+                                    onRIRConfirmed = { rir, formBreaks ->
+                                        // Apply calibration RIR adjustments
+                                        viewModel.applyCalibrationRIR(rir, formBreaks)
+                                    }
+                                )
+                            }
+                            is WorkoutState.Set -> {
+                                val state = workoutState as WorkoutState.Set
+                                LaunchedEffect(state) {
+                                    try {
+                                        heartRateChangeViewModel.reset()
+                                    } catch (exception: Exception) {
+                                        android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
+                                    }
+                                }
+
+                                if (showSetScreenTutorial) {
+                                    TutorialOverlay(
+                                        visible = true,
+                                        steps = listOf(
+                                            TutorialStep("Navigate pages", "Swipe left or right to move between views."),
+                                            TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
+                                            TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
+                                            TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
+                                        ),
+                                        onDismiss = onDismissSetScreenTutorial,
+                                        hapticsViewModel = hapticsViewModel,
+                                        onVisibilityChange = { isVisible ->
+                                            if (isVisible) {
+                                                viewModel.setDimming(false)
+                                            } else {
+                                                viewModel.reEvaluateDimmingForCurrentState()
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    key(state.exerciseId) {
+                                        ExerciseScreen(
+                                            viewModel = viewModel,
+                                            hapticsViewModel = hapticsViewModel,
+                                            state = state,
+                                            hearthRateChart = { modifier ->
+                                                heartRateChartComposable(
+                                                    modifier = modifier,
+                                                    lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                                    upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                                )
+                                            },
+                                            navController = navController,
+                                            onBeforeGoHome = onBeforeGoHome,
+                                        )
+                                    }
+                                }
+                            }
+                            is WorkoutState.Rest -> {
+                                val state = workoutState as WorkoutState.Rest
+                                LaunchedEffect(state) {
+                                    try {
+                                        heartRateChangeViewModel.reset()
+                                    } catch (exception: Exception) {
+                                        android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
+                                    }
+                                }
+
+                                if (showRestScreenTutorial) {
+                                    TutorialOverlay(
+                                        visible = true,
+                                        steps = listOf(
+                                            TutorialStep("Rest timer", "Automatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons."),
+                                            TutorialStep("Exercise preview", "See your current and next exercises.\nTap the left or right side to view previous or upcoming exercises."),
+                                            TutorialStep("Reminder", "Your screen will light up when 5 seconds remain."),
+                                            TutorialStep("Skip rest", "Double-press the back button to skip ahead.")
+                                        ),
+                                        onDismiss = onDismissRestScreenTutorial,
+                                        hapticsViewModel = hapticsViewModel,
+                                        onVisibilityChange = { isVisible ->
+                                            if (isVisible) {
+                                                viewModel.setDimming(false)
+                                            } else {
+                                                viewModel.reEvaluateDimmingForCurrentState()
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    RestScreen(
+                                        viewModel = viewModel,
+                                        hapticsViewModel = hapticsViewModel,
+                                        state = state,
+                                        onBeforeGoHome = onBeforeGoHome,
+                                        onTimerEnd = {
+                                            try {
+                                                if (!MyApplication.isAppInForeground()) {
+                                                    showTimerCompletedNotification(
+                                                        context = context,
+                                                        title = "Rest complete",
+                                                        message = "Time for the next set"
+                                                    )
+                                                }
+                                                viewModel.storeSetData()
+                                                val isDone = viewModel.isNextStateCompleted()
+                                                viewModel.pushAndStoreWorkoutData(isDone, context){
+                                                    try {
+                                                        viewModel.goToNextState()
+                                                        viewModel.lightScreenUp()
+                                                    } catch (exception: Exception) {
+                                                        android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
+                                                    }
+                                                }
+                                            } catch (exception: Exception) {
+                                                android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
+                                            }
+                                        },
+                                        navController = navController,
+                                    )
+                                }
+                            }
+                            is WorkoutState.Completed -> {
+                                val state = workoutState as WorkoutState.Completed
+                                WorkoutCompleteScreen(
+                                    navController,
+                                    viewModel,
+                                    state,
+                                    hrViewModel,
+                                    hapticsViewModel,
+                                    polarViewModel
                                 )
                             }
                         }
-                    }
-                    is WorkoutState.Rest -> {
-                        val state = workoutState as WorkoutState.Rest
-                        LaunchedEffect(state) {
-                            try {
-                                heartRateChangeViewModel.reset()
-                            } catch (exception: Exception) {
-                                android.util.Log.e("WorkoutScreen", "Error resetting heart rate change view model", exception)
-                            }
-                        }
-
-                        if (showRestScreenTutorial) {
-                            TutorialOverlay(
-                                visible = true,
-                                steps = listOf(
-                                    TutorialStep("Rest timer", "Automatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons."),
-                                    TutorialStep("Exercise preview", "See your current and next exercises.\nTap the left or right side to view previous or upcoming exercises."),
-                                    TutorialStep("Reminder", "Your screen will light up when 5 seconds remain."),
-                                    TutorialStep("Skip rest", "Double-press the back button to skip ahead.")
-                                ),
-                                onDismiss = onDismissRestScreenTutorial,
-                                hapticsViewModel = hapticsViewModel,
-                                onVisibilityChange = { isVisible ->
-                                    if (isVisible) {
-                                        viewModel.setDimming(false)
-                                    } else {
-                                        viewModel.reEvaluateDimmingForCurrentState()
-                                    }
-                                }
-                            )
-                        } else {
-                            RestScreen(
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                state = state,
-                                onBeforeGoHome = onBeforeGoHome,
-                                hearthRateChart = { heartRateChartComposable() },
-                                onTimerEnd = {
-                                    try {
-                                        if (!MyApplication.isAppInForeground()) {
-                                            showTimerCompletedNotification(
-                                                context = context,
-                                                title = "Rest complete",
-                                                message = "Time for the next set"
-                                            )
-                                        }
-                                        viewModel.storeSetData()
-                                        val isDone = viewModel.isNextStateCompleted()
-                                        viewModel.pushAndStoreWorkoutData(isDone, context){
-                                            try {
-                                                viewModel.goToNextState()
-                                                viewModel.lightScreenUp()
-                                            } catch (exception: Exception) {
-                                                android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
-                                            }
-                                        }
-                                    } catch (exception: Exception) {
-                                        android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
-                                    }
-                                },
-                                navController = navController,
-                            )
-                        }
-                    }
-                    is WorkoutState.Completed -> {
-                        val state = workoutState as WorkoutState.Completed
-                        WorkoutCompleteScreen(
-                            navController,
-                            viewModel,
-                            state,
-                            hrViewModel,
-                            hapticsViewModel,
-                            polarViewModel
-                        )
                     }
                 }
             }

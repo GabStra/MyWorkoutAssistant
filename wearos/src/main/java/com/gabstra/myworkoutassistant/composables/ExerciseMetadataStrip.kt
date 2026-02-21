@@ -17,6 +17,7 @@ import androidx.wear.compose.material3.MaterialTheme
 @Composable
 fun ExerciseMetadataStrip(
     modifier: Modifier = Modifier,
+    exerciseLabel: String? = null,
     supersetExerciseIndex: Int? = null,
     supersetExerciseTotal: Int? = null,
     setLabel: String? = null,
@@ -32,6 +33,7 @@ fun ExerciseMetadataStrip(
     val secondaryTextColor = MediumLighterGray
 
     val metadataText = remember(
+        exerciseLabel,
         supersetExerciseIndex,
         supersetExerciseTotal,
         setLabel,
@@ -64,6 +66,12 @@ fun ExerciseMetadataStrip(
                         pipe()
                     }
                     first = false
+                }
+
+                exerciseLabel?.let {
+                    sep()
+                    append("Exercise: ")
+                    append(it)
                 }
 
                 if (supersetExerciseTotal != null && supersetExerciseIndex != null) {

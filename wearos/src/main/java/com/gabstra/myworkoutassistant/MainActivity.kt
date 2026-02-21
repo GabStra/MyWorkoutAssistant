@@ -611,6 +611,7 @@ fun WearApp(
             val incompleteWorkouts by appViewModel.incompleteWorkouts
             val showRecoveryPrompt by appViewModel.showRecoveryPrompt
             val recoveryWorkout by appViewModel.recoveryWorkout
+            val recoveryHasCalibrationState by appViewModel.recoveryHasCalibrationState
             val showRecoveredNotice by appViewModel.showRecoveredWorkoutNotice
 
             val basePermissions = listOf(
@@ -665,11 +666,13 @@ fun WearApp(
             RecoveryDialog(
                 show = showRecoveryPrompt,
                 workout = recoveryWorkout,
+                hasCalibrationState = recoveryHasCalibrationState,
                 onDismiss = {
                     appViewModel.hideRecoveryPrompt()
                 },
-                onResume = { incompleteWorkout ->
+                onResume = { incompleteWorkout, recoveryOptions ->
                     appViewModel.hideRecoveryPrompt()
+                    appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
                     appViewModel.prepareResumeWorkout(incompleteWorkout)
                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                 },

@@ -155,17 +155,22 @@ fun CustomDialogYesOnLongPress(
             ) {
                 val scrollState = rememberScrollState()
                 ScreenScaffold(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize(),
                     scrollState = scrollState,
                     overscrollEffect = null,
-                    scrollIndicator = {
-                        ScrollIndicator(
-                            state = scrollState,
-                            colors = ScrollIndicatorDefaults.colors(
-                                indicatorColor = MaterialTheme.colorScheme.onBackground,
-                                trackColor = MediumDarkGray
+                    scrollIndicator =  if(progress > 0) {
+                        null
+                    }else{
+                        {
+                            ScrollIndicator(
+                                state = scrollState,
+                                colors = ScrollIndicatorDefaults.colors(
+                                    indicatorColor = MaterialTheme.colorScheme.onBackground,
+                                    trackColor = MediumDarkGray
+                                )
                             )
-                        )
+                        }
                     }
                 ) { contentPadding ->
                     Column(
@@ -173,6 +178,7 @@ fun CustomDialogYesOnLongPress(
                             .fillMaxSize()
                             .padding(contentPadding)
                             .padding(horizontal = 15.dp)
+                            .padding(top = 10.dp)
                             .verticalScroll(scrollState),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -255,7 +261,8 @@ fun CustomDialogYesOnLongPress(
                 if(progress > 0){
                     androidx.wear.compose.material.CircularProgressIndicator(
                         progress = progress,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize(),
                         strokeWidth = 4.dp,
                         indicatorColor = MaterialTheme.colorScheme.primary,
                         trackColor = MediumDarkGray

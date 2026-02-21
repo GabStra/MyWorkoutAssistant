@@ -243,6 +243,9 @@ fun TimedDurationSetScreen(
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
         // double-triggering when state.startTime changes from null to a value
         if (state.startTime != null) {
+            // Re-anchor once after recovery so resumed value matches what user last saw
+            // before process death, even if recovery navigation took time.
+            viewModel.applyPostRecoveryTimerReanchorIfNeeded()
             // Timer has started - ensure it's registered with service
             // Don't check for completion here - let WorkoutTimerService handle it
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {

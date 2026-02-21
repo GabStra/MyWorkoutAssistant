@@ -1,12 +1,14 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -19,12 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalConfiguration
@@ -102,61 +101,38 @@ fun CustomAnimatedPage(
 ) {
     val isReduceMotionEnabled = LocalReduceMotion.current
     val isRtlEnabled = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val orientation = remember(pagerState) { pagerState.layoutInfo.orientation }
-
-    val currentPageOffsetFraction = pagerState.currentPageOffsetFraction
 
     val graphicsLayerModifier =
         if (isReduceMotionEnabled) Modifier
         else
             Modifier.graphicsLayer {
                 val direction = if (isRtlEnabled) -1 else 1
-                val offsetFraction = currentPageOffsetFraction
-                val isSwipingRightToLeft = direction * offsetFraction > 0
-                val isSwipingLeftToRight = direction * offsetFraction < 0
-                val isSwipingDownToUp = direction * offsetFraction > 0
-                val isSwipingUpToDown = direction * offsetFraction < 0
-                val isCurrentPage: Boolean = pageIndex == pagerState.currentPage
-                val shouldAnchorRight =
-                    (isSwipingRightToLeft && isCurrentPage) ||
-                            (isSwipingLeftToRight && !isCurrentPage)
-                val shouldAnchorBottom =
-                    (isSwipingDownToUp && isCurrentPage) ||
-                            (isSwipingUpToDown && !isCurrentPage)
-                val pivotFractionX = if (shouldAnchorRight) 1f else 0f
-                val pivotFractionY = if (shouldAnchorBottom) 1f else 0f
-                transformOrigin =
-                    if (pagerState.layoutInfo.orientation == Orientation.Horizontal) {
-                        TransformOrigin(pivotFractionX, 0.5f)
-                    } else {
-                        TransformOrigin(0.5f, pivotFractionY)
-                    }
-                val pageTransitionFraction =
-                    getPageTransitionFraction(isCurrentPage, offsetFraction)
-                val scale = lerp(start = 1f, stop = 0.55f, fraction = pageTransitionFraction)
+                val signedOffset = direction * pagerState.currentPageOffsetFraction
+                val pageOffset = ((pagerState.currentPage - pageIndex) + signedOffset)
+                    .absoluteValue
+                    .coerceIn(0f, 1f)
+                val scale = lerp(start = 1f, stop = 0.9f, fraction = pageOffset)
                 scaleX = scale
                 scaleY = scale
             }
-    Box(
-        modifier =
+    val pageModifier =
+        if (!contentScrimColor.isSpecified) {
             graphicsLayerModifier
-                .drawWithContent {
-                    drawContent()
-                    if (contentScrimColor.isSpecified) {
-                        val isCurrentPage: Boolean = pageIndex == pagerState.currentPage
+        } else {
+            graphicsLayerModifier.drawWithContent {
+                drawContent()
+                val isCurrentPage: Boolean = pageIndex == pagerState.currentPage
+                val pageTransitionFraction =
+                    getPageTransitionFraction(isCurrentPage, pagerState.currentPageOffsetFraction)
+                val color =
+                    contentScrimColor.copy(
+                        alpha = lerp(start = 0f, stop = 0.35f, fraction = pageTransitionFraction)
+                    )
+                drawCircle(color = color)
+            }
+        }
 
-                        val pageTransitionFraction =
-                            getPageTransitionFraction(isCurrentPage, currentPageOffsetFraction)
-                        val color =
-                            contentScrimColor.copy(
-                                alpha =
-                                    lerp(start = 0f, stop = 0.5f, fraction = pageTransitionFraction)
-                            )
-
-                        drawCircle(color = color)
-                    }
-                }
-    ) {
+    Box(modifier = pageModifier) {
         content()
     }
 }
@@ -170,6 +146,10 @@ fun CustomHorizontalPager(
     modifier: Modifier,
     pagerState: PagerState,
     userScrollEnabled: Boolean = true,
+    animatePages: Boolean = true,
+    beyondViewportPageCount: Int = 1,
+    pageContentPadding: PaddingValues = PaddingValues(),
+    pageOverlay: (@Composable BoxScope.(Int) -> Unit)? = null,
     content: @Composable (Int) -> Unit
 ) {
     var indicatorVisible by remember { mutableStateOf(true) }
@@ -181,44 +161,73 @@ fun CustomHorizontalPager(
         label = "pager_indicator"
     )
 
-    LaunchedEffect(pagerState.currentPage) {
+    LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
         indicatorVisible = true
         hideTimeoutJob?.cancel()
-        hideTimeoutJob = scope.launch {
-            delay(PAGER_INDICATOR_HIDE_DELAY_MS)
-            indicatorVisible = false
+        if (!pagerState.isScrollInProgress) {
+            hideTimeoutJob = scope.launch {
+                delay(PAGER_INDICATOR_HIDE_DELAY_MS)
+                indicatorVisible = false
+            }
         }
     }
 
     Box(modifier = modifier) {
         // Skip pager when there's only a single page
         if (pagerState.pageCount == 1) {
-            content(0)
+            Box(modifier = Modifier.fillMaxSize()) {
+                pageOverlay?.invoke(this, 0)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(pageContentPadding)
+                ) {
+                    content(0)
+                }
+            }
         } else {
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize().clip(RectangleShape),
+                modifier = Modifier.fillMaxSize(),
                 flingBehavior = PagerDefaults.snapFlingBehavior(state = pagerState),
                 userScrollEnabled = userScrollEnabled,
+                beyondViewportPageCount = beyondViewportPageCount,
             ) { page ->
-                CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {
-                    content(page)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                ) {
+                    if (animatePages) {
+                        CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                pageOverlay?.invoke(this, page)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(pageContentPadding)
+                                ) {
+                                    content(page)
+                                }
+                            }
+                        }
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            pageOverlay?.invoke(this, page)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(pageContentPadding)
+                            ) {
+                                content(page)
+                            }
+                        }
+                    }
                 }
             }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { alpha = indicatorAlpha }
-                    .pointerInput(Unit) {
-                        detectTapGestures {
-                            indicatorVisible = true
-                            hideTimeoutJob?.cancel()
-                            hideTimeoutJob = scope.launch {
-                                delay(PAGER_INDICATOR_HIDE_DELAY_MS)
-                                indicatorVisible = false
-                            }
-                        }
-                    },
+                    .graphicsLayer { alpha = indicatorAlpha },
                 contentAlignment = Alignment.Center
             ) {
                 HorizontalPageIndicator(

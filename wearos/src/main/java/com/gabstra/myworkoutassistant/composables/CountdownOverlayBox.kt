@@ -34,14 +34,10 @@ fun CountdownOverlayBox(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f)),
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.85f)),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
                 text = "$time",
                 textAlign = TextAlign.Center,
                 style = itemStyle

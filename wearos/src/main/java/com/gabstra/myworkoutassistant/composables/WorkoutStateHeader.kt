@@ -8,7 +8,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTimeFilled
@@ -42,6 +41,7 @@ import java.time.temporal.ChronoUnit
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutStateHeader(
+    modifier: Modifier = Modifier,
     workoutState: WorkoutState,
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel
@@ -66,9 +66,8 @@ fun WorkoutStateHeader(
     val interactionSource = remember { MutableInteractionSource() }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .offset(y = 10.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null

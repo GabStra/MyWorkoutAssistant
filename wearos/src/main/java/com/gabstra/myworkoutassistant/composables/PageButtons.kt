@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
@@ -9,12 +10,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
-import androidx.core.content.edit
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
@@ -90,7 +90,7 @@ fun PageButtons(
         }
     ) { contentPadding ->
         TransformingLazyColumn(
-            contentPadding = contentPadding,
+            contentPadding = PaddingValues(20.dp),
             state = state,
         ) {
             item {
@@ -223,11 +223,6 @@ fun PageButtons(
                         
                         // Clear ongoing workout notification/icon
                         cancelWorkoutInProgressNotification(context)
-                        
-                        // Clear workout in progress flag
-                        val prefs = context.getSharedPreferences("workout_state", android.content.Context.MODE_PRIVATE)
-                        prefs.edit { putBoolean("isWorkoutInProgress", false) }
-                        viewModel.clearRecoveryCheckpoint()
                         
                         // Flush any pending sync before navigating away
                         scope.launch {

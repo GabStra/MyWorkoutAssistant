@@ -3,7 +3,7 @@ package com.gabstra.myworkoutassistant.e2e
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
-import com.gabstra.myworkoutassistant.data.WorkoutRecoveryCheckpointStore
+import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
@@ -107,13 +107,12 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         device.waitForIdle(1_000)
 
         launchAppFromHome()
-        val resumePromptVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
-        if (resumePromptVisible) {
-            workoutDriver.clickText("Resume", defaultTimeoutMs)
-        } else {
-            workoutDriver.clickText(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
-            workoutDriver.clickText("Resume", defaultTimeoutMs)
-        }
+        val resumed = workoutDriver.resumeOrEnterRecoveredWorkout(
+            workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
+            inWorkoutSelector = By.textContains(":"),
+            timeoutMs = defaultTimeoutMs
+        )
+        require(resumed) { "Could not return to recovered rest state after relaunch" }
 
         dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
@@ -145,63 +144,59 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
             "Timer did not progress before process death. initial=$initialSeconds, preKill=$preKillSeconds"
         }
 
-        workoutDriver.killAppProcess(context.packageName)
+        val preKillRead = workoutDriver.readTimedDurationSecondsTimed(
+            perAttemptTimeoutMs = 300,
+            attempts = 2,
+            idleBetweenAttempts = false,
+            requireTimerSemantics = true
+        )
+        preKillSeconds = preKillRead.seconds
+
+        workoutDriver.killAppProcessTimed(
+            packageName = context.packageName,
+            settleMs = 0
+        )
         launchAppFromHome()
 
-        val processDeathPromptVisible = device.wait(Until.hasObject(By.text("Workout interrupted")), 5_000)
-        if (processDeathPromptVisible) {
-            workoutDriver.clickText("Resume", defaultTimeoutMs)
-        } else {
-            val resumeVisible = device.wait(Until.hasObject(By.text("Resume")), 3_000)
-            if (resumeVisible) {
-                workoutDriver.clickText("Resume", defaultTimeoutMs)
-            } else {
-                val alreadyInWorkout = device.wait(Until.hasObject(By.text("Timed Exercise")), 2_000)
-                if (!alreadyInWorkout) {
-                    workoutDriver.clickText(TimedDurationSetWorkoutStoreFixture.getWorkoutName(), defaultTimeoutMs)
-                    val resumeInDetailVisible = device.wait(Until.hasObject(By.textContains("Resume")), 5_000)
-                    require(resumeInDetailVisible) {
-                        "Recovery UI not available after process death. 'Resume' button not found."
-                    }
-                    workoutDriver.clickText("Resume", defaultTimeoutMs)
-                }
-            }
+        val recoveryResult = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
+            workoutName = TimedDurationSetWorkoutStoreFixture.getWorkoutName(),
+            inWorkoutSelector = By.text("Stop"),
+            timeoutMs = 15_000
+        )
+        require(recoveryResult.enteredWorkout) {
+            "Recovery UI not available after process death and timed exercise was not restored."
+        }
+
+        val timerVisibleAfterResume = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.TimedDurationValueDescription)),
+            2_000
+        )
+        require(timerVisibleAfterResume) { "Timed duration control not visible after resume" }
+        val resumedRead = workoutDriver.readTimedDurationSecondsTimed(
+            perAttemptTimeoutMs = 300,
+            attempts = 2,
+            idleBetweenAttempts = false,
+            requireTimerSemantics = true
+        )
+        val resumedSeconds = resumedRead.seconds
+
+        val referenceMs = recoveryResult.enteredWorkoutAtMs
+            ?: recoveryResult.resumeActionAtMs
+            ?: resumedRead.readAtMs
+        val harnessReadDelayMs = resumedRead.readAtMs - referenceMs
+        require(harnessReadDelayMs <= 1_500L) {
+            "Harness read timer too late after recovery transition. delayMs=$harnessReadDelayMs"
+        }
+        val strictToleranceSeconds = 2
+        require(kotlin.math.abs(resumedSeconds - preKillSeconds) <= strictToleranceSeconds) {
+            "Recovered timer is not preserved. expected≈$preKillSeconds (±$strictToleranceSeconds), actual=$resumedSeconds, harnessDelayMs=$harnessReadDelayMs"
+        }
+        require(resumedSeconds > 0) {
+            "Recovered timer resumed at an invalid value. resumed=$resumedSeconds"
         }
 
         dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
         dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
-
-        val exerciseVisibleAfterResume = device.wait(Until.hasObject(By.text("Timed Exercise")), 10_000)
-        require(exerciseVisibleAfterResume) { "Timed exercise screen not visible after resume" }
-
-        val checkpoint = WorkoutRecoveryCheckpointStore(context).load()
-        val restoredStartEpochMs = checkpoint?.setStartEpochMs
-        require(restoredStartEpochMs != null) {
-            "Missing recovery checkpoint start time after resume."
-        }
-
-        val restoredStartTimerMs = 60_000L
-        val exactDeadline = System.currentTimeMillis() + 5_000L
-        var resumedSeconds = -1
-        var expectedSeconds = -1
-        var exactMatchFound = false
-        while (System.currentTimeMillis() < exactDeadline) {
-            resumedSeconds = workoutDriver.readTimedDurationSeconds()
-            val elapsedMs = (System.currentTimeMillis() - restoredStartEpochMs).coerceAtLeast(0L)
-            expectedSeconds = ((restoredStartTimerMs - elapsedMs).coerceAtLeast(0L) / 1000L).toInt()
-            if (resumedSeconds == expectedSeconds) {
-                exactMatchFound = true
-                break
-            }
-            Thread.sleep(250)
-        }
-
-        require(exactMatchFound) {
-            "Recovered timer is not exact. expected=$expectedSeconds, actual=$resumedSeconds, preKill=$preKillSeconds"
-        }
-        require(resumedSeconds > 0) {
-            "Recovered timer resumed at an invalid value. resumed=$resumedSeconds, expected=$expectedSeconds"
-        }
     }
 
     @Test

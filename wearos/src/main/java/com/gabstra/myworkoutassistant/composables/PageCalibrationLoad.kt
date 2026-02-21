@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -210,7 +211,7 @@ fun PageCalibrationLoad(
 
     Box(
         modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.TopCenter
     ) {
         if (showPicker) {
             // Picker state: only show ControlButtonsVertical
@@ -244,9 +245,11 @@ fun PageCalibrationLoad(
         } else {
             // Initial state: show exercise info, header, and two-column layout (weight + reps)
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)
+                verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
             ) {
                 exerciseTitleComposable()
 
@@ -279,7 +282,9 @@ fun PageCalibrationLoad(
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                     color = MediumLighterGray,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp)
                 )
             }
         }

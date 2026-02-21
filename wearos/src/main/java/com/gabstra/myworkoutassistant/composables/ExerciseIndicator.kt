@@ -30,10 +30,8 @@ import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.R
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -58,27 +56,41 @@ import kotlin.math.sin
 @Composable
 fun ExerciseIndicator(
     viewModel: AppViewModel,
+    modifier: Modifier = Modifier,
     currentStateOverride: WorkoutState? = null,
     selectedExerciseId: UUID? = null
 ) {
     val workoutStateValue by viewModel.workoutState.collectAsState()
     val currentState = currentStateOverride ?: workoutStateValue
 
-    // Derive exerciseId from currentState (Set, CalibrationLoadSelection, CalibrationRIRSelection have it)
+    fun workoutStateSetLikeId(state: WorkoutState): UUID? = when (state) {
+        is WorkoutState.Set -> state.set.id
+        is WorkoutState.Rest -> state.set.id
+        is WorkoutState.CalibrationLoadSelection -> state.calibrationSet.id
+        is WorkoutState.CalibrationRIRSelection -> state.calibrationSet.id
+        else -> null
+    }
+
+    fun resolveWorkoutStateIndex(state: WorkoutState): Int {
+        val byReference = viewModel.allWorkoutStates.indexOf(state)
+        if (byReference >= 0) return byReference
+
+        val setLikeId = workoutStateSetLikeId(state) ?: return 0
+        return viewModel.allWorkoutStates.indexOfFirst { workoutStateSetLikeId(it) == setLikeId }
+            .takeIf { it >= 0 } ?: 0
+    }
+
+    // Derive exerciseId from currentState (including Rest so coloring stays consistent on rest screen)
     val currentExerciseId = when (currentState) {
         is WorkoutState.Set -> currentState.exerciseId
+        is WorkoutState.Rest -> currentState.exerciseId
         is WorkoutState.CalibrationLoadSelection -> currentState.exerciseId
         is WorkoutState.CalibrationRIRSelection -> currentState.exerciseId
         else -> null
     }
 
-    // Position index in workout for ordering and completed count (when currentState is Calibration)
-    val currentPositionIndex = when (currentState) {
-        is WorkoutState.Set -> viewModel.allWorkoutStates.indexOfFirst {
-            it is WorkoutState.Set && it.set.id == currentState.set.id
-        }.takeIf { it >= 0 } ?: 0
-        else -> viewModel.allWorkoutStates.indexOf(currentState).coerceAtLeast(0)
-    }
+    // Position index in workout for ordering and completed count.
+    val currentPositionIndex = resolveWorkoutStateIndex(currentState)
 
     // --- Flattened order: every exercise once; supersets kept contiguous ---
     // Include Set, CalibrationLoadSelection, CalibrationRIRSelection so exercises on calibration screens appear
@@ -124,19 +136,21 @@ fun ExerciseIndicator(
         }
     }
 
-    // Get completed sets count before current position (for progress)
-    fun completedSetsBeforeCurrent(exerciseId: UUID): Int {
-        return when (currentState) {
-            is WorkoutState.Set -> viewModel.getAllExerciseCompletedSetsBefore(currentState)
-                .filterNot { it.shouldIgnoreCalibration() }
-                .count { it.exerciseId == exerciseId }
-            else -> viewModel.allWorkoutStates
-                .take(currentPositionIndex)
-                .filterIsInstance<WorkoutState.Set>()
-                .filterNot { it.shouldIgnoreCalibration() }
-                .filter { it.exerciseId == exerciseId }
-                .distinctBy { it.set.id }
-                .size
+    fun totalCountForExercise(exerciseId: UUID): Int {
+        return buildExerciseSetDisplayRows(
+            viewModel = viewModel,
+            exerciseId = exerciseId
+        ).size.coerceAtLeast(1)
+    }
+
+    fun completedCountBeforeCurrent(exerciseId: UUID): Int {
+        val rows = buildExerciseSetDisplayRows(
+            viewModel = viewModel,
+            exerciseId = exerciseId
+        )
+        return rows.count { row ->
+            val rowPosition = resolveWorkoutStateIndex(row.workoutState())
+            rowPosition < currentPositionIndex
         }
     }
 
@@ -164,11 +178,17 @@ fun ExerciseIndicator(
     fun safeCurrentSetData(setDataState: androidx.compose.runtime.MutableState<com.gabstra.myworkoutassistant.shared.setdata.SetData>): Any? =
         runCatching { setDataState.value }.getOrNull()
 
+    data class IndicatorProgressLayer(
+        val baseProgress: Float,
+        val completedOverlayProgress: Float? = null
+    )
+
     // Calculate indicator progress.
     // Avoid derivedStateOf + direct MutableState reads to prevent intermittent snapshot read crashes.
     val indicatorProgressByExerciseId = exerciseIds.associateWith { id ->
-        val completed = completedSetsBeforeCurrent(id)
-        val total = viewModel.getTotalSetCountForExercise(id).coerceAtLeast(1)
+        val completed = completedCountBeforeCurrent(id)
+        val total = totalCountForExercise(id)
+        val completedProgress = completed.toFloat() / total.toFloat()
 
         val timerSet: WorkoutState.Set? = when {
             selectedExerciseId != null && id == selectedExerciseId -> findTimeExerciseSet(id, currentPositionIndex)
@@ -177,7 +197,6 @@ fun ExerciseIndicator(
 
         val currentExerciseTimerProgress: Float? = when {
             id == currentExerciseId &&
-                total == 1 &&
                 currentStateSet != null &&
                 (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) &&
                 currentStateSetDataState != null -> {
@@ -187,10 +206,30 @@ fun ExerciseIndicator(
         }
 
         when {
-            currentExerciseTimerProgress != null -> currentExerciseTimerProgress
-            timerSet != null -> timerProgressFromSetData(safeCurrentSetData(timerSet))
-                ?: (completed.toFloat() / total.toFloat())
-            else -> completed.toFloat() / total.toFloat()
+            currentExerciseTimerProgress != null -> {
+                val baseProgress = (completed.toFloat() + currentExerciseTimerProgress) / total.toFloat()
+                IndicatorProgressLayer(
+                    baseProgress = baseProgress.coerceIn(0f, 1f),
+                    completedOverlayProgress = completedProgress.coerceIn(0f, 1f)
+                )
+            }
+            timerSet != null -> {
+                val timerProgress = timerProgressFromSetData(safeCurrentSetData(timerSet)) ?: 0f
+                val baseProgress = (completed.toFloat() + timerProgress) / total.toFloat()
+                IndicatorProgressLayer(
+                    baseProgress = baseProgress.coerceIn(0f, 1f)
+                )
+            }
+            id == currentExerciseId -> {
+                val baseProgress = ((completed + 1).coerceAtMost(total)).toFloat() / total.toFloat()
+                IndicatorProgressLayer(
+                    baseProgress = baseProgress,
+                    completedOverlayProgress = completedProgress
+                )
+            }
+            else -> {
+                IndicatorProgressLayer(baseProgress = completedProgress)
+            }
         }
     }
 
@@ -246,115 +285,114 @@ fun ExerciseIndicator(
     val totalArcEffective = totalArcAngle - leftReserve - rightReserve
     val segmentArcAngle = (totalArcEffective - (visibleCount - 1) * paddingAngle) / visibleCount
 
-    @Composable
-    fun ShowRotatingIndicator(exerciseId: UUID, color: Color = MaterialTheme.colorScheme.onBackground) {
-        val idx = globalIndexByExerciseId[exerciseId] ?: return
-        val posInWindow = if (idx in startIdx..endIdx) idx - startIdx else -1
-        if (posInWindow >= 0) {
-            val baseStart = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
-            val mid = baseStart + segmentArcAngle / 2f
-            RotatingIndicator(mid, color)
+    Box(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(3.dp)
+        ) {
+            // --- OUTER RING for visible superset ranges (drawn first) ---
+            OuterSupersetOverlay(
+                visibleIndices = visibleIndices,
+                flatExerciseOrder = flatExerciseOrder,
+                supersetIdByExerciseId = viewModel.supersetIdByExerciseId,
+                startAngleEffective = startAngleEffective,
+                segmentArcAngle = segmentArcAngle,
+                paddingAngle = paddingAngle,
+                currentGlobalIdx = currentGlobalIdx,
+                ringInset = 0.dp, //ringInset = 12.dp,
+                strokeWidth = 1.dp,
+                tickWidth = 1.dp,
+                tickLength = 3.dp,
+                arcColor = MaterialTheme.colorScheme.onBackground,
+                badgeColor = MaterialTheme.colorScheme.onBackground
+            )
         }
-    }
 
-    Box(
-        modifier = Modifier.fillMaxSize().padding(3.dp)
-    ) {
-        // --- OUTER RING for visible superset ranges (drawn first) ---
-        OuterSupersetOverlay(
-            visibleIndices = visibleIndices,
-            flatExerciseOrder = flatExerciseOrder,
-            supersetIdByExerciseId = viewModel.supersetIdByExerciseId,
-            startAngleEffective = startAngleEffective,
-            segmentArcAngle = segmentArcAngle,
-            paddingAngle = paddingAngle,
-            currentGlobalIdx = currentGlobalIdx,
-            ringInset = 0.dp, //ringInset = 12.dp,
-            strokeWidth = 1.dp,
-            tickWidth = 1.dp,
-            tickLength = 3.dp,
-            arcColor = MaterialTheme.colorScheme.onBackground,
-            badgeColor = MaterialTheme.colorScheme.onBackground
-        )
-    }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+        ) {
+            // --- INNER segments: every exercise gets same arc ---
+            visibleIndices.forEachIndexed { posInWindow, globalIdx ->
+                val eid = flatExerciseOrder[globalIdx]
+                val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
+                val isCurrent = eIdx == currentGlobalIdx
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(10.dp)
-    ) {
-        // --- INNER segments: every exercise gets same arc ---
-        visibleIndices.forEachIndexed { posInWindow, globalIdx ->
-            val eid = flatExerciseOrder[globalIdx]
-            val eIdx = globalIndexByExerciseId[eid] ?: Int.MAX_VALUE
-            val isCurrent = eIdx == currentGlobalIdx
+                val progressLayer = indicatorProgressByExerciseId[eid]!!
+                val indicatorProgress = progressLayer.baseProgress
 
-            val indicatorProgress = indicatorProgressByExerciseId[eid]!!
+                val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
+                val endA = startA + segmentArcAngle
 
-            val startA = startAngleEffective + posInWindow * (segmentArcAngle + paddingAngle)
-            val endA = startA + segmentArcAngle
-
-            key(eid,indicatorProgress) {
-                val indicatorColor = when {
-                    isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
-                    indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green
-                    indicatorProgress == 0.0f -> MediumDarkGray // Future exercise (not started): subtle gray
-                    else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
-                }
-                
-/*                val trackColor = remember(isCurrent, indicatorColor) {
-                    if (isCurrent) {
-                        indicatorColor.copy(alpha = 0.5f)
-                    } else {
-                        MediumDarkGray
+                key(eid,indicatorProgress) {
+                    val indicatorColor = when {
+                        isCurrent -> MaterialTheme.colorScheme.primary // Current exercise: bright gray/white
+                        indicatorProgress >= 1.0f -> MaterialTheme.colorScheme.onBackground // Previous exercise (completed): green
+                        indicatorProgress == 0.0f -> MediumDarkGray // Future exercise (not started): subtle gray
+                        else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
                     }
-                }*/
-                
-                CircularProgressIndicator(
-                    colors = ProgressIndicatorDefaults.colors(
+
+                    HeightLockedCircularProgressIndicator(
+                        progress = { indicatorProgress },
+                        modifier = Modifier.fillMaxSize(),
                         indicatorColor = indicatorColor,
-                        trackColor = MediumDarkGray
-                    ),
-                    progress = { indicatorProgress },
-                    modifier = Modifier.fillMaxSize(),
-                    strokeWidth = 4.dp,
-                    startAngle = startA,
-                    endAngle = endA
-                )
-            }
-        }
+                        trackColor = MediumDarkGray,
+                        strokeWidth = 4.dp,
+                        startAngle = startA,
+                        endAngle = endA
+                    )
 
-        // Edge dots (global)
-        val minVisibleIndex = visibleIndices.first()
-        val maxVisibleIndex = visibleIndices.last()
-        EdgeOverflowDots(
-            angleDeg = startingAngle + (dotsReserve / 2),
-            show = showLeftDots,
-            dotAngleGapDeg = dotAngleGapDeg,
-            color = when {
-                minVisibleIndex > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
-                minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
-                else -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
+                    if (isCurrent && progressLayer.completedOverlayProgress != null && progressLayer.completedOverlayProgress != 0.0f) {
+                        HeightLockedCircularProgressIndicator(
+                            progress = { progressLayer.completedOverlayProgress + 0.1f  },
+                            modifier = Modifier.fillMaxSize(),
+                            indicatorColor = MaterialTheme.colorScheme.background,
+                            trackColor = Color.Transparent,
+                            strokeWidth = 4.dp,
+                            startAngle = startA,
+                            endAngle = endA
+                        )
+
+                        HeightLockedCircularProgressIndicator(
+                            progress = { progressLayer.completedOverlayProgress },
+                            modifier = Modifier.fillMaxSize(),
+                            indicatorColor = MaterialTheme.colorScheme.onBackground,
+                            trackColor = Color.Transparent,
+                            strokeWidth = 4.dp,
+                            startAngle = startA,
+                            endAngle = endA
+                        )
+                    }
+                }
             }
-        )
-        EdgeOverflowDots(
-            angleDeg = startingAngle + totalArcAngle - (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
-            show = showRightDots,
-            dotAngleGapDeg = dotAngleGapDeg,
-            color = when {
-                maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
-                else -> MediumDarkGray // Future exercises: MediumDarkGray
-            }
-        )
+
+            // Edge dots (global)
+            val minVisibleIndex = visibleIndices.first()
+            val maxVisibleIndex = visibleIndices.last()
+            EdgeOverflowDots(
+                angleDeg = startingAngle + (dotsReserve / 2),
+                show = showLeftDots,
+                dotAngleGapDeg = dotAngleGapDeg,
+                color = when {
+                    minVisibleIndex > currentGlobalIdx -> MediumDarkGray // Future exercises: MediumDarkGray
+                    minVisibleIndex == currentGlobalIdx -> MaterialTheme.colorScheme.primary // Current exercise: primary
+                    else -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
+                }
+            )
+            EdgeOverflowDots(
+                angleDeg = startingAngle + totalArcAngle - (dotSpan + dotAngleGapDeg + paddingAngle) / 2f,
+                show = showRightDots,
+                dotAngleGapDeg = dotAngleGapDeg,
+                color = when {
+                    maxVisibleIndex < currentGlobalIdx -> MaterialTheme.colorScheme.onBackground // Previous exercises (completed): primary
+                    else -> MediumDarkGray // Future exercises: MediumDarkGray
+                }
+            )
+        }
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(18.dp)) {
-        if (selectedExerciseId != null && flatExerciseOrder.contains(selectedExerciseId) && currentExerciseId != selectedExerciseId) {
-            ShowRotatingIndicator(selectedExerciseId)
-        } else if (currentExerciseId != null) {
-            ShowRotatingIndicator(currentExerciseId)
-        }
-    }
 }
 
 private fun WorkoutState.Set.shouldIgnoreCalibration(): Boolean {
@@ -539,7 +577,7 @@ private fun ExerciseIndicatorPreview() {
         Box(modifier = Modifier.fillMaxSize()) {
             ExerciseIndicator(
                 viewModel = viewModel,
-                currentStateOverride = workoutState1_3,
+                currentStateOverride = workoutState1_2,
                 selectedExerciseId = null
             )
         }

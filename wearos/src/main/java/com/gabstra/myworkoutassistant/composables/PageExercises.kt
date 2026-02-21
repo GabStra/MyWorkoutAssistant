@@ -85,7 +85,7 @@ fun PageExercises(
 
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp,Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ExerciseNameText(
@@ -127,20 +127,11 @@ fun PageExercises(
             ) {
                 // Metadata strip
                 ExerciseMetadataStrip(
+                    exerciseLabel = if (currentIndex.value >= 0) "${currentIndex.value + 1}/${exerciseIds.size}" else null,
                     supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
                     supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
-                    setLabel = if (currentExercise == selectedExercise && workoutState != null) {
-                        viewModel.getSetCounterForExercise(
-                            currentExercise.id,
-                            workoutState
-                        )?.let { (current, total) ->
-                            if (total > 1) "$current/$total" else null
-                        }
-                    } else null,
-                    sideIndicator = if (currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.intraSetTotal != null) "① ↔ ②" else null,
-                    currentSideIndex = if (currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id) {
-                        workoutState.intraSetCounter.takeIf { workoutState.intraSetTotal != null }
-                    } else null,
+                    sideIndicator = null,
+                    currentSideIndex = null,
                     isUnilateral = currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.isUnilateral,
                     textColor = MaterialTheme.colorScheme.onBackground,
                     onTap = {
@@ -150,7 +141,9 @@ fun PageExercises(
             }
 
             if (currentSet != null) {
+                val shouldApplyProgressColors = workoutState is WorkoutState.Set
                 ExerciseSetsViewer(
+                    modifier = Modifier.padding(horizontal = 20.dp),
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
                     exercise = selectedExercise,
@@ -160,21 +153,23 @@ fun PageExercises(
                         selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> false
                         else -> null
                     },
-                    customBorderColor = when {
-                        // Previous exercise: enforce previous set colors for ALL sets
-                        selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
-                        // Future exercise: enforce future set colors for ALL sets
-                        selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
-                        // Current exercise: use default logic (null = distinguish between previous/current/future sets)
-                        else -> null
+                    customBorderColor = if (shouldApplyProgressColors) {
+                        when {
+                            selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                            selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> null
+                        }
+                    } else {
+                        null
                     },
-                    customTextColor = when {
-                        // Previous exercise: enforce previous set colors for ALL sets
-                        selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
-                        // Future exercise: enforce future set colors for ALL sets
-                        selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
-                        // Current exercise: use default logic (null = distinguish between previous/current/future sets)
-                        else -> null
+                    customTextColor = if (shouldApplyProgressColors) {
+                        when {
+                            selectedExerciseOrSupersetIndex.value < currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.onBackground
+                            selectedExerciseOrSupersetIndex.value > currentExerciseOrSupersetIndex.value -> MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> null
+                        }
+                    } else {
+                        null
                     },
                     overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
                         overrideSetIndex

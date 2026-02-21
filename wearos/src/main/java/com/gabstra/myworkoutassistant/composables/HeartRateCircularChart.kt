@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.PlatformTextStyle
@@ -63,10 +64,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -262,6 +261,8 @@ fun HrStatusBadge(
 @Composable
 fun HeartRateCircularChart(
     modifier: Modifier = Modifier,
+    zoneSegmentsModifier: Modifier = Modifier,
+    heartRateDisplayModifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
@@ -271,6 +272,8 @@ fun HeartRateCircularChart(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    centerReadoutOnScreen: Boolean = false,
+    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val mhrPercentage = remember(hr, age, measuredMaxHeartRate, restingHeartRate) {
@@ -389,7 +392,11 @@ fun HeartRateCircularChart(
         currentZone,
         colorsByZone,
         lowerBoundMaxHRPercent,
-        upperBoundMaxHRPercent
+        upperBoundMaxHRPercent,
+        zoneSegmentsModifier,
+        heartRateDisplayModifier,
+        centerReadoutOnScreen,
+        readoutAnchorOffsetX
     )
 }
 
@@ -683,15 +690,13 @@ private fun ZoneSegment(
     }
 
 
-    CircularProgressIndicator(
+    HeightLockedCircularProgressIndicator(
         progress = {
             progressState.floatValue
         },
         modifier = modifier,
-        colors = ProgressIndicatorDefaults.colors(
-            indicatorColor = colorsByZone[index],
-            trackColor = trackColor
-        ),
+        indicatorColor = colorsByZone[index],
+        trackColor = trackColor,
         strokeWidth = 4.dp,
         startAngle = startAngle,
         endAngle = endAngle
@@ -791,6 +796,10 @@ private fun HeartRateView(
     colorsByZone: Array<Color>,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    zoneSegmentsModifier: Modifier,
+    heartRateDisplayModifier: Modifier,
+    centerReadoutOnScreen: Boolean,
+    readoutAnchorOffsetX: Dp,
 ) {
     val screenState by appViewModel.screenState.collectAsState()
     val displayMode = screenState.hrDisplayMode
@@ -830,108 +839,122 @@ private fun HeartRateView(
         }
     }
 
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        if (hr == 0) {
-            Icon(
-                imageVector = Icons.Filled.SensorsOff,
-                contentDescription = "Disconnected",
-                modifier = Modifier
-                    .size(15.dp)
-                    .offset(y = (-8).dp),
-                tint = MediumDarkGray
+    Box(modifier = modifier) {
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+            val readoutHorizontalOffset = if (centerReadoutOnScreen) {
+                ((screenWidth - maxWidth) / 2f) - readoutAnchorOffsetX
+            } else {
+                0.dp
+            }
+
+            if (hr == 0) {
+                Icon(
+                    imageVector = Icons.Filled.SensorsOff,
+                    contentDescription = "Disconnected",
+                    modifier = Modifier
+                        .size(15.dp)
+                        .offset(x = readoutHorizontalOffset)
+                        .offset(y = (-20).dp)
+                        .then(heartRateDisplayModifier),
+                    tint = MediumDarkGray
+                )
+            } else {
+                HeartRateDisplay(
+                    modifier = Modifier
+                        .width(120.dp)
+                        .height(25.dp)
+                        .offset(x = readoutHorizontalOffset)
+                        .offset(y = (-20).dp)
+                        .clickable(onClick = onSwitchClick)
+                        .then(heartRateDisplayModifier),
+                    bpm = hr,
+                    textToDisplay = textToDisplay,
+                    currentZone = currentZone,
+                    colorsByZone = colorsByZone,
+                    displayMode = displayMode
+                )
+            }
+
+            val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(
+                zoneCount = zoneCount,
+                zoneRanges = zoneRanges,
+                lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+                upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+                totalStartAngle = totalStartAngle,
+                segmentArcAngle = segmentArcAngle,
+                paddingAngle = paddingAngle
             )
-        } else {
-            HeartRateDisplay(
-                modifier = Modifier
-                    .width(120.dp)
-                    .height(25.dp)
-                    .offset(y = (-8).dp)
-                    .clickable(onClick = onSwitchClick),
-                bpm = hr,
-                textToDisplay = textToDisplay,
-                currentZone = currentZone,
-                colorsByZone = colorsByZone,
-                displayMode = displayMode
+
+            val currentHrRotationAngle = extractCurrentHrRotationAngle(
+                zoneCount = zoneCount,
+                zoneRanges = zoneRanges,
+                mhrPercentage = mhrPercentage,
+                totalStartAngle = totalStartAngle,
+                segmentArcAngle = segmentArcAngle,
+                paddingAngle = paddingAngle
             )
-        }
 
-        val (lowerBoundRotationAngle, upperBoundRotationAngle) = extractRotationAngles(
-            zoneCount = zoneCount,
-            zoneRanges = zoneRanges,
-            lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
-            upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-            totalStartAngle = totalStartAngle,
-            segmentArcAngle = segmentArcAngle,
-            paddingAngle = paddingAngle
-        )
-
-        val currentHrRotationAngle = extractCurrentHrRotationAngle(
-            zoneCount = zoneCount,
-            zoneRanges = zoneRanges,
-            mhrPercentage = mhrPercentage,
-            totalStartAngle = totalStartAngle,
-            segmentArcAngle = segmentArcAngle,
-            paddingAngle = paddingAngle
-        )
-
-        if (segmentArcAngle > 0f && zoneCount > 0) {
-            for (index in 0 until zoneCount) {
+            if (segmentArcAngle > 0f && zoneCount > 0) {
+                for (index in 0 until zoneCount) {
 
                 val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
                 val endAngle = startAngle + segmentArcAngle
 
                 val (lowerBound, upperBound) = zoneRanges[index + 1]
 
-                key(hr) {
-                    ZoneSegment(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(10.dp),
-                        index = index + 1,
-                        currentZone = currentZone,
-                        hr = hr,
-                        mhrPercentage = mhrPercentage,
-                        zoneRanges = zoneRanges,
-                        colorsByZone = colorsByZone,
-                        startAngle = startAngle,
-                        endAngle = endAngle,
-                        lowerBound = lowerBound,
-                        upperBound = upperBound
-                    )
+                    key(hr) {
+                        ZoneSegment(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(10.dp)
+                                .then(zoneSegmentsModifier),
+                            index = index + 1,
+                            currentZone = currentZone,
+                            hr = hr,
+                            mhrPercentage = mhrPercentage,
+                            zoneRanges = zoneRanges,
+                            colorsByZone = colorsByZone,
+                            startAngle = startAngle,
+                            endAngle = endAngle,
+                            lowerBound = lowerBound,
+                            upperBound = upperBound
+                        )
+                    }
                 }
             }
-        }
 
-        if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
-            val inBounds = remember(
-                hr,
-                mhrPercentage,
-                lowerBoundMaxHRPercent,
-                upperBoundMaxHRPercent,
-                screenState.userAge,
-                screenState.measuredMaxHeartRate,
-                screenState.restingHeartRate
-            ) {
-                mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!!
+            if (lowerBoundRotationAngle != null && upperBoundRotationAngle != null) {
+                val inBounds = remember(
+                    hr,
+                    mhrPercentage,
+                    lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent,
+                    screenState.userAge,
+                    screenState.measuredMaxHeartRate,
+                    screenState.restingHeartRate
+                ) {
+                    mhrPercentage in lowerBoundMaxHRPercent!!..upperBoundMaxHRPercent!!
+                }
+
+                TargetRangeArc(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(3.dp)
+                        .then(zoneSegmentsModifier),
+                    startAngle = lowerBoundRotationAngle,
+                    endAngle = upperBoundRotationAngle,
+                    color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                    strokeWidth = 18.dp,
+                    borderWidth = 6.dp,
+                    innerBorderWidth = 4.dp
+                )
             }
 
-            TargetRangeArc(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(3.dp),
-                startAngle = lowerBoundRotationAngle,
-                endAngle = upperBoundRotationAngle,
-                color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                strokeWidth = 18.dp,
-                borderWidth = 6.dp,
-                innerBorderWidth = 4.dp
-            )
-        }
-
-        /*
+            /*
         if (currentHrRotationAngle != null) {
             /*
             val animatedAngle by animateFloatAsState(
@@ -953,13 +976,16 @@ private fun HeartRateView(
                 )
             }
         }
-        */
+            */
+        }
     }
 }
 
 @Composable
 fun HeartRateStandard(
     modifier: Modifier = Modifier,
+    zoneSegmentsModifier: Modifier = Modifier,
+    heartRateDisplayModifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
@@ -969,6 +995,8 @@ fun HeartRateStandard(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    centerReadoutOnScreen: Boolean = false,
+    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
@@ -984,6 +1012,8 @@ fun HeartRateStandard(
 
     HeartRateCircularChart(
         modifier = modifier,
+        zoneSegmentsModifier = zoneSegmentsModifier,
+        heartRateDisplayModifier = heartRateDisplayModifier,
         appViewModel = appViewModel,
         hapticsViewModel = hapticsViewModel,
         heartRateChangeViewModel = heartRateChangeViewModel,
@@ -993,6 +1023,8 @@ fun HeartRateStandard(
         restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+        centerReadoutOnScreen = centerReadoutOnScreen,
+        readoutAnchorOffsetX = readoutAnchorOffsetX,
         onHrStatusChange = onHrStatusChange
     )
 }
@@ -1000,6 +1032,8 @@ fun HeartRateStandard(
 @Composable
 fun HeartRatePolar(
     modifier: Modifier = Modifier,
+    zoneSegmentsModifier: Modifier = Modifier,
+    heartRateDisplayModifier: Modifier = Modifier,
     appViewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     heartRateChangeViewModel: HeartRateChangeViewModel,
@@ -1009,6 +1043,8 @@ fun HeartRatePolar(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
+    centerReadoutOnScreen: Boolean = false,
+    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val hrData by polarViewModel.hrBpm.collectAsState()
@@ -1024,6 +1060,8 @@ fun HeartRatePolar(
 
     HeartRateCircularChart(
         modifier = modifier,
+        zoneSegmentsModifier = zoneSegmentsModifier,
+        heartRateDisplayModifier = heartRateDisplayModifier,
         appViewModel = appViewModel,
         hapticsViewModel = hapticsViewModel,
         heartRateChangeViewModel = heartRateChangeViewModel,
@@ -1033,6 +1071,8 @@ fun HeartRatePolar(
         restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+        centerReadoutOnScreen = centerReadoutOnScreen,
+        readoutAnchorOffsetX = readoutAnchorOffsetX,
         onHrStatusChange = onHrStatusChange
     )
 }

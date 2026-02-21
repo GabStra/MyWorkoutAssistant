@@ -21,6 +21,22 @@ class WearWorkoutDriver(
     private val device: UiDevice,
     private val longPressByDesc: (String, Long) -> Unit
 ) {
+    data class RecoveryResumeResult(
+        val enteredWorkout: Boolean,
+        val resumeActionAtMs: Long?,
+        val enteredWorkoutAtMs: Long?
+    )
+
+    data class TimedDurationReadResult(
+        val seconds: Int,
+        val readAtMs: Long
+    )
+
+    data class ProcessKillResult(
+        val homePressedAtMs: Long,
+        val killIssuedAtMs: Long
+    )
+
     fun clickObjectOrAncestor(obj: UiObject2) {
         clickObjectOrAncestorInternal(obj)
     }
@@ -114,31 +130,68 @@ class WearWorkoutDriver(
     }
 
     fun killAppProcess(packageName: String, settleMs: Long = 1_000) {
+        killAppProcessTimed(packageName = packageName, settleMs = settleMs)
+    }
+
+    fun killAppProcessTimed(packageName: String, settleMs: Long = 1_000): ProcessKillResult {
         // Move app to background first so pause/stop persistence hooks run.
+        val homePressedAtMs = System.currentTimeMillis()
         device.pressHome()
-        device.waitForIdle(settleMs)
+        if (settleMs > 0) {
+            device.waitForIdle(settleMs)
+        }
+        val killIssuedAtMs = System.currentTimeMillis()
         device.executeShellCommand("am kill $packageName")
-        device.waitForIdle(settleMs)
+        if (settleMs > 0) {
+            device.waitForIdle(settleMs)
+        }
+        return ProcessKillResult(
+            homePressedAtMs = homePressedAtMs,
+            killIssuedAtMs = killIssuedAtMs
+        )
     }
 
     fun readTimedDurationSeconds(
         perAttemptTimeoutMs: Long = 2_000,
         attempts: Int = 5
     ): Int {
+        return readTimedDurationSecondsTimed(
+            perAttemptTimeoutMs = perAttemptTimeoutMs,
+            attempts = attempts,
+            idleBetweenAttempts = true,
+            requireTimerSemantics = false
+        ).seconds
+    }
+
+    fun readTimedDurationSecondsTimed(
+        perAttemptTimeoutMs: Long = 2_000,
+        attempts: Int = 5,
+        idleBetweenAttempts: Boolean = false,
+        requireTimerSemantics: Boolean = false
+    ): TimedDurationReadResult {
         repeat(attempts) {
             val timerRoot = device.wait(
                 Until.findObject(By.descContains(SetValueSemantics.TimedDurationValueDescription)),
                 perAttemptTimeoutMs
             )
             val timerText = timerRoot?.let { findTimerText(it) }
-                ?: device.findObjects(By.textContains(":"))
-                    .mapNotNull { node -> runCatching { node.text }.getOrNull() }
-                    .firstOrNull { it.matches(Regex("\\d{2}:\\d{2}(?::\\d{2})?")) }
+                ?: if (!requireTimerSemantics) {
+                    device.findObjects(By.textContains(":"))
+                        .mapNotNull { node -> runCatching { node.text }.getOrNull() }
+                        .firstOrNull { it.matches(Regex("\\d{2}:\\d{2}(?::\\d{2})?")) }
+                } else {
+                    null
+                }
 
             if (!timerText.isNullOrBlank()) {
-                return parseTimerTextToSeconds(timerText)
+                return TimedDurationReadResult(
+                    seconds = parseTimerTextToSeconds(timerText),
+                    readAtMs = System.currentTimeMillis()
+                )
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            if (idleBetweenAttempts) {
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            }
         }
 
         error("Could not read timed duration value from UI")
@@ -181,8 +234,143 @@ class WearWorkoutDriver(
     }
 
     fun waitForWorkoutCompletion(timeoutMs: Long = 10_000) {
-        val completedVisible = device.wait(Until.hasObject(By.text("Completed")), timeoutMs)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var completedVisible = false
+        while (System.currentTimeMillis() < deadline && !completedVisible) {
+            completedVisible =
+                device.hasObject(By.text("Completed")) ||
+                    device.hasObject(By.text("COMPLETED")) ||
+                    device.hasObject(By.text("Workout completed"))
+            if (!completedVisible) {
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
         require(completedVisible) { "Workout completion screen did not appear" }
+    }
+
+    fun resumeOrEnterRecoveredWorkout(
+        workoutName: String,
+        inWorkoutSelector: BySelector,
+        timeoutMs: Long = 10_000
+    ): Boolean {
+        return resumeOrEnterRecoveredWorkoutTimed(
+            workoutName = workoutName,
+            inWorkoutSelector = inWorkoutSelector,
+            timeoutMs = timeoutMs
+        ).enteredWorkout
+    }
+
+    fun resumeOrEnterRecoveredWorkoutTimed(
+        workoutName: String,
+        inWorkoutSelector: BySelector,
+        timeoutMs: Long = 10_000
+    ): RecoveryResumeResult {
+        if (isLikelyInActiveWorkout(inWorkoutSelector)) {
+            return RecoveryResumeResult(true, null, System.currentTimeMillis())
+        }
+
+        var resumeActionAtMs: Long? = null
+        var enteredWorkoutAtMs: Long? = null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var workoutEntryOpened = false
+
+        while (System.currentTimeMillis() < deadline) {
+            if (isLikelyInActiveWorkout(inWorkoutSelector)) {
+                enteredWorkoutAtMs = System.currentTimeMillis()
+                break
+            }
+
+            clickContinueTimerIfVisible()
+            val resumeButton = findResumeButton()
+            if (resumeButton != null) {
+                clickObjectOrAncestorInternal(resumeButton)
+                resumeActionAtMs = System.currentTimeMillis()
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                if (waitForActiveWorkoutEntry(inWorkoutSelector, 1_500)) {
+                    enteredWorkoutAtMs = System.currentTimeMillis()
+                    break
+                }
+            } else if (!workoutEntryOpened) {
+                val workoutEntry = device.findObject(By.desc("Open workout: $workoutName"))
+                    ?: device.findObject(By.text(workoutName))
+                if (workoutEntry != null) {
+                    clickObjectOrAncestorInternal(workoutEntry)
+                    workoutEntryOpened = true
+                    device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                }
+            } else {
+                scrollRecoveryDialogDown()
+            }
+
+            Thread.sleep(100)
+        }
+
+        val entered = enteredWorkoutAtMs != null
+        return RecoveryResumeResult(
+            enteredWorkout = entered,
+            resumeActionAtMs = resumeActionAtMs,
+            enteredWorkoutAtMs = enteredWorkoutAtMs
+        )
+    }
+
+    private fun findResumeButton(): UiObject2? {
+        val directMatch = device.findObject(By.desc("Recovery resume action"))
+            ?: device.findObject(By.text("Resume"))
+            ?: device.findObject(By.textContains("Resume"))
+            ?: device.findObject(By.desc("Resume workout"))
+            ?: device.findObject(By.descContains("Resume"))
+        if (directMatch != null) return directMatch
+
+        return device.findObjects(By.clickable(true)).firstOrNull { obj ->
+            val text = runCatching { obj.text }.getOrNull().orEmpty()
+            val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
+            text.contains("resume", ignoreCase = true) ||
+                desc.contains("resume", ignoreCase = true)
+        }
+    }
+
+    private fun clickContinueTimerIfVisible() {
+        val continueTimerButton = device.findObject(By.desc("Recovery timer continue option"))
+            ?: device.findObject(By.textContains("Continue timer"))
+            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
+                val text = runCatching { obj.text }.getOrNull().orEmpty()
+                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
+                text.contains("continue timer", ignoreCase = true) ||
+                    desc.contains("continue timer", ignoreCase = true)
+            }
+
+        if (continueTimerButton != null) {
+            clickObjectOrAncestorInternal(continueTimerButton)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+    }
+
+    private fun scrollRecoveryDialogDown() {
+        val scrollable = device.findObject(By.scrollable(true))
+        if (scrollable != null) {
+            runCatching { scrollable.scroll(Direction.DOWN, 0.75f) }
+        } else {
+            verticalSwipe(Direction.DOWN)
+        }
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    private fun waitForActiveWorkoutEntry(inWorkoutSelector: BySelector, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (isLikelyInActiveWorkout(inWorkoutSelector)) {
+                return true
+            }
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    private fun isLikelyInActiveWorkout(inWorkoutSelector: BySelector): Boolean {
+        return device.hasObject(inWorkoutSelector) ||
+            device.hasObject(By.descContains(SetValueSemantics.TimedDurationValueDescription)) ||
+            device.hasObject(By.text("Stop")) ||
+            device.hasObject(By.desc("Stop"))
     }
 
     /**

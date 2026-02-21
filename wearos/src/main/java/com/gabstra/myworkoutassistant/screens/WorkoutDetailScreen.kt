@@ -2,11 +2,9 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.Manifest
 import android.content.Context
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +52,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import kotlinx.coroutines.delay
 
 @Composable
@@ -255,31 +254,12 @@ fun WorkoutDetailScreen(
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec).animateItem(),
                                 transformation = SurfaceTransformation(spec),
-                                text = "Delete paused workout",
+                                text = InterruptedWorkoutCopy.DELETE_BUTTON,
                                 onClick = {
                                     showDeleteDialog = true
                                 }
                             )
                         }
-                    }
-                    item {
-                        ButtonWithText(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
-                            transformation = SurfaceTransformation(spec),
-                            text = "Send history",
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                viewModel.sendWorkoutHistoryToPhone(context) { success ->
-                                    // Success toast will be shown when completion message is received
-                                    if (!success)
-                                        Toast.makeText(context, "Nothing to send", Toast.LENGTH_SHORT)
-                                            .show()
-                                }
-                            },
-                            enabled = hasExercises
-                        )
                     }
                     item {
                         ButtonWithText(
@@ -303,8 +283,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
-        title = "Delete Paused Workout",
-        message = "Are you sure you want to delete this paused workout?",
+        title = InterruptedWorkoutCopy.DELETE_TITLE,
+        message = InterruptedWorkoutCopy.DELETE_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.deleteWorkoutRecord()
@@ -329,7 +309,7 @@ fun WorkoutDetailScreen(
     CustomDialogYesOnLongPress(
         show = showStartConfirmationDialog,
         title = "Start New Workout",
-        message = "An existing paused workout will be deleted. Continue?",
+        message = InterruptedWorkoutCopy.START_NEW_WORKOUT_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             permissionLauncherStart.launch(basePermissions.toTypedArray())

@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,7 +33,7 @@ private fun TitledLinesSectionItem(
         Text(
             text = section.title,
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = LighterGray,
             textAlign = TextAlign.Center
@@ -42,8 +41,8 @@ private fun TitledLinesSectionItem(
         section.lines.forEach { line ->
             Text(
                 text = line,
-                modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Normal),
                 color = MediumLighterGray,
                 textAlign = TextAlign.Center
             )
@@ -65,7 +64,6 @@ fun PageTitledLines(
     ScreenScaffold(
         modifier = modifier.fillMaxSize(),
         scrollState = scrollState,
-        overscrollEffect = null,
         scrollIndicator = {
             ScrollIndicator(
                 state = scrollState,
@@ -83,19 +81,11 @@ fun PageTitledLines(
                 .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                sections.forEach { section ->
-                    TitledLinesSectionItem(
-                        section = section,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+            sections.forEach { section ->
+                TitledLinesSectionItem(
+                    section = section,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

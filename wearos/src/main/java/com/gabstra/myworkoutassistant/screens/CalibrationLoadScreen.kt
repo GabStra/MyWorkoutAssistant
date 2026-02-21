@@ -1,9 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,25 +13,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.composables.CircularEndsPillShape
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageCalibrationLoad
 import com.gabstra.myworkoutassistant.composables.PageExercises
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
+import com.gabstra.myworkoutassistant.composables.overlayVisualScale
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -45,6 +42,8 @@ enum class CalibrationPageType {
     BUTTONS, EXERCISES, CALIBRATION_LOAD, CALIBRATION_RIR
 }
 
+private const val CALIBRATION_LOAD_PAGER_AUTO_RETURN_DELAY_MS = 15000L
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun CalibrationLoadScreen(
@@ -53,7 +52,7 @@ fun CalibrationLoadScreen(
     state: WorkoutState.CalibrationLoadSelection,
     navController: NavController,
     onBeforeGoHome: (() -> Unit)? = null,
-    hearthRateChart: @Composable () -> Unit,
+    hearthRateChart: @Composable (Modifier) -> Unit,
     onWeightSelected: (Double) -> Unit,
 ) {
     var allowHorizontalScrolling by remember { mutableStateOf(true) }
@@ -88,10 +87,11 @@ fun CalibrationLoadScreen(
             pageTypes.size
         }
     )
-
     LaunchedEffect(state.calibrationSet.id) {
-        // Navigate to the calibration page
-        pagerState.scrollToPage(calibrationPageIndex)
+        // Navigate to the calibration page only when needed.
+        if (pagerState.currentPage != calibrationPageIndex) {
+            pagerState.scrollToPage(calibrationPageIndex)
+        }
         allowHorizontalScrolling = true
     }
 
@@ -102,11 +102,19 @@ fun CalibrationLoadScreen(
         goBackJob?.cancel()
 
         goBackJob = scope.launch {
-            delay(10000)
+            delay(CALIBRATION_LOAD_PAGER_AUTO_RETURN_DELAY_MS)
             val isOnCalibrationPage = pagerState.currentPage == calibrationPageIndex
-            if (!isOnCalibrationPage) {
+            if (!isOnCalibrationPage && !pagerState.isScrollInProgress) {
                 pagerState.scrollToPage(calibrationPageIndex)
             }
+        }
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        if (pagerState.currentPage == calibrationPageIndex) {
+            goBackJob?.cancel()
+        } else {
+            restartGoBack()
         }
     }
 
@@ -122,7 +130,7 @@ fun CalibrationLoadScreen(
             text = exercise.name,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.5.dp),
+                .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.SemiBold
             ),
@@ -131,26 +139,24 @@ fun CalibrationLoadScreen(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 22.5.dp, vertical = 30.dp)
-            .clip(CircularEndsPillShape(straightWidth = 50.dp)),
+        modifier = Modifier.fillMaxSize(),
     ) {
         CustomHorizontalPager(
             modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            if (event.changes.any { it.pressed }) {
-                                restartGoBack()
-                            }
-                        }
-                    }
-                },
+                .fillMaxSize(),
             pagerState = pagerState,
             userScrollEnabled = allowHorizontalScrolling,
+            pageOverlay = { pageIndex ->
+                if (pageTypes[pageIndex] == CalibrationPageType.CALIBRATION_LOAD) {
+                    hearthRateChart(Modifier.fillMaxSize())
+                    ExerciseIndicator(
+                        viewModel = viewModel,
+                        modifier = Modifier.fillMaxSize()
+                            .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
+                        selectedExerciseId = selectedExercise.id
+                    )
+                }
+            }
         ) { pageIndex ->
             // Get the page type for the current index
             val pageType = pageTypes[pageIndex]
@@ -158,7 +164,8 @@ fun CalibrationLoadScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 15.dp)
+                    .padding(WorkoutPagerPageSafeAreaPadding)
+                    .clipToBounds()
             ) {
                 when (pageType) {
                     CalibrationPageType.BUTTONS -> {
@@ -190,42 +197,54 @@ fun CalibrationLoadScreen(
                                     isCalibrationSet = true
                                 )
                             }
-                            PageButtons(
-                                updatedState = mockSetState,
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                navController = navController,
-                                onBeforeGoHome = onBeforeGoHome
-                            )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                PageButtons(
+                                    updatedState = mockSetState,
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    navController = navController,
+                                    onBeforeGoHome = onBeforeGoHome
+                                )
+                            }
                         }
                     }
 
                     CalibrationPageType.EXERCISES -> {
                         key(pageType, pageIndex) {
-                            PageExercises(
-                                selectedExercise = selectedExercise,
-                                workoutState = state,
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                currentExercise = exercise,
-                                exerciseOrSupersetIds = exerciseOrSupersetIds,
-                                onExerciseSelected = {
-                                    selectedExercise = it
-                                }
-                            )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                PageExercises(
+                                    selectedExercise = selectedExercise,
+                                    workoutState = state,
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    currentExercise = exercise,
+                                    exerciseOrSupersetIds = exerciseOrSupersetIds,
+                                    onExerciseSelected = {
+                                        selectedExercise = it
+                                    }
+                                )
+                            }
                         }
                     }
 
                     CalibrationPageType.CALIBRATION_LOAD -> {
                         key(pageType, pageIndex) {
-                            PageCalibrationLoad(
-                                modifier = Modifier.fillMaxSize(),
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                state = state,
-                                onWeightSelected = onWeightSelected,
-                                exerciseTitleComposable = exerciseTitleComposable
-                            )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
+                                ) {
+                                    PageCalibrationLoad(
+                                        modifier = Modifier.fillMaxSize(),
+                                        viewModel = viewModel,
+                                        hapticsViewModel = hapticsViewModel,
+                                        state = state,
+                                        onWeightSelected = onWeightSelected,
+                                        exerciseTitleComposable = exerciseTitleComposable
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -234,21 +253,6 @@ fun CalibrationLoadScreen(
                     }
                 }
             }
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        ExerciseIndicator(
-            viewModel,
-            selectedExerciseId = selectedExercise.id
-        )
-
-        Box {
-            hearthRateChart()
         }
     }
 
