@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.Orange
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
@@ -125,7 +126,7 @@ fun WorkoutsMenu(
 
         MenuSectionHeader("Maintenance")
         AppDropdownMenuItem(
-            text = { Text("Clear incomplete workouts") },
+            text = { Text(InterruptedWorkoutCopy.CLEAR_MENU_LABEL) },
             onClick = {
                 showClearIncompleteDialog = true
                 onMenuItemClick()
@@ -158,8 +159,8 @@ fun WorkoutsMenu(
 
     CustomDialogYesOnLongPress(
         show = showClearIncompleteDialog,
-        title = "Clear All Incomplete Workouts",
-        message = "Are you sure you want to clear all incomplete workouts? This action cannot be undone.",
+        title = InterruptedWorkoutCopy.CLEAR_TITLE,
+        message = InterruptedWorkoutCopy.CLEAR_MESSAGE,
         handleYesClick = {
             onClearUnfinishedWorkouts()
             showClearIncompleteDialog = false

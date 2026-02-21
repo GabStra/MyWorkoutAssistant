@@ -31,6 +31,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -92,7 +93,7 @@ fun ResumeWorkoutDialog(
 
                         item {
                             Text(
-                                text = "Incomplete Workouts:",
+                                text = "${InterruptedWorkoutCopy.PLURAL}:",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,

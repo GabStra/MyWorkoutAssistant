@@ -117,6 +117,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import kotlinx.coroutines.Dispatchers
@@ -1150,7 +1151,7 @@ fun WorkoutDetailScreen(
                                     horizontalArrangement = Arrangement.Center
                                 ) {
                                     AppPrimaryButton(
-                                        text = "Delete paused workout",
+                                        text = InterruptedWorkoutCopy.DELETE_BUTTON,
                                         onClick = {
                                             showDeleteDialog = true
                                         },
@@ -1427,8 +1428,8 @@ fun WorkoutDetailScreen(
 
             CustomDialogYesOnLongPress(
                 show = showDeleteDialog,
-                title = "Delete Paused Workout",
-                message = "Are you sure you want to delete this paused workout?",
+                title = InterruptedWorkoutCopy.DELETE_TITLE,
+                message = InterruptedWorkoutCopy.DELETE_MESSAGE,
                 handleYesClick = {
                     workoutViewModel.deleteWorkoutRecord()
                     showDeleteDialog = false
@@ -1445,7 +1446,7 @@ fun WorkoutDetailScreen(
             CustomDialogYesOnLongPress(
                 show = showStartConfirmationDialog,
                 title = "Start New Workout",
-                message = "An existing paused workout will be deleted. Continue?",
+                message = InterruptedWorkoutCopy.START_NEW_WORKOUT_MESSAGE,
                 handleYesClick = {
                     showStartConfirmationDialog = false
                     startWorkoutDirectly()

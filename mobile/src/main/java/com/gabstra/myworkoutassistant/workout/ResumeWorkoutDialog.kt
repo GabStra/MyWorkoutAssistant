@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -31,7 +32,7 @@ fun ResumeWorkoutDialog(
             title = "Resume Workout",
             body = {
                 Text(
-                    text = "You have incomplete workouts. Select one to resume:",
+                    text = InterruptedWorkoutCopy.RESUME_DIALOG_DESCRIPTION,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(bottom = 16.dp)

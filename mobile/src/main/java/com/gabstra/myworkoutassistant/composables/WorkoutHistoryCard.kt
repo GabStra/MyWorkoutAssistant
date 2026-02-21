@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -57,7 +58,7 @@ fun WorkoutHistoryCard(
             modifier = Modifier
                 .weight(1f)
                 .basicMarquee(iterations = Int.MAX_VALUE),
-            text = if (workoutHistory.isDone) workout.name else workout.name + " (Incomplete)",
+            text = if (workoutHistory.isDone) workout.name else "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}",
             color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
             style = MaterialTheme.typography.bodyLarge,
         )
