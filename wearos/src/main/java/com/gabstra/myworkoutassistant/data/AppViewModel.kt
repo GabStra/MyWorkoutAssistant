@@ -24,6 +24,8 @@ import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.google.android.gms.wearable.DataClient
@@ -56,6 +58,16 @@ internal data class RecoveryResumeOptions(
     val timerChoice: TimerRecoveryChoice = TimerRecoveryChoice.CONTINUE,
     val calibrationChoice: CalibrationRecoveryChoice = CalibrationRecoveryChoice.CONTINUE
 )
+
+internal data class RecoveryPromptUiState(
+    val displayName: String = "",
+    val workoutStartTime: LocalDateTime? = null,
+    val showTimerOptions: Boolean = false,
+    val showCalibrationOptions: Boolean = false
+) {
+    val showResumeButton: Boolean
+        get() = !showTimerOptions && !showCalibrationOptions
+}
 
 open class AppViewModel : WorkoutViewModel() {
 
@@ -142,57 +154,53 @@ open class AppViewModel : WorkoutViewModel() {
         _executeStartWorkout.value = null
     }
 
-    private val _showResumeWorkoutDialog = mutableStateOf(false)
-    val showResumeWorkoutDialog: State<Boolean> = _showResumeWorkoutDialog
-
-    private val _incompleteWorkouts = mutableStateOf<List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>>(emptyList())
-    val incompleteWorkouts: State<List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>> = _incompleteWorkouts
-
-    fun showResumeWorkoutDialog(incompleteWorkouts: List<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout>) {
-        if (incompleteWorkouts.isEmpty()) {
-            hideResumeWorkoutDialog()
-            return
-        }
-        _incompleteWorkouts.value = incompleteWorkouts
-        _showResumeWorkoutDialog.value = true
-    }
-
-    fun hideResumeWorkoutDialog() {
-        _showResumeWorkoutDialog.value = false
-        _incompleteWorkouts.value = emptyList()
-    }
-
     private val _showRecoveryPrompt = mutableStateOf(false)
     val showRecoveryPrompt: State<Boolean> = _showRecoveryPrompt
 
     private val _recoveryWorkout = mutableStateOf<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?>(null)
     val recoveryWorkout: State<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?> = _recoveryWorkout
-    private val _recoveryHasCalibrationState = mutableStateOf(false)
-    val recoveryHasCalibrationState: State<Boolean> = _recoveryHasCalibrationState
+    private val _recoveryPromptUiState = mutableStateOf(RecoveryPromptUiState())
+    internal val recoveryPromptUiState: State<RecoveryPromptUiState> = _recoveryPromptUiState
 
     private val _showRecoveredWorkoutNotice = mutableStateOf(false)
     val showRecoveredWorkoutNotice: State<Boolean> = _showRecoveredWorkoutNotice
+    private var skipNextResumeLastState = false
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false
+    }
+
+    fun consumeSkipNextResumeLastState(): Boolean {
+        val shouldSkip = skipNextResumeLastState
+        skipNextResumeLastState = false
+        return shouldSkip
     }
 
     internal fun showRecoveryPrompt(
         incompleteWorkout: com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout,
         checkpoint: WorkoutRecoveryCheckpoint?
     ) {
+        val showCalibrationOptions = checkpoint?.isCalibrationSetExecution == true ||
+            checkpoint?.stateType == RecoveryStateType.CALIBRATION_LOAD ||
+            checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR
+        val showTimerOptions = !showCalibrationOptions && shouldShowTimerOptions(checkpoint, incompleteWorkout.workoutId)
+        val displayName = resolveRecoveryDisplayName(incompleteWorkout, checkpoint)
+
+        _recoveryPromptUiState.value = RecoveryPromptUiState(
+            displayName = displayName,
+            workoutStartTime = incompleteWorkout.workoutHistory.startTime,
+            showTimerOptions = showTimerOptions,
+            showCalibrationOptions = showCalibrationOptions
+        )
         _recoveryWorkout.value = incompleteWorkout
         _showRecoveryPrompt.value = true
         pendingRecoveryCheckpoint = checkpoint
-        _recoveryHasCalibrationState.value = checkpoint?.isCalibrationSetExecution == true ||
-            checkpoint?.stateType == RecoveryStateType.CALIBRATION_LOAD ||
-            checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR
     }
 
     fun hideRecoveryPrompt() {
         _showRecoveryPrompt.value = false
         _recoveryWorkout.value = null
-        _recoveryHasCalibrationState.value = false
+        _recoveryPromptUiState.value = RecoveryPromptUiState()
     }
 
     internal fun setPendingRecoveryResumeOptions(options: RecoveryResumeOptions) {
@@ -213,7 +221,48 @@ open class AppViewModel : WorkoutViewModel() {
         lastCheckpointFingerprint = null
         pendingRecoveryCheckpoint = null
         pendingRecoveryResumeOptions = RecoveryResumeOptions()
-        _recoveryHasCalibrationState.value = false
+        _recoveryPromptUiState.value = RecoveryPromptUiState()
+    }
+
+    private fun shouldShowTimerOptions(
+        checkpoint: WorkoutRecoveryCheckpoint?,
+        workoutId: UUID
+    ): Boolean {
+        if (checkpoint == null || checkpoint.workoutId != workoutId) return false
+        if (checkpoint.stateType != RecoveryStateType.SET) return false
+        if (checkpoint.isCalibrationSetExecution) return false
+
+        val targetExercise = findExerciseForCheckpoint(checkpoint, workoutId) ?: return false
+        val targetSet = checkpoint.setId?.let { setId ->
+            targetExercise.sets.firstOrNull { it.id == setId }
+        } ?: checkpoint.setIndex?.toInt()?.let { setIndex ->
+            targetExercise.sets.getOrNull(setIndex)
+        } ?: return false
+
+        return targetSet is TimedDurationSet || targetSet is EnduranceSet
+    }
+
+    private fun resolveRecoveryDisplayName(
+        incompleteWorkout: WorkoutViewModel.IncompleteWorkout,
+        checkpoint: WorkoutRecoveryCheckpoint?
+    ): String {
+        val resolvedExerciseName = checkpoint
+            ?.takeIf { it.workoutId == incompleteWorkout.workoutId }
+            ?.let { findExerciseForCheckpoint(it, incompleteWorkout.workoutId)?.name }
+        return resolvedExerciseName ?: incompleteWorkout.workoutName
+    }
+
+    private fun findExerciseForCheckpoint(
+        checkpoint: WorkoutRecoveryCheckpoint,
+        workoutId: UUID
+    ): Exercise? {
+        val workout = workoutStore.workouts.firstOrNull { it.id == workoutId } ?: return null
+        val exercises = workout.workoutComponents.filterIsInstance<Exercise>() +
+            workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
+
+        return checkpoint.exerciseId?.let { exerciseId ->
+            exercises.firstOrNull { it.id == exerciseId }
+        } ?: exercises.firstOrNull()
     }
 
     fun persistRecoverySnapshotNow(synchronous: Boolean = false) {
@@ -734,13 +783,53 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun goToNextState() {
+        stopActiveTimerForCurrentState()
         super.goToNextState()
         reEvaluateDimmingForCurrentState()
+    }
+
+    /**
+     * Wear-specific navigation entrypoint that ensures active timer services are not left running
+     * when navigating backward to a previous set.
+     */
+    fun goToPreviousSetWear() {
+        stopActiveTimerForCurrentState()
+        goToPreviousSet()
+        reEvaluateDimmingForCurrentState()
+    }
+
+    /**
+     * Wear-specific navigation entrypoint that ensures active timer services are not left running
+     * when navigating backward across non-rest states.
+     */
+    fun goToPreviousNonRestStateWear() {
+        stopActiveTimerForCurrentState()
+        goToPreviousNonRestState()
+        reEvaluateDimmingForCurrentState()
+    }
+
+    private fun stopActiveTimerForCurrentState() {
+        when (val currentState = workoutState.value) {
+            is WorkoutState.Set -> {
+                if (currentState.set is TimedDurationSet || currentState.set is EnduranceSet) {
+                    workoutTimerService.unregisterTimer(currentState.set.id)
+                    currentState.startTime = null
+                }
+            }
+
+            is WorkoutState.Rest -> {
+                workoutTimerService.unregisterTimer(currentState.set.id)
+                currentState.startTime = null
+            }
+
+            else -> Unit
+        }
     }
 
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
+        skipNextResumeLastState = false
         val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()
         val runtimeSnapshot = checkpointStore()
             ?.loadRuntimeSnapshotJson()
@@ -786,12 +875,12 @@ open class AppViewModel : WorkoutViewModel() {
             }
 
             if (recoveryApplied) {
-                rebindEquipmentInCurrentStateMachine()
                 if (shouldRestartCalibration) {
                     resetCurrentCalibrationLoadSelectionState()
                 }
                 applyTimerRecoveryChoice(recoveryOptions.timerChoice)
                 resumeWorkout()
+                skipNextResumeLastState = true
                 pendingPostRecoveryTimerReanchor =
                     recoveryOptions.timerChoice == TimerRecoveryChoice.CONTINUE
                 _showRecoveredWorkoutNotice.value = true

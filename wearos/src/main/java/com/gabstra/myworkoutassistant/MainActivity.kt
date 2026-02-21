@@ -50,7 +50,6 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.gabstra.myworkoutassistant.composables.EdgeSwipeBackHandler
 import com.gabstra.myworkoutassistant.composables.KeepOn
 import com.gabstra.myworkoutassistant.composables.RecoveryDialog
-import com.gabstra.myworkoutassistant.composables.ResumeWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -75,7 +74,6 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -331,27 +329,17 @@ fun WearApp(
                 try {
                     val incompleteWorkouts = appViewModel.getIncompleteWorkouts()
                     if (incompleteWorkouts.isNotEmpty()) {
-                        if (isWorkoutInProgress) {
-                            val checkpoint = appViewModel.getSavedRecoveryCheckpoint()
-                            if (checkpoint != null) {
-                                val candidate =
-                                    incompleteWorkouts.firstOrNull { it.workoutId == checkpoint.workoutId }
-
-                                if (candidate != null) {
-                                    appViewModel.showRecoveryPrompt(candidate, checkpoint)
-                                } else {
-                                    Log.w(
-                                        "MainActivity",
-                                        "Recovery checkpoint did not match any incomplete workout; showing resume list instead."
-                                    )
-                                    appViewModel.clearRecoveryCheckpoint()
-                                    appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
-                                }
-                            } else {
-                                appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
-                            }
+                        val checkpoint = if (isWorkoutInProgress) {
+                            appViewModel.getSavedRecoveryCheckpoint()
                         } else {
-                            appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                            null
+                        }
+                        val candidate = checkpoint?.let { recoveryCheckpoint ->
+                            incompleteWorkouts.firstOrNull { it.workoutId == recoveryCheckpoint.workoutId }
+                        } ?: incompleteWorkouts.maxByOrNull { it.workoutHistory.startTime }
+
+                        if (candidate != null) {
+                            appViewModel.showRecoveryPrompt(candidate, checkpoint)
                         }
                     } else if (isWorkoutInProgress) {
                         // Preserve checkpoint if available so recovery can still be applied
@@ -606,12 +594,9 @@ fun WearApp(
                 }
             }
 
-            // Resume workout dialog
-            val showResumeDialog by appViewModel.showResumeWorkoutDialog
-            val incompleteWorkouts by appViewModel.incompleteWorkouts
             val showRecoveryPrompt by appViewModel.showRecoveryPrompt
             val recoveryWorkout by appViewModel.recoveryWorkout
-            val recoveryHasCalibrationState by appViewModel.recoveryHasCalibrationState
+            val recoveryPromptUiState by appViewModel.recoveryPromptUiState
             val showRecoveredNotice by appViewModel.showRecoveredWorkoutNotice
 
             val basePermissions = listOf(
@@ -649,34 +634,23 @@ fun WearApp(
                 appViewModel.consumeRecoveredWorkoutNotice()
             }
 
-            ResumeWorkoutDialog(
-                show = showResumeDialog,
-                hapticsViewModel = hapticsViewModel,
-                incompleteWorkouts = incompleteWorkouts,
-                onDismiss = {
-                    appViewModel.hideResumeWorkoutDialog()
-                },
-                onResumeWorkout = { incompleteWorkout ->
-                    appViewModel.hideResumeWorkoutDialog()
-                    appViewModel.prepareResumeWorkout(incompleteWorkout)
-                    permissionLauncherResume.launch(basePermissions.toTypedArray())
-                }
-            )
-
             RecoveryDialog(
                 show = showRecoveryPrompt,
                 workout = recoveryWorkout,
-                hasCalibrationState = recoveryHasCalibrationState,
+                uiState = recoveryPromptUiState,
                 onDismiss = {
+                    hapticsViewModel.doGentleVibration()
                     appViewModel.hideRecoveryPrompt()
                 },
                 onResume = { incompleteWorkout, recoveryOptions ->
+                    hapticsViewModel.doGentleVibration()
                     appViewModel.hideRecoveryPrompt()
                     appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
                     appViewModel.prepareResumeWorkout(incompleteWorkout)
                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                 },
                 onDiscard = { incompleteWorkout ->
+                    hapticsViewModel.doGentleVibration()
                     appViewModel.discardIncompleteWorkout(incompleteWorkout)
                     appViewModel.clearWorkoutInProgressFlag()
                     appViewModel.clearRecoveryCheckpoint()

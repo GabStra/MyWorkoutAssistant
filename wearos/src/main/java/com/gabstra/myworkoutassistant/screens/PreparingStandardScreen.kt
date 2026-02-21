@@ -75,7 +75,11 @@ fun PreparingStandardScreen(
 
             viewModel.lightScreenUp()
             if(hasWorkoutRecord){
-                viewModel.resumeLastState()
+                if (viewModel.consumeSkipNextResumeLastState()) {
+                    viewModel.resumeWorkout()
+                } else {
+                    viewModel.resumeLastState()
+                }
             }else{
                 viewModel.setWorkoutStart()
             }

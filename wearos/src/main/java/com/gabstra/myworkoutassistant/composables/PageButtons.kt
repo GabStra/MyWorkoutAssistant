@@ -1,8 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -90,14 +90,15 @@ fun PageButtons(
         }
     ) { contentPadding ->
         TransformingLazyColumn(
-            contentPadding = PaddingValues(20.dp),
+            modifier = Modifier.padding(horizontal = 10.dp),
+            contentPadding = contentPadding,
             state = state,
         ) {
             item {
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec).animateItem(),
+                        .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
                     text = "Back",
                     onClick = {
@@ -127,7 +128,7 @@ fun PageButtons(
                             is WorkoutState.CalibrationLoadSelection -> {
                                 // Go back to previous non-Rest state (skipping Rest states)
                                 // This will typically be a Set from the previous exercise
-                                viewModel.goToPreviousNonRestState()
+                                viewModel.goToPreviousNonRestStateWear()
                                 viewModel.lightScreenUp()
                             }
                             else -> {
@@ -143,7 +144,7 @@ fun PageButtons(
                 CheckboxButton(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec).animateItem(),
+                        .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
                     colors = checkboxButtonColors(),
                     label = { Text(
@@ -163,7 +164,7 @@ fun PageButtons(
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .transformedHeight(this, spec).animateItem(),
+                            .transformedHeight(this, spec),
                         transformation = SurfaceTransformation(spec),
                         text = "Add Rest-Pause set",
                         onClick = {
@@ -182,7 +183,7 @@ fun PageButtons(
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .transformedHeight(this, spec).animateItem(),
+                            .transformedHeight(this, spec),
                         transformation = SurfaceTransformation(spec),
                         text = "Add Set",
                         onClick = {
@@ -199,7 +200,7 @@ fun PageButtons(
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec).animateItem(),
+                        .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
                     text = "Go to next exercise",
                     onClick = {
@@ -212,7 +213,7 @@ fun PageButtons(
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec).animateItem(),
+                        .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
                     text = "Go Home",
                     onClick = {
@@ -244,7 +245,7 @@ fun PageButtons(
         message = "Do you want to proceed?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            viewModel.goToPreviousSet()
+            viewModel.goToPreviousSetWear()
             viewModel.lightScreenUp()
         },
         handleNoClick = {

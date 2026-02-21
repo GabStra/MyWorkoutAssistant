@@ -105,7 +105,11 @@ fun PreparingPolarScreen(
 
             viewModel.lightScreenUp()
             if (hasWorkoutRecord) {
-                viewModel.resumeLastState()
+                if (viewModel.consumeSkipNextResumeLastState()) {
+                    viewModel.resumeWorkout()
+                } else {
+                    viewModel.resumeLastState()
+                }
             } else {
                 viewModel.setWorkoutStart()
             }
@@ -154,7 +158,11 @@ fun PreparingPolarScreen(
                                 hapticsViewModel.doGentleVibration()
 
                                 if (hasWorkoutRecord) {
-                                    viewModel.resumeLastState()
+                                    if (viewModel.consumeSkipNextResumeLastState()) {
+                                        viewModel.resumeWorkout()
+                                    } else {
+                                        viewModel.resumeLastState()
+                                    }
                                 } else {
                                     viewModel.setWorkoutStart()
                                 }

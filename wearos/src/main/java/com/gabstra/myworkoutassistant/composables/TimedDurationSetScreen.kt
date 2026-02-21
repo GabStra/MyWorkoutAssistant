@@ -84,12 +84,18 @@ fun TimedDurationSetScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    var showStartButton by remember(set.id) { mutableStateOf(!set.autoStart) }
+    val restoredTimedData = state.currentSetData as? TimedDurationSetData
+    val hasRecoveredProgress = restoredTimedData != null &&
+        restoredTimedData.endTimer > 0 &&
+        restoredTimedData.endTimer < restoredTimedData.startTimer
+    var showStartButton by remember(set.id) {
+        mutableStateOf(!set.autoStart && state.startTime == null && !hasRecoveredProgress)
+    }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
-    var countdownValue by remember(set) { mutableIntStateOf(3) }
+    var countdownValue by remember(set.id) { mutableIntStateOf(3) }
     var countdownInitiated by remember(set.id) { mutableStateOf(false) }
     var hasAutoStartBeenInitiated by remember(set.id) { mutableStateOf(false) }
 
@@ -190,7 +196,6 @@ fun TimedDurationSetScreen(
         } finally {
             displayStartingDialog = false
             countdownInitiated = false
-            countdownValue = 3
         }
     }
 
@@ -272,6 +277,21 @@ fun TimedDurationSetScreen(
                 // Timer should be running - register if not already registered
                 // This handles Bug 5: Timer Service Not Re-registered on Resume
                 android.util.Log.d("TimedDurationSetScreen", "Re-registering timer on resume: setId=${set.id}, startTime=${state.startTime}")
+                startTimer()
+            }
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
+
+        val recoveredSetData = state.currentSetData as? TimedDurationSetData
+        val hasRecoverableProgress = recoveredSetData != null &&
+            recoveredSetData.endTimer > 0 &&
+            recoveredSetData.endTimer < recoveredSetData.startTimer
+        if (hasRecoverableProgress) {
+            val elapsedMillis = (recoveredSetData.startTimer - recoveredSetData.endTimer).coerceAtLeast(0)
+            state.startTime = LocalDateTime.now().minusNanos(elapsedMillis.toLong() * 1_000_000L)
+            showStartButton = false
+            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 startTimer()
             }
             autoStartJob?.cancel()
@@ -518,4 +538,3 @@ fun TimedDurationSetScreen(
 
     }
 }
-

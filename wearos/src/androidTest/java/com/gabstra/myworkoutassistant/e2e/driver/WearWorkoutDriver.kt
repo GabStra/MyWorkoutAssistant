@@ -281,6 +281,7 @@ class WearWorkoutDriver(
             }
 
             clickContinueTimerIfVisible()
+            clickContinueCalibrationIfVisible()
             val resumeButton = findResumeButton()
             if (resumeButton != null) {
                 clickObjectOrAncestorInternal(resumeButton)
@@ -341,6 +342,22 @@ class WearWorkoutDriver(
 
         if (continueTimerButton != null) {
             clickObjectOrAncestorInternal(continueTimerButton)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+    }
+
+    private fun clickContinueCalibrationIfVisible() {
+        val continueCalibrationButton = device.findObject(By.desc("Recovery calibration continue option"))
+            ?: device.findObject(By.textContains("Continue calibration"))
+            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
+                val text = runCatching { obj.text }.getOrNull().orEmpty()
+                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
+                text.contains("continue calibration", ignoreCase = true) ||
+                    desc.contains("continue calibration", ignoreCase = true)
+            }
+
+        if (continueCalibrationButton != null) {
+            clickObjectOrAncestorInternal(continueCalibrationButton)
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
     }

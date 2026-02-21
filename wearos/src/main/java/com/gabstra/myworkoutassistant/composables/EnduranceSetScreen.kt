@@ -94,10 +94,16 @@ fun EnduranceSetScreen (
     }
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
-    var countdownValue by remember(set) { mutableIntStateOf(3) }
+    var countdownValue by remember(set.id) { mutableIntStateOf(3) }
     var countdownInitiated by remember(set.id) { mutableStateOf(false) }
 
-    var showStartButton by remember(set) { mutableStateOf(!set.autoStart) }
+    val restoredEnduranceData = state.currentSetData as? EnduranceSetData
+    val hasRecoveredProgress = restoredEnduranceData != null &&
+        restoredEnduranceData.endTimer > 0 &&
+        restoredEnduranceData.endTimer < restoredEnduranceData.startTimer
+    var showStartButton by remember(set.id) {
+        mutableStateOf(!set.autoStart && state.startTime == null && !hasRecoveredProgress)
+    }
 
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? EnduranceSetData)?.startTimer
@@ -225,7 +231,6 @@ fun EnduranceSetScreen (
         } finally {
             displayStartingDialog = false
             countdownInitiated = false
-            countdownValue = 3
         }
     }
 
@@ -357,6 +362,21 @@ fun EnduranceSetScreen (
             // Don't check for completion here - let WorkoutTimerService handle it
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 // Timer should be running - register if not already registered
+                startTimer()
+            }
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
+
+        val recoveredSetData = state.currentSetData as? EnduranceSetData
+        val hasRecoverableProgress = recoveredSetData != null &&
+            recoveredSetData.endTimer > 0 &&
+            recoveredSetData.endTimer < recoveredSetData.startTimer
+        if (hasRecoverableProgress) {
+            state.startTime = LocalDateTime.now()
+                .minusNanos(recoveredSetData.endTimer.toLong() * 1_000_000L)
+            showStartButton = false
+            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 startTimer()
             }
             autoStartJob?.cancel()
@@ -532,4 +552,3 @@ fun EnduranceSetScreen (
 
     }
 }
-

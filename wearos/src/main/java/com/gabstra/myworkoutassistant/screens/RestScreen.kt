@@ -240,8 +240,7 @@ private fun RestTimerBlock(
     if (isTimerInEditMode) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(vertical = 20.dp, horizontal = 35.dp),
+                .fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
             ControlButtonsVertical(
@@ -271,11 +270,19 @@ private fun RestTimerBlock(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
+                    text = "REST",
+                    style = timerHeaderStyle,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(2.5.dp))
+                textComposable(seconds = currentSeconds)
+                Spacer(modifier = Modifier.height(7.5.dp))
+                Text(
                     text = "UP NEXT",
                     style = timerHeaderStyle,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(7.5.dp))
                 ExerciseNameText(
                     text = exerciseName,
                     modifier = Modifier
@@ -295,14 +302,6 @@ private fun RestTimerBlock(
                     textColor = MaterialTheme.colorScheme.onBackground,
                     onTap = { hapticsViewModel.doGentleVibration() }
                 )
-                Spacer(modifier = Modifier.height(5.dp))
-                Text(
-                    text = "REST",
-                    style = timerHeaderStyle,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(2.5.dp))
-                textComposable(seconds = currentSeconds)
             }
         }
     }
@@ -519,7 +518,7 @@ fun RestScreen(
                 }
 
                 RestHorizontalPage.REST_TIMER -> {
-                    Box(modifier = pageModifier, contentAlignment = Alignment.Center) {
+                    Box(modifier = pageModifier) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
