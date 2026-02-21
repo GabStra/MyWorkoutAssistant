@@ -273,9 +273,14 @@ open class AppViewModel : WorkoutViewModel() {
         prefs.edit { putBoolean("isWorkoutInProgress", false) }
     }
 
+    /**
+     * Discards an interrupted workout: deletes the workout record and marks the workout history
+     * as done so it no longer appears in [getInterruptedWorkouts].
+     */
     fun discardInterruptedWorkout(interruptedWorkout: InterruptedWorkout) {
         launchIO {
             workoutRecordDao.deleteByWorkoutId(interruptedWorkout.workoutId)
+            workoutHistoryDao.updateIsDone(interruptedWorkout.workoutHistory.id, true)
         }
     }
 
