@@ -33,6 +33,8 @@ data class WorkoutStateMachine(
     internal val currentIndex: Int,
     private val timeProvider: () -> LocalDateTime = { LocalDateTime.now() }
 ) {
+    fun sequenceSnapshot(): List<WorkoutStateSequenceItem> = stateSequence
+
     init {
         val disallowedBoundaryState = allStates.firstOrNull { state ->
             state is WorkoutState.Preparing || state is WorkoutState.Completed

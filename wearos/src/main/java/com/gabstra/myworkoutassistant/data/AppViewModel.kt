@@ -15,10 +15,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
@@ -35,11 +37,25 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDateTime
-import java.time.ZoneId
 import java.util.UUID
 import com.gabstra.myworkoutassistant.data.checkConnection
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
+
+internal enum class TimerRecoveryChoice {
+    CONTINUE,
+    RESTART
+}
+
+internal enum class CalibrationRecoveryChoice {
+    CONTINUE,
+    RESTART
+}
+
+internal data class RecoveryResumeOptions(
+    val timerChoice: TimerRecoveryChoice = TimerRecoveryChoice.CONTINUE,
+    val calibrationChoice: CalibrationRecoveryChoice = CalibrationRecoveryChoice.CONTINUE
+)
 
 open class AppViewModel : WorkoutViewModel() {
 
@@ -50,7 +66,10 @@ open class AppViewModel : WorkoutViewModel() {
 
     private var applicationContext: android.content.Context? = null
     private var lastCheckpointFingerprint: String? = null
+    private var forceSyncRecoveryWrite = false
+    private var pendingPostRecoveryTimerReanchor = false
     private var pendingRecoveryCheckpoint: WorkoutRecoveryCheckpoint? = null
+    private var pendingRecoveryResumeOptions: RecoveryResumeOptions = RecoveryResumeOptions()
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -148,6 +167,8 @@ open class AppViewModel : WorkoutViewModel() {
 
     private val _recoveryWorkout = mutableStateOf<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?>(null)
     val recoveryWorkout: State<com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel.IncompleteWorkout?> = _recoveryWorkout
+    private val _recoveryHasCalibrationState = mutableStateOf(false)
+    val recoveryHasCalibrationState: State<Boolean> = _recoveryHasCalibrationState
 
     private val _showRecoveredWorkoutNotice = mutableStateOf(false)
     val showRecoveredWorkoutNotice: State<Boolean> = _showRecoveredWorkoutNotice
@@ -163,11 +184,19 @@ open class AppViewModel : WorkoutViewModel() {
         _recoveryWorkout.value = incompleteWorkout
         _showRecoveryPrompt.value = true
         pendingRecoveryCheckpoint = checkpoint
+        _recoveryHasCalibrationState.value = checkpoint?.isCalibrationSetExecution == true ||
+            checkpoint?.stateType == RecoveryStateType.CALIBRATION_LOAD ||
+            checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR
     }
 
     fun hideRecoveryPrompt() {
         _showRecoveryPrompt.value = false
         _recoveryWorkout.value = null
+        _recoveryHasCalibrationState.value = false
+    }
+
+    internal fun setPendingRecoveryResumeOptions(options: RecoveryResumeOptions) {
+        pendingRecoveryResumeOptions = options
     }
 
     fun prepareResumeWorkout(incompleteWorkout: WorkoutViewModel.IncompleteWorkout) {
@@ -183,6 +212,17 @@ open class AppViewModel : WorkoutViewModel() {
         checkpointStore()?.clear()
         lastCheckpointFingerprint = null
         pendingRecoveryCheckpoint = null
+        pendingRecoveryResumeOptions = RecoveryResumeOptions()
+        _recoveryHasCalibrationState.value = false
+    }
+
+    fun persistRecoverySnapshotNow(synchronous: Boolean = false) {
+        forceSyncRecoveryWrite = synchronous
+        try {
+            rebuildScreenState()
+        } finally {
+            forceSyncRecoveryWrite = false
+        }
     }
 
     fun clearWorkoutInProgressFlag() {
@@ -391,6 +431,7 @@ open class AppViewModel : WorkoutViewModel() {
             workoutId = selectedWorkoutId,
             workoutHistoryId = currentWorkoutHistory?.id,
             stateType = stateType,
+            isCalibrationSetExecution = (currentState as? WorkoutState.Set)?.isCalibrationSet == true,
             exerciseId = exerciseId,
             setId = setId,
             setIndex = setIndex,
@@ -399,11 +440,56 @@ open class AppViewModel : WorkoutViewModel() {
             updatedAtEpochMs = System.currentTimeMillis()
         )
 
-        val fingerprint = "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}:${checkpoint.setStartEpochMs}"
-        if (fingerprint == lastCheckpointFingerprint) return
+        val checkpointStore = WorkoutRecoveryCheckpointStore(context)
+        val runtimeSnapshot = exportRecoveryStateMachine()?.let { (sequence, currentIndex) ->
+            val runtimeSnapshotJson = WorkoutRecoverySnapshotCodec.encode(
+                workoutId = selectedWorkoutId,
+                workoutHistoryId = currentWorkoutHistory?.id,
+                currentIndex = currentIndex,
+                sequenceItems = sequence
+            )
+            currentIndex to runtimeSnapshotJson
+        }
+        val timerProgress = getTimerProgressKey(currentState)
+        val sequenceIndex = runtimeSnapshot?.first ?: -1
+        val isTimerActivelyRunning = when (currentState) {
+            is WorkoutState.Set -> currentState.startTime != null &&
+                (
+                    currentState.currentSetData is TimedDurationSetData ||
+                        currentState.currentSetData is EnduranceSetData
+                    )
+            is WorkoutState.Rest -> currentState.startTime != null
+            else -> false
+        }
+        val shouldWriteSynchronously = forceSyncRecoveryWrite || isTimerActivelyRunning
+        val fingerprint =
+            "${checkpoint.workoutId}:${checkpoint.stateType}:${checkpoint.exerciseId}:${checkpoint.setId}:${checkpoint.setIndex}:${checkpoint.restOrder}:${checkpoint.setStartEpochMs}:$sequenceIndex:$timerProgress"
 
-        WorkoutRecoveryCheckpointStore(context).save(checkpoint)
-        lastCheckpointFingerprint = fingerprint
+        if (fingerprint != lastCheckpointFingerprint) {
+            checkpointStore.save(checkpoint, synchronous = shouldWriteSynchronously)
+            lastCheckpointFingerprint = fingerprint
+        }
+
+        runtimeSnapshot?.second?.let { runtimeSnapshotJson ->
+            checkpointStore.saveRuntimeSnapshotJson(
+                snapshotJson = runtimeSnapshotJson,
+                synchronous = shouldWriteSynchronously
+            )
+        }
+    }
+
+    private fun getTimerProgressKey(state: WorkoutState): Int {
+        return when (state) {
+            is WorkoutState.Set -> when (val setData = state.currentSetData) {
+                is TimedDurationSetData -> setData.endTimer
+                is EnduranceSetData -> setData.endTimer
+                else -> -1
+            }
+            is WorkoutState.Rest -> {
+                (state.currentSetData as? RestSetData)?.endTimer ?: -1
+            }
+            else -> -1
+        }
     }
 
     fun sendAll(context: Context) {
@@ -656,68 +742,152 @@ open class AppViewModel : WorkoutViewModel() {
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
         val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()
+        val runtimeSnapshot = checkpointStore()
+            ?.loadRuntimeSnapshotJson()
+            ?.let { WorkoutRecoverySnapshotCodec.decode(it) }
+        val recoveryOptions = pendingRecoveryResumeOptions
+
         super.resumeWorkoutFromRecord {
             val selectedWorkoutId = selectedWorkout.value.id
-            val checkpointApplied = if (checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
-                moveToRecoveredState(
-                    stateType = checkpoint.stateType.name,
+            val shouldRestartCalibration = checkpoint != null &&
+                checkpoint.workoutId == selectedWorkoutId &&
+                recoveryOptions.calibrationChoice == CalibrationRecoveryChoice.RESTART &&
+                (
+                    checkpoint.stateType == RecoveryStateType.CALIBRATION_LOAD ||
+                        checkpoint.stateType == RecoveryStateType.CALIBRATION_RIR ||
+                        checkpoint.isCalibrationSetExecution
+                    )
+
+            var recoveryApplied = false
+
+            if (!shouldRestartCalibration &&
+                runtimeSnapshot != null &&
+                runtimeSnapshot.workoutId == selectedWorkoutId
+            ) {
+                recoveryApplied = restoreRecoveryStateMachine(
+                    sequence = runtimeSnapshot.sequenceItems,
+                    currentIndex = runtimeSnapshot.currentIndex
+                )
+            }
+
+            if (!recoveryApplied && checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
+                val targetStateType = if (shouldRestartCalibration) {
+                    RecoveryStateType.CALIBRATION_LOAD.name
+                } else {
+                    checkpoint.stateType.name
+                }
+                recoveryApplied = moveToRecoveredState(
+                    stateType = targetStateType,
                     exerciseId = checkpoint.exerciseId,
                     setId = checkpoint.setId,
                     setIndex = checkpoint.setIndex,
                     restOrder = checkpoint.restOrder
                 )
-            } else {
-                false
             }
 
-            if (checkpointApplied) {
-                checkpoint?.let { applyTimerRecoveryFromCheckpoint(it) }
+            if (recoveryApplied) {
+                if (shouldRestartCalibration) {
+                    resetCurrentCalibrationLoadSelectionState()
+                }
+                applyTimerRecoveryChoice(recoveryOptions.timerChoice)
+                resumeWorkout()
+                pendingPostRecoveryTimerReanchor =
+                    recoveryOptions.timerChoice == TimerRecoveryChoice.CONTINUE
                 _showRecoveredWorkoutNotice.value = true
             }
 
             pendingRecoveryCheckpoint = null
+            pendingRecoveryResumeOptions = RecoveryResumeOptions()
             lightScreenUp()
             onEnd()
         }
     }
 
-    private fun applyTimerRecoveryFromCheckpoint(checkpoint: WorkoutRecoveryCheckpoint) {
-        val setState = workoutState.value as? WorkoutState.Set ?: return
-        val setStartEpochMs = checkpoint.setStartEpochMs ?: return
+    private fun applyTimerRecoveryChoice(choice: TimerRecoveryChoice) {
+        when (val state = workoutState.value) {
+            is WorkoutState.Set -> {
+                when (val setData = state.currentSetData) {
+                    is TimedDurationSetData -> {
+                        if (choice == TimerRecoveryChoice.RESTART) {
+                            state.currentSetData = setData.copy(endTimer = setData.startTimer)
+                            state.startTime = null
+                            workoutTimerService.unregisterTimer(state.set.id)
+                        } else {
+                            reanchorTimedDurationStartTime(state, setData)
+                        }
+                    }
 
-        val nowEpochMs = System.currentTimeMillis()
-        val elapsedMs = (nowEpochMs - setStartEpochMs).coerceAtLeast(0L).toInt()
-        val setData = setState.currentSetData
-
-        when (setData) {
-            is TimedDurationSetData -> {
-                val remainingMs = (setData.startTimer - elapsedMs).coerceAtLeast(0)
-                setState.currentSetData = setData.copy(endTimer = remainingMs)
-                if (remainingMs > 0) {
-                    setState.startTime = fromEpochMillis(setStartEpochMs)
+                    is EnduranceSetData -> {
+                        if (choice == TimerRecoveryChoice.RESTART) {
+                            state.currentSetData = setData.copy(endTimer = 0)
+                            state.startTime = null
+                            workoutTimerService.unregisterTimer(state.set.id)
+                        } else {
+                            reanchorEnduranceStartTime(state, setData)
+                        }
+                    }
+                    else -> Unit
                 }
             }
 
-            is EnduranceSetData -> {
-                val elapsedClamped = elapsedMs.coerceAtMost(setData.startTimer)
-                setState.currentSetData = setData.copy(endTimer = elapsedClamped)
-                if (elapsedClamped < setData.startTimer) {
-                    setState.startTime = fromEpochMillis(setStartEpochMs)
+            is WorkoutState.Rest -> {
+                val setData = state.currentSetData as? RestSetData ?: return
+                if (choice == TimerRecoveryChoice.RESTART) {
+                    state.currentSetData = setData.copy(endTimer = setData.startTimer)
+                    state.startTime = null
+                    workoutTimerService.unregisterTimer(state.set.id)
+                } else {
+                    reanchorRestStartTime(state, setData)
                 }
+            }
+
+            else -> Unit
+        }
+
+    }
+
+    fun applyPostRecoveryTimerReanchorIfNeeded() {
+        if (!pendingPostRecoveryTimerReanchor) return
+        pendingPostRecoveryTimerReanchor = false
+
+        when (val state = workoutState.value) {
+            is WorkoutState.Set -> when (val setData = state.currentSetData) {
+                is TimedDurationSetData -> reanchorTimedDurationStartTime(state, setData)
+                is EnduranceSetData -> reanchorEnduranceStartTime(state, setData)
+                else -> Unit
+            }
+            is WorkoutState.Rest -> {
+                val setData = state.currentSetData as? RestSetData ?: return
+                reanchorRestStartTime(state, setData)
             }
             else -> Unit
         }
     }
 
-    private fun toEpochMillis(dateTime: LocalDateTime): Long {
-        return dateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private fun reanchorTimedDurationStartTime(state: WorkoutState.Set, setData: TimedDurationSetData) {
+        val elapsedMillis = (setData.startTimer - setData.endTimer).coerceAtLeast(0)
+        state.startTime = LocalDateTime.now()
+            .minusNanos(elapsedMillis.toLong() * 1_000_000L)
     }
 
-    private fun fromEpochMillis(epochMs: Long): LocalDateTime {
-        return LocalDateTime.ofInstant(
-            java.time.Instant.ofEpochMilli(epochMs),
-            ZoneId.systemDefault()
-        )
+    private fun reanchorEnduranceStartTime(state: WorkoutState.Set, setData: EnduranceSetData) {
+        val elapsedMillis = setData.endTimer.coerceAtLeast(0)
+        state.startTime = LocalDateTime.now()
+            .minusNanos(elapsedMillis.toLong() * 1_000_000L)
+    }
+
+    private fun reanchorRestStartTime(state: WorkoutState.Rest, setData: RestSetData) {
+        val elapsedSeconds = (setData.startTimer - setData.endTimer).coerceAtLeast(0)
+        state.startTime = LocalDateTime.now().minusSeconds(elapsedSeconds.toLong())
+    }
+
+    private fun resetCurrentCalibrationLoadSelectionState() {
+        val state = workoutState.value as? WorkoutState.CalibrationLoadSelection ?: return
+        state.currentSetData = initializeSetData(state.calibrationSet)
+    }
+
+    private fun toEpochMillis(dateTime: LocalDateTime): Long {
+        return dateTime.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
     override fun pushAndStoreWorkoutData(

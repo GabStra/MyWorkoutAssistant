@@ -299,7 +299,8 @@ open class WorkoutViewModel(
     // Timer service for managing workout timers independently of composable lifecycle
     val workoutTimerService = WorkoutTimerService(
         viewModelScope = CoroutineScope(viewModelScope.coroutineContext + exceptionContext()),
-        isPaused = { _isPaused.value }
+        isPaused = { _isPaused.value },
+        onTimerProgressChanged = { rebuildScreenState() }
     )
 
     fun pauseWorkout() {
@@ -1359,6 +1360,27 @@ open class WorkoutViewModel(
         if (genericSetFallback != null) return genericSetFallback
 
         return firstMatching { _ -> true }
+    }
+
+    protected fun exportRecoveryStateMachine(): Pair<List<WorkoutStateSequenceItem>, Int>? {
+        val machine = stateMachine ?: return null
+        return machine.sequenceSnapshot() to machine.currentIndex
+    }
+
+    protected fun restoreRecoveryStateMachine(
+        sequence: List<WorkoutStateSequenceItem>,
+        currentIndex: Int
+    ): Boolean {
+        if (sequence.isEmpty()) return false
+        val machine = runCatching {
+            WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, currentIndex)
+        }.getOrNull() ?: return false
+
+        populateNextStateForRest(machine)
+        stateMachine = machine
+        populateNextStateSets()
+        updateStateFlowsFromMachine()
+        return true
     }
 
     private suspend fun resetWorkoutRuntimeState() {

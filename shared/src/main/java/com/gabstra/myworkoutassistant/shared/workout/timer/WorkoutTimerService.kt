@@ -21,7 +21,8 @@ import java.util.UUID
  */
 class WorkoutTimerService(
     private val viewModelScope: CoroutineScope,
-    private val isPaused: () -> Boolean
+    private val isPaused: () -> Boolean,
+    private val onTimerProgressChanged: (() -> Unit)? = null
 ) {
     private enum class TimerType {
         ENDURANCE_SET,
@@ -211,6 +212,7 @@ class WorkoutTimerService(
                 // Only update if value changed to avoid unnecessary recompositions
                 if (setData.endTimer != newEndTimer) {
                     state.currentSetData = setData.copy(endTimer = newEndTimer)
+                    onTimerProgressChanged?.invoke()
                 }
 
                 // Check if timer reached startTimer (for autoStop) or exceeded it
@@ -234,6 +236,7 @@ class WorkoutTimerService(
                 // Only update if value changed to avoid unnecessary recompositions
                 if (setData.endTimer != remainingMillis) {
                     state.currentSetData = setData.copy(endTimer = remainingMillis)
+                    onTimerProgressChanged?.invoke()
                 }
 
                 // Timer completed when it reaches 0
@@ -253,6 +256,7 @@ class WorkoutTimerService(
 
                 if (setData.endTimer != remainingSeconds) {
                     state.currentSetData = setData.copy(endTimer = remainingSeconds)
+                    onTimerProgressChanged?.invoke()
                 }
 
                 if (remainingSeconds <= 0) {
