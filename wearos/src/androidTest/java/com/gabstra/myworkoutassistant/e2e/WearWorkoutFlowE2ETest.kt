@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
@@ -121,6 +122,75 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         require(restTimerVisibleAfterResume) {
             "Workout did not resume at correct state - rest timer not visible"
         }
+    }
+
+    @Test
+    fun resumeWorkout_withRestartTimer_showsFullDurationAndCountsDown() {
+        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
+
+        workoutDriver.completeCurrentSet()
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+        assertRestTimerVisible()
+
+        workoutDriver.killAppProcessTimed(
+            packageName = context.packageName,
+            settleMs = 0
+        )
+        launchAppFromHome()
+
+        val resumed = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
+            workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
+            inWorkoutSelector = By.textContains(":"),
+            timeoutMs = 15_000,
+            useRestartTimer = true
+        )
+        require(resumed.enteredWorkout) {
+            "Could not return to rest screen after relaunch with Restart timer choice"
+        }
+
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+
+        val restVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            5_000
+        )
+        require(restVisible) { "Rest screen not visible after recovery with Restart timer" }
+
+        val initialSeconds = readRestTimerSecondsFromScreen()
+        require(initialSeconds != null && initialSeconds >= 55) {
+            "After Restart timer choice, rest should show full duration (≥55s). actual=$initialSeconds"
+        }
+
+        Thread.sleep(3_000)
+        val laterSeconds = readRestTimerSecondsFromScreen()
+        require(laterSeconds != null && laterSeconds < initialSeconds) {
+            "Rest timer should count down. initial=$initialSeconds later=$laterSeconds"
+        }
+    }
+
+    private fun readRestTimerSecondsFromScreen(): Int? {
+        val root = device.findObject(By.descContains(SetValueSemantics.RestSetTypeDescription)) ?: return null
+        val timerText = findRestTimerText(root) ?: return null
+        val parts = timerText.split(":")
+        if (parts.size != 2) return null
+        val minutes = parts[0].toIntOrNull() ?: return null
+        val seconds = parts[1].toIntOrNull() ?: return null
+        return (minutes * 60) + seconds
+    }
+
+    private fun findRestTimerText(root: UiObject2): String? {
+        val queue = ArrayDeque<UiObject2>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val current = queue.removeFirst()
+            val text = runCatching { current.text }.getOrNull()
+            if (!text.isNullOrBlank() && text.matches(Regex("\\d{1,2}:\\d{2}"))) return text
+            runCatching { current.children }.getOrElse { emptyList() }.forEach { queue.addLast(it) }
+        }
+        return null
     }
 
     @Test

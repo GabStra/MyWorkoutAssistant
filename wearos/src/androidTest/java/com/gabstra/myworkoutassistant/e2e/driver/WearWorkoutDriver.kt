@@ -263,7 +263,8 @@ class WearWorkoutDriver(
     fun resumeOrEnterRecoveredWorkoutTimed(
         workoutName: String,
         inWorkoutSelector: BySelector,
-        timeoutMs: Long = 10_000
+        timeoutMs: Long = 10_000,
+        useRestartTimer: Boolean = false
     ): RecoveryResumeResult {
         if (isLikelyInActiveWorkout(inWorkoutSelector)) {
             return RecoveryResumeResult(true, null, System.currentTimeMillis())
@@ -280,7 +281,11 @@ class WearWorkoutDriver(
                 break
             }
 
-            clickContinueTimerIfVisible()
+            if (useRestartTimer) {
+                clickRestartTimerIfVisible()
+            } else {
+                clickContinueTimerIfVisible()
+            }
             clickContinueCalibrationIfVisible()
             val resumeButton = findResumeButton()
             if (resumeButton != null) {
@@ -358,6 +363,22 @@ class WearWorkoutDriver(
 
         if (continueCalibrationButton != null) {
             clickObjectOrAncestorInternal(continueCalibrationButton)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+    }
+
+    private fun clickRestartTimerIfVisible() {
+        val restartTimerButton = device.findObject(By.desc("Recovery timer restart option"))
+            ?: device.findObject(By.textContains("Restart timer"))
+            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
+                val text = runCatching { obj.text }.getOrNull().orEmpty()
+                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
+                text.contains("restart timer", ignoreCase = true) ||
+                    desc.contains("restart timer", ignoreCase = true)
+            }
+
+        if (restartTimerButton != null) {
+            clickObjectOrAncestorInternal(restartTimerButton)
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
     }
