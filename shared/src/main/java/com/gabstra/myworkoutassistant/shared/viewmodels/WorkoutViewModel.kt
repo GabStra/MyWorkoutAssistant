@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetPreparat
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetStateFactory
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAssemblyService
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutPersistenceCoordinator
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRecordService
 import com.gabstra.myworkoutassistant.shared.workout.progression.SessionDecision
@@ -61,6 +62,7 @@ import com.gabstra.myworkoutassistant.shared.workout.progression.WorkoutProgress
 import com.gabstra.myworkoutassistant.shared.workout.state.CalibrationContext
 import com.gabstra.myworkoutassistant.shared.workout.state.CalibrationPhase
 import com.gabstra.myworkoutassistant.shared.workout.state.ContainerPosition
+import com.gabstra.myworkoutassistant.shared.workout.state.RecoveryStateIndexFinder
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -787,7 +789,7 @@ open class WorkoutViewModel(
         _selectedWorkoutId.value = workoutId
 
         if (workout == null) {
-            Log.w("WorkoutViewModel", "Workout not found for id: $workoutId")
+            Log.w(TAG, "Workout not found for id: $workoutId")
             _hasExercises.value = false
             _hasWorkoutRecord.value = false
             _isCheckingWorkoutRecord.value = false
@@ -802,6 +804,16 @@ open class WorkoutViewModel(
 
         initializeExercisesMaps(workout)
         getWorkoutRecord(workout)
+    }
+
+    /**
+     * Prepares to resume an interrupted workout by setting the selected workout and history id.
+     * Call [resumeWorkoutFromRecord] after navigation to start the workout at the correct state.
+     */
+    open fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
+        _selectedWorkoutId.value = workoutId
+        pendingResumeWorkoutHistoryId = workoutHistoryId
+        _enableWorkoutNotificationFlow.value = null
     }
 
     fun resetAll() {
@@ -876,23 +888,10 @@ open class WorkoutViewModel(
         }
     }
 
-    data class IncompleteWorkout(
-        val workoutHistory: WorkoutHistory,
-        val workoutName: String,
-        val workoutId: UUID
-    )
-
-    suspend fun getIncompleteWorkouts(): List<IncompleteWorkout> {
+    suspend fun getInterruptedWorkouts(): List<InterruptedWorkout> {
         return withContext(dispatchers.io) {
-            // Capture workoutStore value at the start to avoid race conditions
             val currentWorkoutStore = workoutStore
-            workoutRecordService.getIncompleteWorkouts(currentWorkoutStore.workouts).map { incomplete ->
-                IncompleteWorkout(
-                    workoutHistory = incomplete.workoutHistory,
-                    workoutName = incomplete.workoutName,
-                    workoutId = incomplete.workoutId
-                )
-            }
+            workoutRecordService.getInterruptedWorkouts(currentWorkoutStore.workouts)
         }
     }
 
@@ -918,6 +917,11 @@ open class WorkoutViewModel(
         )
     }
 
+    /**
+     * Shared "resume from record" flow: loads workout history, builds state machine at the
+     * resumption index (from [pendingResumeWorkoutHistoryId] or workout record), then invokes [onEnd].
+     * Platforms may override to add process-death recovery (checkpoint/snapshot) before calling [onEnd].
+     */
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
         launchMain {
             withContext(dispatchers.io) {
@@ -951,7 +955,7 @@ open class WorkoutViewModel(
 
                 val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)
                 if (resumeWorkoutHistory == null) {
-                    Log.e("WorkoutViewModel", "Workout history $resumeHistoryId not found when resuming")
+                    Log.e(TAG, "Workout history $resumeHistoryId not found when resuming")
                     pendingResumeWorkoutHistoryId = null
                     _workoutRecord = null
                     withContext(dispatchers.main) {
@@ -1207,6 +1211,11 @@ open class WorkoutViewModel(
         return workoutProgressionService.computeSessionDecision(exerciseId)
     }
 
+    /**
+     * Advances the state machine to the set/rest matching the current workout record and restores
+     * timer state for time-based sets. Part of the shared resume-from-record flow; call after
+     * [resumeWorkoutFromRecord] when the session is ready (e.g. after Preparing screen).
+     */
     fun resumeLastState() {
         if (_workoutRecord == null) return
         val executedSetHistories = executedSetStore.executedSets.value
@@ -1230,6 +1239,25 @@ open class WorkoutViewModel(
         if (isTargetResumeState(currentState) && currentState is WorkoutState.Set) {
             workoutTimerRestoreService.restoreTimerForTimeSet(currentState, executedSetHistories, TAG)
             return
+        }
+
+        // When we landed on Rest (after the Set matching workoutRecord), stay on Rest; do not advance.
+        val machine = stateMachine
+        if (currentState is WorkoutState.Rest && machine != null) {
+            val idx = machine.currentIndex
+            if (idx > 0) {
+                val previousState = machine.allStates[idx - 1]
+                if (previousState is WorkoutState.Set &&
+                    WorkoutStateQueries.matchesExerciseAndOrder(
+                        state = previousState,
+                        exerciseId = _workoutRecord!!.exerciseId,
+                        order = _workoutRecord!!.setIndex
+                    )
+                ) {
+                    Log.d(TAG, "Resume on Rest after set matching record: staying on Rest")
+                    return
+                }
+            }
         }
 
         launchIO {
@@ -1270,7 +1298,7 @@ open class WorkoutViewModel(
         val machine = stateMachine ?: return false
         if (machine.allStates.isEmpty()) return false
 
-        val targetIndex = findRecoveryStateIndex(
+        val targetIndex = RecoveryStateIndexFinder.findRecoveryStateIndex(
             allStates = machine.allStates,
             stateType = stateType,
             exerciseId = exerciseId,
@@ -1289,77 +1317,6 @@ open class WorkoutViewModel(
         }
 
         return true
-    }
-
-    private fun findRecoveryStateIndex(
-        allStates: List<WorkoutState>,
-        stateType: String,
-        exerciseId: UUID?,
-        setId: UUID?,
-        setIndex: UInt?,
-        restOrder: UInt?
-    ): Int? {
-        fun firstMatching(predicate: (WorkoutState) -> Boolean): Int? {
-            val index = allStates.indexOfFirst(predicate)
-            return index.takeIf { it >= 0 }
-        }
-
-        val normalizedStateType = stateType.uppercase()
-
-        val exactMatch = when (normalizedStateType) {
-            "SET" -> firstMatching { state ->
-                state is WorkoutState.Set &&
-                    (setId == null || state.set.id == setId) &&
-                    (exerciseId == null || state.exerciseId == exerciseId) &&
-                    (setIndex == null || state.setIndex == setIndex)
-            }
-
-            "REST" -> firstMatching { state ->
-                state is WorkoutState.Rest &&
-                    (setId == null || state.set.id == setId) &&
-                    (exerciseId == null || state.exerciseId == exerciseId) &&
-                    (restOrder == null || state.order == restOrder)
-            }
-
-            "CALIBRATION_LOAD" -> firstMatching { state ->
-                state is WorkoutState.CalibrationLoadSelection &&
-                    (setId == null || state.calibrationSet.id == setId) &&
-                    (exerciseId == null || state.exerciseId == exerciseId) &&
-                    (setIndex == null || state.setIndex == setIndex)
-            }
-
-            "CALIBRATION_RIR" -> firstMatching { state ->
-                state is WorkoutState.CalibrationRIRSelection &&
-                    (setId == null || state.calibrationSet.id == setId) &&
-                    (exerciseId == null || state.exerciseId == exerciseId) &&
-                    (setIndex == null || state.setIndex == setIndex)
-            }
-
-            else -> null
-        }
-
-        if (exactMatch != null) return exactMatch
-
-        // Calibration fallback when calibration selection states are missing in regenerated sequence.
-        if (normalizedStateType == "CALIBRATION_LOAD" || normalizedStateType == "CALIBRATION_RIR") {
-            val calibrationSetFallback = firstMatching { state ->
-                state is WorkoutState.Set &&
-                    state.isCalibrationSet &&
-                    (setId == null || state.set.id == setId) &&
-                    (exerciseId == null || state.exerciseId == exerciseId) &&
-                    (setIndex == null || state.setIndex == setIndex)
-            }
-            if (calibrationSetFallback != null) return calibrationSetFallback
-        }
-
-        val genericSetFallback = firstMatching { state ->
-            state is WorkoutState.Set &&
-                (exerciseId == null || state.exerciseId == exerciseId) &&
-                (setIndex == null || state.setIndex == setIndex)
-        }
-        if (genericSetFallback != null) return genericSetFallback
-
-        return firstMatching { _ -> true }
     }
 
     protected fun exportRecoveryStateMachine(): Pair<List<WorkoutStateSequenceItem>, Int>? {
@@ -1430,14 +1387,14 @@ open class WorkoutViewModel(
                     )
                     
                     if (foundWorkout == null) {
-                        Log.e("WorkoutViewModel", "Workout not found for id: $selectedWorkoutIdSnapshot")
+                        Log.e(TAG, "Workout not found for id: $selectedWorkoutIdSnapshot")
                         markSessionReady()
                         return@withContext
                     }
 
                     prepareWorkoutForStart(foundWorkout)
                 } catch (e: Exception) {
-                    Log.e("WorkoutViewModel", "Error in startWorkout()", e)
+                    Log.e(TAG, "Error in startWorkout()", e)
                     val currentState = _workoutState.value
                     if (currentState is WorkoutState.Preparing) {
                         markSessionReady()
@@ -1807,7 +1764,7 @@ open class WorkoutViewModel(
 
                     plateChangeResults.addAll(results)
                 } catch (e: Exception) {
-                    Log.e("PlatesCalculator", "Error calculating plate changes", e)
+                    Log.e(TAG, "Error calculating plate changes", e)
                 }
             }
         }
@@ -1830,7 +1787,7 @@ open class WorkoutViewModel(
                 initialSetup,
             )
         } catch (e: Exception) {
-            Log.e("PlatesCalculator", "Error calculating plate changes", e)
+            Log.e(TAG, "Error calculating plate changes", e)
             emptyList()
         }
     }
@@ -2199,7 +2156,7 @@ open class WorkoutViewModel(
             }
 
             if (plateChangeResults.size != remainingStates.size) {
-                Log.e("WorkoutViewModel", "Plate change results count (${plateChangeResults.size}) doesn't match remaining states count (${remainingStates.size})")
+                Log.e(TAG, "Plate change results count (${plateChangeResults.size}) doesn't match remaining states count (${remainingStates.size})")
                 return
             }
 
@@ -2240,7 +2197,7 @@ open class WorkoutViewModel(
 
         if (remainingStates.isEmpty() || weights.size != remainingStates.size) {
             if (weights.size != remainingStates.size) {
-                Log.e("WorkoutViewModel", "recalculatePlatesForExerciseFromIndex: weights count (${weights.size}) doesn't match work set states count (${remainingStates.size})")
+                Log.e(TAG, "recalculatePlatesForExerciseFromIndex: weights count (${weights.size}) doesn't match work set states count (${remainingStates.size})")
             }
             return
         }
@@ -2256,7 +2213,7 @@ open class WorkoutViewModel(
         }
 
         if (plateChangeResults.size != remainingStates.size) {
-            Log.e("WorkoutViewModel", "Plate change results count (${plateChangeResults.size}) doesn't match remaining states count (${remainingStates.size})")
+            Log.e(TAG, "Plate change results count (${plateChangeResults.size}) doesn't match remaining states count (${remainingStates.size})")
             return
         }
 
@@ -2268,6 +2225,57 @@ open class WorkoutViewModel(
             stateMachine = WorkoutStateEditor.replaceBySetId(machine, replacements)
             updateStateFlowsFromMachine()
         }
+    }
+
+    /**
+     * After restoring from checkpoint, recalculates plateChangeResult for the current exercise
+     * when the current state (or Rest's next state) is a weight set, so the plates page shows
+     * correct plate load instead of "NOT AVAILABLE".
+     */
+    protected open suspend fun recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState
+        val targetState = when (currentState) {
+            is WorkoutState.Set -> currentState
+            is WorkoutState.Rest -> currentState.nextState
+            else -> null
+        }
+        val setState = targetState as? WorkoutState.Set ?: return
+        if (setState.set !is WeightSet && setState.set !is BodyWeightSet) return
+        val exerciseId = setState.exerciseId
+        val equipment = setState.equipmentId?.let { getEquipmentById(it) } as? Barbell ?: return
+        val allStates = machine.allStates
+        val firstWorkSetStateIndex = allStates.indexOfFirst { s ->
+            s is WorkoutState.Set &&
+                s.exerciseId == exerciseId &&
+                (s.set is WeightSet || s.set is BodyWeightSet)
+        }
+        if (firstWorkSetStateIndex < 0) return
+        val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+            machine = machine,
+            fromIndexInclusive = firstWorkSetStateIndex,
+            exerciseId = exerciseId
+        )
+        if (remainingStates.isEmpty()) return
+        val exercise = exercisesById[exerciseId] ?: return
+        val relativeBodyWeight = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            bodyWeight.value * (exercise.bodyWeightPercentage!! / 100)
+        } else {
+            0.0
+        }
+        val weights = remainingStates.map { state ->
+            when (val set = state.set) {
+                is WeightSet -> (state.currentSetData as? WeightSetData)?.actualWeight ?: set.weight
+                is BodyWeightSet -> relativeBodyWeight + set.additionalWeight
+                else -> 0.0
+            }
+        }
+        recalculatePlatesForExerciseFromIndex(
+            exerciseId = exerciseId,
+            firstWorkSetStateIndex = firstWorkSetStateIndex,
+            weights = weights,
+            equipment = equipment
+        )
     }
 
     fun schedulePlateRecalculation(newWeight: Double) {

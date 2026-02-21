@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import java.util.UUID
 
 internal class WorkoutRecordService(
@@ -14,12 +15,6 @@ internal class WorkoutRecordService(
     data class WorkoutRecordState(
         val workoutRecord: WorkoutRecord?,
         val hasWorkoutRecord: Boolean
-    )
-
-    data class IncompleteWorkout(
-        val workoutHistory: WorkoutHistory,
-        val workoutName: String,
-        val workoutId: UUID
     )
 
     suspend fun resolveWorkoutRecord(workoutId: UUID): WorkoutRecordState {
@@ -73,7 +68,7 @@ internal class WorkoutRecordService(
         workoutRecordDao().deleteById(recordId)
     }
 
-    suspend fun getIncompleteWorkouts(workouts: List<Workout>): List<IncompleteWorkout> {
+    suspend fun getInterruptedWorkouts(workouts: List<Workout>): List<InterruptedWorkout> {
         val incompleteHistories = workoutHistoryDao().getAllUnfinishedWorkoutHistories(isDone = false)
 
         val groupedByWorkoutId = incompleteHistories
@@ -87,7 +82,7 @@ internal class WorkoutRecordService(
                 ?: workouts.find { it.globalId == workoutHistory.globalId }
                 ?: return@mapNotNull null
 
-            IncompleteWorkout(
+            InterruptedWorkout(
                 workoutHistory = workoutHistory,
                 workoutName = workout.name,
                 workoutId = workout.id
