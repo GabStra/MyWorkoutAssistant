@@ -14,19 +14,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.StandardDialog
-import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
+import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
-import java.util.UUID
 
 @Composable
 fun ResumeWorkoutDialog(
     show: Boolean,
-    incompleteWorkouts: List<WorkoutViewModel.IncompleteWorkout>,
+    interruptedWorkouts: List<InterruptedWorkout>,
     onDismiss: () -> Unit,
-    onResumeWorkout: (UUID) -> Unit
+    onResumeWorkout: (InterruptedWorkout) -> Unit
 ) {
-    if (show && incompleteWorkouts.isNotEmpty()) {
+    if (show && interruptedWorkouts.isNotEmpty()) {
         StandardDialog(
             onDismissRequest = onDismiss,
             title = "Resume Workout",
@@ -41,16 +40,16 @@ fun ResumeWorkoutDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height((incompleteWorkouts.size * 80).coerceAtMost(400).dp),
+                        .height((interruptedWorkouts.size * 80).coerceAtMost(400).dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(incompleteWorkouts) { incompleteWorkout ->
+                    items(interruptedWorkouts) { interruptedWorkout ->
                         AppPrimaryButton(
                             text = buildString {
-                                append(incompleteWorkout.workoutName)
+                                append(interruptedWorkout.workoutName)
                                 append("\n")
                                 append(
-                                    incompleteWorkout.workoutHistory.startTime.format(
+                                    interruptedWorkout.workoutHistory.startTime.format(
                                         DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm")
                                     )
                                 )
@@ -58,7 +57,7 @@ fun ResumeWorkoutDialog(
                             modifier = Modifier.fillMaxWidth(),
                             minHeight = 64.dp,
                             onClick = {
-                                onResumeWorkout(incompleteWorkout.workoutId)
+                                onResumeWorkout(interruptedWorkout)
                             }
                         )
                     }

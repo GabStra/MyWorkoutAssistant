@@ -514,9 +514,9 @@ fun MyWorkoutAssistantNavHost(
         val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
         if (!isWorkoutInProgress) {
             try {
-                val incompleteWorkouts = workoutViewModel.getIncompleteWorkouts()
-                if (incompleteWorkouts.isNotEmpty()) {
-                    appViewModel.showResumeWorkoutDialog(incompleteWorkouts)
+                val interruptedWorkouts = workoutViewModel.getInterruptedWorkouts()
+                if (interruptedWorkouts.isNotEmpty()) {
+                    appViewModel.showResumeWorkoutDialog(interruptedWorkouts)
                 }
             } catch (exception: Exception) {
             }
@@ -2742,21 +2742,21 @@ fun MyWorkoutAssistantNavHost(
 
             // Resume workout dialog
             val showResumeDialog by appViewModel.showResumeWorkoutDialog
-            val incompleteWorkouts by appViewModel.incompleteWorkouts
+            val interruptedWorkouts by appViewModel.interruptedWorkouts
 
             com.gabstra.myworkoutassistant.workout.ResumeWorkoutDialog(
                 show = showResumeDialog,
-                incompleteWorkouts = incompleteWorkouts,
+                interruptedWorkouts = interruptedWorkouts,
                 onDismiss = {
                     appViewModel.hideResumeWorkoutDialog()
                 },
-                onResumeWorkout = { workoutId ->
+                onResumeWorkout = { interruptedWorkout ->
                     appViewModel.hideResumeWorkoutDialog()
-                    workoutViewModel.setSelectedWorkoutId(workoutId)
+                    workoutViewModel.prepareResumeWorkout(interruptedWorkout.workoutId, interruptedWorkout.workoutHistory.id)
                     workoutViewModel.resumeWorkoutFromRecord()
                     val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
                     prefs.edit { putBoolean("isWorkoutInProgress", true) }
-                    appViewModel.setScreenData(ScreenData.Workout(workoutId))
+                    appViewModel.setScreenData(ScreenData.Workout(interruptedWorkout.workoutId))
                 }
             )
         }
