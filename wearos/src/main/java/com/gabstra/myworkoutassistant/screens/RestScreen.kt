@@ -16,7 +16,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -28,16 +27,19 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
+import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
+import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
@@ -51,7 +53,6 @@ import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -82,6 +83,13 @@ private fun RestTimerBlock(
     skipConfirmAction: androidx.compose.runtime.MutableState<(() -> Unit)?>,
     restartTimerAction: androidx.compose.runtime.MutableState<(() -> Unit)?>,
     isEditModeState: androidx.compose.runtime.MutableState<Boolean>,
+    exerciseName: String,
+    supersetExerciseIndex: Int?,
+    supersetExerciseTotal: Int?,
+    setLabel: String?,
+    sideIndicator: String?,
+    currentSideIndex: UInt?,
+    isUnilateral: Boolean,
 ) {
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.endTimer) }
@@ -117,15 +125,6 @@ private fun RestTimerBlock(
         if (viewModel.workoutTimerService.isTimerRegistered(set.id)) {
             viewModel.workoutTimerService.unregisterTimer(set.id)
         }
-    }
-
-    fun computeProgress(): Float {
-        if (amountToWait <= 0) return 0f
-        return currentSeconds.toFloat() / amountToWait.toFloat()
-    }
-    val indicatorProgress = remember { mutableFloatStateOf(computeProgress()) }
-    LaunchedEffect(currentSeconds, amountToWait) {
-        indicatorProgress.floatValue = computeProgress()
     }
 
     val updateInteractionTime = { lastInteractionTime = System.currentTimeMillis() }
@@ -265,29 +264,44 @@ private fun RestTimerBlock(
             .semantics { contentDescription = SetValueSemantics.RestSetTypeDescription },
         contentAlignment = Alignment.Center
     ) {
-        val primaryColor = MaterialTheme.colorScheme.primary
-        CircularProgressIndicator(
-            progress = { indicatorProgress.floatValue },
-            modifier = Modifier.fillMaxSize().padding(10.dp),
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = primaryColor,
-                trackColor = MediumDarkGray
-            ),
-            strokeWidth = 4.dp,
-            startAngle = 130f,
-            endAngle = 230f,
-        )
         if (!isTimerInEditMode) {
             Column(
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                androidx.wear.compose.material3.Text(
-                    text = "REST TIMER",
+                Text(
+                    text = "UP NEXT",
                     style = timerHeaderStyle,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(5.dp))
+                ExerciseNameText(
+                    text = exerciseName,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(5.dp))
+                ExerciseMetadataStrip(
+                    supersetExerciseIndex = supersetExerciseIndex,
+                    supersetExerciseTotal = supersetExerciseTotal,
+                    setLabel = setLabel,
+                    sideIndicator = sideIndicator,
+                    currentSideIndex = currentSideIndex,
+                    isUnilateral = isUnilateral,
+                    textColor = MaterialTheme.colorScheme.onBackground,
+                    onTap = { hapticsViewModel.doGentleVibration() }
+                )
+                Spacer(modifier = Modifier.height(5.dp))
+                Text(
+                    text = "REST",
+                    style = timerHeaderStyle,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(2.5.dp))
                 textComposable(seconds = currentSeconds)
             }
         }
@@ -300,6 +314,7 @@ fun RestScreen(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     state: WorkoutState.Rest,
+    hearthRateChart: @Composable (Modifier) -> Unit,
     onBeforeGoHome: (() -> Unit)? = null,
     onTimerEnd: () -> Unit,
     navController: NavController,
@@ -310,13 +325,19 @@ fun RestScreen(
     val restartTimerAction = remember { mutableStateOf<(() -> Unit)?>(null) }
     val isEditModeState = remember { mutableStateOf(false) }
 
-    val exerciseIdFromNext = when (val next = state.nextState) {
+    val nextExerciseId = when (val next = state.nextState) {
         is WorkoutState.Set -> next.exerciseId
         is WorkoutState.CalibrationLoadSelection -> next.exerciseId
         is WorkoutState.CalibrationRIRSelection -> next.exerciseId
-        else -> state.exerciseId
+        is WorkoutState.Rest -> next.exerciseId
+        null -> null
+        is WorkoutState.Preparing, is WorkoutState.Completed -> null
     }
-    val exercise = remember(exerciseIdFromNext) {
+    val currentExercise = remember(state.exerciseId) {
+        state.exerciseId?.let { viewModel.exercisesById[it] }
+    }
+    val exerciseIdFromNext = nextExerciseId ?: state.exerciseId
+    val nextExercise = remember(exerciseIdFromNext) {
         val exerciseId = exerciseIdFromNext
         if (exerciseId != null) {
             viewModel.exercisesById[exerciseId]!!
@@ -325,23 +346,39 @@ fun RestScreen(
                 ?: throw IllegalStateException("No exercises available")
         }
     }
-    val equipment = remember(exercise) { exercise.equipmentId?.let { viewModel.getEquipmentById(it) } }
-    val showPlatesPage = remember(exercise, equipment) {
+
+    val exerciseIdForPages = when (val next = state.nextState) {
+        is WorkoutState.Set -> next.exerciseId
+        is WorkoutState.CalibrationLoadSelection -> next.exerciseId
+        is WorkoutState.CalibrationRIRSelection -> next.exerciseId
+        else -> state.exerciseId
+    }
+    val exerciseForPages = remember(exerciseIdForPages) {
+        val exerciseId = exerciseIdForPages
+        if (exerciseId != null) {
+            viewModel.exercisesById[exerciseId]!!
+        } else {
+            viewModel.exercisesById.values.firstOrNull()
+                ?: throw IllegalStateException("No exercises available")
+        }
+    }
+    val equipment = remember(exerciseForPages) { exerciseForPages.equipmentId?.let { viewModel.getEquipmentById(it) } }
+    val showPlatesPage = remember(exerciseForPages, equipment) {
         equipment != null &&
             equipment.type == EquipmentType.BARBELL &&
             equipment.name.contains("barbell", ignoreCase = true) &&
-            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+            (exerciseForPages.exerciseType == ExerciseType.WEIGHT || exerciseForPages.exerciseType == ExerciseType.BODY_WEIGHT)
     }
-    val showProgressionComparisonPage = remember(exercise) {
-        !exercise.requiresLoadCalibration &&
-            viewModel.exerciseProgressionByExerciseId.containsKey(exercise.id) &&
+    val showProgressionComparisonPage = remember(exerciseForPages) {
+        !exerciseForPages.requiresLoadCalibration &&
+            viewModel.exerciseProgressionByExerciseId.containsKey(exerciseForPages.id) &&
             viewModel.lastSessionWorkout != null &&
             ((viewModel.lastSessionWorkout!!.workoutComponents.filterIsInstance<Exercise>() +
                 viewModel.lastSessionWorkout!!.workoutComponents
                     .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset>()
-                    .flatMap { it.exercises }).any { it.id == exercise.id })
+                    .flatMap { it.exercises }).any { it.id == exerciseForPages.id })
     }
-    val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
+    val showNotesPage = remember(exerciseForPages) { exerciseForPages.notes.isNotEmpty() }
 
     val horizontalPageTypes = remember(showPlatesPage, showProgressionComparisonPage, showNotesPage) {
         mutableListOf<RestHorizontalPage>().apply {
@@ -371,7 +408,7 @@ fun RestScreen(
         initialPage = restTimerPageIndex,
         pageCount = { horizontalPageTypes.size }
     )
-    var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
+    var selectedExercise by remember(exerciseForPages.id) { mutableStateOf(exerciseForPages) }
     val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .mapNotNull {
@@ -387,6 +424,42 @@ fun RestScreen(
         (state.nextState as? WorkoutState.Set) ?: viewModel.getFirstSetStateAfterCurrent()
     }
     val nextState = state.nextState
+    val indicatorStateOverride = remember(state, nextState) {
+        if (state.exerciseId == null && nextState != null) nextState else state
+    }
+
+    val supersetExercises = remember(exerciseForPages.id) {
+        val supersetId = viewModel.supersetIdByExerciseId[exerciseForPages.id]
+        supersetId?.let { viewModel.exercisesBySupersetId[it].orEmpty() }
+    }
+    val supersetExerciseIndex = remember(supersetExercises, exerciseForPages.id) {
+        supersetExercises
+            ?.indexOfFirst { it.id == exerciseForPages.id }
+            ?.takeIf { it >= 0 }
+    }
+    val supersetExerciseTotal = remember(supersetExercises) {
+        supersetExercises
+            ?.size
+            ?.takeIf { it > 1 }
+    }
+    val metadataSetLabel = remember(setStateForPages) {
+        setStateForPages
+            ?.let { setState ->
+                viewModel.getSetCounterForExercise(setState.exerciseId, setState)
+                    ?.let { (current, total) -> if (total > 1) "$current/$total" else null }
+            }
+    }
+    val metadataSideIndicator = remember(setStateForPages) {
+        if (setStateForPages?.intraSetTotal != null) "① ↔ ②" else null
+    }
+    val metadataCurrentSideIndex = remember(setStateForPages) {
+        setStateForPages
+            ?.intraSetCounter
+            ?.takeIf { setStateForPages.intraSetTotal != null }
+    }
+    val metadataIsUnilateral = remember(setStateForPages) {
+        setStateForPages?.isUnilateral ?: false
+    }
 
     LaunchedEffect(set.id) {
         if (horizontalPagerState.currentPage != restTimerPageIndex) {
@@ -400,7 +473,7 @@ fun RestScreen(
         if (isOnRestPlatesPage) viewModel.setDimming(false) else viewModel.reEvaluateDimmingForCurrentState()
 
         if (horizontalPagerState.currentPage != exercisesPageIndex) {
-            selectedExercise = exercise
+            selectedExercise = exerciseForPages
         }
     }
 
@@ -410,14 +483,17 @@ fun RestScreen(
             pagerState = horizontalPagerState,
             userScrollEnabled = !isEditModeState.value,
             pageOverlay = { pageIndex ->
-                if (horizontalPageTypes[pageIndex] == RestHorizontalPage.REST_TIMER && nextState != null) {
-                    ExerciseIndicator(
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
-                            .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
-                        currentStateOverride = state,
-                        selectedExerciseId = selectedExercise.id
-                    )
+                if (horizontalPageTypes[pageIndex] == RestHorizontalPage.REST_TIMER) {
+                    hearthRateChart(Modifier.fillMaxSize())
+                    if (nextState != null) {
+                        ExerciseIndicator(
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxSize()
+                                .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
+                            currentStateOverride = indicatorStateOverride,
+                            selectedExerciseId = selectedExercise.id
+                        )
+                    }
                 }
             }
         ) { pageIndex ->
@@ -458,6 +534,13 @@ fun RestScreen(
                                 skipConfirmAction = skipConfirmAction,
                                 restartTimerAction = restartTimerAction,
                                 isEditModeState = isEditModeState,
+                                exerciseName = nextExercise.name,
+                                supersetExerciseIndex = supersetExerciseIndex,
+                                supersetExerciseTotal = supersetExerciseTotal,
+                                setLabel = metadataSetLabel,
+                                sideIndicator = metadataSideIndicator,
+                                currentSideIndex = metadataCurrentSideIndex,
+                                isUnilateral = metadataIsUnilateral,
                             )
                         }
                     }
@@ -469,7 +552,7 @@ fun RestScreen(
                             PageProgressionComparison(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
-                                exercise = exercise,
+                                exercise = exerciseForPages,
                                 state = setStateForPages,
                                 isPageVisible = horizontalPagerState.currentPage == restProgressionPageIndex &&
                                     !horizontalPagerState.isScrollInProgress
@@ -480,7 +563,7 @@ fun RestScreen(
 
                 RestHorizontalPage.NOTES -> {
                     Box(modifier = pageModifier) {
-                        PageNotes(exercise.notes)
+                        PageNotes(exerciseForPages.notes)
                     }
                 }
 
@@ -492,7 +575,7 @@ fun RestScreen(
                                 workoutState = state,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
-                                currentExercise = exercise,
+                                currentExercise = exerciseForPages,
                                 exerciseOrSupersetIds = exerciseOrSupersetIds,
                                 onExerciseSelected = { selectedExercise = it }
                             )

@@ -21,10 +21,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,9 +47,7 @@ import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.time.Duration
 import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -71,12 +67,14 @@ fun TimedDurationSetScreen(
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
+    val topOverlayController = LocalTopOverlayController.current
 
     DisposableEffect(state.set.id) {
         onDispose {
             // Clean up auto-start job when composable is disposed
             // Timer service continues running in background and will unregister when timer completes
             autoStartJob?.cancel()
+            topOverlayController.clear("timed_duration_countdown_${state.set.id}")
         }
     }
 
@@ -193,6 +191,28 @@ fun TimedDurationSetScreen(
             displayStartingDialog = false
             countdownInitiated = false
             countdownValue = 3
+        }
+    }
+
+    LaunchedEffect(displayStartingDialog) {
+        if (displayStartingDialog) {
+            viewModel.setDimming(false)
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
+
+    LaunchedEffect(displayStartingDialog, countdownValue, state.set.id) {
+        val owner = "timed_duration_countdown_${state.set.id}"
+        if (displayStartingDialog) {
+            topOverlayController.show(owner = owner) {
+                CountdownOverlayBox(
+                    show = true,
+                    time = countdownValue
+                )
+            }
+        } else {
+            topOverlayController.clear(owner)
         }
     }
 
@@ -496,17 +516,6 @@ fun TimedDurationSetScreen(
             }
         )
 
-        CountdownOverlayBox(
-            show = displayStartingDialog,
-            time = countdownValue,
-            onVisibilityChange = { isVisible ->
-                if (isVisible) {
-                    viewModel.setDimming(false)
-                } else {
-                    viewModel.reEvaluateDimmingForCurrentState()
-                }
-            }
-        )
     }
 }
 

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -29,12 +29,14 @@ import com.gabstra.myworkoutassistant.composables.HrStatusBadge
 import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
+import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
+import com.gabstra.myworkoutassistant.composables.TopOverlayHost
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.composables.overlayVisualScale
+import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -101,6 +103,7 @@ fun WorkoutScreen(
     }
 
     val triggerMobileNotification = screenState.enableWorkoutNotificationFlow
+    val topOverlayController = rememberTopOverlayController()
 
     LaunchedEffect(triggerMobileNotification){
         if(triggerMobileNotification==null) return@LaunchedEffect
@@ -303,39 +306,42 @@ fun WorkoutScreen(
         }
     )
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize(),
-    ) {
-        if(isResuming){
-            LoadingScreen(viewModel,"Resuming workout")
-            return@Box
-        }
-
-        if(isRefreshing){
-            LoadingScreen(viewModel,"Reloading workout")
-            return@Box
-        }
-
-        if (showHeartRateTutorial) {
-            TutorialOverlay(
-                visible = true,
-                steps = listOf(
-                    TutorialStep("Heart rate (left)", "Tap the number to change the display format."),
-                    TutorialStep("Workout progress (right)", "See your current position in the workout."),
-                    TutorialStep("Back button", "Double-press to complete the set.")
-                ),
-                onDismiss = onDismissHeartRateTutorial,
-                hapticsViewModel = hapticsViewModel,
-                onVisibilityChange = { isVisible ->
-                    if (isVisible) {
-                        viewModel.setDimming(false)
-                    } else {
-                        viewModel.reEvaluateDimmingForCurrentState()
-                    }
+    CompositionLocalProvider(LocalTopOverlayController provides topOverlayController) {
+        LaunchedEffect(showHeartRateTutorial) {
+            if (showHeartRateTutorial) {
+                viewModel.setDimming(false)
+                topOverlayController.show(owner = "workout_heart_rate_tutorial") {
+                    TutorialOverlay(
+                        visible = true,
+                        steps = listOf(
+                            TutorialStep("Heart rate (left)", "Tap the number to change the display format."),
+                            TutorialStep("Workout progress (right)", "See your current position in the workout."),
+                            TutorialStep("Back button", "Double-press to complete the set.")
+                        ),
+                        onDismiss = onDismissHeartRateTutorial,
+                        hapticsViewModel = hapticsViewModel
+                    )
                 }
-            )
-        } else {
+            } else {
+                topOverlayController.clear("workout_heart_rate_tutorial")
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize(),
+        ) {
+            if(isResuming){
+                LoadingScreen(viewModel,"Resuming workout")
+                return@Box
+            }
+
+            if(isRefreshing){
+                LoadingScreen(viewModel,"Reloading workout")
+                return@Box
+            }
+
             val stateTypeKey = remember(workoutState) {
                 when (workoutState) {
                     is WorkoutState.Preparing -> "Preparing"
@@ -351,7 +357,6 @@ fun WorkoutScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     Box(
                         modifier = Modifier
-                            .zIndex(1f)
                             .align(Alignment.TopCenter)
                             .fillMaxWidth()
                             .padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding)
@@ -441,42 +446,43 @@ fun WorkoutScreen(
                                     }
                                 }
 
-                                if (showSetScreenTutorial) {
-                                    TutorialOverlay(
-                                        visible = true,
-                                        steps = listOf(
-                                            TutorialStep("Navigate pages", "Swipe left or right to move between views."),
-                                            TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
-                                            TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
-                                            TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
-                                        ),
-                                        onDismiss = onDismissSetScreenTutorial,
-                                        hapticsViewModel = hapticsViewModel,
-                                        onVisibilityChange = { isVisible ->
-                                            if (isVisible) {
-                                                viewModel.setDimming(false)
-                                            } else {
-                                                viewModel.reEvaluateDimmingForCurrentState()
-                                            }
+                                LaunchedEffect(showSetScreenTutorial, state.exerciseId, state.set.id) {
+                                    if (showSetScreenTutorial) {
+                                        viewModel.setDimming(false)
+                                        topOverlayController.show(owner = "workout_set_tutorial") {
+                                            TutorialOverlay(
+                                                visible = true,
+                                                steps = listOf(
+                                                    TutorialStep("Navigate pages", "Swipe left or right to move between views."),
+                                                    TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
+                                                    TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
+                                                    TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
+                                                ),
+                                                onDismiss = onDismissSetScreenTutorial,
+                                                hapticsViewModel = hapticsViewModel
+                                            )
                                         }
-                                    )
-                                } else {
-                                    key(state.exerciseId) {
-                                        ExerciseScreen(
-                                            viewModel = viewModel,
-                                            hapticsViewModel = hapticsViewModel,
-                                            state = state,
-                                            hearthRateChart = { modifier ->
-                                                heartRateChartComposable(
-                                                    modifier = modifier,
-                                                    lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
-                                                    upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
-                                                )
-                                            },
-                                            navController = navController,
-                                            onBeforeGoHome = onBeforeGoHome,
-                                        )
+                                    } else {
+                                        topOverlayController.clear("workout_set_tutorial")
+                                        viewModel.reEvaluateDimmingForCurrentState()
                                     }
+                                }
+
+                                key(state.exerciseId) {
+                                    ExerciseScreen(
+                                        viewModel = viewModel,
+                                        hapticsViewModel = hapticsViewModel,
+                                        state = state,
+                                        hearthRateChart = { modifier ->
+                                            heartRateChartComposable(
+                                                modifier = modifier,
+                                                lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                                upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                            )
+                                        },
+                                        navController = navController,
+                                        onBeforeGoHome = onBeforeGoHome,
+                                    )
                                 }
                             }
                             is WorkoutState.Rest -> {
@@ -489,57 +495,61 @@ fun WorkoutScreen(
                                     }
                                 }
 
-                                if (showRestScreenTutorial) {
-                                    TutorialOverlay(
-                                        visible = true,
-                                        steps = listOf(
-                                            TutorialStep("Rest timer", "Automatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons."),
-                                            TutorialStep("Exercise preview", "See your current and next exercises.\nTap the left or right side to view previous or upcoming exercises."),
-                                            TutorialStep("Reminder", "Your screen will light up when 5 seconds remain."),
-                                            TutorialStep("Skip rest", "Double-press the back button to skip ahead.")
-                                        ),
-                                        onDismiss = onDismissRestScreenTutorial,
-                                        hapticsViewModel = hapticsViewModel,
-                                        onVisibilityChange = { isVisible ->
-                                            if (isVisible) {
-                                                viewModel.setDimming(false)
-                                            } else {
-                                                viewModel.reEvaluateDimmingForCurrentState()
-                                            }
+                                LaunchedEffect(showRestScreenTutorial, state.set.id) {
+                                    if (showRestScreenTutorial) {
+                                        viewModel.setDimming(false)
+                                        topOverlayController.show(owner = "workout_rest_tutorial") {
+                                            TutorialOverlay(
+                                                visible = true,
+                                                steps = listOf(
+                                                    TutorialStep("Rest timer", "Automatically starts counting down.\nLong-press the timer to adjust it, then use +/- buttons."),
+                                                    TutorialStep("Exercise preview", "See your current and next exercises.\nTap the left or right side to view previous or upcoming exercises."),
+                                                    TutorialStep("Reminder", "Your screen will light up when 5 seconds remain."),
+                                                    TutorialStep("Skip rest", "Double-press the back button to skip ahead.")
+                                                ),
+                                                onDismiss = onDismissRestScreenTutorial,
+                                                hapticsViewModel = hapticsViewModel
+                                            )
                                         }
-                                    )
-                                } else {
-                                    RestScreen(
-                                        viewModel = viewModel,
-                                        hapticsViewModel = hapticsViewModel,
-                                        state = state,
-                                        onBeforeGoHome = onBeforeGoHome,
-                                        onTimerEnd = {
-                                            try {
-                                                if (!MyApplication.isAppInForeground()) {
-                                                    showTimerCompletedNotification(
-                                                        context = context,
-                                                        title = "Rest complete",
-                                                        message = "Time for the next set"
-                                                    )
-                                                }
-                                                viewModel.storeSetData()
-                                                val isDone = viewModel.isNextStateCompleted()
-                                                viewModel.pushAndStoreWorkoutData(isDone, context){
-                                                    try {
-                                                        viewModel.goToNextState()
-                                                        viewModel.lightScreenUp()
-                                                    } catch (exception: Exception) {
-                                                        android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
-                                                    }
-                                                }
-                                            } catch (exception: Exception) {
-                                                android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
-                                            }
-                                        },
-                                        navController = navController,
-                                    )
+                                    } else {
+                                        topOverlayController.clear("workout_rest_tutorial")
+                                        viewModel.reEvaluateDimmingForCurrentState()
+                                    }
                                 }
+
+                                RestScreen(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    state = state,
+                                    hearthRateChart = { modifier ->
+                                        heartRateChartComposable(modifier = modifier)
+                                    },
+                                    onBeforeGoHome = onBeforeGoHome,
+                                    onTimerEnd = {
+                                        try {
+                                            if (!MyApplication.isAppInForeground()) {
+                                                showTimerCompletedNotification(
+                                                    context = context,
+                                                    title = "Rest complete",
+                                                    message = "Time for the next set"
+                                                )
+                                            }
+                                            viewModel.storeSetData()
+                                            val isDone = viewModel.isNextStateCompleted()
+                                            viewModel.pushAndStoreWorkoutData(isDone, context){
+                                                try {
+                                                    viewModel.goToNextState()
+                                                    viewModel.lightScreenUp()
+                                                } catch (exception: Exception) {
+                                                    android.util.Log.e("WorkoutScreen", "Error in onTimerEnd callback", exception)
+                                                }
+                                            }
+                                        } catch (exception: Exception) {
+                                            android.util.Log.e("WorkoutScreen", "Error handling timer end", exception)
+                                        }
+                                    },
+                                    navController = navController,
+                                )
                             }
                             is WorkoutState.Completed -> {
                                 val state = workoutState as WorkoutState.Completed
@@ -556,16 +566,18 @@ fun WorkoutScreen(
                     }
                 }
             }
+
+            LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
+
+            // Sync status badge (non-blocking)
+            //SyncStatusBadge(viewModel = viewModel)
+
+            // HR target indicators (non-blocking)
+            HrTargetGlowEffect(isVisible = hrStatus != null)
+            HrStatusBadge(hrStatus = hrStatus)
+
+            TopOverlayHost(controller = topOverlayController)
         }
-        
-        LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
-        
-        // Sync status badge (non-blocking)
-        //SyncStatusBadge(viewModel = viewModel)
-        
-        // HR target indicators (non-blocking)
-        HrTargetGlowEffect(isVisible = hrStatus != null)
-        HrStatusBadge(hrStatus = hrStatus)
     }
 }
 

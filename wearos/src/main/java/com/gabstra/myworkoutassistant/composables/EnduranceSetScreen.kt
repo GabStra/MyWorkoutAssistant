@@ -72,12 +72,14 @@ fun EnduranceSetScreen (
     val context = LocalContext.current
     val scope = rememberWearCoroutineScope()
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
+    val topOverlayController = LocalTopOverlayController.current
 
     DisposableEffect(state.set.id) {
         onDispose {
             // Clean up auto-start job when composable is disposed
             // Timer service continues running in background and will unregister when timer completes
             autoStartJob?.cancel()
+            topOverlayController.clear("endurance_countdown_${state.set.id}")
         }
     }
 
@@ -224,6 +226,28 @@ fun EnduranceSetScreen (
             displayStartingDialog = false
             countdownInitiated = false
             countdownValue = 3
+        }
+    }
+
+    LaunchedEffect(displayStartingDialog) {
+        if (displayStartingDialog) {
+            viewModel.setDimming(false)
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
+
+    LaunchedEffect(displayStartingDialog, countdownValue, state.set.id) {
+        val owner = "endurance_countdown_${state.set.id}"
+        if (displayStartingDialog) {
+            topOverlayController.show(owner = owner) {
+                CountdownOverlayBox(
+                    show = true,
+                    time = countdownValue
+                )
+            }
+        } else {
+            topOverlayController.clear(owner)
         }
     }
 
@@ -506,17 +530,6 @@ fun EnduranceSetScreen (
             }
         )
 
-        CountdownOverlayBox(
-            show = displayStartingDialog,
-            time = countdownValue,
-            onVisibilityChange = { isVisible ->
-                if (isVisible) {
-                    viewModel.setDimming(false)
-                } else {
-                    viewModel.reEvaluateDimmingForCurrentState()
-                }
-            }
-        )
     }
 }
 
