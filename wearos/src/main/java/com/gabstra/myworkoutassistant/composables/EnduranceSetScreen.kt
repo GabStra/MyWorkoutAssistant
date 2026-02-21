@@ -73,6 +73,7 @@ fun EnduranceSetScreen (
     val scope = rememberWearCoroutineScope()
     var autoStartJob by remember(state.set.id) { mutableStateOf<Job?>(null) }
     val topOverlayController = LocalTopOverlayController.current
+    val overlayOwner = topOverlayController.currentOwner
 
     DisposableEffect(state.set.id) {
         onDispose {
@@ -353,7 +354,12 @@ fun EnduranceSetScreen (
         if (!hasBeenStartedOnce) hasBeenStartedOnce = true
     }
 
-    LaunchedEffect(set.id, set.autoStart, isPaused) {
+    LaunchedEffect(set.id, set.autoStart, isPaused, overlayOwner) {
+        // Do not start countdown while set screen tutorial is showing; wait until user dismisses it
+        if (overlayOwner == TopOverlayController.OWNER_SET_SCREEN_TUTORIAL) {
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
         // Check if timer has already started (e.g., resuming workout)
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
         // double-triggering when state.startTime changes from null to a value

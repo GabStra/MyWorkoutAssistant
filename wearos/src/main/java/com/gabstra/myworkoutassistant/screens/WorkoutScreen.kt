@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
@@ -30,6 +31,7 @@ import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
+import com.gabstra.myworkoutassistant.composables.TopOverlayController
 import com.gabstra.myworkoutassistant.composables.TopOverlayHost
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
@@ -358,7 +360,8 @@ fun WorkoutScreen(
                             .align(Alignment.TopCenter)
                             .fillMaxWidth()
                             .padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding)
-                            .height(WorkoutPagerLayoutTokens.WorkoutHeaderHeight),
+                            .height(WorkoutPagerLayoutTokens.WorkoutHeaderHeight)
+                            .zIndex(1f),
                         contentAlignment = Alignment.Center
                     ) {
                         WorkoutStateHeader(
@@ -369,8 +372,7 @@ fun WorkoutScreen(
                     }
 
                     Box(
-                        modifier = Modifier
-                            .fillMaxSize()
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         when(workoutState){
                             is WorkoutState.Preparing -> {
@@ -447,7 +449,7 @@ fun WorkoutScreen(
                                 LaunchedEffect(showSetScreenTutorial, state.exerciseId, state.set.id) {
                                     if (showSetScreenTutorial) {
                                         viewModel.setDimming(false)
-                                        topOverlayController.show(owner = "workout_set_tutorial") {
+                                        topOverlayController.show(owner = TopOverlayController.OWNER_SET_SCREEN_TUTORIAL) {
                                             TutorialOverlay(
                                                 visible = true,
                                                 steps = listOf(
@@ -461,7 +463,7 @@ fun WorkoutScreen(
                                             )
                                         }
                                     } else {
-                                        topOverlayController.clear("workout_set_tutorial")
+                                        topOverlayController.clear(TopOverlayController.OWNER_SET_SCREEN_TUTORIAL)
                                         viewModel.reEvaluateDimmingForCurrentState()
                                     }
                                 }

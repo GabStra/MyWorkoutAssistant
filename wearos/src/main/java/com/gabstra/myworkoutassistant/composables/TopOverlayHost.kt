@@ -14,7 +14,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.zIndex
 
 internal data class TopOverlayEntry(
     val owner: String,
@@ -24,11 +23,21 @@ internal data class TopOverlayEntry(
 
 @Stable
 class TopOverlayController internal constructor() {
+    companion object {
+        const val OWNER_SET_SCREEN_TUTORIAL = "workout_set_tutorial"
+    }
+
     private var nextToken by mutableLongStateOf(0L)
     private var entry by mutableStateOf<TopOverlayEntry?>(null)
 
     val isVisible: Boolean
         get() = entry != null
+
+    /**
+     * Current overlay owner, or null if no overlay. Composable reads subscribe to overlay changes.
+     */
+    val currentOwner: String?
+        get() = entry?.owner
 
     fun show(owner: String, content: @Composable BoxScope.() -> Unit) {
         nextToken += 1L
@@ -73,10 +82,7 @@ fun TopOverlayHost(
                 .fillMaxSize()
                 .consumeAllPointerInput()
         )
-        Box(modifier = Modifier
-            .fillMaxSize()
-            .zIndex(2f)
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             currentEntry.content.invoke(this)
         }
     }
