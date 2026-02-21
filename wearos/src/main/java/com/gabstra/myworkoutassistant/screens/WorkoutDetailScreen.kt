@@ -184,7 +184,7 @@ fun WorkoutDetailScreen(
                         ListHeader(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
+                                .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                         ) {
                             Text(
@@ -204,7 +204,7 @@ fun WorkoutDetailScreen(
                             modifier = Modifier
                                 .semantics { contentDescription = "Start workout" }
                                 .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
+                                .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
@@ -231,7 +231,7 @@ fun WorkoutDetailScreen(
                                 modifier = Modifier
                                     .semantics { contentDescription = "Resume workout" }
                                     .fillMaxWidth()
-                                    .transformedHeight(this, spec).animateItem(),
+                                    .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
@@ -252,7 +252,7 @@ fun WorkoutDetailScreen(
                             ButtonWithText(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .transformedHeight(this, spec).animateItem(),
+                                    .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 text = InterruptedWorkoutCopy.DELETE_BUTTON,
                                 onClick = {
@@ -265,7 +265,7 @@ fun WorkoutDetailScreen(
                         ButtonWithText(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .transformedHeight(this, spec).animateItem(),
+                                .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             text = "Back",
                             onClick = {
