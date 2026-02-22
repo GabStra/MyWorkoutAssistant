@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -520,27 +521,7 @@ fun ExerciseSetsViewer(
                     textAlign = TextAlign.Center
                 )
             }
-
-            DynamicHeightColumn(
-                modifier = Modifier
-                    .height(100.dp) // Fills remaining vertical space
-                    .fillMaxWidth(), // Still need to fill width
-                prototypeItem = { prototypeItem() } // Pass the item for measurement
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalColumnScrollbar(scrollState = scrollState)
-                        .verticalScroll(scrollState)
-                ) {
-                    displayRows.forEachIndexed { index, displayRow ->
-                        MeasuredSetTableRow(displayRow, index)
-                    }
-                }
-            }
-        }
-
-        if (exercise.exerciseType == ExerciseType.COUNTUP || exercise.exerciseType == ExerciseType.COUNTDOWN) {
+        } else {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -560,21 +541,23 @@ fun ExerciseSetsViewer(
                     textAlign = TextAlign.Center
                 )
             }
-            DynamicHeightColumn(
+        }
+
+        DynamicHeightColumn(
+            modifier = Modifier
+                .height(100.dp) // Fills remaining vertical space
+                .fillMaxWidth()
+                .clipToBounds(), // Still need to fill width
+            prototypeItem = { prototypeItem() } // Pass the item for measurement
+        ) {
+            Column(
                 modifier = Modifier
-                    .height(100.dp) // Fills remaining vertical space
-                    .fillMaxWidth(), // Still need to fill width
-                prototypeItem = { prototypeItem() } // Pass the item for measurement
+                    .fillMaxWidth()
+                    .verticalColumnScrollbar(scrollState = scrollState)
+                    .verticalScroll(scrollState)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalColumnScrollbar(scrollState = scrollState)
-                        .verticalScroll(scrollState)
-                ) {
-                    displayRows.forEachIndexed { index, displayRow ->
-                        MeasuredSetTableRow(displayRow, index)
-                    }
+                displayRows.forEachIndexed { index, setState ->
+                    MeasuredSetTableRow(setState, index)
                 }
             }
         }

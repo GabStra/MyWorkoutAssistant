@@ -140,7 +140,7 @@ fun PageExercises(
             if (currentSet != null) {
                 val shouldApplyProgressColors = workoutState is WorkoutState.Set
                 ExerciseSetsViewer(
-                    modifier = Modifier.padding(horizontal = 20.dp),
+                    modifier = Modifier.padding(horizontal = 22.5.dp),
                     viewModel = viewModel,
                     hapticsViewModel = hapticsViewModel,
                     exercise = selectedExercise,
