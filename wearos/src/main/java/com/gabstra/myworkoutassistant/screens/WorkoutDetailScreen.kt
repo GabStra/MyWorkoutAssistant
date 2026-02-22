@@ -288,6 +288,7 @@ fun WorkoutDetailScreen(
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.deleteWorkoutRecord()
+            showDeleteDialog = false
         },
         handleNoClick = {
             showDeleteDialog = false
@@ -318,10 +319,7 @@ fun WorkoutDetailScreen(
             showStartConfirmationDialog = false
             hapticsViewModel.doGentleVibration()
         },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
-            showStartConfirmationDialog = false
-        },
+        handleOnAutomaticClose = { },
         onVisibilityChange = { isVisible ->
             if (isVisible) {
                 viewModel.setDimming(false)
