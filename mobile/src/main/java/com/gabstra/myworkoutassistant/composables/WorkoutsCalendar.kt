@@ -112,46 +112,49 @@ private fun Day(
         Modifier
             .fillMaxWidth()
             .padding(
-                horizontal = if (isInSelectedWeek) 0.dp else 5.dp,
+                horizontal = 0.dp,
                 vertical = 2.dp
             )
             .drawBehind {
                 if (isInSelectedWeek) {
-                    val strokeWidth = 1.dp.toPx()
+                    val strokeWidth = 2f
+                    val half = strokeWidth / 2f
                     val borderColor = primaryColor
-                    val backgroundColor = primaryColor.copy(alpha = 0.16f)
+                    val backgroundColor = primaryColor.copy(alpha = 0.25f)
 
                     drawRect(color = backgroundColor)
+                    // Horizontal lines: inset by half stroke so full stroke is drawn (pixel-perfect)
                     drawLine(
                         color = borderColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(size.width, 0f),
+                        start = Offset(0f, half),
+                        end = Offset(size.width, half),
                         strokeWidth = strokeWidth
                     )
                     drawLine(
                         color = borderColor,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
+                        start = Offset(0f, size.height - half),
+                        end = Offset(size.width, size.height - half),
                         strokeWidth = strokeWidth
                     )
+                    // Vertical lines: inset by half stroke so full stroke is drawn (same thickness as horizontal)
                     if (isSelectedWeekStart) {
                         drawLine(
                             color = borderColor,
-                            start = Offset(0f, 0f),
-                            end = Offset(0f, size.height),
+                            start = Offset(half, 0f),
+                            end = Offset(half, size.height),
                             strokeWidth = strokeWidth
                         )
                     }
                     if (isSelectedWeekEnd) {
                         drawLine(
                             color = borderColor,
-                            start = Offset(size.width, 0f),
-                            end = Offset(size.width, size.height),
+                            start = Offset(size.width - half, 0f),
+                            end = Offset(size.width - half, size.height),
                             strokeWidth = strokeWidth
                         )
                     }
                 } else if (isToday) {
-                    val strokeWidth = 1.dp.toPx()
+                    val strokeWidth = 2f
                     val borderColor = secondaryColor
                     drawLine(
                         color = borderColor,
@@ -190,12 +193,12 @@ private fun Day(
                         onClick(day)
                     },
                 )
-                .padding(3.dp)
+                .padding(5.dp)
         ) {
             val textColor = when {
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
-                shouldHighlight -> MaterialTheme.colorScheme.onPrimary
+                shouldHighlight -> MaterialTheme.colorScheme.background
                 else -> MaterialTheme.colorScheme.onBackground
             }
 
