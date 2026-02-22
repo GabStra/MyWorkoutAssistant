@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -84,8 +85,8 @@ fun TutorialOverlay(
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(),
-        exit = fadeOut()
+        enter = fadeIn(animationSpec = tween(durationMillis = 0)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 150))
     ) {
         Box(
             modifier = modifier

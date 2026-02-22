@@ -23,10 +23,6 @@ internal data class TopOverlayEntry(
 
 @Stable
 class TopOverlayController internal constructor() {
-    companion object {
-        const val OWNER_SET_SCREEN_TUTORIAL = "workout_set_tutorial"
-    }
-
     private var nextToken by mutableLongStateOf(0L)
     private var entry by mutableStateOf<TopOverlayEntry?>(null)
 

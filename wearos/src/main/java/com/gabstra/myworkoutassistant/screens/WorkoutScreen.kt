@@ -446,43 +446,40 @@ fun WorkoutScreen(
                                     }
                                 }
 
-                                LaunchedEffect(showSetScreenTutorial, state.exerciseId, state.set.id) {
-                                    if (showSetScreenTutorial) {
-                                        viewModel.setDimming(false)
-                                        topOverlayController.show(owner = TopOverlayController.OWNER_SET_SCREEN_TUTORIAL) {
-                                            TutorialOverlay(
-                                                visible = true,
-                                                steps = listOf(
-                                                    TutorialStep("Navigate pages", "Swipe left or right to move between views."),
-                                                    TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
-                                                    TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
-                                                    TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
-                                                ),
-                                                onDismiss = onDismissSetScreenTutorial,
-                                                hapticsViewModel = hapticsViewModel
-                                            )
-                                        }
-                                    } else {
-                                        topOverlayController.clear(TopOverlayController.OWNER_SET_SCREEN_TUTORIAL)
-                                        viewModel.reEvaluateDimmingForCurrentState()
-                                    }
+                                LaunchedEffect(showSetScreenTutorial) {
+                                    if (showSetScreenTutorial) viewModel.setDimming(false)
+                                    else viewModel.reEvaluateDimmingForCurrentState()
                                 }
 
-                                key(state.exerciseId) {
-                                    ExerciseScreen(
-                                        viewModel = viewModel,
-                                        hapticsViewModel = hapticsViewModel,
-                                        state = state,
-                                        hearthRateChart = { modifier ->
-                                            heartRateChartComposable(
-                                                modifier = modifier,
-                                                lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
-                                                upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
-                                            )
-                                        },
-                                        navController = navController,
-                                        onBeforeGoHome = onBeforeGoHome,
+                                if (showSetScreenTutorial) {
+                                    TutorialOverlay(
+                                        visible = true,
+                                        steps = listOf(
+                                            TutorialStep("Navigate pages", "Swipe left or right to move between views."),
+                                            TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
+                                            TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
+                                            TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
+                                        ),
+                                        onDismiss = onDismissSetScreenTutorial,
+                                        hapticsViewModel = hapticsViewModel
                                     )
+                                } else {
+                                    key(state.exerciseId) {
+                                        ExerciseScreen(
+                                            viewModel = viewModel,
+                                            hapticsViewModel = hapticsViewModel,
+                                            state = state,
+                                            hearthRateChart = { modifier ->
+                                                heartRateChartComposable(
+                                                    modifier = modifier,
+                                                    lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                                    upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                                )
+                                            },
+                                            navController = navController,
+                                            onBeforeGoHome = onBeforeGoHome,
+                                        )
+                                    }
                                 }
                             }
                             is WorkoutState.Rest -> {
