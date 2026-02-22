@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.screens
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
@@ -28,10 +27,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -64,11 +63,13 @@ import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -98,11 +99,9 @@ private fun Workout.hasEnabledExerciseWithSet(): Boolean {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun WorkoutListItem(workout: Workout, onItemClick: () -> Unit, modifier: Modifier, transformation: SurfaceTransformation) {
+fun WorkoutListItem(modifier: Modifier,workout: Workout, onItemClick: () -> Unit, transformation: SurfaceTransformation) {
     ButtonWithText(
-        modifier = modifier.semantics {
-            contentDescription = "Open workout: ${workout.name}"
-        },
+        modifier = modifier,
         transformation = transformation,
         text = workout.name,
         onClick = { onItemClick() }
@@ -284,17 +283,12 @@ fun WorkoutSelectionScreen(
             
             TransformingLazyColumn(
                 contentPadding = contentPadding,
-                state = state,
-                verticalArrangement = Arrangement.spacedBy(
-                    space = 4.dp,
-                    alignment = Alignment.CenterVertically,
-                ),
+                state = state
             ) {
                 item {
                     ListHeader(
                         modifier = Modifier
-                            .transformedHeight(this, spec)
-                            .animateItem(),
+                            .transformedHeight(this, spec),
                         transformation = SurfaceTransformation(spec),
                     ) {
                         Row(
@@ -374,30 +368,34 @@ fun WorkoutSelectionScreen(
 
                 if (userAge == currentYear) {
                     item {
-                        if (viewModel.isPhoneConnectedAndHasApp) {
-                            Text(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 5.dp)
-                                    .transformedHeight(this, spec)
-                                    .animateItem(),
-                                text = "Complete configuration on the companion app",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                color = MediumLighterGray
-                            )
-                        } else {
-                            Text(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 5.dp)
-                                    .transformedHeight(this, spec)
-                                    .animateItem(),
-                                text = "Install the companion app",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                color = MediumLighterGray
-                            )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .transformedHeight(this, spec)
+                                .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                        ) {
+                            if (viewModel.isPhoneConnectedAndHasApp) {
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                    text = "Complete configuration on the companion app",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                                    color = MediumLighterGray
+                                )
+                            } else {
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                    text = "Install the companion app",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                                    color = MediumLighterGray
+                                )
+                            }
                         }
                     }
                     if (viewModel.isPhoneConnectedAndHasApp) {
@@ -432,13 +430,22 @@ fun WorkoutSelectionScreen(
                 } else {
                     if (workouts.isEmpty()) {
                         item {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "No Workouts Available",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                color = MediumLighterGray
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec)
+                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                            ) {
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                    text = "No Workouts Available",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
+                                    color = MediumLighterGray
+                                )
+                            }
                         }
                     } else {
                         // Group workouts by plan and display with headers
@@ -449,8 +456,7 @@ fun WorkoutSelectionScreen(
                                     item {
                                         ListHeader(
                                             modifier = Modifier
-                                                .transformedHeight(this, spec)
-                                                .animateItem(),
+                                                .transformedHeight(this, spec),
                                             transformation = SurfaceTransformation(spec),
                                         ) {
                                             Text(
@@ -476,9 +482,9 @@ fun WorkoutSelectionScreen(
                                             viewModel.setSelectedWorkoutId(workout.id)
                                         },
                                         modifier = Modifier
+                                            .semantics { contentDescription = "Open workout: ${workout.name}" }
                                             .fillMaxWidth()
-                                            .transformedHeight(this, spec)
-                                            .animateItem(),
+                                            .transformedHeight(this, spec),
                                         transformation = SurfaceTransformation(spec)
                                     )
                                 }
