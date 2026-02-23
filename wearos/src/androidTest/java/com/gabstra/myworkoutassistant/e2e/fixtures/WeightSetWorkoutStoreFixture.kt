@@ -41,7 +41,7 @@ object WeightSetWorkoutStoreFixture {
             equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

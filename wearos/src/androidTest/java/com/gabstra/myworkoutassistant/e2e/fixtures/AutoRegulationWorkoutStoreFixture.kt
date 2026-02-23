@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.e2e.fixtures
 import android.content.Context
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -12,28 +13,31 @@ import java.time.LocalDate
 import java.util.UUID
 
 /**
- * Fixture for creating a workout store with multiple sets and rests for progression tests.
+ * Fixture for a workout containing one exercise with auto-regulation progression.
+ * No calibration; first screen is the first work set. Completing a work set (reps in range)
+ * shows the auto-regulation RIR screen; last work set has no RIR step.
  */
-object MultipleSetsAndRestsWorkoutStoreFixture {
-    private const val WORKOUT_NAME = "Test Workout"
+object AutoRegulationWorkoutStoreFixture {
+    private const val WORKOUT_NAME = "Auto-Regulation Workout"
+    const val EXERCISE_NAME = "Auto-Reg Bench Press"
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
         val exerciseId = UUID.randomUUID()
         val set1Id = UUID.randomUUID()
-        val set2Id = UUID.randomUUID()
         val restId = UUID.randomUUID()
+        val set2Id = UUID.randomUUID()
 
         val exercise = Exercise(
             id = exerciseId,
             enabled = true,
-            name = "Bench Press",
+            name = EXERCISE_NAME,
             doNotStoreHistory = false,
             notes = "",
             sets = listOf(
-                WeightSet(set1Id, 10, 100.0),
-                RestSet(restId, 60), // Short rest for faster E2E
-                WeightSet(set2Id, 8, 100.0)
+                WeightSet(set1Id, 8, 80.0),
+                RestSet(restId, 60),
+                WeightSet(set2Id, 8, 80.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
@@ -45,19 +49,20 @@ object MultipleSetsAndRestsWorkoutStoreFixture {
             equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
+            progressionMode = ProgressionMode.AUTO_REGULATION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
-            loadJumpDefaultPct = 0.025,
-            loadJumpMaxPct = 0.5,
-            loadJumpOvercapUntil = 2
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null,
+            requiresLoadCalibration = false
         )
 
         val workout = Workout(
             id = UUID.randomUUID(),
             name = WORKOUT_NAME,
-            description = "Test Description",
+            description = "Auto-regulation E2E test workout",
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
@@ -85,5 +90,3 @@ object MultipleSetsAndRestsWorkoutStoreFixture {
 
     fun getWorkoutName(): String = WORKOUT_NAME
 }
-
-

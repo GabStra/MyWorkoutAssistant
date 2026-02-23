@@ -44,7 +44,7 @@ object WarmupSetWorkoutStoreFixture {
             equipmentId = equipment.id,
             bodyWeightPercentage = null,
             generateWarmUpSets = true, // Enable warmup set generation
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

@@ -12,6 +12,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
+import java.util.regex.Pattern
 
 /**
  * Reusable UI driver for common workout E2E interactions.
@@ -268,6 +269,121 @@ class WearWorkoutDriver(
         longPressByDesc("Done", timeoutMs)
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         return true
+    }
+
+    /**
+     * Reads the weight displayed on the current set screen (e.g. Weight Set screen).
+     * Uses [SetValueSemantics.WeightValueDescription]; parses text or content description to Double.
+     * Waits for the weight (or Weight Set screen) to appear and retries a few times to allow pager/UI to settle.
+     * @return The weight in kg, or null if not found / parse failed.
+     */
+    fun readWeightOnSetScreen(timeoutMs: Long = 5_000): Double? {
+        if (!waitForWeightSetScreen(timeoutMs)) {
+            return readWeightFromScreenFallback(timeoutMs)
+        }
+        val deadline = System.currentTimeMillis() + 3_000
+        repeat(5) {
+            if (System.currentTimeMillis() >= deadline) return null
+            val target = device.findObject(By.descContains(SetValueSemantics.WeightValueDescription))
+                ?: device.findObject(By.descContains(SetValueSemantics.WeightSetTypeDescription))
+            if (target != null) {
+                val raw = readValueTextFromNode(target)
+                raw?.replace(",", ".")?.toDoubleOrNull()?.let { return it }
+            }
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        }
+        return readWeightFromScreenFallback(1_000)
+    }
+
+    /**
+     * Fallback: find visible text that looks like a weight value (integer in 50..150 kg).
+     * Used when semantics are not exposed (e.g. on a pager page).
+     */
+    private fun readWeightFromScreenFallback(timeoutMs: Long): Double? {
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val nodes = device.findObjects(By.text(Pattern.compile("^[0-9]+$")))
+            for (node in nodes) {
+                val text = node.text?.trim() ?: continue
+                val value = text.toDoubleOrNull() ?: continue
+                if (value in 50.0..150.0) return value
+            }
+            device.waitForIdle(300)
+        }
+        return null
+    }
+
+    /**
+     * Waits until the Weight Set screen or weight value is visible (e.g. after pager settles).
+     */
+    fun waitForWeightSetScreen(timeoutMs: Long): Boolean {
+        return device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightValueDescription)),
+            timeoutMs
+        ) || device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
+            timeoutMs
+        )
+    }
+
+    private fun readValueTextFromNode(target: UiObject2): String? {
+        return try {
+            val directText = target.text?.trim()
+            if (!directText.isNullOrBlank()) return directText
+            val queue = ArrayDeque<UiObject2>()
+            queue.add(target)
+            while (queue.isNotEmpty()) {
+                val node = queue.removeFirst()
+                val nodeText = node.text?.trim()
+                if (!nodeText.isNullOrBlank()) return nodeText
+                runCatching { node.children }.getOrDefault(emptyList()).forEach { queue.addLast(it) }
+            }
+            val desc = target.contentDescription?.toString()?.trim()
+            if (!desc.isNullOrBlank()) {
+                val parts = desc.split(":", limit = 2)
+                if (parts.size == 2) {
+                    val candidate = parts[1].trim()
+                    if (candidate.isNotBlank()) return candidate
+                }
+            }
+            null
+        } catch (_: StaleObjectException) {
+            null
+        }
+    }
+
+    /**
+     * On the auto-regulation (or calibration) RIR screen: select the given RIR value via the picker,
+     * then confirm. Assumes RIR screen is already visible (e.g. "0 = Form Breaks" text present).
+     * Default RIR is 2; use Add/Subtract to reach [targetRir], then Back to close picker, Back to open
+     * confirm dialog, long-press Done to confirm.
+     */
+    fun selectRIRAndConfirm(targetRir: Int, timeoutMs: Long = 8_000) {
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        val rirNode = device.wait(Until.findObject(By.desc("RIR value")), timeoutMs)
+            ?: error("RIR value control not found within ${timeoutMs}ms")
+        rirNode.longClick()
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        val steps = targetRir - 2
+        when {
+            steps < 0 -> repeat(-steps) {
+                clickLabel("Subtract", 2_000)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            }
+            steps > 0 -> repeat(steps) {
+                clickLabel("Add", 2_000)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            }
+        }
+        device.pressBack()
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        device.pressBack()
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        val hasDone = device.wait(Until.hasObject(By.desc("Done")), timeoutMs)
+        require(hasDone) { "Confirm RIR dialog (Done) did not appear" }
+        longPressByDesc("Done", timeoutMs)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
     }
 
     fun skipRest(timeoutMs: Long = 3_000) {
