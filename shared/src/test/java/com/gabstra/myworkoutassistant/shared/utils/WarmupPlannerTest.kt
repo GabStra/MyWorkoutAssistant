@@ -60,7 +60,7 @@ class WarmupPlannerTest {
             equipmentId = equipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = true,
-            enableProgression = false,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

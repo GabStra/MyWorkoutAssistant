@@ -34,17 +34,16 @@ class BarbellTest {
         // Find the bar-only entry (total = barWeight, plateWeight = 0)
         val barOnly = labels.find { it.first == barWeight }
         assertTrue("Should have bar-only entry", barOnly != null)
-        assertEquals("20 kg", barOnly!!.second)
+        assertEquals("20", barOnly!!.second)
 
         // Find an entry with plates (e.g., bar + 40kg plates = 60kg total)
         // With 2x20kg plates, we get 40kg total plates (20kg per side * 2)
         val withPlates = labels.find { it.first == 60.0 } // 20kg bar + 40kg plates
         if (withPlates != null) {
             assertTrue(
-                "Label should show bar and plates in concise format",
-                withPlates.second.contains("20") && withPlates.second.contains("40") && withPlates.second.contains("kg")
+                "Label should show total weight",
+                withPlates.second == "60"
             )
-            assertEquals("20 + 40 kg", withPlates.second)
         }
     }
 
@@ -87,8 +86,8 @@ class BarbellTest {
         val barOnly = labels.find { it.first == barWeight }
 
         assertTrue("Should have bar-only entry", barOnly != null)
-        // Should just show the weight when there are no plates
-        assertEquals("20 kg", barOnly!!.second)
+        // Should just show the weight when there are no plates (formatWeight gives integer string)
+        assertEquals("20", barOnly!!.second)
     }
 }
 

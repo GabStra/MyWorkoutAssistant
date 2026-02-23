@@ -194,7 +194,7 @@ class WorkoutViewModelDatabaseTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -222,7 +222,7 @@ class WorkoutViewModelDatabaseTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -251,7 +251,7 @@ class WorkoutViewModelDatabaseTest {
 
     private fun createTestWorkoutStore(): WorkoutStore {
         val workout = createTestWorkout()
-        val equipmentId = createTestBarbell()
+        val equipment = createTestBarbell()
         
         return WorkoutStore(
             workouts = listOf(workout),
@@ -722,9 +722,8 @@ class WorkoutViewModelDatabaseTest {
         }
 
         assertTrue("Should have left Preparing", workoutState !is WorkoutState.Preparing)
-        viewModel.setWorkoutStart()
-        advanceUntilIdle()
-        joinViewModelJobs()
+        // Do NOT call setWorkoutStart() so that currentWorkoutHistory stays null (simulates
+        // "Go Home" before ever persisting; setWorkoutStart() would call pushAndStoreWorkoutData).
 
         // Advance until we're on a Set (first set of first exercise); may be Rest first.
         var steps = 0
@@ -768,7 +767,7 @@ class WorkoutViewModelDatabaseTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

@@ -184,7 +184,7 @@ class WorkoutViewModelSessionTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -558,7 +558,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above expected: 95kg instead of 92.5kg
-                val achievableWeight = findClosestAchievableWeight(95.0, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(95.0, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -645,7 +645,7 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData && expectedSetIndex < expectedSets.size) {
                 val expectedSet = expectedSets[expectedSetIndex]
                 // Execute exactly as expected from progression
-                val achievableWeight = findClosestAchievableWeight(expectedSet.weight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(expectedSet.weight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = expectedSet.reps,
                     actualWeight = achievableWeight,
@@ -700,7 +700,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below expected: 50 instead of 55.0kg
-                val achievableWeight = findClosestAchievableWeight(50.0, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(50.0, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -758,7 +758,7 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData) {
                 // First set above, second set below - creates MIXED
                 val desiredWeight = if (setIndex == 0) 95.0 else 90.0
-                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -816,7 +816,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above retry target
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
                     actualWeight = achievableWeight,
@@ -871,7 +871,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute exactly as retry target
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -925,7 +925,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below retry target
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 1,
                     actualWeight = achievableWeight,
@@ -982,7 +982,7 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData) {
                 // First set above, second set below - creates MIXED
                 val reps = if (setIndex == 0) currentSetData.actualReps + 1 else currentSetData.actualReps - 1
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = reps,
                     actualWeight = achievableWeight,
@@ -1066,7 +1066,7 @@ class WorkoutViewModelSessionTest {
         executeSetsOnly { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -1120,7 +1120,7 @@ class WorkoutViewModelSessionTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = false, // Disable progression
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF, // Disable progression
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -1139,7 +1139,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above last successful session
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
                     actualWeight = achievableWeight,
@@ -1181,7 +1181,7 @@ class WorkoutViewModelSessionTest {
                 createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             )
         ).copy(
-            enableProgression = true,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             requiresLoadCalibration = true
         )
         val workout = createTestWorkout(exercise)
@@ -1194,7 +1194,7 @@ class WorkoutViewModelSessionTest {
         executeWorkoutWithSets { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
                     actualWeight = achievableWeight,
@@ -1245,7 +1245,7 @@ class WorkoutViewModelSessionTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = false,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -1264,7 +1264,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute below last successful session
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 1,
                     actualWeight = achievableWeight,
@@ -1315,7 +1315,7 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData) {
                 // Execute significantly above expected to beat best session
                 val desiredWeight = currentSetData.actualWeight + 5.0
-                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 2,
                     actualWeight = achievableWeight,
@@ -1558,7 +1558,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above previous session
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
                     actualWeight = achievableWeight,
@@ -1670,7 +1670,7 @@ class WorkoutViewModelSessionTest {
             if (currentSetData is WeightSetData) {
                 // Execute below expected - failure
                 val desiredWeight = currentSetData.actualWeight - 5.0
-                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(desiredWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps - 2,
                     actualWeight = achievableWeight,
@@ -1702,7 +1702,7 @@ class WorkoutViewModelSessionTest {
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
                 // Execute above retry target - success
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps + 1,
                     actualWeight = achievableWeight,
@@ -1871,7 +1871,7 @@ class WorkoutViewModelSessionTest {
         executeWorkoutWithSets { setState ->
             val currentSetData = setState.currentSetData
             if (currentSetData is WeightSetData) {
-                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipment)
+                val achievableWeight = findClosestAchievableWeight(currentSetData.actualWeight, setState.equipmentId?.let { viewModel.getEquipmentById(it) })
                 setState.currentSetData = currentSetData.copy(
                     actualReps = currentSetData.actualReps,
                     actualWeight = achievableWeight,
@@ -1942,7 +1942,7 @@ class WorkoutViewModelSessionTest {
             equipmentId = testEquipmentId,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = false,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = 60, // This makes it unilateral

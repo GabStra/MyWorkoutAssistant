@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.shared.viewmodels
 
 import android.content.Context
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.room.Room
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
@@ -127,7 +129,7 @@ class ResumeLastStateRestTest {
         stateMachineField.isAccessible = true
         workoutStateField = WorkoutViewModel::class.java.getDeclaredField("_workoutState")
         workoutStateField.isAccessible = true
-        workoutRecordField = WorkoutViewModel::class.java.getDeclaredField("_workoutRecord")
+        workoutRecordField = WorkoutViewModel::class.java.getDeclaredField("_workoutRecord\$delegate")
         workoutRecordField.isAccessible = true
 
         viewModel.initWorkoutStoreRepository(mockWorkoutStoreRepository)
@@ -153,7 +155,7 @@ class ResumeLastStateRestTest {
         val sequence = listOf(WorkoutStateSequenceItem.Container(container))
         val machine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1)
         stateMachineField.set(viewModel, machine)
-        workoutStateField.set(viewModel, restState)
+        (workoutStateField.get(viewModel) as MutableStateFlow<WorkoutState>).value = restState
 
         val record = WorkoutRecord(
             id = UUID.randomUUID(),
@@ -162,7 +164,7 @@ class ResumeLastStateRestTest {
             setIndex = 0u,
             exerciseId = exerciseId
         )
-        workoutRecordField.set(viewModel, record)
+        (workoutRecordField.get(viewModel) as MutableState<WorkoutRecord?>).value = record
 
         viewModel.resumeLastState()
         advanceUntilIdle()
