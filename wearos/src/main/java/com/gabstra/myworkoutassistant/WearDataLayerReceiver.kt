@@ -37,7 +37,11 @@ internal class WearDataLayerReceiver(
 
     private fun handleBackupStart(intent: Intent) {
         val appBackupStartJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_START_JSON)
-        if (appBackupStartJson == null) {
+        val startAccepted = intent.getBooleanExtra(
+            DataLayerListenerService.APP_BACKUP_START_ACCEPTED,
+            false
+        )
+        if (appBackupStartJson == null || !startAccepted) {
             return
         }
         Log.d("DataLayerSync", "Received APP_BACKUP_START_JSON - triggering loading screen")
