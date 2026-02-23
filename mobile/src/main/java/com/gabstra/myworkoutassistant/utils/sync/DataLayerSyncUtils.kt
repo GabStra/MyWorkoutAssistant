@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -673,6 +674,40 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup, context:
         SyncHandshakeManager.cleanup(transactionId)
         Log.e("DataLayerSync", "Error sending app backup", exception)
         throw exception
+    } finally {
+        cleanupAppBackupTransactionDataItems(dataClient, transactionId)
+    }
+}
+
+private suspend fun cleanupAppBackupTransactionDataItems(
+    dataClient: DataClient,
+    transactionId: String
+) {
+    val transactionPaths = listOf(
+        DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.APP_BACKUP_START_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.APP_BACKUP_CHUNK_PREFIX, transactionId)
+    )
+
+    transactionPaths.forEach { path ->
+        try {
+            val uri = Uri.Builder()
+                .scheme("wear")
+                .path(path)
+                .build()
+            val deletedCount = Tasks.await(
+                dataClient.deleteDataItems(uri, DataClient.FILTER_PREFIX)
+            )
+            Log.d(
+                "DataLayerSync",
+                "Cleaned up $deletedCount DataItem(s) for path=$path transaction=$transactionId"
+            )
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to clean up DataItems for path=$path transaction=$transactionId: ${exception.message}"
+            )
+        }
     }
 }
 
