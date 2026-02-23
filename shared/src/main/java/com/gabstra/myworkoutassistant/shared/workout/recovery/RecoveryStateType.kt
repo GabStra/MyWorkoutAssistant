@@ -9,5 +9,6 @@ enum class RecoveryStateType {
     REST,
     CALIBRATION_LOAD,
     CALIBRATION_RIR,
+    AUTO_REGULATION_RIR,
     UNKNOWN
 }

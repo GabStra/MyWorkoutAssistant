@@ -235,6 +235,42 @@ internal object WorkoutStateSequenceOps {
         if (id != null) replacements[id] ?: state else state
     }
 
+    /**
+     * Removes the first state that equals [stateToRemove] from the sequence.
+     * Used to remove CalibrationRIRSelection or AutoRegulationRIRSelection after applying RIR.
+     */
+    fun removeStateFromSequence(
+        sequence: List<WorkoutStateSequenceItem>,
+        stateToRemove: WorkoutState
+    ): List<WorkoutStateSequenceItem> = sequence.map { item ->
+        when (item) {
+            is WorkoutStateSequenceItem.Container -> when (val c = item.container) {
+                is WorkoutStateContainer.ExerciseState -> {
+                    val newChildItems = c.childItems.flatMap { child ->
+                        when (child) {
+                            is ExerciseChildItem.Normal ->
+                                if (child.state == stateToRemove) emptyList() else listOf(child)
+                            is ExerciseChildItem.CalibrationExecutionBlock ->
+                                listOf(
+                                    ExerciseChildItem.CalibrationExecutionBlock(
+                                        child.childStates.filter { it != stateToRemove }.toMutableList()
+                                    )
+                                )
+                            is ExerciseChildItem.LoadSelectionBlock -> listOf(child)
+                            is ExerciseChildItem.UnilateralSetBlock -> listOf(child)
+                        }
+                    }.toMutableList()
+                    WorkoutStateSequenceItem.Container(c.copy(childItems = newChildItems))
+                }
+                is WorkoutStateContainer.SupersetState -> {
+                    val newChildStates = c.childStates.filter { it != stateToRemove }.toMutableList()
+                    WorkoutStateSequenceItem.Container(c.copy(childStates = newChildStates))
+                }
+            }
+            is WorkoutStateSequenceItem.RestBetweenExercises -> item
+        }
+    }
+
     fun rebuildExerciseChildItemsFromFlat(
         childItems: MutableList<ExerciseChildItem>,
         flatStates: List<WorkoutState>

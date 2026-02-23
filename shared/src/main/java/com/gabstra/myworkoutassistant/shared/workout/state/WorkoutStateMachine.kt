@@ -515,6 +515,7 @@ data class WorkoutStateMachine(
                                     is WorkoutState.Set -> state.exerciseId == exerciseId
                                     is WorkoutState.CalibrationLoadSelection -> state.exerciseId == exerciseId
                                     is WorkoutState.CalibrationRIRSelection -> state.exerciseId == exerciseId
+                                    is WorkoutState.AutoRegulationRIRSelection -> state.exerciseId == exerciseId
                                     else -> false
                                 }
                             }

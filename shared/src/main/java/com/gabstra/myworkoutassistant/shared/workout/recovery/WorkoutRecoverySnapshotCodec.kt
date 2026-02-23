@@ -68,6 +68,7 @@ internal data class StateDto(
     val exerciseId: String? = null,
     val setJson: String? = null,
     val calibrationSetJson: String? = null,
+    val workSetJson: String? = null,
     val setIndex: Int? = null,
     val order: Int? = null,
     val previousSetDataJson: String? = null,
@@ -86,6 +87,7 @@ internal data class StateDto(
     val intraSetCounter: Int? = null,
     val isCalibrationSet: Boolean? = null,
     val isCalibrationManagedWorkSet: Boolean? = null,
+    val isAutoRegulationWorkSet: Boolean? = null,
     val equipmentId: String? = null,
     val isIntraSetRest: Boolean? = null,
     val isLoadConfirmed: Boolean? = null
@@ -214,6 +216,7 @@ object WorkoutRecoverySnapshotCodec {
             intraSetCounter = intraSetCounter.toInt(),
             isCalibrationSet = isCalibrationSet,
             isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
+            isAutoRegulationWorkSet = isAutoRegulationWorkSet,
             equipmentId = equipmentId?.toString()
         )
         is WorkoutState.CalibrationLoadSelection -> StateDto(
@@ -234,6 +237,17 @@ object WorkoutRecoverySnapshotCodec {
             type = "CALIBRATION_RIR",
             exerciseId = exerciseId.toString(),
             calibrationSetJson = setGson.toJson(calibrationSet),
+            setIndex = setIndex.toInt(),
+            currentSetDataJson = setDataConverter.fromSetData(copySetData(currentSetData)),
+            lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+            upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+            currentBodyWeight = currentBodyWeight,
+            equipmentId = equipmentId?.toString()
+        )
+        is WorkoutState.AutoRegulationRIRSelection -> StateDto(
+            type = "AUTO_REGULATION_RIR",
+            exerciseId = exerciseId.toString(),
+            workSetJson = setGson.toJson(workSet),
             setIndex = setIndex.toInt(),
             currentSetDataJson = setDataConverter.fromSetData(copySetData(currentSetData)),
             lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
@@ -319,7 +333,8 @@ object WorkoutRecoverySnapshotCodec {
                     intraSetTotal = intraSetTotal?.toUInt(),
                     intraSetCounter = (intraSetCounter ?: 0).toUInt(),
                     isCalibrationSet = isCalibrationSet ?: false,
-                    isCalibrationManagedWorkSet = isCalibrationManagedWorkSet ?: false
+                    isCalibrationManagedWorkSet = isCalibrationManagedWorkSet ?: false,
+                    isAutoRegulationWorkSet = isAutoRegulationWorkSet ?: false
                 )
             }
 
@@ -348,6 +363,21 @@ object WorkoutRecoverySnapshotCodec {
                 WorkoutState.CalibrationRIRSelection(
                     exerciseId = exerciseId?.toUuidOrNull() ?: return null,
                     calibrationSet = parsedSet,
+                    setIndex = (setIndex ?: return null).toUInt(),
+                    currentSetDataState = mutableStateOf(copySetData(currentData)),
+                    equipmentId = equipmentId?.toUuidOrNull(),
+                    lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+                    currentBodyWeight = currentBodyWeight ?: 0.0
+                )
+            }
+
+            "AUTO_REGULATION_RIR" -> {
+                val parsedWorkSet = workSetJson?.toSetOrNull() ?: return null
+                val currentData = currentSetDataJson.toSetDataOrNull() ?: initializeSetData(parsedWorkSet)
+                WorkoutState.AutoRegulationRIRSelection(
+                    exerciseId = exerciseId?.toUuidOrNull() ?: return null,
+                    workSet = parsedWorkSet,
                     setIndex = (setIndex ?: return null).toUInt(),
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
                     equipmentId = equipmentId?.toUuidOrNull(),

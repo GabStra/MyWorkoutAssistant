@@ -7,6 +7,7 @@ internal fun WorkoutState.exerciseIdOrNull(): UUID? = when (this) {
     is WorkoutState.Rest -> exerciseId
     is WorkoutState.CalibrationLoadSelection -> exerciseId
     is WorkoutState.CalibrationRIRSelection -> exerciseId
+    is WorkoutState.AutoRegulationRIRSelection -> exerciseId
     else -> null
 }
 
@@ -15,6 +16,7 @@ internal fun WorkoutState.setIdOrNull(): UUID? = when (this) {
     is WorkoutState.Rest -> set.id
     is WorkoutState.CalibrationLoadSelection -> calibrationSet.id
     is WorkoutState.CalibrationRIRSelection -> calibrationSet.id
+    is WorkoutState.AutoRegulationRIRSelection -> workSet.id
     else -> null
 }
 

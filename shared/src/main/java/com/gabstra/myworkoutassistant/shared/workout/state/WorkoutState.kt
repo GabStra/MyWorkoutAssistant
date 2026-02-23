@@ -116,6 +116,7 @@ sealed class WorkoutState {
         var intraSetCounter : UInt = 0u,
         val isCalibrationSet: Boolean = false, // Identifies if this Set is a calibration set execution
         val isCalibrationManagedWorkSet: Boolean = false, // Normal work set under an exercise that requires calibration
+        val isAutoRegulationWorkSet: Boolean = false, // Non-last work set when progressionMode == AUTO_REGULATION
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
     }
@@ -147,6 +148,23 @@ sealed class WorkoutState {
         val currentBodyWeight: Double
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // Observable set data with RIR
+    }
+
+    /**
+     * Auto-regulation RIR entry (standalone flow, not calibration).
+     * Shown when user completes an auto-regulation work set with reps in [minReps, maxReps].
+     */
+    data class AutoRegulationRIRSelection(
+        val exerciseId: UUID,
+        val workSet: com.gabstra.myworkoutassistant.shared.sets.Set, // The work set that was just executed
+        val setIndex: UInt,
+        val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,
+        val equipmentId: UUID?,
+        val lowerBoundMaxHRPercent: Float? = null,
+        val upperBoundMaxHRPercent: Float? = null,
+        val currentBodyWeight: Double
+    ) : WorkoutState() {
+        var currentSetData by currentSetDataState
     }
 
     data class Rest(

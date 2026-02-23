@@ -53,6 +53,13 @@ internal object RecoveryStateIndexFinder {
                     (setIndex == null || state.setIndex == setIndex)
             }
 
+            "AUTO_REGULATION_RIR" -> firstMatching { state ->
+                state is WorkoutState.AutoRegulationRIRSelection &&
+                    (setId == null || state.workSet.id == setId) &&
+                    (exerciseId == null || state.exerciseId == exerciseId) &&
+                    (setIndex == null || state.setIndex == setIndex)
+            }
+
             else -> null
         }
 
