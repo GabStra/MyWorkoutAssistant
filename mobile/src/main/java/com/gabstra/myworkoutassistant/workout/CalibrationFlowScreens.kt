@@ -29,6 +29,8 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.rir.applyAutoRegulationRIR
+import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -322,6 +324,116 @@ fun CalibrationRIRScreen(
             }
             hapticsViewModel.doGentleVibration()
             viewModel.applyCalibrationRIR(rir = rir, formBreaks = formBreaks)
+            viewModel.lightScreenUp()
+            showConfirmDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = { showConfirmDialog = false },
+        onVisibilityChange = { isVisible ->
+            if (isVisible) viewModel.setDimming(false) else viewModel.reEvaluateDimmingForCurrentState()
+        }
+    )
+}
+
+@Composable
+fun AutoRegulationRIRScreen(
+    viewModel: WorkoutViewModel,
+    hapticsViewModel: HapticsViewModel,
+    state: WorkoutState.AutoRegulationRIRSelection,
+) {
+    val exercise = remember(state.exerciseId) { viewModel.exercisesById[state.exerciseId]!! }
+    val initialRir = remember(state.currentSetData) {
+        when (val setData = state.currentSetData) {
+            is WeightSetData -> setData.autoRegulationRIR?.toInt() ?: 2
+            is BodyWeightSetData -> setData.autoRegulationRIR?.toInt() ?: 2
+            else -> 2
+        }
+    }
+
+    var rirValue by remember { mutableIntStateOf(initialRir) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    fun onMinus() {
+        if (rirValue > 0) {
+            rirValue--
+            hapticsViewModel.doGentleVibration()
+        }
+    }
+
+    fun onPlus() {
+        if (rirValue < 10) {
+            rirValue++
+            hapticsViewModel.doGentleVibration()
+        }
+    }
+
+    val rirText = if (rirValue >= 5) "$rirValue+" else rirValue.toString()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
+    ) {
+        Text(
+            text = exercise.name,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text(
+            text = "RIR (Auto-regulation)",
+            style = MaterialTheme.typography.titleSmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        ControlButtonsVertical(
+            modifier = Modifier.weight(1f),
+            onMinusTap = ::onMinus,
+            onMinusLongPress = ::onMinus,
+            onPlusTap = ::onPlus,
+            onPlusLongPress = ::onPlus
+        ) {
+            ScalableText(
+                modifier = Modifier.fillMaxWidth(),
+                text = rirText,
+                style = MaterialTheme.typography.displayLarge.copy(fontWeight = FontWeight.Bold),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Text(
+            text = CalibrationUiLabels.FormBreaksHint,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        ButtonWithText(
+            text = CalibrationUiLabels.ConfirmRir,
+            style = AppButtonStyle.Filled,
+            onClick = { showConfirmDialog = true }
+        )
+    }
+
+    CustomDialogYesOnLongPress(
+        show = showConfirmDialog,
+        title = CalibrationUiLabels.ConfirmRir,
+        message = CalibrationUiLabels.ConfirmRirMessage,
+        handleNoClick = {
+            hapticsViewModel.doGentleVibration()
+            showConfirmDialog = false
+        },
+        handleYesClick = {
+            val rir = rirValue.toDouble()
+            val formBreaks = rirValue == 0
+            state.currentSetData = state.currentSetData.withRIR(rir, forAutoRegulation = true)
+            hapticsViewModel.doGentleVibration()
+            viewModel.applyAutoRegulationRIR(rir = rir, formBreaks = formBreaks)
             viewModel.lightScreenUp()
             showConfirmDialog = false
         },

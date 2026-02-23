@@ -255,7 +255,10 @@ fun ExerciseScreen(
                         val isCalibrationSet = remember(state.isCalibrationSet) {
                             state.isCalibrationSet
                         }
-                        
+                        val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) {
+                            state.isAutoRegulationWorkSet
+                        }
+
                         val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
                             if (isSuperset) {
                                 viewModel.exercisesBySupersetId[exerciseOrSupersetId]!!
@@ -304,7 +307,7 @@ fun ExerciseScreen(
                             )
                             
                             // Status badges row
-                            if (isWarmupSet || isCalibrationSet) {
+                            if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.Center,
@@ -327,6 +330,16 @@ fun ExerciseScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
                                         )
+                                    }
+                                    if (isAutoRegulationWorkSet) {
+                                        Chip(backgroundColor = MaterialTheme.colorScheme.tertiary) {
+                                            Text(
+                                                text = "Auto-regulation",
+                                                style = captionStyle,
+                                                color = MaterialTheme.colorScheme.onTertiary,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -359,10 +372,15 @@ fun ExerciseScreen(
             show = showNextDialog,
             title = when {
                 state.isCalibrationSet -> CalibrationUiLabels.CompleteCalibrationSet
+                state.isAutoRegulationWorkSet -> "Complete Set"
                 state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
                 else -> "Complete Set"
             },
-            message = if (state.isCalibrationSet) CalibrationUiLabels.RateRirAfterSet else "Do you want to proceed?",
+            message = when {
+                state.isCalibrationSet -> CalibrationUiLabels.RateRirAfterSet
+                state.isAutoRegulationWorkSet -> "Rate your RIR after this set (or we'll auto-apply)."
+                else -> "Do you want to proceed?"
+            },
             handleYesClick = {
 
                 if (state.intraSetTotal != null) {
@@ -371,13 +389,20 @@ fun ExerciseScreen(
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
-                if (state.isCalibrationSet) {
-                    viewModel.completeCalibrationSet()
-                    viewModel.lightScreenUp()
-                } else {
-                    viewModel.pushAndStoreWorkoutData(false, context) {
-                        viewModel.goToNextState()
+                when {
+                    state.isAutoRegulationWorkSet -> {
+                        viewModel.completeAutoRegulationSet()
                         viewModel.lightScreenUp()
+                    }
+                    state.isCalibrationSet -> {
+                        viewModel.completeCalibrationSet()
+                        viewModel.lightScreenUp()
+                    }
+                    else -> {
+                        viewModel.pushAndStoreWorkoutData(false, context) {
+                            viewModel.goToNextState()
+                            viewModel.lightScreenUp()
+                        }
                     }
                 }
 

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -99,7 +100,7 @@ private fun PageMusclesPreview() {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = false,
+            progressionMode = ProgressionMode.OFF,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

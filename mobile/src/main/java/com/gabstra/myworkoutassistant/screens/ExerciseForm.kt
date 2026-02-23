@@ -68,6 +68,7 @@ import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -130,7 +131,7 @@ fun ExerciseForm(
 
     val generateWarmupSets = rememberSaveable { mutableStateOf(exercise?.generateWarmUpSets ?: false) }
     val selectedExerciseCategory = rememberSaveable { mutableStateOf(exercise?.exerciseCategory) }
-    val enableProgression = rememberSaveable { mutableStateOf(exercise?.enableProgression ?: false) }
+    val progressionMode = rememberSaveable { mutableStateOf(exercise?.progressionMode ?: ProgressionMode.OFF) }
     val keepScreenOn = rememberSaveable { mutableStateOf(exercise?.keepScreenOn ?: false) }
     val showCountDownTimer = rememberSaveable { mutableStateOf(exercise?.showCountDownTimer ?: false) }
     val requiresLoadCalibration = rememberSaveable { mutableStateOf(exercise?.requiresLoadCalibration ?: false) }
@@ -212,7 +213,14 @@ fun ExerciseForm(
             )
         )
     }
-    
+    val progressionModeOptions: List<StandardFilterDropdownItem<ProgressionMode>> = remember {
+        listOf(
+            StandardFilterDropdownItem(ProgressionMode.OFF, "Off"),
+            StandardFilterDropdownItem(ProgressionMode.DOUBLE_PROGRESSION, "Double progression"),
+            StandardFilterDropdownItem(ProgressionMode.AUTO_REGULATION, "Auto-regulation")
+        )
+    }
+
     // Validate equipment ID exists whenever equipments list changes
     LaunchedEffect(equipments, exercise?.id) {
         val currentEquipmentId = selectedEquipmentId.value
@@ -623,26 +631,26 @@ fun ExerciseForm(
                 Spacer(Modifier.height(Spacing.sm))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                // Enable progression
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Enable double progression", style = MaterialTheme.typography.bodyLarge) },
-                    trailingContent = {
-                        Switch(
-                            checked = enableProgression.value,
-                            onCheckedChange = { 
-                                enableProgression.value = it
-                                // Disable calibration when progression is enabled
-                                if (it) {
-                                    requiresLoadCalibration.value = false
-                                }
-                            }
-                        )
+                // Progression mode
+                val selectedProgressionModeLabel =
+                    remember(progressionModeOptions, progressionMode.value) {
+                        progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
                     }
+                StandardFilterDropdown<ProgressionMode>(
+                    label = "Progression mode",
+                    selectedText = selectedProgressionModeLabel,
+                    items = progressionModeOptions,
+                    onItemSelected = { mode ->
+                        progressionMode.value = mode
+                        if (mode != ProgressionMode.OFF) {
+                            requiresLoadCalibration.value = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isItemSelected = { it == progressionMode.value }
                 )
 
-
-                if (enableProgression.value) {
+                if (progressionMode.value != ProgressionMode.OFF) {
                     Spacer(Modifier.height(Spacing.lg))
                     Text(
                         text = "Default load increase: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
@@ -814,7 +822,7 @@ fun ExerciseForm(
                                 requiresLoadCalibration.value = it
                                 // Disable progression when calibration is enabled
                                 if (it) {
-                                    enableProgression.value = false
+                                    progressionMode.value = ProgressionMode.OFF
                                 }
                             }
                         )
@@ -920,7 +928,7 @@ fun ExerciseForm(
                             equipmentId = selectedEquipmentId.value,
                             bodyWeightPercentage = bodyWeightPercentageValue ?: 0.0,
                             generateWarmUpSets = generateWarmupSets.value,
-                            enableProgression = enableProgression.value && !requiresLoadCalibration.value,
+                            progressionMode = if (requiresLoadCalibration.value) ProgressionMode.OFF else progressionMode.value,
                             keepScreenOn = keepScreenOn.value,
                             showCountDownTimer = showCountDownTimer.value,
                             intraSetRestInSeconds = if (isUnilateral.value && intraSetRestSeconds > 0) {

@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -185,23 +186,23 @@ suspend fun backfillExerciseSessionProgressions(
                 continue
             }
             
-            // Get all exercises from this workout that have enableProgression
+            // Get all exercises from this workout that have progression enabled
             val exercises = mutableListOf<Exercise>()
             workout.workoutComponents?.forEach { component ->
                 when (component) {
                     is Exercise -> {
-                        if (component.enableProgression &&
+                        if (component.progressionMode != ProgressionMode.OFF &&
                             !component.requiresLoadCalibration &&
-                            (component.exerciseType == ExerciseType.WEIGHT || 
+                            (component.exerciseType == ExerciseType.WEIGHT ||
                              component.exerciseType == ExerciseType.BODY_WEIGHT)) {
                             exercises.add(component)
                         }
                     }
                     is Superset -> {
                         component.exercises?.forEach { exercise ->
-                            if (exercise.enableProgression &&
+                            if (exercise.progressionMode != ProgressionMode.OFF &&
                                 !exercise.requiresLoadCalibration &&
-                                (exercise.exerciseType == ExerciseType.WEIGHT || 
+                                (exercise.exerciseType == ExerciseType.WEIGHT ||
                                  exercise.exerciseType == ExerciseType.BODY_WEIGHT)) {
                                 exercises.add(exercise)
                             }

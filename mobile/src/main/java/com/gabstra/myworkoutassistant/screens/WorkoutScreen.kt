@@ -46,6 +46,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.workout.CalibrationLoadScreen
+import com.gabstra.myworkoutassistant.workout.AutoRegulationRIRScreen
 import com.gabstra.myworkoutassistant.workout.CalibrationRIRScreen
 import com.gabstra.myworkoutassistant.workout.ExerciseScreen
 import com.gabstra.myworkoutassistant.workout.KeepOn
@@ -153,6 +154,7 @@ fun WorkoutScreen(
                     is WorkoutState.Completed -> "Completed"
                     is WorkoutState.CalibrationLoadSelection -> "CalibrationLoadSelection"
                     is WorkoutState.CalibrationRIRSelection -> "CalibrationRIRSelection"
+                    is WorkoutState.AutoRegulationRIRSelection -> "AutoRegulationRIRSelection"
                 }
             }
 
@@ -182,6 +184,13 @@ fun WorkoutScreen(
                     }
                     is WorkoutState.CalibrationRIRSelection -> {
                         CalibrationRIRScreen(
+                            viewModel = workoutViewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            state = state
+                        )
+                    }
+                    is WorkoutState.AutoRegulationRIRSelection -> {
+                        AutoRegulationRIRScreen(
                             viewModel = workoutViewModel,
                             hapticsViewModel = hapticsViewModel,
                             state = state
