@@ -1,9 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -44,12 +43,12 @@ fun ExerciseNameText(
     }
 
     Box(
-        modifier = modifier.heightIn(max = twoLineHeight),
+        modifier = modifier.height(twoLineHeight),
     ) {
         Text(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                .fillMaxWidth(),
             text = text,
             style = style,
             textAlign = textAlign,

@@ -31,7 +31,6 @@ import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
-import com.gabstra.myworkoutassistant.composables.TopOverlayController
 import com.gabstra.myworkoutassistant.composables.TopOverlayHost
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
@@ -229,6 +228,9 @@ fun WorkoutScreen(
                 is WorkoutState.CalibrationRIRSelection -> {
                     Toast.makeText(context, "Double press to confirm RIR", Toast.LENGTH_SHORT).show()
                 }
+                is WorkoutState.AutoRegulationRIRSelection -> {
+                    Toast.makeText(context, "Double press to confirm RIR", Toast.LENGTH_SHORT).show()
+                }
                 else -> {
                     // Keep existing behavior for other states
                     viewModel.openCustomDialog()
@@ -251,7 +253,9 @@ fun WorkoutScreen(
                 }
                 is WorkoutState.CalibrationRIRSelection -> {
                     // CalibrationRIRScreen handles its own back button logic
-                    // This case should not be reached, but handle it gracefully
+                }
+                is WorkoutState.AutoRegulationRIRSelection -> {
+                    // AutoRegulationRIRScreen handles its own back button logic
                 }
                 is WorkoutState.Rest -> {
                     // Rest skip now handled by single-press dialog in RestScreen
@@ -350,6 +354,7 @@ fun WorkoutScreen(
                     is WorkoutState.Completed -> "Completed"
                     is WorkoutState.CalibrationLoadSelection -> "Calibration Load Selection"
                     is WorkoutState.CalibrationRIRSelection -> "Calibration RIR Selection"
+                    is WorkoutState.AutoRegulationRIRSelection -> "Auto-regulation RIR"
                 }
             }
 
@@ -431,9 +436,25 @@ fun WorkoutScreen(
                                         )
                                     },
                                     onRIRConfirmed = { rir, formBreaks ->
-                                        // Apply calibration RIR adjustments
                                         viewModel.applyCalibrationRIR(rir, formBreaks)
                                     }
+                                )
+                            }
+                            is WorkoutState.AutoRegulationRIRSelection -> {
+                                val state = workoutState as WorkoutState.AutoRegulationRIRSelection
+                                AutoRegulationRIRScreen(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    state = state,
+                                    navController = navController,
+                                    onBeforeGoHome = onBeforeGoHome,
+                                    hearthRateChart = { modifier ->
+                                        heartRateChartComposable(
+                                            modifier = modifier,
+                                            lowerBoundMaxHRPercent = state.lowerBoundMaxHRPercent,
+                                            upperBoundMaxHRPercent = state.upperBoundMaxHRPercent
+                                        )
+                                    },
                                 )
                             }
                             is WorkoutState.Set -> {
@@ -453,6 +474,7 @@ fun WorkoutScreen(
 
                                 if (showSetScreenTutorial) {
                                     TutorialOverlay(
+                                        modifier = Modifier.zIndex(2f),
                                         visible = true,
                                         steps = listOf(
                                             TutorialStep("Navigate pages", "Swipe left or right to move between views."),

@@ -151,7 +151,7 @@ private fun PageMovementAnimationPreview() {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            enableProgression = false,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,

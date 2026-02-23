@@ -21,6 +21,7 @@ fun ExerciseMetadataStrip(
     supersetExerciseIndex: Int? = null,
     supersetExerciseTotal: Int? = null,
     setLabel: String? = null,
+    repRange: String? = null,
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
     isUnilateral: Boolean = false,
@@ -37,6 +38,7 @@ fun ExerciseMetadataStrip(
         supersetExerciseIndex,
         supersetExerciseTotal,
         setLabel,
+        repRange,
         sideIndicator,
         currentSideIndex,
         isUnilateral,
@@ -94,6 +96,12 @@ fun ExerciseMetadataStrip(
                 setLabel?.let {
                     sep()
                     append("Set: ")
+                    append(it)
+                }
+
+                repRange?.let {
+                    sep()
+                    append("Reps: ")
                     append(it)
                 }
 

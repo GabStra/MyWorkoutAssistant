@@ -57,12 +57,14 @@ sealed class ExerciseSetDisplayRow {
     data class RestRow(val state: WorkoutState.Rest) : ExerciseSetDisplayRow()
     data class CalibrationLoadSelectRow(val state: WorkoutState.CalibrationLoadSelection) : ExerciseSetDisplayRow()
     data class CalibrationRIRRow(val state: WorkoutState.CalibrationRIRSelection) : ExerciseSetDisplayRow()
+    data class AutoRegulationRIRRow(val state: WorkoutState.AutoRegulationRIRSelection) : ExerciseSetDisplayRow()
 
     fun workoutState(): WorkoutState = when (this) {
         is SetRow -> state
         is RestRow -> state
         is CalibrationLoadSelectRow -> state
         is CalibrationRIRRow -> state
+        is AutoRegulationRIRRow -> state
     }
 }
 
@@ -77,6 +79,7 @@ internal fun buildExerciseSetDisplayRows(
             is WorkoutState.CalibrationLoadSelection ->
                 if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
             is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
+            is WorkoutState.AutoRegulationRIRSelection -> ExerciseSetDisplayRow.AutoRegulationRIRRow(state)
             else -> null
         }
     }
@@ -87,6 +90,7 @@ internal fun ExerciseSetDisplayRow.setLikeIdOrNull(): UUID? = when (this) {
     is ExerciseSetDisplayRow.RestRow -> state.set.id
     is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> state.calibrationSet.id
     is ExerciseSetDisplayRow.CalibrationRIRRow -> state.calibrationSet.id
+    is ExerciseSetDisplayRow.AutoRegulationRIRRow -> state.workSet.id
 }
 
 internal fun findDisplayRowIndex(
@@ -136,10 +140,10 @@ private fun buildSetIdentifier(
         current.toString()
     }
 
-    return if (CalibrationHelper.isWarmupSet(setState.set)) {
-        "W$baseIdentifier"
-    } else {
-        baseIdentifier
+    return when {
+        CalibrationHelper.isWarmupSet(setState.set) -> "W$baseIdentifier"
+        setState.isAutoRegulationWorkSet -> "AR$baseIdentifier"
+        else -> baseIdentifier
     }
 }
 
@@ -478,6 +482,11 @@ fun ExerciseSetsViewer(
                 is ExerciseSetDisplayRow.CalibrationRIRRow -> CenteredLabelRow(
                     modifier = rowModifier,
                     text = "SET RIR",
+                    textColor = textColor
+                )
+                is ExerciseSetDisplayRow.AutoRegulationRIRRow -> CenteredLabelRow(
+                    modifier = rowModifier,
+                    text = "AUTO-REG RIR",
                     textColor = textColor
                 )
             }

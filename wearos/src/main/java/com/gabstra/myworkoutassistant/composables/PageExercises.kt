@@ -55,6 +55,7 @@ fun PageExercises(
             is WorkoutState.Set -> workoutState.set
             is WorkoutState.CalibrationLoadSelection -> workoutState.calibrationSet
             is WorkoutState.CalibrationRIRSelection -> workoutState.calibrationSet
+            is WorkoutState.AutoRegulationRIRSelection -> workoutState.workSet
             else -> selectedExercise.sets.firstOrNull()
         }
     }

@@ -166,7 +166,8 @@ open class AppViewModel : WorkoutViewModel() {
     ) {
         val showCalibrationOptions = checkpoint?.isCalibrationSetExecution == true ||
             checkpoint?.stateType == RecoveryStateType.CALIBRATION_LOAD ||
-            checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR
+            checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR ||
+            checkpoint?.stateType == RecoveryStateType.AUTO_REGULATION_RIR
         val showTimerOptions = !showCalibrationOptions && shouldShowTimerOptions(checkpoint, interruptedWorkout.workoutId)
         val displayName = resolveRecoveryDisplayName(interruptedWorkout, checkpoint)
 
@@ -429,6 +430,7 @@ open class AppViewModel : WorkoutViewModel() {
             is WorkoutState.Rest -> RecoveryStateType.REST
             is WorkoutState.CalibrationLoadSelection -> RecoveryStateType.CALIBRATION_LOAD
             is WorkoutState.CalibrationRIRSelection -> RecoveryStateType.CALIBRATION_RIR
+            is WorkoutState.AutoRegulationRIRSelection -> RecoveryStateType.AUTO_REGULATION_RIR
             else -> RecoveryStateType.UNKNOWN
         }
 
@@ -441,6 +443,7 @@ open class AppViewModel : WorkoutViewModel() {
             is WorkoutState.Rest -> currentState.exerciseId
             is WorkoutState.CalibrationLoadSelection -> currentState.exerciseId
             is WorkoutState.CalibrationRIRSelection -> currentState.exerciseId
+            is WorkoutState.AutoRegulationRIRSelection -> currentState.exerciseId
             else -> null
         }
 
@@ -449,6 +452,7 @@ open class AppViewModel : WorkoutViewModel() {
             is WorkoutState.Rest -> currentState.set.id
             is WorkoutState.CalibrationLoadSelection -> currentState.calibrationSet.id
             is WorkoutState.CalibrationRIRSelection -> currentState.calibrationSet.id
+            is WorkoutState.AutoRegulationRIRSelection -> currentState.workSet.id
             else -> null
         }
 
@@ -456,6 +460,7 @@ open class AppViewModel : WorkoutViewModel() {
             is WorkoutState.Set -> currentState.setIndex
             is WorkoutState.CalibrationLoadSelection -> currentState.setIndex
             is WorkoutState.CalibrationRIRSelection -> currentState.setIndex
+            is WorkoutState.AutoRegulationRIRSelection -> currentState.setIndex
             else -> null
         }
 

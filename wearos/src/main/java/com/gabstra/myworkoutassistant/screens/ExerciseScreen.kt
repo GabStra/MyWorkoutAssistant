@@ -362,13 +362,14 @@ fun ExerciseScreen(
             show = showNextDialog,
             title = when {
                 state.isCalibrationSet -> "Complete Calibration Set"
+                state.isAutoRegulationWorkSet -> "Complete Set"
                 state.intraSetTotal != null && state.intraSetCounter < state.intraSetTotal!! -> "Switch side"
                 else -> "Complete Set"
             },
-            message = if (state.isCalibrationSet) {
-                "Rate your RIR after completing this set."
-            } else {
-                "Do you want to proceed?"
+            message = when {
+                state.isCalibrationSet -> "Rate your RIR after completing this set."
+                state.isAutoRegulationWorkSet -> "Rate your RIR (or we'll auto-apply)."
+                else -> "Do you want to proceed?"
             },
             handleYesClick = {
                 if (state.intraSetTotal != null) {
@@ -378,14 +379,21 @@ fun ExerciseScreen(
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
 
-                if (state.isCalibrationSet) {
-                    viewModel.completeCalibrationSet()
-                    viewModel.lightScreenUp()
-                } else {
-                    val isDone = viewModel.isNextStateCompleted()
-                    viewModel.pushAndStoreWorkoutData(isDone, context) {
-                        viewModel.goToNextState()
+                when {
+                    state.isAutoRegulationWorkSet -> {
+                        viewModel.completeAutoRegulationSet()
                         viewModel.lightScreenUp()
+                    }
+                    state.isCalibrationSet -> {
+                        viewModel.completeCalibrationSet()
+                        viewModel.lightScreenUp()
+                    }
+                    else -> {
+                        val isDone = viewModel.isNextStateCompleted()
+                        viewModel.pushAndStoreWorkoutData(isDone, context) {
+                            viewModel.goToNextState()
+                            viewModel.lightScreenUp()
+                        }
                     }
                 }
 
@@ -447,11 +455,20 @@ private fun ExerciseDetailContent(
                         }
                     }
                     val isCalibrationSet = remember(state.isCalibrationSet) { state.isCalibrationSet }
+                    val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) { state.isAutoRegulationWorkSet }
                     val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
                         if (isSuperset) viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty() else null
                     }
                     val supersetIndex = remember(supersetExercises, exercise) {
                         supersetExercises?.indexOf(exercise)
+                    }
+                    val repRange = remember(exercise) {
+                        when {
+                            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+                                exercise.minReps > 0 && exercise.maxReps >= exercise.minReps ->
+                                "${exercise.minReps}–${exercise.maxReps}"
+                            else -> null
+                        }
                     }
 
                     Column(
@@ -464,6 +481,7 @@ private fun ExerciseDetailContent(
                             supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
                             setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
                                 ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
+                            repRange = repRange,
                             sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
                             currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
                             isUnilateral = state.isUnilateral,
@@ -471,7 +489,7 @@ private fun ExerciseDetailContent(
                             onTap = { hapticsViewModel.doGentleVibration() }
                         )
 
-                        if (isWarmupSet || isCalibrationSet) {
+                        if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.Center,
@@ -517,6 +535,28 @@ private fun ExerciseDetailContent(
                                             text = "Calibration",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = Green,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                                if (isAutoRegulationWorkSet) {
+                                    Box(
+                                        modifier = Modifier
+                                            .background(
+                                                MaterialTheme.colorScheme.background,
+                                                RoundedCornerShape(25)
+                                            )
+                                            .border(
+                                                BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
+                                                RoundedCornerShape(25)
+                                            )
+                                            .padding(5.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Auto-regulation",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.tertiary,
                                             textAlign = TextAlign.Center
                                         )
                                     }

@@ -329,6 +329,7 @@ fun RestScreen(
         is WorkoutState.Set -> next.exerciseId
         is WorkoutState.CalibrationLoadSelection -> next.exerciseId
         is WorkoutState.CalibrationRIRSelection -> next.exerciseId
+        is WorkoutState.AutoRegulationRIRSelection -> next.exerciseId
         is WorkoutState.Rest -> next.exerciseId
         null -> null
         is WorkoutState.Preparing, is WorkoutState.Completed -> null

@@ -20,6 +20,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,6 +33,7 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 
@@ -88,7 +91,7 @@ fun PageCalibrationRIR(
     
     fun onPlusClick() {
         updateInteractionTime()
-        if (rirValue < 10) {
+        if (rirValue < 5) {
             rirValue++
             hapticsViewModel.doGentleVibration()
         }
@@ -151,6 +154,7 @@ fun PageCalibrationRIR(
         Row(
             modifier = modifier
                 .height(40.dp)
+                .semantics { contentDescription = "RIR value" }
                 .combinedClickable(
                     onClick = {
                         updateInteractionTime()
@@ -270,5 +274,195 @@ fun PageCalibrationRIR(
         onVisibilityChange = { isVisible ->
             // Dialog visibility change handling if needed
         }
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PageCalibrationRIR(
+    modifier: Modifier = Modifier,
+    viewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
+    state: WorkoutState.AutoRegulationRIRSelection,
+    onRIRConfirmed: (Double, Boolean) -> Unit,
+    exerciseTitleComposable: @Composable () -> Unit,
+) {
+    val initialRIR = remember(state.currentSetData) {
+        when (val setData = state.currentSetData) {
+            is WeightSetData -> setData.autoRegulationRIR?.toInt() ?: 2
+            is BodyWeightSetData -> setData.autoRegulationRIR?.toInt() ?: 2
+            else -> 2
+        }
+    }
+    var rirValue by remember { mutableIntStateOf(initialRIR) }
+    var showPicker by remember { mutableStateOf(false) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val typography = MaterialTheme.typography
+    val itemStyle = remember(typography) {
+        typography.numeralSmall.copy(fontWeight = FontWeight.Medium)
+    }
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
+
+    fun updateInteractionTime() {
+        lastInteractionTime = System.currentTimeMillis()
+    }
+
+    fun onOpenPicker() {
+        showPicker = true
+        updateInteractionTime()
+        hapticsViewModel.doGentleVibration()
+    }
+
+    fun onClosePicker() {
+        showPicker = false
+        updateInteractionTime()
+    }
+
+    fun onMinusClick() {
+        updateInteractionTime()
+        if (rirValue > 0) {
+            rirValue--
+            hapticsViewModel.doGentleVibration()
+        }
+    }
+
+    fun onPlusClick() {
+        updateInteractionTime()
+        if (rirValue < 10) {
+            rirValue++
+            hapticsViewModel.doGentleVibration()
+        }
+    }
+
+    fun onConfirmClick() {
+        val formBreaks = rirValue == 0
+        state.currentSetData = state.currentSetData.withRIR(rirValue.toDouble(), forAutoRegulation = true)
+        onRIRConfirmed(rirValue.toDouble(), formBreaks)
+        hapticsViewModel.doGentleVibration()
+    }
+
+    val rirText = if (rirValue >= 5) "$rirValue+" else rirValue.toString()
+
+    LaunchedEffect(showPicker) {
+        if (showPicker) {
+            while (showPicker) {
+                delay(1000)
+                if (System.currentTimeMillis() - lastInteractionTime > 5000) {
+                    showPicker = false
+                }
+            }
+        }
+    }
+
+    CustomBackHandler(
+        enabled = true,
+        onPress = { hapticsViewModel.doGentleVibration() },
+        onSinglePress = {
+            if (showPicker) onClosePicker() else showConfirmDialog = true
+        },
+        onDoublePress = { }
+    )
+
+    @Composable
+    fun RIRRow(modifier: Modifier = Modifier, style: TextStyle) {
+        Row(
+            modifier = modifier
+                .height(40.dp)
+                .semantics { contentDescription = "RIR value" }
+                .combinedClickable(
+                    onClick = { updateInteractionTime() },
+                    onLongClick = { onOpenPicker() }
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ScalableText(
+                modifier = Modifier.fillMaxWidth(),
+                text = rirText,
+                style = style,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        if (showPicker) {
+            ControlButtonsVertical(
+                modifier = Modifier.fillMaxSize(),
+                onMinusTap = { onMinusClick() },
+                onMinusLongPress = { onMinusClick() },
+                onPlusTap = { onPlusClick() },
+                onPlusLongPress = { onPlusClick() },
+                onCloseClick = { onClosePicker() }
+            ) {
+                ScalableText(
+                    modifier = Modifier.fillMaxWidth().combinedClickable(
+                        onClick = { updateInteractionTime() },
+                        onLongClick = { onClosePicker() },
+                        onDoubleClick = { }
+                    ),
+                    text = rirText,
+                    style = itemStyle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top)
+            ) {
+                exerciseTitleComposable()
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                    ) {
+                            Text(
+                                text = "RIR (AR)",
+                                style = headerStyle,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            RIRRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                        }
+                }
+                Text(
+                    text = "0 = Form Breaks",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MediumLighterGray,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                )
+            }
+        }
+    }
+
+    CustomDialogYesOnLongPress(
+        show = showConfirmDialog,
+        title = "Confirm RIR",
+        message = "Do you want to proceed with this RIR?",
+        handleYesClick = {
+            hapticsViewModel.doGentleVibration()
+            onConfirmClick()
+            showConfirmDialog = false
+        },
+        handleNoClick = {
+            hapticsViewModel.doGentleVibration()
+            showConfirmDialog = false
+        },
+        closeTimerInMillis = 5000,
+        handleOnAutomaticClose = { showConfirmDialog = false },
+        onVisibilityChange = { }
     )
 }

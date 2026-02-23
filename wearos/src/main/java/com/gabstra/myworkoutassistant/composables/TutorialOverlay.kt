@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -32,6 +31,7 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 /** A single tutorial step with a title and description. */
 data class TutorialStep(val title: String, val description: String)
@@ -71,9 +71,9 @@ private fun TutorialStepItem(
  */
 @Composable
 fun TutorialOverlay(
+    modifier: Modifier = Modifier,
     visible: Boolean,
     steps: List<TutorialStep>,
-    modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
     buttonText: String = "Got it",
     hapticsViewModel: HapticsViewModel? = null,
