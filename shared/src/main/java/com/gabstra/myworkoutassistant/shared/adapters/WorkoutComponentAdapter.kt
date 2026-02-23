@@ -1,8 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.adapters
 
+import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.ExerciseCategory
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.getExerciseTypeFromSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -67,7 +68,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 }
 
                 jsonObject.addProperty("generateWarmUpSets", src.generateWarmUpSets)
-                jsonObject.addProperty("enableProgression", src.enableProgression)
+                jsonObject.addProperty("progressionMode", src.progressionMode.name)
                 jsonObject.addProperty("keepScreenOn", src.keepScreenOn)
                 jsonObject.addProperty("intraSetRestInSeconds", src.intraSetRestInSeconds)
                 jsonObject.addProperty("showCountDownTimer", src.showCountDownTimer)
@@ -206,10 +207,18 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     false
                 }
 
-                val enableProgression = if (jsonObject.has("enableProgression")) {
-                    jsonObject.get("enableProgression").asBoolean
-                } else {
-                    false
+                val progressionMode = when {
+                    jsonObject.has("progressionMode") -> {
+                        try {
+                            ProgressionMode.valueOf(jsonObject.get("progressionMode").asString)
+                        } catch (e: IllegalArgumentException) {
+                            ProgressionMode.OFF
+                        }
+                    }
+                    jsonObject.has("enableProgression") -> {
+                        if (jsonObject.get("enableProgression").asBoolean) ProgressionMode.DOUBLE_PROGRESSION else ProgressionMode.OFF
+                    }
+                    else -> ProgressionMode.OFF
                 }
 
                 val keepScreenOn = if (jsonObject.has("keepScreenOn")) {
@@ -316,7 +325,7 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     equipmentId,
                     bodyWeightPercentage,
                     generateWarmUpSets,
-                    enableProgression,
+                    progressionMode,
                     keepScreenOn,
                     showCountDownTimer,
                     intraSetRestInSeconds,

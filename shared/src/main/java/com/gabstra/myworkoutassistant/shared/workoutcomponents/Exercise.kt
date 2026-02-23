@@ -1,8 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.workoutcomponents
 
+import com.gabstra.myworkoutassistant.shared.ExerciseCategory
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MuscleGroup
-import com.gabstra.myworkoutassistant.shared.ExerciseCategory
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import java.util.UUID
 
@@ -24,8 +25,8 @@ data class Exercise (
     val equipmentId: UUID?,
     val bodyWeightPercentage: Double?,
     val generateWarmUpSets: Boolean = false,
-    val enableProgression : Boolean = false,
-    val keepScreenOn : Boolean = false,
+    val progressionMode: ProgressionMode = ProgressionMode.OFF,
+    val keepScreenOn: Boolean = false,
     val showCountDownTimer: Boolean = false,
     val intraSetRestInSeconds : Int? = null,
 
@@ -58,7 +59,7 @@ data class Exercise (
         result = 31 * result + (equipmentId?.hashCode() ?: 0)
         result = 31 * result + (bodyWeightPercentage?.hashCode() ?: 0)
         result = 31 * result + generateWarmUpSets.hashCode()
-        result = 31 * result + enableProgression.hashCode()
+        result = 31 * result + progressionMode.hashCode()
         result = 31 * result + keepScreenOn.hashCode()
         result = 31 * result + showCountDownTimer.hashCode()
         result = 31 * result + (intraSetRestInSeconds?.hashCode() ?: 0)
@@ -93,7 +94,7 @@ data class Exercise (
         if (equipmentId != other.equipmentId) return false
         if (bodyWeightPercentage != other.bodyWeightPercentage) return false
         if (generateWarmUpSets != other.generateWarmUpSets) return false
-        if (enableProgression != other.enableProgression) return false
+        if (progressionMode != other.progressionMode) return false
         if (keepScreenOn != other.keepScreenOn) return false
         if (showCountDownTimer != other.showCountDownTimer) return false
         if (intraSetRestInSeconds != other.intraSetRestInSeconds) return false
