@@ -22,6 +22,11 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workout.rir.applyWorkSetUpdateToState
+import com.gabstra.myworkoutassistant.shared.workout.rir.extractWorkWeight
+import com.gabstra.myworkoutassistant.shared.workout.rir.updateWorkSetStateData
+import com.gabstra.myworkoutassistant.shared.workout.rir.updateWorkSetsInExercise
+import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceOps
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.launch
@@ -37,103 +42,7 @@ private fun WorkoutViewModel.storeRIRInCalibrationSetData(
     currentState: WorkoutState.CalibrationRIRSelection,
     rir: Double
 ) {
-    val currentSetData = currentState.currentSetData
-    val updatedSetData = when (currentSetData) {
-        is WeightSetData -> currentSetData.copy(calibrationRIR = rir)
-        is BodyWeightSetData -> currentSetData.copy(calibrationRIR = rir)
-        else -> currentSetData
-    }
-    currentState.currentSetData = updatedSetData
-}
-
-private fun WorkoutViewModel.extractCalibrationWeight(
-    currentSetData: com.gabstra.myworkoutassistant.shared.setdata.SetData
-): Double {
-    return when (currentSetData) {
-        is WeightSetData -> currentSetData.actualWeight
-        is BodyWeightSetData -> currentSetData.additionalWeight
-        else -> 0.0
-    }
-}
-
-private fun WorkoutViewModel.roundToNearestAvailableWeight(
-    weight: Double,
-    availableWeights: kotlin.collections.Set<Double>
-): Double {
-    return if (availableWeights.isNotEmpty()) {
-        availableWeights.minByOrNull { kotlin.math.abs(it - weight) } ?: weight
-    } else {
-        weight
-    }
-}
-
-private fun WorkoutViewModel.updateWorkSetsInExercise(
-    exercise: Exercise,
-    adjustedWeight: Double,
-    availableWeights: kotlin.collections.Set<Double>
-): Pair<List<Set>, Map<UUID, Set>> {
-    val updatedSets = exercise.sets.toMutableList()
-    val setUpdates = mutableMapOf<UUID, Set>()
-    
-    for (i in exercise.sets.indices) {
-        val set = exercise.sets[i]
-        when {
-            set is RestSet -> continue
-            set is WeightSet && (
-                set.subCategory == SetSubCategory.CalibrationPendingSet ||
-                    set.subCategory == SetSubCategory.WorkSet
-                ) -> {
-                val roundedWeight = roundToNearestAvailableWeight(adjustedWeight, availableWeights)
-                val updatedSet = set.copy(
-                    weight = roundedWeight,
-                    subCategory = SetSubCategory.WorkSet
-                )
-                updatedSets[i] = updatedSet
-                setUpdates[set.id] = updatedSet
-            }
-            set is BodyWeightSet && (
-                set.subCategory == SetSubCategory.CalibrationPendingSet ||
-                    set.subCategory == SetSubCategory.WorkSet
-                ) -> {
-                val roundedWeight = roundToNearestAvailableWeight(adjustedWeight, availableWeights)
-                val updatedSet = set.copy(
-                    additionalWeight = roundedWeight,
-                    subCategory = SetSubCategory.WorkSet
-                )
-                updatedSets[i] = updatedSet
-                setUpdates[set.id] = updatedSet
-            }
-        }
-    }
-    
-    return Pair(updatedSets, setUpdates)
-}
-
-private fun WorkoutViewModel.updateWorkSetStateData(
-    state: WorkoutState.Set,
-    updatedSet: Set
-): com.gabstra.myworkoutassistant.shared.setdata.SetData {
-    return when (val setData = state.currentSetData) {
-        is WeightSetData -> {
-            val weightSet = updatedSet as? WeightSet
-            if (weightSet != null) {
-                val newData = setData.copy(actualWeight = weightSet.weight)
-                newData.copy(volume = newData.calculateVolume())
-            } else {
-                setData
-            }
-        }
-        is BodyWeightSetData -> {
-            val bodyWeightSet = updatedSet as? BodyWeightSet
-            if (bodyWeightSet != null) {
-                val newData = setData.copy(additionalWeight = bodyWeightSet.additionalWeight)
-                newData.copy(volume = newData.calculateVolume())
-            } else {
-                setData
-            }
-        }
-        else -> setData
-    }
+    currentState.currentSetData = currentState.currentSetData.withRIR(rir, forAutoRegulation = false)
 }
 
 private fun WorkoutViewModel.updateCalibrationSetPreviousData(
@@ -184,13 +93,11 @@ private fun WorkoutViewModel.updateWorkSetStatesInList(
         if (state is WorkoutState.Set && WorkoutStateQueries.stateExerciseId(state) == currentState.exerciseId) {
             val updatedSet = setUpdates[WorkoutStateQueries.stateSetId(state)]
             if (updatedSet != null && !state.isCalibrationSet) {
-                // Work set: update set and currentSetData to adjusted load; set previousSetData to same so UI shows neutral color
                 val newSetData = updateWorkSetStateData(state, updatedSet)
                 state.set = updatedSet
                 state.currentSetData = newSetData
                 states[i] = state.copy(previousSetData = newSetData)
             } else if (state.isCalibrationSet) {
-                // Calibration set: update previousSetData to match currentSetData
                 val updatedPreviousSetData = updateCalibrationSetPreviousData(state)
                 if (updatedPreviousSetData != null) {
                     states[i] = state.copy(previousSetData = updatedPreviousSetData)
@@ -205,27 +112,11 @@ private fun WorkoutViewModel.applyWorkSetUpdateToState(
     currentState: WorkoutState.CalibrationRIRSelection,
     setUpdates: Map<UUID, Set>
 ): WorkoutState {
-    if (state !is WorkoutState.Set) return state
-    if (WorkoutStateQueries.stateExerciseId(state) != currentState.exerciseId) return state
-
-    val updatedSet = setUpdates[WorkoutStateQueries.stateSetId(state)]
-    return if (updatedSet != null && !state.isCalibrationSet) {
-        // Work set: keep Set object and SetData aligned with adjusted load.
-        val newSetData = updateWorkSetStateData(state, updatedSet)
-        state.set = updatedSet
-        state.currentSetData = newSetData
-        state.copy(previousSetData = newSetData)
-    } else if (state.isCalibrationSet) {
-        // Calibration execution set: keep previous data aligned with executed data after RIR capture.
+    val withSetUpdates = applyWorkSetUpdateToState(state, currentState.exerciseId, setUpdates)
+    return if (state is WorkoutState.Set && state.isCalibrationSet) {
         val updatedPreviousSetData = updateCalibrationSetPreviousData(state)
-        if (updatedPreviousSetData != null) {
-            state.copy(previousSetData = updatedPreviousSetData)
-        } else {
-            state
-        }
-    } else {
-        state
-    }
+        if (updatedPreviousSetData != null) state.copy(previousSetData = updatedPreviousSetData) else withSetUpdates
+    } else withSetUpdates
 }
 
 private fun WorkoutViewModel.calculateNewCurrentIndex(
@@ -282,7 +173,7 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
         
         // Get calibration weight
         val currentSetData = currentState.currentSetData
-        val calibrationWeight = extractCalibrationWeight(currentSetData)
+        val calibrationWeight = extractWorkWeight(currentSetData)
         
         // Calculate adjusted weight
         val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(calibrationWeight, rir, formBreaks)
