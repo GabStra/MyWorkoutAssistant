@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workout.assembly
 
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -115,6 +116,7 @@ class WorkoutSetPreparationService {
         exerciseAllSets: MutableList<Set>
     ) {
         if (!exercise.requiresLoadCalibration) return
+        if (exercise.progressionMode == ProgressionMode.AUTO_REGULATION) return
         val supportsCalibration =
             exercise.exerciseType == ExerciseType.WEIGHT ||
                 (exercise.exerciseType == ExerciseType.BODY_WEIGHT && equipment != null)

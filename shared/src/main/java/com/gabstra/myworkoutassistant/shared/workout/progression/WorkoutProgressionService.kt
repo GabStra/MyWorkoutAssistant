@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.workout.progression
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -95,7 +96,7 @@ class WorkoutProgressionService(
         val validExercises = exercises
             .filter {
                 it.enabled &&
-                    it.enableProgression &&
+                    it.progressionMode != ProgressionMode.OFF &&
                     !it.requiresLoadCalibration &&
                     !it.doNotStoreHistory
             }

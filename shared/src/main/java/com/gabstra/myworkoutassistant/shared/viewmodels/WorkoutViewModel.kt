@@ -15,6 +15,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -72,6 +73,10 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceOps
+import com.gabstra.myworkoutassistant.shared.workout.rir.applyWorkSetUpdateToState
+import com.gabstra.myworkoutassistant.shared.workout.rir.extractWorkWeight
+import com.gabstra.myworkoutassistant.shared.workout.rir.updateWorkSetsInExercise
+import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutRefreshService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutResumptionService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionLifecycleService
@@ -80,6 +85,7 @@ import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutTimerRestore
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -699,7 +705,8 @@ open class WorkoutViewModel(
     var supersetIdByExerciseId: Map<UUID, UUID> = emptyMap()
     var exercisesBySupersetId: Map<UUID, List<Exercise>> = emptyMap()
 
-    fun initializeExercisesMaps(selectedWorkout: Workout) {
+    fun initializeExercisesMaps(selectedWorkout: Workout?) {
+        if (selectedWorkout == null) return
         val orderedExercises = mutableListOf<Exercise>()
 
         selectedWorkout.workoutComponents.forEach { component ->
@@ -1145,7 +1152,7 @@ open class WorkoutViewModel(
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
         val validExercises = exercises.filter { exercise ->
             !exercise.doNotStoreHistory &&
-                exercise.enableProgression &&
+                exercise.progressionMode != ProgressionMode.OFF &&
                 !exercise.requiresLoadCalibration
         }
         val latestSetHistoryByKey = latestSetHistoryMap.entries.associate { (key, value) ->
@@ -1174,7 +1181,7 @@ open class WorkoutViewModel(
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
         val validExercises = exercises.filter { exercise ->
             exercise.enabled &&
-                exercise.enableProgression &&
+                exercise.progressionMode != ProgressionMode.OFF &&
                 !exercise.requiresLoadCalibration &&
                 !exercise.doNotStoreHistory &&
                 exerciseProgressionByExerciseId.containsKey(exercise.id)
@@ -1833,6 +1840,14 @@ open class WorkoutViewModel(
 
         val isUnilateralExercise = workoutSetStateFactory.isUnilateralExercise(exercise)
 
+        val workSetIndices = exerciseAllSets.indices.filter { i ->
+            val s = exerciseAllSets[i]
+            s !is RestSet &&
+                !workoutSetStateFactory.isWarmupSet(s) &&
+                !workoutSetStateFactory.isCalibrationSet(s)
+        }
+        val lastWorkSetIndex = workSetIndices.lastOrNull()
+
         for ((index, set) in exerciseAllSets.withIndex()) {
             if (set is RestSet) {
                 val restState = WorkoutState.Rest(
@@ -1911,10 +1926,15 @@ open class WorkoutViewModel(
                         isUnilateral = isUnilateralExercise,
                         isCalibrationSet = true,
                         isCalibrationManagedWorkSet = false,
+                        isAutoRegulationWorkSet = false,
                         getEquipmentById = ::getEquipmentById
                     )
                     childItems.add(ExerciseChildItem.Normal(setState))
                 } else {
+                    val isAutoRegulationWorkSet = exercise.progressionMode == ProgressionMode.AUTO_REGULATION &&
+                        index in workSetIndices &&
+                        lastWorkSetIndex != null &&
+                        index != lastWorkSetIndex
                     val setState = workoutSetStateFactory.buildWorkoutSetState(
                         exercise = exercise,
                         set = set,
@@ -1930,6 +1950,7 @@ open class WorkoutViewModel(
                         isUnilateral = isUnilateralExercise,
                         isCalibrationSet = false,
                         isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
+                        isAutoRegulationWorkSet = isAutoRegulationWorkSet,
                         getEquipmentById = ::getEquipmentById
                     )
 
@@ -2050,6 +2071,94 @@ open class WorkoutViewModel(
             populateNextStateForRest(updatedMachine)
             stateMachine = updatedMachine.withCurrentIndex(currentFlatIndex + 1)
             updateStateFlowsFromMachine()
+        }
+    }
+
+    /**
+     * Handles completion of an auto-regulation work set: below range → store RIR 0 and advance;
+     * in range → show AutoRegulationRIRSelection; above range → store RIR 3 and advance.
+     */
+    fun completeAutoRegulationSet() {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        if (!currentState.isAutoRegulationWorkSet) return
+
+        val exercise = exercisesById[currentState.exerciseId] ?: return
+        val actualReps = when (val d = currentState.currentSetData) {
+            is WeightSetData -> d.actualReps
+            is BodyWeightSetData -> d.actualReps
+            else -> return
+        }
+        val minReps = exercise.minReps
+        val maxReps = exercise.maxReps
+
+        when {
+            actualReps < minReps -> applyAutoRegulationRIRImmediate(0.0)
+            actualReps > maxReps -> applyAutoRegulationRIRImmediate(3.0)
+            else -> {
+                val rirState = WorkoutState.AutoRegulationRIRSelection(
+                    exerciseId = currentState.exerciseId,
+                    workSet = currentState.set,
+                    setIndex = currentState.setIndex,
+                    currentSetDataState = currentState.currentSetDataState,
+                    equipmentId = currentState.equipmentId,
+                    lowerBoundMaxHRPercent = currentState.lowerBoundMaxHRPercent,
+                    upperBoundMaxHRPercent = currentState.upperBoundMaxHRPercent,
+                    currentBodyWeight = currentState.currentBodyWeight
+                )
+                val position = machine.getContainerAndChildIndex(machine.currentIndex) as? ContainerPosition.Exercise ?: return
+                val flatInContainer = machine.getFlatIndexInContainer(position) ?: return
+                val updatedMachine = machine.insertStatesIntoExercise(
+                    currentState.exerciseId,
+                    listOf(rirState),
+                    flatInContainer
+                )
+                stateMachine = updatedMachine.withCurrentIndex(machine.currentIndex + 1)
+                updateStateFlowsFromMachine()
+            }
+        }
+    }
+
+    private fun applyAutoRegulationRIRImmediate(rir: Double) {
+        val machine = stateMachine ?: return
+        val currentState = machine.currentState as? WorkoutState.Set ?: return
+        if (!currentState.isAutoRegulationWorkSet) return
+
+        currentState.currentSetData = currentState.currentSetData.withRIR(rir, forAutoRegulation = true)
+
+        launchIO {
+            val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
+            val workWeight = extractWorkWeight(currentState.currentSetData)
+            val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(workWeight, rir, formBreaks = false)
+            val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
+            val availableWeights = getWeightByEquipment(equipment)
+
+            val sourceSetIndexInExerciseSets = exercise.sets.indexOfFirst { it.id == currentState.set.id }
+            val subsequentIndices = if (sourceSetIndexInExerciseSets < 0) null else {
+                exercise.sets.indices.filter { i ->
+                    i > sourceSetIndexInExerciseSets && exercise.sets[i] !is RestSet
+                }.toSet()
+            }
+
+            val (updatedSets, setUpdates) = updateWorkSetsInExercise(
+                exercise,
+                adjustedWeight,
+                availableWeights,
+                indicesToUpdate = subsequentIndices
+            )
+            updateWorkout(exercise, exercise.copy(sets = updatedSets))
+
+            withContext(dispatchers.main) {
+                initializeExercisesMaps(selectedWorkout.value)
+                val m = stateMachine ?: return@withContext
+                val sequence = m.sequenceSnapshot()
+                val updatedSequence = WorkoutStateSequenceOps.mapSequenceStates(sequence) { state ->
+                    applyWorkSetUpdateToState(state, currentState.exerciseId, setUpdates)
+                }
+                stateMachine = m.withSequence(updatedSequence, m.currentIndex)
+                goToNextState()
+                updateStateFlowsFromMachine()
+            }
         }
     }
 
