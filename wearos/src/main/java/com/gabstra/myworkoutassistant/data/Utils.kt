@@ -40,6 +40,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.DataLayerListenerService
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.shared.ErrorLog
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
