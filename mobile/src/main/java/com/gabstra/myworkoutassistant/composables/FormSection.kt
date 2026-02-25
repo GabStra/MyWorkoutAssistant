@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,8 +16,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import com.gabstra.myworkoutassistant.Spacing
 
@@ -86,12 +89,18 @@ fun CollapsibleSection(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+
     StyledCard(modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(Spacing.md)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggle),
+                    .clickable(
+                        onClick = onToggle,
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -102,8 +111,9 @@ fun CollapsibleSection(
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Start
                     )
-                    if (!expanded && summary.isNotBlank()) {
+                    if (summary.isNotBlank()) {
                         Text(
+                            modifier = Modifier.alpha(if(expanded) 0f else 1f),
                             text = summary,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
