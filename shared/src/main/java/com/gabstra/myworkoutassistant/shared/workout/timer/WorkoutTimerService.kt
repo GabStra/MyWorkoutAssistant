@@ -44,6 +44,7 @@ class WorkoutTimerService(
     )
 
     private val activeTimers = mutableMapOf<UUID, ActiveTimer>()
+    private val pausedTimers = mutableMapOf<UUID, LocalDateTime>()
     private var updateJob: Job? = null
 
     /**
@@ -109,6 +110,7 @@ class WorkoutTimerService(
      */
     fun unregisterTimer(setId: UUID) {
         val timer = activeTimers.remove(setId)
+        pausedTimers.remove(setId)
         timer?.callbacks?.onTimerDisabled()
         
         // Stop update loop if no active timers
@@ -124,6 +126,7 @@ class WorkoutTimerService(
     fun unregisterAll() {
         activeTimers.values.forEach { it.callbacks.onTimerDisabled() }
         activeTimers.clear()
+        pausedTimers.clear()
         updateJob?.cancel()
         updateJob = null
     }
@@ -133,6 +136,30 @@ class WorkoutTimerService(
      */
     fun isTimerRegistered(setId: UUID): Boolean {
         return activeTimers.containsKey(setId)
+    }
+
+    /**
+     * Pause an active timer without unregistering it.
+     * Keeps the timer state registered and preserves callbacks.
+     */
+    fun pauseTimer(setId: UUID) {
+        if (!activeTimers.containsKey(setId)) return
+        if (pausedTimers.containsKey(setId)) return
+        pausedTimers[setId] = LocalDateTime.now()
+    }
+
+    /**
+     * Resume a previously paused timer and compensate startTime
+     * so elapsed/remaining values continue from the paused position.
+     */
+    fun resumeTimer(setId: UUID) {
+        val pausedAt = pausedTimers.remove(setId) ?: return
+        val timer = activeTimers[setId] ?: return
+        val pausedDuration = Duration.between(pausedAt, LocalDateTime.now())
+        if (pausedDuration.isNegative || pausedDuration.isZero) return
+
+        timer.setState?.startTime = timer.setState?.startTime?.plus(pausedDuration)
+        timer.restState?.startTime = timer.restState?.startTime?.plus(pausedDuration)
     }
 
     /**
@@ -169,19 +196,18 @@ class WorkoutTimerService(
                 // Update all active timers
                 val updateNow = LocalDateTime.now()
                 val timersToRemove = mutableListOf<UUID>()
-                activeTimers.values.forEach { timer ->
+                activeTimers.forEach { (timerId, timer) ->
+                    if (pausedTimers.containsKey(timerId)) return@forEach
                     val completed = updateTimerProgress(timer, now = updateNow)
                     if (completed) {
-                        val timerId = timer.setState?.set?.id ?: timer.restState?.set?.id
-                        if (timerId != null) {
-                            timersToRemove.add(timerId)
-                        }
+                        timersToRemove.add(timerId)
                     }
                 }
 
                 // Remove completed timers
                 timersToRemove.forEach { setId ->
                     val timer = activeTimers.remove(setId)
+                    pausedTimers.remove(setId)
                     timer?.callbacks?.onTimerEnd?.invoke()
                     timer?.callbacks?.onTimerDisabled?.invoke()
                 }
