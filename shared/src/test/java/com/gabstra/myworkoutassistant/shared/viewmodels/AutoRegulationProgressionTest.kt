@@ -140,6 +140,10 @@ class AutoRegulationProgressionTest {
         field.set(viewModel, androidx.compose.runtime.mutableStateOf(workout))
     }
 
+    private fun nearestAvailableWeight(target: Double): Double {
+        return barbell.getWeightsCombinations().minByOrNull { abs(it - target) } ?: target
+    }
+
     @Test
     fun applyAutoRegulationRIR_removesAutoRegulationRIRSelectionAndStoresRIRAndUpdatesOnlySubsequentSets() = runTest(testDispatcher) {
         val initialWeight = 80.0
@@ -313,8 +317,9 @@ class AutoRegulationProgressionTest {
     }
 
     @Test
-    fun completeAutoRegulationSet_repsInRange_insertsAutoRegulationRIRSelection() = runTest(testDispatcher) {
+    fun completeAutoRegulationSet_repsInRange_advancesWithoutRIRSelectionAndKeepsLoad() = runTest(testDispatcher) {
         val initialWeight = 80.0
+        val expectedWeight = nearestAvailableWeight(initialWeight)
         val workoutExercise = Exercise(
             id = exerciseId,
             enabled = true,
@@ -432,15 +437,36 @@ class AutoRegulationProgressionTest {
 
         val machine = stateMachineField.get(viewModel) as? WorkoutStateMachine
         assertNotNull(machine)
-        assertTrue(
-            "Current state should be AutoRegulationRIRSelection when reps in range",
+        assertFalse(
+            "Current state should not be AutoRegulationRIRSelection when reps are in range",
             machine!!.currentState is WorkoutState.AutoRegulationRIRSelection
+        )
+        assertTrue(
+            "Should advance after completing set. Actual: ${machine.currentState?.javaClass?.simpleName}",
+            machine.currentState is WorkoutState.Rest || machine.currentState is WorkoutState.Set
+        )
+
+        val states = viewModel.getStatesForExercise(exerciseId)
+        val firstSetState = states.filterIsInstance<WorkoutState.Set>().firstOrNull { it.set.id == workSet1Id }
+        assertNotNull(firstSetState)
+        val firstSetData = firstSetState!!.currentSetData as? WeightSetData
+        assertNotNull(firstSetData)
+        assertEquals(2.0, firstSetData!!.autoRegulationRIR!!, 0.01)
+
+        val secondSetState = states.filterIsInstance<WorkoutState.Set>().firstOrNull { it.set.id == workSet2Id }
+        assertNotNull(secondSetState)
+        val secondSet = secondSetState!!.set as? WeightSet
+        assertNotNull(secondSet)
+        assertTrue(
+            "Subsequent set weight should stay unchanged. expected=$expectedWeight actual=${secondSet!!.weight}",
+            abs(secondSet.weight - expectedWeight) < 0.01
         )
     }
 
     @Test
     fun completeAutoRegulationSet_repsBelowRange_advancesAndStoresRIR0() = runTest(testDispatcher) {
         val initialWeight = 80.0
+        val expectedAdjustedWeight = nearestAvailableWeight(initialWeight * 0.90)
         val workoutExercise = Exercise(
             id = exerciseId,
             enabled = true,
@@ -591,5 +617,192 @@ class AutoRegulationProgressionTest {
         val firstSetData = firstSetState!!.currentSetData as? WeightSetData
         assertNotNull(firstSetData)
         assertEquals(0.0, firstSetData!!.autoRegulationRIR!!, 0.01)
+
+        val secondSetState = states.filterIsInstance<WorkoutState.Set>().firstOrNull { it.set.id == workSet2Id }
+        assertNotNull(secondSetState)
+        val secondSet = secondSetState!!.set as? WeightSet
+        assertNotNull(secondSet)
+        assertTrue(
+            "Subsequent set weight should be decreased by 10% (rounded). expected=$expectedAdjustedWeight actual=${secondSet!!.weight}",
+            abs(secondSet.weight - expectedAdjustedWeight) < 0.01
+        )
+    }
+
+    @Test
+    fun completeAutoRegulationSet_repsAboveRange_advancesAndStoresRIR3AndAdjustsSubsequentSet() = runTest(testDispatcher) {
+        val initialWeight = 80.0
+        val expectedAdjustedWeight = nearestAvailableWeight(initialWeight * 1.025)
+        val workoutExercise = Exercise(
+            id = exerciseId,
+            enabled = true,
+            name = "Bench",
+            doNotStoreHistory = false,
+            notes = "",
+            sets = listOf(
+                WeightSet(workSet1Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet),
+                RestSet(UUID.randomUUID(), 90),
+                WeightSet(workSet2Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 5,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = barbell.id,
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.AUTO_REGULATION,
+            requiresLoadCalibration = false
+        )
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "W",
+            description = "",
+            workoutComponents = listOf(workoutExercise),
+            order = 0,
+            enabled = true,
+            creationDate = java.time.LocalDate.now(),
+            type = 0,
+            globalId = UUID.randomUUID()
+        )
+        setSelectedWorkoutForTest(workout)
+        viewModel.updateWorkoutStore(
+            WorkoutStore(
+                workouts = listOf(workout),
+                equipments = listOf(barbell),
+                accessoryEquipments = emptyList(),
+                workoutPlans = emptyList(),
+                polarDeviceId = null,
+                birthDateYear = 0,
+                weightKg = 0.0,
+                progressionPercentageAmount = 0.0,
+                measuredMaxHeartRate = null,
+                restingHeartRate = null
+            )
+        )
+        viewModel.initializeExercisesMaps(workout)
+
+        val workSet1Data = WeightSetData(actualReps = 14, actualWeight = initialWeight, volume = initialWeight * 14)
+        val workSet1State = WorkoutState.Set(
+            exerciseId = exerciseId,
+            set = WeightSet(workSet1Id, 8, initialWeight, subCategory = SetSubCategory.WorkSet),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(workSet1Data),
+            hasNoHistory = true,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 75.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = barbell.id,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u,
+            isCalibrationSet = false,
+            isAutoRegulationWorkSet = true
+        )
+
+        val restState = WorkoutState.Rest(
+            set = RestSet(UUID.randomUUID(), 90),
+            order = 1u,
+            currentSetDataState = mutableStateOf(RestSetData(90, 90)),
+            exerciseId = exerciseId,
+            nextState = null,
+            startTime = null,
+            isIntraSetRest = false
+        )
+
+        val workSet2State = WorkoutState.Set(
+            exerciseId = exerciseId,
+            set = WeightSet(workSet2Id, 8, initialWeight, subCategory = SetSubCategory.WorkSet),
+            setIndex = 2u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(WeightSetData(8, initialWeight, initialWeight * 8)),
+            hasNoHistory = true,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 75.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = barbell.id,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u,
+            isCalibrationSet = false,
+            isAutoRegulationWorkSet = false
+        )
+        restState.nextState = workSet2State
+
+        val sequence = listOf(
+            WorkoutStateSequenceItem.Container(
+                WorkoutStateContainer.ExerciseState(
+                    exerciseId = exerciseId,
+                    childItems = mutableListOf(
+                        ExerciseChildItem.Normal(workSet1State),
+                        ExerciseChildItem.Normal(restState),
+                        ExerciseChildItem.Normal(workSet2State)
+                    )
+                )
+            )
+        )
+        viewModel.stateMachine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, 0)
+        viewModel.updateStateFlowsFromMachine()
+
+        val exercisesByIdField = WorkoutViewModel::class.java.getDeclaredField("exercisesById")
+        exercisesByIdField.isAccessible = true
+        exercisesByIdField.set(viewModel, mapOf(exerciseId to workoutExercise))
+
+        viewModel.completeAutoRegulationSet()
+        advanceUntilIdle()
+
+        val machine = stateMachineField.get(viewModel) as? WorkoutStateMachine
+        assertNotNull(machine)
+        assertFalse(
+            "Current state should not be AutoRegulationRIRSelection when reps are above range",
+            machine!!.currentState is WorkoutState.AutoRegulationRIRSelection
+        )
+        assertTrue(
+            "Should advance to Rest after completing set. Actual: ${machine.currentState?.javaClass?.simpleName}",
+            machine.currentState is WorkoutState.Rest
+        )
+
+        val states = viewModel.getStatesForExercise(exerciseId)
+        val firstSetState = states.filterIsInstance<WorkoutState.Set>().firstOrNull { it.set.id == workSet1Id }
+        assertNotNull(firstSetState)
+        val firstSetData = firstSetState!!.currentSetData as? WeightSetData
+        assertNotNull(firstSetData)
+        assertEquals(3.0, firstSetData!!.autoRegulationRIR!!, 0.01)
+
+        val secondSetState = states.filterIsInstance<WorkoutState.Set>().firstOrNull { it.set.id == workSet2Id }
+        assertNotNull(secondSetState)
+        val secondSet = secondSetState!!.set as? WeightSet
+        assertNotNull(secondSet)
+        assertTrue(
+            "Subsequent set weight should be adjusted. expected=$expectedAdjustedWeight actual=${secondSet!!.weight}",
+            abs(secondSet.weight - expectedAdjustedWeight) < 0.01
+        )
+        assertNotNull(
+            "Subsequent set plate change should be recalculated after auto-regulation adjustment",
+            secondSetState.plateChangeResult
+        )
+
+        val currentRest = machine.currentState as? WorkoutState.Rest
+        assertNotNull("Current state should be Rest after completion", currentRest)
+        val nextSetFromRest = currentRest!!.nextState as? WorkoutState.Set
+        assertNotNull("Rest nextState should point to the next set", nextSetFromRest)
+        assertNotNull(
+            "Rest nextState should include recalculated plate change",
+            nextSetFromRest!!.plateChangeResult
+        )
     }
 }
