@@ -438,6 +438,9 @@ class DataLayerListenerService : WearableListenerService() {
             eventsList.forEach { dataEvent ->
                 val uri = dataEvent.dataItem.uri
                 val eventType = dataEvent.type
+                if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
+                    return@forEach
+                }
                 val path = uri.path ?: return@forEach
                 when {
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {

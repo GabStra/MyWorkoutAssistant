@@ -656,6 +656,12 @@ class DataLayerListenerService : WearableListenerService() {
 
             // Process other data events
             eventsList.forEach { dataEvent ->
+                // Ignore DataItem deletions here as well. Deletion events (e.g., after phone uninstall
+                // or sender-side cleanup) must not be interpreted as new backup/sync starts.
+                if (dataEvent.type != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
+                    return@forEach
+                }
+
                 val uri = dataEvent.dataItem.uri
                 val path = uri.path ?: return@forEach
                 when {
