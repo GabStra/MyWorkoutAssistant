@@ -31,8 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -46,7 +48,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -73,6 +77,8 @@ fun WeightVestForm(
 
     // State for showing dialogs
     val showAvailableWeightsDialog = remember { mutableStateOf(false) }
+
+    var expandedWeights by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
@@ -129,71 +135,65 @@ fun WeightVestForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            // Barbell name field
-            OutlinedTextField(
-                value = nameState.value,
-                onValueChange = { nameState.value = it },
-                label = { Text("Barbell Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            FormSectionTitle(text = "Essentials")
+            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+                OutlinedTextField(
+                    value = nameState.value,
+                    onValueChange = { nameState.value = it },
+                    label = { Text("Weight Vest Name", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
-            // Available Plates Section
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth(),
+            FormSectionTitle(text = "Weights")
+            CollapsibleSection(
+                title = "Available Weights",
+                summary = "${availableWeightsState.value.size} weights",
+                expanded = expandedWeights,
+                onToggle = { expandedWeights = !expandedWeights }
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text(
+                        text = "Available Weights",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    IconButton(
+                        modifier = Modifier.clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .size(35.dp),
+                        onClick = { showAvailableWeightsDialog.value = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Plate",
+                            tint = MaterialTheme.colorScheme.background
+                        )
+                    }
+                }
+
+                availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Available Weights",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("${index+1}) ${weight.weight}kg", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .size(35.dp),
-                            onClick = { showAvailableWeightsDialog.value = true }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Plate",
-                                tint = MaterialTheme.colorScheme.background
-                            )
-                        }
-                    }
-
-                    availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index+1}) ${weight.weight}kg",style = MaterialTheme.typography.bodyMedium)
-                            IconButton(
-                                modifier = Modifier.size(35.dp),
-                                onClick = {
-                                    availableWeightsState.value = availableWeightsState.value - weight
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
+                            modifier = Modifier.size(35.dp),
+                            onClick = {
+                                availableWeightsState.value = availableWeightsState.value - weight
                             }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
                         }
                     }
                 }

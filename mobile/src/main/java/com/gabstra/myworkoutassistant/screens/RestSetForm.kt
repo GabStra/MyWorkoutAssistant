@@ -109,19 +109,18 @@ fun RestSetForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
+                .verticalScroll(scrollState),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                Text("Rest between sets")
-                Spacer(modifier = Modifier.height(15.dp))
+            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+                Text(
+                    text = "Rest between sets",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Start
+                )
+                Spacer(modifier = Modifier.height(Spacing.sm))
                 CustomTimePicker(
                     initialHour = hours,
                     initialMinute = minutes,

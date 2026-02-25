@@ -68,8 +68,8 @@ fun WorkoutsGearTab(
             modifier = Modifier.fillMaxWidth(),
             text = "Equipment:",
             style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground
+            textAlign = TextAlign.Start,
+            color = MaterialTheme.colorScheme.primary
         )
 
         if (equipments.isEmpty()) {
@@ -172,8 +172,8 @@ fun WorkoutsGearTab(
             modifier = Modifier.fillMaxWidth(),
             text = "Accessories:",
             style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground
+            textAlign = TextAlign.Start,
+            color = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.height(Spacing.md))
 

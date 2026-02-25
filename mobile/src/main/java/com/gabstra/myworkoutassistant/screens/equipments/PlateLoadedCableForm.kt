@@ -31,8 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,6 +49,8 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -75,6 +79,8 @@ fun PlateLoadedCableForm(
 
     // State for showing dialogs
     val showAvailablePlateDialog = remember { mutableStateOf(false) }
+
+    var expandedPlates by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
@@ -130,84 +136,81 @@ fun PlateLoadedCableForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            // Barbell name field
-            OutlinedTextField(
-                value = nameState.value,
-                onValueChange = { nameState.value = it },
-                label = { Text("Plate-Loaded Cable Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Sleeve length field
-            OutlinedTextField(
-                value = sleeveLengthState.value,
-                onValueChange = {
-                    if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                        sleeveLengthState.value = it
-                    }
-                },
-                label = { Text("Sleeve length (mm)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Available Plates Section
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth(),
-            ) {
+            FormSectionTitle(text = "Essentials")
+            StyledCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
+                    OutlinedTextField(
+                        value = nameState.value,
+                        onValueChange = { nameState.value = it },
+                        label = { Text("Plate-Loaded Cable Name", style = MaterialTheme.typography.labelLarge) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = sleeveLengthState.value,
+                        onValueChange = {
+                            if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                                sleeveLengthState.value = it
+                            }
+                        },
+                        label = { Text("Sleeve length (mm)", style = MaterialTheme.typography.labelLarge) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            FormSectionTitle(text = "Plates")
+            CollapsibleSection(
+                title = "Available Plates",
+                summary = "${availablePlatesState.value.size} plate pair${if (availablePlatesState.value.size == 1) "" else "s"}",
+                expanded = expandedPlates,
+                onToggle = { expandedPlates = !expandedPlates }
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Available Plates",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    IconButton(
+                        modifier = Modifier.clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .size(35.dp),
+                        onClick = { showAvailablePlateDialog.value = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Plate",
+                            tint = MaterialTheme.colorScheme.background
+                        )
+                    }
+                }
+
+                availablePlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Available Plates",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .size(35.dp),
-                            onClick = { showAvailablePlateDialog.value = true }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Plate",
-                                tint = MaterialTheme.colorScheme.background
-                            )
-                        }
-                    }
-
-                    availablePlatesState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index+1}) ${plate.weight}kg - ${plate.thickness}mm",style = MaterialTheme.typography.bodyMedium)
-                            IconButton(
-                                modifier = Modifier.size(35.dp),
-                                onClick = {
-                                    availablePlatesState.value = availablePlatesState.value - plate
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
+                            modifier = Modifier.size(35.dp),
+                            onClick = {
+                                availablePlatesState.value = availablePlatesState.value - plate
                             }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove Plate")
                         }
                     }
                 }

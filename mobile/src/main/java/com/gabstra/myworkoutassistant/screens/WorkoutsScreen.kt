@@ -404,6 +404,10 @@ fun WorkoutsScreen(
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
         scope.launch(Dispatchers.Main) {
             if (groupedWorkoutsHistories == null || workoutById == null) return@launch
+            // Do nothing when clicking a day within the already selected week
+            if (!day.date.isBefore(selectedWeekStart) && !day.date.isAfter(selectedWeekEnd)) {
+                return@launch
+            }
             val willChangeSelection = selectedDate != day || selectedWeekAnchorDate != day.date
             if (!willChangeSelection) return@launch
 

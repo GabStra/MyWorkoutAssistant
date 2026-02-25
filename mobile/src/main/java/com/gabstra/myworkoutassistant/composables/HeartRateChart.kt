@@ -266,9 +266,9 @@ fun HeartRateChart(
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 10.dp),
+                            .padding(start = 10.dp, top = 10.dp, end = 0.dp, bottom = 10.dp),
                         text = title,
-                        textAlign = TextAlign.Center,
+                        textAlign = TextAlign.Start,
                         color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.titleMedium,
                     )

@@ -101,20 +101,19 @@ fun AccessoryForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            // Accessory name field
-            OutlinedTextField(
-                value = nameState.value,
-                onValueChange = { nameState.value = it },
-                label = { Text("Accessory Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
+                OutlinedTextField(
+                    value = nameState.value,
+                    onValueChange = { nameState.value = it },
+                    label = { Text("Accessory Name", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

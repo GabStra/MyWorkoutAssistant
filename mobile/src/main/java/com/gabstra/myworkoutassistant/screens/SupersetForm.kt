@@ -41,7 +41,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
@@ -73,14 +75,14 @@ fun SupersetForm(
         initialRests
     }
 
-    // START of new code
     // Check for a mismatch in the number of sets among selected exercises.
     val areSetCountsMismatched = if (selectedExercises.size > 1) {
         selectedExercises.map { it.sets.size }.toSet().size > 1
     } else {
         false
     }
-    // END of new code
+
+    var expandedRestTimes by remember { mutableStateOf(false) }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
@@ -140,122 +142,124 @@ fun SupersetForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
+                .verticalScroll(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(20.dp))
+            FormSectionTitle(text = "Essentials")
+            StyledCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Select at least two exercises", style = MaterialTheme.typography.titleMedium)
+                        if (selectedExercises.isNotEmpty()) {
+                            TextButton(onClick = {
+                                selectedExercises = emptyList()
+                                restsByExerciseHms.clear()
+                            }) {
+                                Text("Clear")
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(Spacing.sm))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Select at least two exercises", style = MaterialTheme.typography.titleMedium)
-                // NEW: Show button only if there is a selection to clear
-                if (selectedExercises.isNotEmpty()) {
-                    TextButton(onClick = {
-                        selectedExercises = emptyList()
-                        restsByExerciseHms.clear()
-                    }) {
-                        Text("Clear")
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        exercisesToShow.forEach { exercise ->
+                            val isSelected = selectedExercises.any { it.id == exercise.id }
+
+                            StyledCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = Spacing.sm)
+                                    .clickable {
+                                        selectedExercises = if (isSelected) {
+                                            selectedExercises
+                                                .filter { it.id != exercise.id }
+                                                .also { restsByExerciseHms.remove(exercise.id) }
+                                        } else {
+                                            selectedExercises + exercise
+                                        }
+                                    },
+                                borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(Spacing.md),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = exercise.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
 
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                exercisesToShow.forEach { exercise ->
-                    val isSelected = selectedExercises.any { it.id == exercise.id }
+            if (areSetCountsMismatched) {
+                Spacer(modifier = Modifier.height(Spacing.md))
+                Text(
+                    text = "Selected exercises have different numbers of sets. The superset will use the lowest set count.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            }
 
-                    StyledCard(
-                        modifier = Modifier.padding(vertical = 6.dp).clickable {
-                            selectedExercises = if (isSelected) {
-                                selectedExercises
-                                    .filter { it.id != exercise.id }
-                                    .also { restsByExerciseHms.remove(exercise.id) } // Remove rest time if deselected
-                            } else {
-                                selectedExercises + exercise
-                            }
-                        },
-                        borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(15.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+            if (selectedExercises.size >= 2) {
+                Spacer(Modifier.height(Spacing.md))
+                val restSummary = "Rest times for ${selectedExercises.size} exercises"
+                CollapsibleSection(
+                    title = "Rest after each exercise",
+                    summary = restSummary,
+                    expanded = expandedRestTimes,
+                    onToggle = { expandedRestTimes = !expandedRestTimes }
+                ) {
+                    selectedExercises.forEach { exercise ->
+                        val hms = restsByExerciseHms.getOrPut(exercise.id) { Triple(0, 0, 0) }
+                        val (h, m, s) = hms
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                         ) {
                             Text(
                                 modifier = Modifier.fillMaxWidth(),
                                 text = exercise.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Start
+                            )
+                            CustomTimePicker(
+                                initialHour = h,
+                                initialMinute = m,
+                                initialSecond = s,
+                                onTimeChange = { newHour, newMinute, newSecond ->
+                                    restsByExerciseHms[exercise.id] = Triple(newHour, newMinute, newSecond)
+                                }
                             )
                         }
                     }
-
-
                 }
             }
 
-            // START of new code
-            // Display a warning if the set counts are mismatched.
-            if (areSetCountsMismatched) {
-                Spacer(modifier = Modifier.height(15.dp))
-                Text(
-                    text = "WARNING\nSelected exercises have different numbers of sets.\nThe superset will be limited to the lowest set count, extra sets will be pruned.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    textAlign = TextAlign.Center
-                )
-            }
-            // END of new code
-
-            Spacer(modifier = Modifier.height(25.dp))
-
-            if (selectedExercises.size >= 2) {
-                Text("Rest Time After Each Exercise", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(15.dp))
-
-                selectedExercises.forEach { exercise ->
-                    val hms = restsByExerciseHms.getOrPut(exercise.id) { Triple(0, 0, 0) }
-                    val (h, m, s) = hms
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = exercise.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center
-                        )
-                        CustomTimePicker(
-                            initialHour = h,
-                            initialMinute = m,
-                            initialSecond = s,
-                            onTimeChange = { newHour, newMinute, newSecond ->
-                                // Update the map with the new time for this specific exercise
-                                restsByExerciseHms[exercise.id] = Triple(newHour, newMinute, newSecond)
-                            }
-                        )
-                    }
-                }
-            }
+            Spacer(Modifier.height(Spacing.xl))
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(vertical = Spacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -287,7 +291,7 @@ fun SupersetForm(
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(Modifier.height(Spacing.md))
         }
     }
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")

@@ -59,8 +59,8 @@ fun WorkoutsListTab(
             modifier = Modifier.fillMaxWidth(),
             text = "Workouts:",
             style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onBackground
+            textAlign = TextAlign.Start,
+            color = MaterialTheme.colorScheme.primary
         )
 
         if (workouts.isEmpty()) {

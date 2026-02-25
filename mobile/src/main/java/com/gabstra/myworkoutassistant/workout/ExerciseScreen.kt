@@ -378,7 +378,7 @@ fun ExerciseScreen(
             },
             message = when {
                 state.isCalibrationSet -> CalibrationUiLabels.RateRirAfterSet
-                state.isAutoRegulationWorkSet -> "Rate your RIR after this set (or we'll auto-apply)."
+                state.isAutoRegulationWorkSet -> "Complete this set to auto-adjust the next load."
                 else -> "Do you want to proceed?"
             },
             handleYesClick = {

@@ -126,7 +126,7 @@ fun WorkoutsStatusTab(
                             modifier = Modifier.fillMaxWidth(),
                             text = "Weekly progress (${dateText}):",
                             style = MaterialTheme.typography.titleMedium,
-                            textAlign = TextAlign.Center,
+                            textAlign = TextAlign.Start,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         ExpandableContainer(
@@ -200,7 +200,7 @@ fun WorkoutsStatusTab(
                         modifier = Modifier.fillMaxWidth(),
                         text = "Workout Histories ($currentWeekText):",
                         style = MaterialTheme.typography.titleMedium,
-                        textAlign = TextAlign.Center,
+                        textAlign = TextAlign.Start,
                         color = MaterialTheme.colorScheme.onBackground
                     )
 

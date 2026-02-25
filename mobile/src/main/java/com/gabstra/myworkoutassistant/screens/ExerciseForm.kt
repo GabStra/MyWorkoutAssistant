@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -25,8 +28,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -54,15 +57,18 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.composables.BodyView
+import com.gabstra.myworkoutassistant.composables.ZoomableMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
-import com.gabstra.myworkoutassistant.composables.InteractiveMuscleHeatMap
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.MinMaxStepperRow
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.ExerciseCategory
@@ -77,8 +83,6 @@ import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 private fun ExerciseType.toReadableString(): String {
@@ -243,8 +247,14 @@ fun ExerciseForm(
     val selectedSecondaryMuscleGroups = rememberSaveable {
         mutableStateOf(exercise?.secondaryMuscleGroups ?: emptySet<MuscleGroup>())
     }
-    var currentBodyView by rememberSaveable { mutableStateOf(BodyView.FRONT) }
     var isSelectingSecondary by rememberSaveable { mutableStateOf(false) }
+    var resetMuscleMapTrigger by remember { mutableStateOf(0) }
+
+    var expandedWarmupProgression by rememberSaveable { mutableStateOf(false) }
+    var expandedCalibration by rememberSaveable { mutableStateOf(false) }
+    var expandedHistoryNotes by rememberSaveable { mutableStateOf(false) }
+    var expandedEquipment by rememberSaveable { mutableStateOf(false) }
+    var expandedTargetMuscles by rememberSaveable { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -300,561 +310,613 @@ fun ExerciseForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
+                .verticalScroll(scrollState),
         ) {
-            // Name
-            OutlinedTextField(
-                value = nameState.value,
-                onValueChange = { nameState.value = it },
-                label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(Modifier.height(Spacing.lg))
-
-            // Exercise type (create only)
-            if (exercise == null) {
-                StandardFilterDropdown(
-                    label = "Exercise type",
-                    selectedText = selectedExerciseType.value.toReadableString(),
-                    items = exerciseTypeItems,
-                    onItemSelected = { type ->
-                        selectedExerciseType.value = type
-                        selectedEquipmentId.value =
-                            if (type == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    isItemSelected = { it == selectedExerciseType.value }
-                )
-                Spacer(Modifier.height(Spacing.lg))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            }
-
-            // Toggles
-            ListItem(
-                colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                headlineContent = { Text("Keep screen awake", style = MaterialTheme.typography.bodyLarge) },
-                trailingContent = {
-                    Switch(
-                        checked = keepScreenOn.value,
-                        onCheckedChange = { keepScreenOn.value = it }
+            // ----- Essentials -----
+            FormSectionTitle(text = "Essentials")
+            StyledCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    OutlinedTextField(
+                        value = nameState.value,
+                        onValueChange = { nameState.value = it },
+                        label = { Text("Exercise name", style = MaterialTheme.typography.labelLarge) },
+                        modifier = Modifier.fillMaxWidth()
                     )
-                }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Show countdown timer", style = MaterialTheme.typography.bodyLarge) },
-                    trailingContent = {
-                        Switch(
-                            checked = showCountDownTimer.value,
-                            onCheckedChange = { showCountDownTimer.value = it }
+                    if (exercise == null) {
+                        StandardFilterDropdown(
+                            label = "Exercise type",
+                            selectedText = selectedExerciseType.value.toReadableString(),
+                            items = exerciseTypeItems,
+                            onItemSelected = { type ->
+                                selectedExerciseType.value = type
+                                selectedEquipmentId.value =
+                                    if (type == ExerciseType.WEIGHT) viewModel.GENERIC_ID else null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == selectedExerciseType.value }
                         )
                     }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
             }
 
-            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+            if (nameState.value.isNotBlank()) {
                 Spacer(Modifier.height(Spacing.lg))
 
-                // Equipment picker
-                val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
-                    equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
-                }
-                StandardFilterDropdown<UUID?>(
-                    label = "Equipment",
-                    selectedText = selectedEquipmentName,
-                    items = equipmentItems,
-                    onItemSelected = { selectedEquipmentId.value = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    isItemSelected = { it == selectedEquipmentId.value }
-                )
-
-                // Accessories selection
-                Spacer(Modifier.height(Spacing.lg))
-                Text(
-                    text = "Accessories",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = Spacing.sm)
-                )
-                if (accessories.isEmpty()) {
-                    Text(
-                        text = "No accessories available. Add accessories in the Equipment tab.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    accessories.forEach { accessory ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = selectedAccessoryIds.value.contains(accessory.id),
-                                onCheckedChange = { checked ->
-                                    selectedAccessoryIds.value = if (checked) {
-                                        selectedAccessoryIds.value + accessory.id
-                                    } else {
-                                        selectedAccessoryIds.value - accessory.id
-                                    }
-                                }
-                            )
-                            Text(
-                                text = accessory.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier.padding(start = 8.dp)
+                FormSectionTitle(text = "Training setup")
+                // ----- Display -----
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    ListItem(
+                        colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                        headlineContent = { Text("Keep screen awake", style = MaterialTheme.typography.bodyLarge) },
+                        trailingContent = {
+                            Switch(
+                                checked = keepScreenOn.value,
+                                onCheckedChange = { keepScreenOn.value = it }
                             )
                         }
+                    )
+                    if (selectedExerciseType.value == ExerciseType.COUNTDOWN || selectedExerciseType.value == ExerciseType.COUNTUP) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        ListItem(
+                            colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                            headlineContent = { Text("Show countdown timer", style = MaterialTheme.typography.bodyLarge) },
+                            trailingContent = {
+                                Switch(
+                                    checked = showCountDownTimer.value,
+                                    onCheckedChange = { showCountDownTimer.value = it }
+                                )
+                            }
+                        )
                     }
                 }
-            }
-
-            // Muscle Groups Selection
-            Spacer(Modifier.height(Spacing.lg))
-            Text(
-                text = "Target muscles",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = Spacing.sm)
-            )
-            
-            // Primary/Secondary toggle buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                Button(
-                    onClick = { isSelectingSecondary = false },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (!isSelectingSecondary) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Primary muscles",
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
-                    )
-                }
-                Button(
-                    onClick = { isSelectingSecondary = true },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (isSelectingSecondary) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Secondary muscles",
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-            
-            Spacer(Modifier.height(Spacing.sm))
-            
-            // View toggle buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                Button(
-                    onClick = { currentBodyView = BodyView.FRONT },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (currentBodyView == BodyView.FRONT) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text("Front", style = MaterialTheme.typography.bodyLarge)
-                }
-                Button(
-                    onClick = { currentBodyView = BodyView.BACK },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (currentBodyView == BodyView.BACK) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text("Back", style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-            
-            Spacer(Modifier.height(Spacing.md))
-            
-            // Interactive Muscle Heat Map
-            InteractiveMuscleHeatMap(
-                selectedMuscles = selectedMuscleGroups.value,
-                selectedSecondaryMuscles = selectedSecondaryMuscleGroups.value,
-                onMuscleToggled = { muscle ->
-                    if (isSelectingSecondary) {
-                        // Remove from primary if it's there
-                        selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
-                        // Toggle in secondary
-                        selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
-                            selectedSecondaryMuscleGroups.value - muscle
-                        } else {
-                            selectedSecondaryMuscleGroups.value + muscle
-                        }
-                    } else {
-                        // Remove from secondary if it's there
-                        selectedSecondaryMuscleGroups.value = selectedSecondaryMuscleGroups.value - muscle
-                        // Toggle in primary
-                        selectedMuscleGroups.value = if (selectedMuscleGroups.value.contains(muscle)) {
-                            selectedMuscleGroups.value - muscle
-                        } else {
-                            selectedMuscleGroups.value + muscle
-                        }
-                    }
-                },
-                onSecondaryMuscleToggled = if (isSelectingSecondary) {
-                    { muscle ->
-                        // Remove from primary if it's there
-                        selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
-                        // Toggle in secondary
-                        selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
-                            selectedSecondaryMuscleGroups.value - muscle
-                        } else {
-                            selectedSecondaryMuscleGroups.value + muscle
-                        }
-                    }
-                } else null,
-                currentView = currentBodyView
-            )
-            
-            Spacer(Modifier.height(Spacing.lg))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            // Weight / Bodyweight sections
-            if (selectedExerciseType.value == ExerciseType.WEIGHT ||
-                (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
-            ) {
-                Spacer(Modifier.height(Spacing.lg))
-                Text(
-                    text = "Target load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                RangeSlider(
-                    value = minLoadPercent.floatValue..maxLoadPercent.floatValue,
-                    onValueChange = { r ->
-                        minLoadPercent.floatValue = r.start
-                        maxLoadPercent.floatValue = r.endInclusive
-                    },
-                    valueRange = 0f..100f
-                )
 
                 Spacer(Modifier.height(Spacing.md))
-                Text(
-                    text = "Target reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                RangeSlider(
-                    value = minReps.floatValue..maxReps.floatValue,
-                    onValueChange = { r ->
-                        minReps.floatValue = r.start
-                        maxReps.floatValue = r.endInclusive
-                    },
-                    valueRange = 1f..50f
-                )
 
-                Spacer(Modifier.height(Spacing.lg))
-            }
-
-            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT) {
-                OutlinedTextField(
-                    value = bodyWeightPercentage.value,
-                    onValueChange = {
-                        if (it.isEmpty() || (it.all { ch -> ch.isDigit() || ch == '.' } && !it.startsWith("."))) {
-                            bodyWeightPercentage.value = it
+                // ----- Equipment -----
+                if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
+                    val selectedEquipmentName = remember(equipmentItems, selectedEquipmentId.value) {
+                        equipmentItems.firstOrNull { it.value == selectedEquipmentId.value }?.label ?: "None"
+                    }
+                    val equipmentSummary = remember(selectedEquipmentName, selectedAccessoryIds.value, accessories) {
+                        val accCount = selectedAccessoryIds.value.size
+                        if (accCount == 0) "Equipment: $selectedEquipmentName"
+                        else "Equipment: $selectedEquipmentName, Accessories: $accCount"
+                    }
+                    CollapsibleSection(
+                        title = "Equipment",
+                        summary = equipmentSummary,
+                        expanded = expandedEquipment,
+                        onToggle = { expandedEquipment = !expandedEquipment }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            StandardFilterDropdown<UUID?>(
+                                label = "Equipment",
+                                selectedText = selectedEquipmentName,
+                                items = equipmentItems,
+                                onItemSelected = { selectedEquipmentId.value = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                isItemSelected = { it == selectedEquipmentId.value }
+                            )
+                            Text(
+                                text = "Accessories",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(bottom = Spacing.sm)
+                            )
+                            if (accessories.isEmpty()) {
+                                Text(
+                                    text = "No accessories available. Add accessories in the Equipment tab.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                accessories.forEach { accessory ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = Spacing.xs),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = selectedAccessoryIds.value.contains(accessory.id),
+                                            onCheckedChange = { checked ->
+                                                selectedAccessoryIds.value = if (checked) {
+                                                    selectedAccessoryIds.value + accessory.id
+                                                } else {
+                                                    selectedAccessoryIds.value - accessory.id
+                                                }
+                                            }
+                                        )
+                                        Text(
+                                            text = accessory.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            modifier = Modifier.padding(start = Spacing.sm)
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    },
-                    label = { Text("Bodyweight load (%)", style = MaterialTheme.typography.labelLarge) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(Spacing.lg))
-            }
+                    }
+                    Spacer(Modifier.height(Spacing.md))
+                }
+
+                // ----- Target muscles -----
+                val targetMusclesSummary = remember(selectedMuscleGroups.value.size, selectedSecondaryMuscleGroups.value.size) {
+                    when {
+                        selectedMuscleGroups.value.isEmpty() && selectedSecondaryMuscleGroups.value.isEmpty() ->
+                            "No muscles selected"
+                        selectedSecondaryMuscleGroups.value.isEmpty() ->
+                            "Primary: ${selectedMuscleGroups.value.size}"
+                        selectedMuscleGroups.value.isEmpty() ->
+                            "Secondary: ${selectedSecondaryMuscleGroups.value.size}"
+                        else ->
+                            "Primary: ${selectedMuscleGroups.value.size}, Secondary: ${selectedSecondaryMuscleGroups.value.size}"
+                    }
+                }
+                CollapsibleSection(
+                    title = "Target muscles",
+                    summary = targetMusclesSummary,
+                    expanded = expandedTargetMuscles,
+                    onToggle = { expandedTargetMuscles = !expandedTargetMuscles }
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                        ) {
+                            Button(
+                                onClick = { isSelectingSecondary = false },
+                                modifier = Modifier.weight(1f),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = if (!isSelectingSecondary)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = "Primary muscles",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            Button(
+                                onClick = { isSelectingSecondary = true },
+                                modifier = Modifier.weight(1f),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelectingSecondary)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = "Secondary muscles",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            OutlinedButton(
+                                onClick = { resetMuscleMapTrigger++ }
+                            ) {
+                                Text(
+                                    text = "Reset zoom & center",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        ZoomableMuscleHeatMap(
+                            selectedMuscles = selectedMuscleGroups.value,
+                            selectedSecondaryMuscles = selectedSecondaryMuscleGroups.value,
+                            onMuscleToggled = { muscle ->
+                                if (isSelectingSecondary) {
+                                    selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
+                                    selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
+                                        selectedSecondaryMuscleGroups.value - muscle
+                                    } else {
+                                        selectedSecondaryMuscleGroups.value + muscle
+                                    }
+                                } else {
+                                    selectedSecondaryMuscleGroups.value = selectedSecondaryMuscleGroups.value - muscle
+                                    selectedMuscleGroups.value = if (selectedMuscleGroups.value.contains(muscle)) {
+                                        selectedMuscleGroups.value - muscle
+                                    } else {
+                                        selectedMuscleGroups.value + muscle
+                                    }
+                                }
+                            },
+                            onSecondaryMuscleToggled = if (isSelectingSecondary) {
+                                { muscle ->
+                                    selectedMuscleGroups.value = selectedMuscleGroups.value - muscle
+                                    selectedSecondaryMuscleGroups.value = if (selectedSecondaryMuscleGroups.value.contains(muscle)) {
+                                        selectedSecondaryMuscleGroups.value - muscle
+                                    } else {
+                                        selectedSecondaryMuscleGroups.value + muscle
+                                    }
+                                }
+                            } else null,
+                            resetTrigger = resetMuscleMapTrigger
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(Spacing.md))
+                // ----- Load & reps -----
+                if (selectedExerciseType.value == ExerciseType.WEIGHT ||
+                    (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
+                ) {
+                    StyledCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(Spacing.md),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                        ) {
+                            Text(
+                                text = "Target load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            MinMaxStepperRow(
+                                minValue = minLoadPercent.floatValue.toInt(),
+                                maxValue = maxLoadPercent.floatValue.toInt(),
+                                onMinChange = { minLoadPercent.floatValue = it.toFloat() },
+                                onMaxChange = { maxLoadPercent.floatValue = it.toFloat() },
+                                minBound = 0,
+                                maxBound = 100,
+                                step = 5
+                            )
+
+                            Text(
+                                text = "Target reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            MinMaxStepperRow(
+                                minValue = minReps.floatValue.toInt(),
+                                maxValue = maxReps.floatValue.toInt(),
+                                onMinChange = { minReps.floatValue = it.toFloat() },
+                                onMaxChange = { maxReps.floatValue = it.toFloat() },
+                                minBound = 1,
+                                maxBound = 50,
+                                step = 1
+                            )
+
+                            if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT) {
+                                OutlinedTextField(
+                                    value = bodyWeightPercentage.value,
+                                    onValueChange = {
+                                        if (it.isEmpty() || (it.all { ch -> ch.isDigit() || ch == '.' } && !it.startsWith("."))) {
+                                            bodyWeightPercentage.value = it
+                                        }
+                                    },
+                                    label = { Text("Bodyweight load (%)", style = MaterialTheme.typography.labelLarge) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(Spacing.md))
+                }
 
             if (selectedExerciseType.value == ExerciseType.BODY_WEIGHT || selectedExerciseType.value == ExerciseType.WEIGHT) {
                 // Track current intra-set rest in seconds for validation and persistence
                 val intraSetRestSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds)
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Auto warmups
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = { Text("Automatically generate warm-up sets", style = MaterialTheme.typography.bodyLarge) },
-                    trailingContent = {
-                        Switch(
-                            checked = generateWarmupSets.value,
-                            onCheckedChange = { generateWarmupSets.value = it }
-                        )
-                    }
-                )
-
-                // Exercise category (determines warm-up volume: heavy / moderate / isolation)
-                val selectedExerciseCategoryLabel =
-                    remember(exerciseCategoryOptions, selectedExerciseCategory.value) {
-                        exerciseCategoryOptions.firstOrNull {
-                            it.value == selectedExerciseCategory.value
-                        }?.label ?: "Not set"
-                    }
-                StandardFilterDropdown<ExerciseCategory?>(
-                    label = "Exercise category",
-                    selectedText = selectedExerciseCategoryLabel,
-                    items = exerciseCategoryOptions,
-                    onItemSelected = { selectedExerciseCategory.value = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    isItemSelected = { it == selectedExerciseCategory.value }
-                )
-                Spacer(Modifier.height(Spacing.sm))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Progression mode
-                val selectedProgressionModeLabel =
-                    remember(progressionModeOptions, progressionMode.value) {
-                        progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
-                    }
-                StandardFilterDropdown<ProgressionMode>(
-                    label = "Progression mode",
-                    selectedText = selectedProgressionModeLabel,
-                    items = progressionModeOptions,
-                    onItemSelected = { mode ->
-                        progressionMode.value = mode
-                        if (mode != ProgressionMode.OFF) {
-                            requiresLoadCalibration.value = false
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    isItemSelected = { it == progressionMode.value }
-                )
-
-                if (progressionMode.value != ProgressionMode.OFF) {
-                    Spacer(Modifier.height(Spacing.lg))
-                    Text(
-                        text = "Default load increase: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Slider(
-                        value = loadJumpDefaultPctState.floatValue,
-                        onValueChange = { loadJumpDefaultPctState.floatValue = it.coerceIn(0f, 0.10f) },
-                        valueRange = 0f..0.10f
-                    )
-
-                    // Ensure max slider's lower bound tracks the default value
-                    val maxLower = loadJumpDefaultPctState.floatValue
-                    if (loadJumpMaxPctState.floatValue < maxLower) {
-                        loadJumpMaxPctState.floatValue = maxLower
-                    }
-
-                    Text(
-                        text = "Maximum load increase: ${(loadJumpMaxPctState.floatValue * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = Spacing.md)
-                    )
-                    Slider(
-                        value = loadJumpMaxPctState.floatValue,
-                        onValueChange = { loadJumpMaxPctState.floatValue = it.coerceIn(maxLower, 0.25f) },
-                        valueRange = maxLower..0.25f
-                    )
-
-                    Text(
-                        text = "Overcap reps threshold: ${loadJumpOvercapUntilState.intValue}",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = Spacing.md)
-                    )
-                    Slider(
-                        value = loadJumpOvercapUntilState.intValue.toFloat(),
-                        onValueChange = { loadJumpOvercapUntilState.intValue = it.roundToInt().coerceIn(0, 5) },
-                        valueRange = 0f..5f
-                    )
-
+                // ----- Warm-up & progression -----
+                val warmupProgressionSummary = remember(
+                    generateWarmupSets.value,
+                    selectedExerciseCategory.value,
+                    progressionMode.value,
+                    exerciseCategoryOptions
+                ) {
+                    val catLabel = exerciseCategoryOptions.firstOrNull { it.value == selectedExerciseCategory.value }?.label ?: "Not set"
+                    val progLabel = progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
+                    "Warm-up: ${if (generateWarmupSets.value) "On" else "Off"}, Category: $catLabel, Progression: $progLabel"
                 }
+                CollapsibleSection(
+                    title = "Warm-up & progression",
+                    summary = warmupProgressionSummary,
+                    expanded = expandedWarmupProgression,
+                    onToggle = { expandedWarmupProgression = !expandedWarmupProgression }
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        ListItem(
+                            colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                            headlineContent = { Text("Automatically generate warm-up sets", style = MaterialTheme.typography.bodyLarge) },
+                            trailingContent = {
+                                Switch(
+                                    checked = generateWarmupSets.value,
+                                    onCheckedChange = { generateWarmupSets.value = it }
+                                )
+                            }
+                        )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        val selectedExerciseCategoryLabel =
+                            remember(exerciseCategoryOptions, selectedExerciseCategory.value) {
+                                exerciseCategoryOptions.firstOrNull {
+                                    it.value == selectedExerciseCategory.value
+                                }?.label ?: "Not set"
+                            }
+                        StandardFilterDropdown<ExerciseCategory?>(
+                            label = "Exercise category",
+                            selectedText = selectedExerciseCategoryLabel,
+                            items = exerciseCategoryOptions,
+                            onItemSelected = { selectedExerciseCategory.value = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == selectedExerciseCategory.value }
+                        )
+
+                        val selectedProgressionModeLabel =
+                            remember(progressionModeOptions, progressionMode.value) {
+                                progressionModeOptions.firstOrNull { it.value == progressionMode.value }?.label ?: "Off"
+                            }
+                        StandardFilterDropdown<ProgressionMode>(
+                            label = "Progression mode",
+                            selectedText = selectedProgressionModeLabel,
+                            items = progressionModeOptions,
+                            onItemSelected = { mode ->
+                                progressionMode.value = mode
+                                if (mode != ProgressionMode.OFF) {
+                                    requiresLoadCalibration.value = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == progressionMode.value }
+                        )
+
+                        if (progressionMode.value != ProgressionMode.OFF) {
+                            Text(
+                                text = "Default load increase: ${(loadJumpDefaultPctState.floatValue * 100).round(2)}%",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Slider(
+                                value = loadJumpDefaultPctState.floatValue,
+                                onValueChange = { loadJumpDefaultPctState.floatValue = it.coerceIn(0f, 0.10f) },
+                                valueRange = 0f..0.10f
+                            )
+
+                            val maxLower = loadJumpDefaultPctState.floatValue
+                            if (loadJumpMaxPctState.floatValue < maxLower) {
+                                loadJumpMaxPctState.floatValue = maxLower
+                            }
+
+                            Text(
+                                text = "Maximum load increase: ${(loadJumpMaxPctState.floatValue * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(top = Spacing.md)
+                            )
+                            Slider(
+                                value = loadJumpMaxPctState.floatValue,
+                                onValueChange = { loadJumpMaxPctState.floatValue = it.coerceIn(maxLower, 0.25f) },
+                                valueRange = maxLower..0.25f
+                            )
+
+                            Text(
+                                text = "Overcap reps threshold: ${loadJumpOvercapUntilState.intValue}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(top = Spacing.md)
+                            )
+                            Slider(
+                                value = loadJumpOvercapUntilState.intValue.toFloat(),
+                                onValueChange = { loadJumpOvercapUntilState.intValue = it.roundToInt().coerceIn(0, 5) },
+                                valueRange = 0f..5f
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(Spacing.lg))
-                // Unilateral toggle
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = {
-                        Text(
-                            "Unilateral exercise (left/right sides)",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    },
-                    supportingContent = {
-                        Text(
-                            "Treat each set as left and right sides with rest between sides.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = isUnilateral.value,
-                            onCheckedChange = { isUnilateral.value = it }
-                        )
-                    }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                if (isUnilateral.value) {
-                    Spacer(Modifier.height(Spacing.lg))
-                    Text("Rest between sides", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(Spacing.sm))
-                    CustomTimePicker(
-                        initialHour = hours,
-                        initialMinute = minutes,
-                        initialSecond = seconds,
-                        onTimeChange = { h, m, s -> hms.value = Triple(h, m, s) }
+                // ----- Unilateral -----
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    ListItem(
+                        colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                        headlineContent = {
+                            Text(
+                                "Unilateral exercise (left/right sides)",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        },
+                        supportingContent = {
+                            Text(
+                                "Treat each set as left and right sides with rest between sides.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = isUnilateral.value,
+                                onCheckedChange = { isUnilateral.value = it }
+                            )
+                        }
                     )
 
-                    if (intraSetRestSeconds == 0) {
-                        Spacer(Modifier.height(Spacing.sm))
-                        Text(
-                            text = "Set a non-zero rest between sides for unilateral exercises.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
+                    if (isUnilateral.value) {
+                        Text("Rest between sides", style = MaterialTheme.typography.titleMedium)
+                        CustomTimePicker(
+                            initialHour = hours,
+                            initialMinute = minutes,
+                            initialSecond = seconds,
+                            onTimeChange = { h, m, s -> hms.value = Triple(h, m, s) }
                         )
+
+                        if (intraSetRestSeconds == 0) {
+                            Text(
+                                text = "Set a non-zero rest between sides for unilateral exercises.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
-
-                    Spacer(Modifier.height(Spacing.lg))
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
+
+                Spacer(Modifier.height(Spacing.md))
             } else {
-                // Cardio HR target zone
+                // ----- Heart rate (cardio) -----
                 val selectedHeartRateZoneIndex = when (selectedTargetZone.value) {
                     null -> 0
                     -1 -> 5
                     else -> selectedTargetZone.value!! + 1 // 1..4 -> Zone 2..5
                 }
-                StandardFilterDropdown(
-                    label = "Target heart-rate zone",
-                    selectedText = heartRateZones[selectedHeartRateZoneIndex],
-                    items = heartRateZoneItems,
-                    onItemSelected = { index ->
-                        when (index) {
-                            0 -> { // None
-                                selectedLowerBoundMaxHRPercent.value = null
-                                selectedUpperBoundMaxHRPercent.value = null
-                                selectedTargetZone.value = null
-                            }
-                            in 1..4 -> { // Zone 2..5
-                                val (lower, upper) = zoneRanges[index + 1]
-                                selectedLowerBoundMaxHRPercent.value = lower
-                                selectedUpperBoundMaxHRPercent.value = upper
-                                selectedTargetZone.value = index
-                            }
-                            5 -> { // Custom
-                                selectedLowerBoundMaxHRPercent.value = 50f
-                                selectedUpperBoundMaxHRPercent.value = 60f
-                                selectedTargetZone.value = -1
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    isItemSelected = { it == selectedHeartRateZoneIndex }
-                )
+                StyledCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(Spacing.md),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        StandardFilterDropdown(
+                            label = "Target heart-rate zone",
+                            selectedText = heartRateZones[selectedHeartRateZoneIndex],
+                            items = heartRateZoneItems,
+                            onItemSelected = { index ->
+                                when (index) {
+                                    0 -> { // None
+                                        selectedLowerBoundMaxHRPercent.value = null
+                                        selectedUpperBoundMaxHRPercent.value = null
+                                        selectedTargetZone.value = null
+                                    }
+                                    in 1..4 -> { // Zone 2..5
+                                        val (lower, upper) = zoneRanges[index + 1]
+                                        selectedLowerBoundMaxHRPercent.value = lower
+                                        selectedUpperBoundMaxHRPercent.value = upper
+                                        selectedTargetZone.value = index
+                                    }
+                                    5 -> { // Custom
+                                        selectedLowerBoundMaxHRPercent.value = 50f
+                                        selectedUpperBoundMaxHRPercent.value = 60f
+                                        selectedTargetZone.value = -1
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == selectedHeartRateZoneIndex }
+                        )
 
-                if (showCustomTargetZone) {
-                    Spacer(Modifier.height(Spacing.lg))
-                    val lb = selectedLowerBoundMaxHRPercent.value ?: 50f
-                    val ub = selectedUpperBoundMaxHRPercent.value ?: 60f
-                    Text(
-                        text = "Custom heart-rate zone (${lb.toInt()}% – ${ub.toInt()}%)",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    RangeSlider(
-                        value = lb..ub,
-                        onValueChange = { r ->
-                            selectedLowerBoundMaxHRPercent.value = max(1f, r.start.roundToInt().toFloat())
-                            selectedUpperBoundMaxHRPercent.value = min(100f, r.endInclusive.roundToInt().toFloat())
-                        },
-                        valueRange = 1f..100f
-                    )
+                        if (showCustomTargetZone) {
+                            val lb = selectedLowerBoundMaxHRPercent.value ?: 50f
+                            val ub = selectedUpperBoundMaxHRPercent.value ?: 60f
+                            Text(
+                                text = "Custom heart-rate zone (${lb.toInt()}% – ${ub.toInt()}%)",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            MinMaxStepperRow(
+                                minValue = lb.toInt(),
+                                maxValue = ub.toInt(),
+                                onMinChange = { selectedLowerBoundMaxHRPercent.value = it.toFloat() },
+                                onMaxChange = { selectedUpperBoundMaxHRPercent.value = it.toFloat() },
+                                minBound = 1,
+                                maxBound = 100,
+                                step = 5
+                            )
+                        }
+                    }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(Spacing.md))
             }
 
-            // Calibration mode (only for WEIGHT or BODY_WEIGHT with equipment)
-            if (selectedExerciseType.value == ExerciseType.WEIGHT || 
-                (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
-                ListItem(
-                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                    headlineContent = {
-                        Text(
-                            "Use Calibration mode",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    },
-                    supportingContent = {
-                        Text(
-                            "Weight will be determined by a calibration set before the first work set.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    },
-                    trailingContent = {
-                        Switch(
-                            checked = requiresLoadCalibration.value,
-                            onCheckedChange = { 
-                                requiresLoadCalibration.value = it
-                                // Disable progression when calibration is enabled
-                                if (it) {
-                                    progressionMode.value = ProgressionMode.OFF
-                                }
+                Spacer(Modifier.height(Spacing.md))
+                FormSectionTitle(text = "Advanced")
+                // ----- Calibration -----
+                if (selectedExerciseType.value == ExerciseType.WEIGHT ||
+                    (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null && selectedEquipmentId.value != viewModel.GENERIC_ID)) {
+                    CollapsibleSection(
+                        title = "Calibration",
+                        summary = "Calibration: ${if (requiresLoadCalibration.value) "On" else "Off"}",
+                        expanded = expandedCalibration,
+                        onToggle = { expandedCalibration = !expandedCalibration }
+                    ) {
+                        ListItem(
+                            colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                            headlineContent = {
+                                Text(
+                                    "Use Calibration mode",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    "Weight will be determined by a calibration set before the first work set.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = requiresLoadCalibration.value,
+                                    onCheckedChange = {
+                                        requiresLoadCalibration.value = it
+                                        if (it) {
+                                            progressionMode.value = ProgressionMode.OFF
+                                        }
+                                    }
+                                )
                             }
                         )
                     }
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            }
-
-            // Do not store history
-            ListItem(
-                colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                headlineContent = { Text("Skip exercise history tracking", style = MaterialTheme.typography.bodyLarge) },
-                trailingContent = {
-                    Switch(
-                        checked = doNotStoreHistory.value,
-                        onCheckedChange = { doNotStoreHistory.value = it },
-                        enabled = allowSettingDoNotStoreHistory
-                    )
+                    Spacer(Modifier.height(Spacing.lg))
                 }
-            )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            // Notes
-            Spacer(Modifier.height(Spacing.lg))
-            OutlinedTextField(
-                value = notesState.value,
-                onValueChange = { notesState.value = it },
-                label = { Text("Notes", style = MaterialTheme.typography.labelLarge) },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 3,
-                singleLine = false
-            )
+                // ----- History & notes -----
+                val historyNotesSummary = remember(doNotStoreHistory.value, notesState.value) {
+                    val skip = if (doNotStoreHistory.value) "Skip history: On" else "Skip history: Off"
+                    val notesPreview = notesState.value.trim().take(30)
+                    if (notesPreview.isEmpty()) skip else "$skip, Notes: ${notesPreview}${if (notesState.value.trim().length > 30) "…" else ""}"
+                }
+                CollapsibleSection(
+                    title = "History & notes",
+                    summary = historyNotesSummary,
+                    expanded = expandedHistoryNotes,
+                    onToggle = { expandedHistoryNotes = !expandedHistoryNotes }
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        ListItem(
+                            colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                            headlineContent = { Text("Skip exercise history tracking", style = MaterialTheme.typography.bodyLarge) },
+                            trailingContent = {
+                                Switch(
+                                    checked = doNotStoreHistory.value,
+                                    onCheckedChange = { doNotStoreHistory.value = it },
+                                    enabled = allowSettingDoNotStoreHistory
+                                )
+                            }
+                        )
+
+                        OutlinedTextField(
+                            value = notesState.value,
+                            onValueChange = { notesState.value = it },
+                            label = { Text("Notes", style = MaterialTheme.typography.labelLarge) },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            singleLine = false
+                        )
+                    }
+                }
+            } // end gating: nameState.value.isNotBlank()
+
+            if (!nameState.value.isNotBlank()) {
+                Text(
+                    text = "Set a name above to configure training and advanced options.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.md)
+                )
+            }
 
             Spacer(Modifier.height(Spacing.xl))
 

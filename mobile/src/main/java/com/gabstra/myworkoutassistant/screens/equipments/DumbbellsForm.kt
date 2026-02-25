@@ -31,8 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -46,7 +48,9 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -77,6 +81,9 @@ fun DumbbellsForm(
     // State for showing dialogs
     val showDumbbellDialog = remember { mutableStateOf(false) }
     val showExtraWeightDialog = remember { mutableStateOf(false) }
+
+    var expandedDumbbells by remember { mutableStateOf(false) }
+    var expandedExtraWeights by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
@@ -130,142 +137,133 @@ fun DumbbellsForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(top = 10.dp)
-                .padding(bottom = 10.dp)
+                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
                 .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
-                .padding(horizontal = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
-            // Dumbbells name field
-            OutlinedTextField(
-                value = nameState.value,
-                onValueChange = { nameState.value = it },
-                label = { Text("Dumbbells Set Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Max Additional Items field
-            OutlinedTextField(
-                value = maxExtraWeightsPerLoadingPointState.value,
-                onValueChange = {
-                    if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                        maxExtraWeightsPerLoadingPointState.value = it
-                    }
-                },
-                label = { Text("Maximum Additional Plates") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            // Available Dumbbells Section
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth(),
-            ) {
+            FormSectionTitle(text = "Essentials")
+            StyledCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
+                    OutlinedTextField(
+                        value = nameState.value,
+                        onValueChange = { nameState.value = it },
+                        label = { Text("Dumbbells Set Name", style = MaterialTheme.typography.labelLarge) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = maxExtraWeightsPerLoadingPointState.value,
+                        onValueChange = {
+                            if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                                maxExtraWeightsPerLoadingPointState.value = it
+                            }
+                        },
+                        label = { Text("Maximum Additional Plates", style = MaterialTheme.typography.labelLarge) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            FormSectionTitle(text = "Weights")
+            CollapsibleSection(
+                title = "Available Dumbbells",
+                summary = "${availableDumbbellsState.value.size} dumbbells",
+                expanded = expandedDumbbells,
+                onToggle = { expandedDumbbells = !expandedDumbbells }
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Available Dumbbells",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    IconButton(
+                        modifier = Modifier.clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .size(35.dp),
+                        onClick = { showDumbbellDialog.value = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Dumbbell",
+                            tint = MaterialTheme.colorScheme.background
+                        )
+                    }
+                }
+
+                availableDumbbellsState.value.sortedBy { it.weight }.forEachIndexed { index, dumbbell ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Available Dumbbells",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
                         IconButton(
-                            modifier = Modifier.clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .size(35.dp),
-                            onClick = { showDumbbellDialog.value = true }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Dumbbell",
-                                tint = MaterialTheme.colorScheme.background
-                            )
-                        }
-                    }
-
-                    availableDumbbellsState.value.sortedBy { it.weight }.forEachIndexed { index, dumbbell ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index+1}) ${dumbbell.weight}kg", style = MaterialTheme.typography.bodyMedium)
-                            IconButton(
-                                modifier = Modifier.size(35.dp),
-                                onClick = {
-                                    availableDumbbellsState.value =
-                                        availableDumbbellsState.value - dumbbell
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
+                            modifier = Modifier.size(35.dp),
+                            onClick = {
+                                availableDumbbellsState.value =
+                                    availableDumbbellsState.value - dumbbell
                             }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove Dumbbell")
                         }
                     }
                 }
             }
 
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth(),
+            CollapsibleSection(
+                title = "Extra Weights",
+                summary = "${extraWeightsState.value.size} weights",
+                expanded = expandedExtraWeights,
+                onToggle = { expandedExtraWeights = !expandedExtraWeights }
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text(
+                        text = "Extra Weights",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    IconButton(
+                        modifier = Modifier.clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .size(35.dp),
+                        onClick = { showExtraWeightDialog.value = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Extra Weight",
+                            tint = MaterialTheme.colorScheme.background
+                        )
+                    }
+                }
+
+                extraWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Extra Weights",
-                            style = MaterialTheme.typography.titleMedium
+                        Text("${index+1}) ${plate.weight}kg",
+                            style = MaterialTheme.typography.bodyMedium
                         )
                         IconButton(
-                            modifier = Modifier.clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .size(35.dp),
-                            onClick = { showExtraWeightDialog.value = true }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Extra Weight",
-                                tint = MaterialTheme.colorScheme.background
-                            )
-                        }
-                    }
-
-                    extraWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, plate ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index+1}) ${plate.weight}kg",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            IconButton(
-                                modifier = Modifier.size(35.dp),
-                                onClick = {
-                                    extraWeightsState.value =
-                                        extraWeightsState.value - plate
-                                }
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
+                            modifier = Modifier.size(35.dp),
+                            onClick = {
+                                extraWeightsState.value =
+                                    extraWeightsState.value - plate
                             }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove Weight")
                         }
                     }
                 }
