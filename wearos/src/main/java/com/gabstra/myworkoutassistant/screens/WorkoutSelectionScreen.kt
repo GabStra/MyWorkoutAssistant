@@ -201,7 +201,6 @@ fun WorkoutSelectionScreen(
     
     // Handle back button press to close the app
     BackHandler {
-        hapticsViewModel.doGentleVibration()
         (context as? Activity)?.finish()
     }
     

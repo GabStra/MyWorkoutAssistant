@@ -1,22 +1,25 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
@@ -60,32 +63,40 @@ fun PageTitledLines(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {
-    val scrollState = rememberScrollState()
+    val state = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec()
+
     ScreenScaffold(
         modifier = modifier.fillMaxSize(),
-        scrollState = scrollState,
+        scrollState = state,
         scrollIndicator = {
             ScrollIndicator(
-                state = scrollState,
+                state = state,
                 colors = ScrollIndicatorDefaults.colors(
                     indicatorColor = MaterialTheme.colorScheme.onBackground,
                     trackColor = MediumDarkGray
                 )
             )
         }
-    ) { _ ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 5.dp)
-                .verticalScroll(scrollState),
-            horizontalAlignment = Alignment.CenterHorizontally
+    ) { contentPadding ->
+        TransformingLazyColumn(
+            contentPadding = contentPadding,
+            state = state
         ) {
             sections.forEach { section ->
-                TitledLinesSectionItem(
-                    section = section,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                item{
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec)
+                            .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                    ) {
+                        TitledLinesSectionItem(
+                            section = section,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
         }
     }

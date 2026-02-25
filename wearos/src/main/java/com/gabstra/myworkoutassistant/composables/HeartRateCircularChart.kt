@@ -41,7 +41,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,7 +74,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.getValueInRange
-import com.gabstra.myworkoutassistant.data.truncate
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
@@ -107,7 +105,7 @@ fun HrTargetGlowEffect(
     val density = LocalDensity.current
     val infiniteTransition = rememberInfiniteTransition(label = "glow")
     val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
+        initialValue = 0f,
         targetValue = 0.8f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 1000, delayMillis = 0),
@@ -273,7 +271,6 @@ fun HeartRateCircularChart(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
-    centerReadoutOnScreen: Boolean = false,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val mhrPercentage = remember(hr, age, measuredMaxHeartRate, restingHeartRate) {
@@ -734,7 +731,7 @@ fun extractRotationAngles(
             val percentageInZone = if (upperBound > lowerBound) {
                 ((lowerBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
             } else {
-                if (lowerBoundMaxHRPercent == lowerBound) 0f else 0f
+                0f
             }
             foundLowerBoundRotationAngle = getValueInRange(startAngle, endAngle, percentageInZone)
         }
@@ -747,40 +744,13 @@ fun extractRotationAngles(
             val percentageInZone = if (upperBound > lowerBound) {
                 ((upperBoundMaxHRPercent - lowerBound) / (upperBound - lowerBound))
             } else {
-                if (upperBoundMaxHRPercent == lowerBound) 0f else 0f
+                0f
             }
             foundUpperBoundRotationAngle = getValueInRange(startAngle, endAngle, percentageInZone)
         }
     }
 
     return Pair(foundLowerBoundRotationAngle, foundUpperBoundRotationAngle)
-}
-
-fun extractCurrentHrRotationAngle(
-    zoneCount: Int,
-    zoneRanges: Array<Pair<Float, Float>>,
-    mhrPercentage: Float?,
-    totalStartAngle: Float,
-    segmentArcAngle: Float,
-    paddingAngle: Float
-): Float? {
-    if (segmentArcAngle <= 0f || zoneCount <= 0 || mhrPercentage == null) return null
-
-    for (index in 0 until zoneCount) {
-        val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
-        val endAngle = startAngle + segmentArcAngle
-        val (lowerBound, upperBound) = zoneRanges[index + 1]
-
-        if (mhrPercentage.truncate(1) in lowerBound.truncate(1)..upperBound.truncate(1)) {
-            val percentageInZone = if (upperBound > lowerBound) {
-                ((mhrPercentage- lowerBound) / (upperBound - lowerBound)).coerceIn(0f, 1f)
-            } else 0f
-
-            return getValueInRange(startAngle, endAngle, percentageInZone)
-        }
-    }
-
-    return null
 }
 
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
@@ -879,41 +849,28 @@ private fun HeartRateView(
                 paddingAngle = paddingAngle
             )
 
-            val currentHrRotationAngle = extractCurrentHrRotationAngle(
-                zoneCount = zoneCount,
-                zoneRanges = zoneRanges,
-                mhrPercentage = mhrPercentage,
-                totalStartAngle = totalStartAngle,
-                segmentArcAngle = segmentArcAngle,
-                paddingAngle = paddingAngle
-            )
-
             if (segmentArcAngle > 0f && zoneCount > 0) {
                 for (index in 0 until zoneCount) {
+                    val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
+                    val endAngle = startAngle + segmentArcAngle
+                    val (lowerBound, upperBound) = zoneRanges[index + 1]
 
-                val startAngle = totalStartAngle + index * (segmentArcAngle + paddingAngle)
-                val endAngle = startAngle + segmentArcAngle
-
-                val (lowerBound, upperBound) = zoneRanges[index + 1]
-
-                    key(hr) {
-                        ZoneSegment(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(10.dp)
-                                .then(zoneSegmentsModifier),
-                            index = index + 1,
-                            currentZone = currentZone,
-                            hr = hr,
-                            mhrPercentage = mhrPercentage,
-                            zoneRanges = zoneRanges,
-                            colorsByZone = colorsByZone,
-                            startAngle = startAngle,
-                            endAngle = endAngle,
-                            lowerBound = lowerBound,
-                            upperBound = upperBound
-                        )
-                    }
+                    ZoneSegment(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp)
+                            .then(zoneSegmentsModifier),
+                        index = index + 1,
+                        currentZone = currentZone,
+                        hr = hr,
+                        mhrPercentage = mhrPercentage,
+                        zoneRanges = zoneRanges,
+                        colorsByZone = colorsByZone,
+                        startAngle = startAngle,
+                        endAngle = endAngle,
+                        lowerBound = lowerBound,
+                        upperBound = upperBound
+                    )
                 }
             }
 
@@ -943,30 +900,6 @@ private fun HeartRateView(
                     innerBorderWidth = 4.dp
                 )
             }
-
-            /*
-        if (currentHrRotationAngle != null) {
-            /*
-            val animatedAngle by animateFloatAsState(
-
-                targetValue = currentHrRotationAngle,
-                animationSpec = tween(durationMillis = 300),
-                label = "HeartRateIndicatorAngle"
-            )*/
-
-            Box(modifier = Modifier
-                .fillMaxSize()
-                .padding(3.dp)
-            ) {
-                HeartRateIndicator(
-                    currentHrRotationAngle,
-                    MaterialTheme.colorScheme.onBackground,
-                    bubbleSize = 18.dp,
-                    borderWidth = 2.dp
-                )
-            }
-        }
-            */
         }
     }
 }
@@ -985,8 +918,6 @@ fun HeartRateStandard(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
-    centerReadoutOnScreen: Boolean = false,
-    readoutAnchorOffsetX: Dp = 0.dp,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val currentHeartRate by hrViewModel.heartRateBpm.collectAsState()
@@ -1013,7 +944,6 @@ fun HeartRateStandard(
         restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-        centerReadoutOnScreen = centerReadoutOnScreen,
         onHrStatusChange = onHrStatusChange
     )
 }
@@ -1032,7 +962,6 @@ fun HeartRatePolar(
     restingHeartRate: Int? = null,
     lowerBoundMaxHRPercent: Float?,
     upperBoundMaxHRPercent: Float?,
-    centerReadoutOnScreen: Boolean = false,
     onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
 ) {
     val hrData by polarViewModel.hrBpm.collectAsState()
@@ -1059,7 +988,6 @@ fun HeartRatePolar(
         restingHeartRate = restingHeartRate,
         lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
         upperBoundMaxHRPercent = upperBoundMaxHRPercent,
-        centerReadoutOnScreen = centerReadoutOnScreen,
         onHrStatusChange = onHrStatusChange
     )
 }

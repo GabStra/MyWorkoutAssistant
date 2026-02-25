@@ -50,7 +50,6 @@ import com.gabstra.myworkoutassistant.composables.PageTitledLines
 import com.gabstra.myworkoutassistant.composables.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
-import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -59,6 +58,8 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -92,6 +93,7 @@ fun ExerciseScreen(
 ) {
     var isEditModeEnabled by remember { mutableStateOf(false) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
+    val isPaused by viewModel.isPaused
 
     val exercise = remember(state.exerciseId) { viewModel.exercisesById[state.exerciseId]!! }
     val equipment = remember(exercise) { exercise.equipmentId?.let { viewModel.getEquipmentById(it) } }
@@ -109,8 +111,8 @@ fun ExerciseScreen(
     }
     val showNotesPage = remember(exercise) { exercise.notes.isNotEmpty() }
     val hasMuscleInfo = remember(exercise) { !exercise.muscleGroups.isNullOrEmpty() }
-    val showTitledLinesPage = remember(equipment, accessoryEquipments) {
-        equipment != null || accessoryEquipments.isNotEmpty()
+    val showTitledLinesPage = remember(exercise, equipment, accessoryEquipments) {
+        exercise.notes.isNotEmpty() || equipment != null || accessoryEquipments.isNotEmpty()
     }
     val showProgressionComparisonPage = remember(exercise) {
         !exercise.requiresLoadCalibration &&
@@ -134,9 +136,9 @@ fun ExerciseScreen(
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
             if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
-            if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
-            if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
-            if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
+            //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
+            //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
+            //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
             add(ExerciseHorizontalPage.EXERCISES)
         }
     }
@@ -171,6 +173,7 @@ fun ExerciseScreen(
 
     val scope = rememberWearCoroutineScope()
     var goBackJob by remember { mutableStateOf<Job?>(null) }
+    var shouldResumeTimerAfterDialog by remember(state.set.id) { mutableStateOf(false) }
 
     fun restartGoBack() {
         goBackJob?.cancel()
@@ -233,7 +236,7 @@ fun ExerciseScreen(
                         .fillMaxWidth()
                         .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding)
                         .combinedClickable(
-                            onClick = { hapticsViewModel.doGentleVibration() },
+                            onClick = {  },
                             onLongClick = { providedOnLongClick.invoke() }
                         ),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
@@ -253,8 +256,7 @@ fun ExerciseScreen(
                         hearthRateChart(Modifier.fillMaxSize())
                         ExerciseIndicator(
                             viewModel = viewModel,
-                            modifier = Modifier.fillMaxSize()
-                                .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
+                            modifier = Modifier.fillMaxSize(),
                             selectedExerciseId = selectedExercise.id
                         )
                     }
@@ -296,8 +298,11 @@ fun ExerciseScreen(
                     }
 
                     ExerciseHorizontalPage.TITLED_LINES -> {
-                        val titledLinesSections = remember(equipment, accessoryEquipments) {
+                        val titledLinesSections = remember(exercise, equipment, accessoryEquipments) {
                             val sections = mutableListOf<TitledLinesSection>()
+                            if (exercise.notes.isNotEmpty()) {
+                                sections.add(TitledLinesSection("Notes", listOf(exercise.notes)))
+                            }
                             equipment?.let { sections.add(TitledLinesSection("Equipment", listOf(it.name))) }
                             if (accessoryEquipments.isNotEmpty()) {
                                 sections.add(
@@ -372,6 +377,7 @@ fun ExerciseScreen(
                 else -> "Do you want to proceed?"
             },
             handleYesClick = {
+                shouldResumeTimerAfterDialog = false
                 if (state.intraSetTotal != null) {
                     state.intraSetCounter++
                 }
@@ -407,8 +413,25 @@ fun ExerciseScreen(
             handleOnAutomaticClose = { viewModel.closeCustomDialog() },
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
+                    if (state.set is TimedDurationSet || state.set is EnduranceSet) {
+                        if (viewModel.workoutTimerService.isTimerRegistered(state.set.id)) {
+                            viewModel.workoutTimerService.pauseTimer(state.set.id)
+                            shouldResumeTimerAfterDialog = true
+                        } else {
+                            shouldResumeTimerAfterDialog = false
+                        }
+                    }
                     viewModel.setDimming(false)
                 } else {
+                    if (
+                        shouldResumeTimerAfterDialog &&
+                        !isPaused &&
+                        (state.set is TimedDurationSet || state.set is EnduranceSet) &&
+                        viewModel.workoutTimerService.isTimerRegistered(state.set.id)
+                    ) {
+                        viewModel.workoutTimerService.resumeTimer(state.set.id)
+                    }
+                    shouldResumeTimerAfterDialog = false
                     viewModel.reEvaluateDimmingForCurrentState()
                 }
             }
@@ -433,143 +456,138 @@ private fun ExerciseDetailContent(
     onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
-        ) {
-            ExerciseDetail(
-                updatedState = state,
-                viewModel = viewModel,
-                onEditModeDisabled = onEditModeDisabled,
-                onEditModeEnabled = onEditModeEnabled,
-                onTimerDisabled = { },
-                onTimerEnabled = { },
-                extraInfo = {
-                    val isWarmupSet = remember(state.set) {
-                        when (val set = state.set) {
-                            is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                            is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                            else -> false
-                        }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = WorkoutPagerLayoutTokens.OverlayContentHorizontalPadding)
+    ) {
+        ExerciseDetail(
+            updatedState = state,
+            viewModel = viewModel,
+            onEditModeDisabled = onEditModeDisabled,
+            onEditModeEnabled = onEditModeEnabled,
+            onTimerDisabled = { },
+            onTimerEnabled = { },
+            extraInfo = {
+                val isWarmupSet = remember(state.set) {
+                    when (val set = state.set) {
+                        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
+                        else -> false
                     }
-                    val isCalibrationSet = remember(state.isCalibrationSet) { state.isCalibrationSet }
-                    val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) { state.isAutoRegulationWorkSet }
-                    val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
-                        if (isSuperset) viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty() else null
-                    }
-                    val supersetIndex = remember(supersetExercises, exercise) {
-                        supersetExercises?.indexOf(exercise)
-                    }
-                    val repRange = remember(exercise) {
-                        when {
-                            (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+                }
+                val isCalibrationSet = remember(state.isCalibrationSet) { state.isCalibrationSet }
+                val isAutoRegulationWorkSet = remember(state.isAutoRegulationWorkSet) { state.isAutoRegulationWorkSet }
+                val supersetExercises = remember(exerciseOrSupersetId, isSuperset) {
+                    if (isSuperset) viewModel.exercisesBySupersetId[exerciseOrSupersetId].orEmpty() else null
+                }
+                val supersetIndex = remember(supersetExercises, exercise) {
+                    supersetExercises?.indexOf(exercise)
+                }
+                val repRange = remember(exercise) {
+                    when {
+                        (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
                                 exercise.minReps > 0 && exercise.maxReps >= exercise.minReps ->
-                                "${exercise.minReps}–${exercise.maxReps}"
-                            else -> null
-                        }
+                            "${exercise.minReps}–${exercise.maxReps}"
+                        else -> null
                     }
+                }
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        ExerciseMetadataStrip(
-                            supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                            supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
-                            setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
-                                ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
-                            repRange = repRange,
-                            sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
-                            currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
-                            isUnilateral = state.isUnilateral,
-                            textColor = MaterialTheme.colorScheme.onBackground,
-                            onTap = { hapticsViewModel.doGentleVibration() }
-                        )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    ExerciseMetadataStrip(
+                        supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
+                        supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
+                        setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
+                            ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
+                        repRange = repRange,
+                        sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
+                        currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
+                        isUnilateral = state.isUnilateral
+                    )
 
-                        if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (isWarmupSet) {
-                                    Box(
-                                        modifier = Modifier
-                                            .background(
-                                                MaterialTheme.colorScheme.background,
-                                                RoundedCornerShape(25)
-                                            )
-                                            .border(
-                                                BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                                RoundedCornerShape(25)
-                                            )
-                                            .padding(5.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "Warm-up",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            textAlign = TextAlign.Center
+                    if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isWarmupSet) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.background,
+                                            RoundedCornerShape(25)
                                         )
-                                    }
+                                        .border(
+                                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                            RoundedCornerShape(25)
+                                        )
+                                        .padding(5.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Warm-up",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                if (isCalibrationSet) {
-                                    Box(
-                                        modifier = Modifier
-                                            .background(
-                                                MaterialTheme.colorScheme.background,
-                                                RoundedCornerShape(25)
-                                            )
-                                            .border(
-                                                BorderStroke(1.dp, Green),
-                                                RoundedCornerShape(25)
-                                            )
-                                            .padding(5.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "Calibration",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = Green,
-                                            textAlign = TextAlign.Center
+                            }
+                            if (isCalibrationSet) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.background,
+                                            RoundedCornerShape(25)
                                         )
-                                    }
+                                        .border(
+                                            BorderStroke(1.dp, Green),
+                                            RoundedCornerShape(25)
+                                        )
+                                        .padding(5.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Calibration",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Green,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                if (isAutoRegulationWorkSet) {
-                                    Box(
-                                        modifier = Modifier
-                                            .background(
-                                                MaterialTheme.colorScheme.background,
-                                                RoundedCornerShape(25)
-                                            )
-                                            .border(
-                                                BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
-                                                RoundedCornerShape(25)
-                                            )
-                                            .padding(5.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "Auto-regulation",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.tertiary,
-                                            textAlign = TextAlign.Center
+                            }
+                            if (isAutoRegulationWorkSet) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.background,
+                                            RoundedCornerShape(25)
                                         )
-                                    }
+                                        .border(
+                                            BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
+                                            RoundedCornerShape(25)
+                                        )
+                                        .padding(5.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Auto-regulation",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
                     }
-                },
-                exerciseTitleComposable = exerciseTitleComposable,
-                hapticsViewModel = hapticsViewModel,
-                customComponentWrapper = { content -> content() }
-            )
-        }
-
+                }
+            },
+            exerciseTitleComposable = exerciseTitleComposable,
+            hapticsViewModel = hapticsViewModel,
+            customComponentWrapper = { content -> content() }
+        )
     }
 }

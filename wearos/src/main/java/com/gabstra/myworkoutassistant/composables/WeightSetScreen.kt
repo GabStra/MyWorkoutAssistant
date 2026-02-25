@@ -23,7 +23,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -472,7 +471,9 @@ fun WeightSetScreen(
 
     customComponentWrapper {
         Box(
-            modifier = modifier.semantics {
+            modifier = modifier
+                .fillMaxSize()
+                .semantics {
                 contentDescription = SetValueSemantics.WeightSetTypeDescription
             }
         ) {
@@ -484,7 +485,7 @@ fun WeightSetScreen(
                 verticalArrangement = Arrangement.Top
             ) {
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     exerciseTitleComposable()
                     if (extraInfo != null) {

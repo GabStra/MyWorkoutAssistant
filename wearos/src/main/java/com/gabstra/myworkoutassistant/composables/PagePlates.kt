@@ -88,14 +88,8 @@ private fun computeRequiredLabelRightEdgePx(
     val paddingEnd = with(density) { 0.dp.toPx() }
     val sleeveX = shaftLength + spacing + stopperWidth + spacing
     val sleeveWidth = viewportWidthPx - sleeveX - paddingEnd
-    val baseThickness = (maxLogicalThickness ?: currentTotalThickness).coerceAtLeast(0f)
-    val logicalUsedLength = if (baseThickness > 0f) {
-        val desired = baseThickness + extraLogicalOffset
-        if (sleeveLength > 0f) desired.coerceAtMost(sleeveLength) else desired
-    } else {
-        if (sleeveLength > 0f) sleeveLength else sleeveWidth
-    }.coerceAtLeast(1f)
-    val scaleFactor = sleeveWidth / logicalUsedLength
+    val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
+    val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
     val labelCollisionPadding = with(density) { 6.dp.toPx() }
     val minPlateWidthPx = with(density) { 4.dp.toPx() }
     val maxPlateWeight = plateData.maxOfOrNull { it.weight } ?: 25.0
@@ -214,7 +208,7 @@ fun PagePlates(
                         }
                     }
 
-                    FadingText(
+                    ScalableFadingText(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
@@ -239,7 +233,7 @@ fun PagePlates(
                         }
                     }
 
-                    FadingText(
+                    ScalableFadingText(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
@@ -594,9 +588,8 @@ private fun BarbellVisualization(
     // Total logical thickness of the *current* plates on the sleeve (in the same unit as sleeveLength)
     val currentTotalThickness = plateData.sumOf { it.thickness }.toFloat()
     // Extra logical length reserved beyond the outermost plate so we always show a bit of empty sleeve.
-    // This is expressed as a fraction of the sleeve length per side and capped at non‑negative.
+    // This is expressed as a fraction of the sleeve length per side and capped at non-negative.
     val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
-
     val maxPlateWeight = remember(plateData) {
         plateData.maxOfOrNull { it.weight } ?: 25.0
     }
@@ -705,25 +698,9 @@ private fun BarbellVisualization(
         // When viewportWidth is set (scrollable layout), bar and plates use viewport width; labels use full canvas width.
         val viewportWidthPx = viewportWidth?.toPx()
         val sleeveWidth = (viewportWidthPx ?: canvasWidth) - sleeveX - paddingEnd
-        // Dynamically scale the logical sleeve length so plates use more of the visible width.
-        // We base this on the maximum total thickness encountered across all configurations in
-        // the animation (if provided), plus a small offset, but never exceed the physical sleeve
-        // length per side (sleeveLength).
-        val baseThickness = (maxLogicalThickness ?: currentTotalThickness).coerceAtLeast(0f)
-        val logicalUsedLength = if (baseThickness > 0f) {
-            val desired = baseThickness + extraLogicalOffset
-            if (sleeveLength > 0f) {
-                desired.coerceAtMost(sleeveLength)
-            } else {
-                desired
-            }
-        } else {
-            // If there are no plates, fall back to showing the whole physical sleeve if known,
-            // otherwise just map 1:1 to the canvas sleeve width.
-            if (sleeveLength > 0f) sleeveLength else sleeveWidth
-        }.coerceAtLeast(1f)
-
-        val scaleFactor = sleeveWidth / logicalUsedLength
+        // Scale against the full physical sleeve length so plate thickness remains proportional.
+        val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
+        val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
 
         // --- HELPER FUNCTION ---
         fun drawRoundedBlock(
@@ -773,9 +750,9 @@ private fun BarbellVisualization(
         // --- 3. DRAWING ---
 
         // 1. Proportions (Key to fixing the "Sword" look)
-        // Shaft = Thinner (60%), Sleeve = Standard (100%), Collar = Stopper (150%)
-        val sleeveDiameter = maxAvailablePlateHeight * 0.15f
-        val shaftDiameter = sleeveDiameter * 0.6f
+        // Shaft = Thinner (50%), Sleeve = Standard (100%), Collar = Stopper (150%)
+        val sleeveDiameter = maxAvailablePlateHeight * 0.2f
+        val shaftDiameter = sleeveDiameter * 0.5f
         val collarDiameter = sleeveDiameter * 1.5f
 
         val sleeveY = centerY - (sleeveDiameter / 2f)
@@ -830,13 +807,14 @@ private fun BarbellVisualization(
         var currentX = sleeveX
 
         val plateBorderWidth = 1.5.dp.toPx()
-        val plateCornerRadius = 3.dp.toPx()
 
         plateData.forEachIndexed { plateIndex, plateInfo ->
             val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
-            val plateWidth = scaledThickness.coerceAtLeast(4.dp.toPx()).coerceAtMost(sleeveX + sleeveWidth - currentX)
+            val plateWidth = scaledThickness
+                .coerceAtLeast(4.dp.toPx())
+                .coerceAtMost(sleeveX + sleeveWidth - currentX)
 
-            val minHeightRatio = 0.3f
+            val minHeightRatio = 0.2f
             val weightRatio = sqrt(
                 (plateInfo.weight.toFloat() / maxPlateWeight.toFloat()).coerceIn(0f, 1f)
             )
@@ -922,7 +900,8 @@ private fun BarbellVisualization(
                 )
             )
 
-            // Draw Plate with color and alpha
+            // Draw plate as a capsule (rectangle with semi-circular ends).
+            val plateCornerRadius = (plateWidth / 2f).coerceAtMost(plateHeight / 2f)
             drawRoundedBlock(
                 topLeft = Offset(currentX, localPlateY),
                 size = Size(plateWidth, plateHeight),

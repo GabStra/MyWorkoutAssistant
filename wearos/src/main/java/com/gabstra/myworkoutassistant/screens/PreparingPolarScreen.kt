@@ -82,6 +82,7 @@ fun PreparingPolarScreen(
                 delay(1000) // Update every sec.
                 currentMillis += 1000
                 if (currentMillis >= 5000 && !hasTriggeredNextState) {
+                    polarViewModel.disconnectFromDevice()
                     canSkip = true
                     break
                 }

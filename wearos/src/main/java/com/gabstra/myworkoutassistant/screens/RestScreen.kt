@@ -49,7 +49,6 @@ import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.composables.TimeViewer
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
-import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -299,9 +298,7 @@ private fun RestTimerBlock(
                     setLabel = setLabel,
                     sideIndicator = sideIndicator,
                     currentSideIndex = currentSideIndex,
-                    isUnilateral = isUnilateral,
-                    textColor = MaterialTheme.colorScheme.onBackground,
-                    onTap = { hapticsViewModel.doGentleVibration() }
+                    isUnilateral = isUnilateral
                 )
             }
         }
@@ -386,8 +383,8 @@ fun RestScreen(
             add(RestHorizontalPage.BUTTONS)
             if (showPlatesPage) add(RestHorizontalPage.PLATES)
             add(RestHorizontalPage.REST_TIMER)
-            if (showProgressionComparisonPage) add(RestHorizontalPage.PROGRESSION_COMPARISON)
-            if (showNotesPage) add(RestHorizontalPage.NOTES)
+            //if (showProgressionComparisonPage) add(RestHorizontalPage.PROGRESSION_COMPARISON)
+            //if (showNotesPage) add(RestHorizontalPage.NOTES)
             add(RestHorizontalPage.EXERCISES)
         }
     }
@@ -489,8 +486,7 @@ fun RestScreen(
                     if (nextState != null) {
                         ExerciseIndicator(
                             viewModel = viewModel,
-                            modifier = Modifier.fillMaxSize()
-                                .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
+                            modifier = Modifier.fillMaxSize(),
                             currentStateOverride = indicatorStateOverride,
                             selectedExerciseId = selectedExercise.id
                         )

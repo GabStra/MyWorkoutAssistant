@@ -29,7 +29,6 @@ import com.gabstra.myworkoutassistant.composables.PageCalibrationLoad
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
-import com.gabstra.myworkoutassistant.composables.overlayVisualScale
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -151,8 +150,7 @@ fun CalibrationLoadScreen(
                     hearthRateChart(Modifier.fillMaxSize())
                     ExerciseIndicator(
                         viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
-                            .overlayVisualScale(WorkoutPagerLayoutTokens.ExerciseIndicatorVisualScale),
+                        modifier = Modifier.fillMaxSize(),
                         selectedExerciseId = selectedExercise.id
                     )
                 }

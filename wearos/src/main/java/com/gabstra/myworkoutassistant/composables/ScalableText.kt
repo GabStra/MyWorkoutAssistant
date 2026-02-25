@@ -38,7 +38,7 @@ fun ScalableText(
     overflow: TextOverflow = LocalTextConfiguration.current.overflow,
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
-    fadeInMillis: Int = 600, // Slower fade for a premium feel
+    fadeInMillis: Int = 250, // Slower fade for a premium feel
     scaleDownOnly: Boolean = true
 ) {
     val measurer = rememberTextMeasurer()

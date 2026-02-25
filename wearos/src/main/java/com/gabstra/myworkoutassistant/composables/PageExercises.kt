@@ -130,11 +130,7 @@ fun PageExercises(
                     supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
                     sideIndicator = null,
                     currentSideIndex = null,
-                    isUnilateral = currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.isUnilateral,
-                    textColor = MaterialTheme.colorScheme.onBackground,
-                    onTap = {
-                        hapticsViewModel.doGentleVibration()
-                    }
+                    isUnilateral = currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.isUnilateral
                 )
             }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -463,10 +464,10 @@ fun TimedDurationSetScreen(
     }
 
     customComponentWrapper {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top,
-            modifier = modifier.semantics {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .semantics {
                 contentDescription = SetValueSemantics.TimedDurationSetTypeDescription
             }
         ) {
@@ -494,10 +495,11 @@ fun TimedDurationSetScreen(
             } else {
                 Column(
                     modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    horizontalAlignment = Alignment.CenterHorizontally,
+
                 ) {
                     Column(
-                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         exerciseTitleComposable()
                         if (extraInfo != null) {
@@ -505,7 +507,7 @@ fun TimedDurationSetScreen(
                             extraInfo(state)
                         }
                     }
-                    Spacer(modifier = Modifier.height(5.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     SetScreen(customModifier = Modifier)
                 }
             }

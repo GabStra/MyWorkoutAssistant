@@ -143,6 +143,7 @@ fun WorkoutCompleteScreen(
     WorkoutCompleteScreenContent(
         workoutName = workout.name,
         countDownSeconds = countDownTimer.intValue,
+        showCountdown = progressionDataCalculated,
         progressionContent = {
             ProgressionSection(
                 modifier = Modifier.weight(1f),
@@ -200,6 +201,7 @@ fun WorkoutCompleteScreen(
 private fun WorkoutCompleteScreenContent(
     workoutName: String,
     countDownSeconds: Int,
+    showCountdown: Boolean = true,
     progressionContent: @Composable ColumnScope.() -> Unit
 ) {
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -233,13 +235,14 @@ private fun WorkoutCompleteScreenContent(
         }
 
         progressionContent()
-
-        Text(
-            modifier = Modifier.padding(top = 2.5.dp),
-            text = "CLOSING IN: $countDownSeconds",
-            style = headerStyle,
-            textAlign = TextAlign.Center,
-        )
+        if(showCountdown){
+            Text(
+                modifier = Modifier.padding(top = 2.5.dp),
+                text = "CLOSING IN: $countDownSeconds",
+                style = headerStyle,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

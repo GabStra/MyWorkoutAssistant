@@ -466,7 +466,9 @@ fun BodyWeightSetScreen(
 
     customComponentWrapper {
         Box(
-            modifier = modifier.semantics {
+            modifier = modifier
+                .fillMaxSize()
+                .semantics {
                 contentDescription = SetValueSemantics.BodyWeightSetTypeDescription
             }
         ) {
@@ -478,7 +480,7 @@ fun BodyWeightSetScreen(
                 verticalArrangement = Arrangement.Top
             ) {
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     exerciseTitleComposable()
                     if (extraInfo != null) {

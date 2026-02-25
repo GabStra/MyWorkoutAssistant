@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +25,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,11 +48,8 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.time.Duration
 import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -478,10 +475,10 @@ fun EnduranceSetScreen (
     }
 
     customComponentWrapper {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top,
-            modifier = modifier.semantics {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .semantics {
                 contentDescription = SetValueSemantics.EnduranceSetTypeDescription
             }
         ) {
@@ -512,7 +509,7 @@ fun EnduranceSetScreen (
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Column(
-                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         exerciseTitleComposable()
                         if (extraInfo != null) {
@@ -520,7 +517,7 @@ fun EnduranceSetScreen (
                             extraInfo(state)
                         }
                     }
-                    Spacer(modifier = Modifier.height(5.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     SetScreen(customModifier = Modifier)
                 }
             }

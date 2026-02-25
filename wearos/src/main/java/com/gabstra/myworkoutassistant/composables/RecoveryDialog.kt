@@ -148,6 +148,7 @@ internal fun RecoveryDialog(
                                     color = MediumLighterGray
                                 )
                             }
+                            Spacer(Modifier.height(5.dp))
                         }
                     }
 

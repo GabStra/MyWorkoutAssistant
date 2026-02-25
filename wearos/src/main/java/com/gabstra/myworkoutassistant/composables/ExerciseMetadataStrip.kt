@@ -1,11 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -13,6 +11,7 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 @Composable
 fun ExerciseMetadataStrip(
@@ -25,7 +24,6 @@ fun ExerciseMetadataStrip(
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
     isUnilateral: Boolean = false,
-    textColor: Color = MaterialTheme.colorScheme.onBackground,
     onTap: (() -> Unit)? = null,
 ) {
     val baseStyle = MaterialTheme.typography.bodySmall
@@ -127,14 +125,12 @@ fun ExerciseMetadataStrip(
     }
 
     if (metadataText.text.isNotEmpty()) {
-        FadingText(
+        ScalableFadingText(
             text = metadataText,
             modifier = modifier.fillMaxWidth(),
-            style = baseStyle.copy(fontWeight = FontWeight.Normal),
+            style = baseStyle,
             color = secondaryTextColor,
-            onClick = {
-                onTap?.invoke()
-            },
+            onClick = onTap,
             textAlign = TextAlign.Center
         )
     }
