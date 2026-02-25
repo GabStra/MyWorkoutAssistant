@@ -2075,8 +2075,12 @@ open class WorkoutViewModel(
     }
 
     /**
-     * Handles completion of an auto-regulation work set: below range → store RIR 0 and advance;
-     * in range → show AutoRegulationRIRSelection; above range → store RIR 3 and advance.
+     * Handles completion of an auto-regulation work set with fully automatic load changes:
+     * - at least 2 reps below min reps -> decrease subsequent work-set load by 10%
+     * - at least 2 reps above max reps -> increase subsequent work-set load by 2.5%
+     * - otherwise -> keep subsequent work-set load unchanged
+     *
+     * User is not prompted for RIR in this flow.
      */
     fun completeAutoRegulationSet() {
         val machine = stateMachine ?: return
@@ -2092,34 +2096,17 @@ open class WorkoutViewModel(
         val minReps = exercise.minReps
         val maxReps = exercise.maxReps
 
+        val repsBelowMin = minReps - actualReps
+        val repsAboveMax = actualReps - maxReps
+
         when {
-            actualReps < minReps -> applyAutoRegulationRIRImmediate(0.0)
-            actualReps > maxReps -> applyAutoRegulationRIRImmediate(3.0)
-            else -> {
-                val rirState = WorkoutState.AutoRegulationRIRSelection(
-                    exerciseId = currentState.exerciseId,
-                    workSet = currentState.set,
-                    setIndex = currentState.setIndex,
-                    currentSetDataState = currentState.currentSetDataState,
-                    equipmentId = currentState.equipmentId,
-                    lowerBoundMaxHRPercent = currentState.lowerBoundMaxHRPercent,
-                    upperBoundMaxHRPercent = currentState.upperBoundMaxHRPercent,
-                    currentBodyWeight = currentState.currentBodyWeight
-                )
-                val position = machine.getContainerAndChildIndex(machine.currentIndex) as? ContainerPosition.Exercise ?: return
-                val flatInContainer = machine.getFlatIndexInContainer(position) ?: return
-                val updatedMachine = machine.insertStatesIntoExercise(
-                    currentState.exerciseId,
-                    listOf(rirState),
-                    flatInContainer
-                )
-                stateMachine = updatedMachine.withCurrentIndex(machine.currentIndex + 1)
-                updateStateFlowsFromMachine()
-            }
+            repsBelowMin >= 2 -> applyAutoRegulationRIRImmediate(rir = 0.0, adjustmentMultiplier = 0.90)
+            repsAboveMax >= 2 -> applyAutoRegulationRIRImmediate(rir = 3.0, adjustmentMultiplier = 1.025)
+            else -> applyAutoRegulationRIRImmediate(rir = 2.0, adjustmentMultiplier = 1.0)
         }
     }
 
-    private fun applyAutoRegulationRIRImmediate(rir: Double) {
+    private fun applyAutoRegulationRIRImmediate(rir: Double, adjustmentMultiplier: Double? = null) {
         val machine = stateMachine ?: return
         val currentState = machine.currentState as? WorkoutState.Set ?: return
         if (!currentState.isAutoRegulationWorkSet) return
@@ -2129,9 +2116,13 @@ open class WorkoutViewModel(
         launchIO {
             val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
             val workWeight = extractWorkWeight(currentState.currentSetData)
-            val adjustedWeight = CalibrationHelper.applyCalibrationAdjustment(workWeight, rir, formBreaks = false)
+            val adjustedWeight = adjustmentMultiplier?.let { multiplier ->
+                workWeight * multiplier
+            } ?: CalibrationHelper.applyCalibrationAdjustment(workWeight, rir, formBreaks = false)
             val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
-            val availableWeights = getWeightByEquipment(equipment)
+            val availableWeights = getWeightByEquipment(equipment).ifEmpty {
+                equipment?.getWeightsCombinations() ?: emptySet()
+            }
 
             val sourceSetIndexInExerciseSets = exercise.sets.indexOfFirst { it.id == currentState.set.id }
             val subsequentIndices = if (sourceSetIndexInExerciseSets < 0) null else {
@@ -2158,6 +2149,36 @@ open class WorkoutViewModel(
                 stateMachine = m.withSequence(updatedSequence, m.currentIndex)
                 goToNextState()
                 updateStateFlowsFromMachine()
+
+                if (equipment is Barbell &&
+                    (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+                    subsequentIndices != null && subsequentIndices.isNotEmpty()
+                ) {
+                    val fromIndex = stateMachine?.currentIndex ?: return@withContext
+                    val remainingStates = WorkoutStateQueries.remainingSetStatesForExercise(
+                        machine = stateMachine!!,
+                        fromIndexInclusive = fromIndex,
+                        exerciseId = currentState.exerciseId
+                    )
+                    val weights = remainingStates.map { state ->
+                        when (val set = state.set) {
+                            is WeightSet -> set.weight
+                            is BodyWeightSet ->
+                                bodyWeight.value * (exercise.bodyWeightPercentage!! / 100) + set.additionalWeight
+                            else -> 0.0
+                        }
+                    }
+                    if (weights.size == remainingStates.size) {
+                        recalculatePlatesForExerciseFromIndex(
+                            currentState.exerciseId,
+                            fromIndex,
+                            weights,
+                            equipment
+                        )
+                        stateMachine?.let { mp -> populateNextStateForRest(mp) }
+                        updateStateFlowsFromMachine()
+                    }
+                }
             }
         }
     }
