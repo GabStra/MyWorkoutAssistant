@@ -240,74 +240,65 @@ fun WorkoutForm(
                     }
                 }
 
-                if (workoutNameState.value.isNotBlank()) {
-                    Spacer(Modifier.height(Spacing.md))
+                Spacer(Modifier.height(Spacing.md))
 
-                    FormSectionTitle(text = "Schedule setup")
-                    val scheduleSummary = remember(schedules.value.size) {
-                        if (schedules.value.isEmpty()) "No alarms set"
-                        else "${schedules.value.size} alarm${if (schedules.value.size == 1) "" else "s"}"
-                    }
-                    CollapsibleSection(
-                        title = "Alarms",
-                        summary = scheduleSummary,
-                        expanded = expandedSchedule,
-                        onToggle = { expandedSchedule = !expandedSchedule }
-                    ) {
-                        if (schedules.value.isEmpty()) {
-                            Text(
-                                text = "No alarms set",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                                schedules.value.forEachIndexed { index, schedule ->
-                                    ScheduleListItem(
-                                        schedule = schedule,
-                                        index = index,
-                                        onEdit = {
-                                            currentEditingSchedule.value = schedule
-                                            showScheduleDialog.value = true
-                                        },
-                                        onDelete = {
-                                            val updated = schedules.value.toMutableList()
-                                            updated.removeAt(index)
-                                            schedules.value = updated
-                                        }
-                                    )
-                                }
+                FormSectionTitle(text = "Schedule setup")
+                val scheduleSummary = remember(schedules.value.size) {
+                    if (schedules.value.isEmpty()) "No alarms set"
+                    else "${schedules.value.size} alarm${if (schedules.value.size == 1) "" else "s"}"
+                }
+                CollapsibleSection(
+                    title = "Alarms",
+                    summary = scheduleSummary,
+                    expanded = expandedSchedule,
+                    onToggle = { expandedSchedule = !expandedSchedule }
+                ) {
+                    if (schedules.value.isEmpty()) {
+                        Text(
+                            text = "No alarms set",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            schedules.value.forEachIndexed { index, schedule ->
+                                ScheduleListItem(
+                                    schedule = schedule,
+                                    index = index,
+                                    onEdit = {
+                                        currentEditingSchedule.value = schedule
+                                        showScheduleDialog.value = true
+                                    },
+                                    onDelete = {
+                                        val updated = schedules.value.toMutableList()
+                                        updated.removeAt(index)
+                                        schedules.value = updated
+                                    }
+                                )
                             }
                         }
-
-                        Spacer(Modifier.height(Spacing.md))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.md)
-                        ) {
-                            AppPrimaryOutlinedButton(
-                                text = "Add Single",
-                                onClick = {
-                                    currentEditingSchedule.value = null
-                                    showScheduleDialog.value = true
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            AppPrimaryOutlinedButton(
-                                text = "Add Multiple",
-                                onClick = { showBatchScheduleDialog.value = true },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
                     }
-                } else {
+
                     Spacer(Modifier.height(Spacing.md))
-                    Text(
-                        text = "Set a name above to configure schedule and alarms.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        AppPrimaryOutlinedButton(
+                            text = "Add Single",
+                            onClick = {
+                                currentEditingSchedule.value = null
+                                showScheduleDialog.value = true
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        AppPrimaryOutlinedButton(
+                            text = "Add Multiple",
+                            onClick = { showBatchScheduleDialog.value = true },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(Spacing.xl))
