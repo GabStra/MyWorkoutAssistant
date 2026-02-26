@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.net.Uri
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.VibrationEffect
@@ -1030,6 +1031,40 @@ suspend fun sendWorkoutHistoryStore(
         Log.e("DataLayerSync", "Error sending workout history store", exception)
         exception.printStackTrace()
         return Pair(false, usedTransactionId)
+    } finally {
+        cleanupWorkoutHistoryTransactionDataItems(dataClient, usedTransactionId)
+    }
+}
+
+private suspend fun cleanupWorkoutHistoryTransactionDataItems(
+    dataClient: DataClient,
+    transactionId: String
+) {
+    val transactionPaths = listOf(
+        DataLayerPaths.buildPath(DataLayerPaths.SYNC_REQUEST_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_START_PREFIX, transactionId),
+        DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX, transactionId)
+    )
+
+    transactionPaths.forEach { path ->
+        try {
+            val uri = Uri.Builder()
+                .scheme("wear")
+                .path(path)
+                .build()
+            val deletedCount = Tasks.await(
+                dataClient.deleteDataItems(uri, DataClient.FILTER_PREFIX)
+            )
+            Log.d(
+                "DataLayerSync",
+                "Cleaned up $deletedCount DataItem(s) for path=$path transaction=$transactionId"
+            )
+        } catch (exception: Exception) {
+            Log.w(
+                "DataLayerSync",
+                "Failed to clean up DataItems for path=$path transaction=$transactionId: ${exception.message}"
+            )
+        }
     }
 }
 
