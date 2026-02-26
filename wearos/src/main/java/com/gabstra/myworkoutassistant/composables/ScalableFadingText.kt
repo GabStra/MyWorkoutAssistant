@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -70,6 +71,7 @@ fun ScalableFadingText(
     scaleDownOnly: Boolean = true,
     fadeInMillis: Int = 600,
 ) {
+    val isInspectionMode = LocalInspectionMode.current
     val density = LocalDensity.current
     val fadeColor = MaterialTheme.colorScheme.background
     
@@ -152,7 +154,13 @@ fun ScalableFadingText(
     val boxModifier = modifier
         .fillMaxWidth()
         .clipToBounds()
-        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .then(
+            if (isInspectionMode) {
+                Modifier
+            } else {
+                Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            }
+        )
         .onGloballyPositioned { coordinates ->
             containerWidth = coordinates.size.width.toFloat()
         }
@@ -164,12 +172,16 @@ fun ScalableFadingText(
             }
         )
     
-    val textModifier = Modifier.trackableMarquee(
-        state = marqueeState,
-        iterations = Int.MAX_VALUE,
-        edgeFadeWidth = fadeWidth,
-        edgeFadeColor = fadeColor,
-    )
+    val textModifier = if (isInspectionMode) {
+        Modifier
+    } else {
+        Modifier.trackableMarquee(
+            state = marqueeState,
+            iterations = Int.MAX_VALUE,
+            edgeFadeWidth = fadeWidth,
+            edgeFadeColor = fadeColor,
+        )
+    }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         ScalableText(

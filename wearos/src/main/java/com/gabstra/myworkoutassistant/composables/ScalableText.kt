@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -41,6 +42,8 @@ fun ScalableText(
     fadeInMillis: Int = 250, // Slower fade for a premium feel
     scaleDownOnly: Boolean = true
 ) {
+    val isInspectionMode = LocalInspectionMode.current
+
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
 
@@ -127,8 +130,12 @@ fun ScalableText(
             textAlign = textAlign,
             overflow = overflow,
             // Use graphicsLayer for performant alpha changes
-            modifier = textModifier.graphicsLayer {
-                this.alpha = if (isLayoutReady) alphaAnim.value else 0f
+            modifier = if(isInspectionMode){
+                textModifier
+            }else{
+                textModifier.graphicsLayer {
+                    this.alpha = if (isLayoutReady) alphaAnim.value else 0f
+                }
             }
         )
     }

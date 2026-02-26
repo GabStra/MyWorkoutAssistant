@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
-import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -349,7 +348,7 @@ fun ExerciseIndicator(
                         endAngle = endA
                     )
 
-                    if (isCurrent && progressLayer.completedOverlayProgress != null && progressLayer.completedOverlayProgress != 0.0f) {
+/*                    if (isCurrent && progressLayer.completedOverlayProgress != null && progressLayer.completedOverlayProgress != 0.0f) {
                         Log.d("OVERLAY", "progressLayer.completedOverlayProgress: ${progressLayer.completedOverlayProgress}")
 
                         CircularProgressIndicator(
@@ -377,7 +376,7 @@ fun ExerciseIndicator(
                             endAngle = endA,
                             gapSize = 0.dp
                         )
-                    }
+                    }*/
                 }
             }
 

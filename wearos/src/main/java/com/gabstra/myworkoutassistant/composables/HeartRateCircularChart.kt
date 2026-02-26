@@ -678,7 +678,7 @@ private fun ZoneSegment(
 
     val trackColor = remember(currentZone, index, hr) {
         if (currentZone == index && hr > 0) {
-            colorsByZone[index].copy(alpha = 0.35f)
+            colorsByZone[index].copy(alpha = 0.5f)
         } else {
             MediumDarkGray
         }
@@ -696,7 +696,6 @@ private fun ZoneSegment(
         strokeWidth = 4.dp,
         startAngle = startAngle,
         endAngle = endAngle,
-
     )
 }
 
@@ -819,7 +818,7 @@ private fun HeartRateView(
                     contentDescription = "Disconnected",
                     modifier = Modifier
                         .size(15.dp)
-                        .offset(y = (-15).dp)
+                        .offset(y = (-7.5).dp)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
                 )
@@ -828,7 +827,7 @@ private fun HeartRateView(
                     modifier = Modifier
                         .width(120.dp)
                         .height(25.dp)
-                        .offset(y = (-15).dp)
+                        .offset(y = (-7.5).dp)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
                     bpm = hr,
@@ -894,7 +893,7 @@ private fun HeartRateView(
                         .then(zoneSegmentsModifier),
                     startAngle = lowerBoundRotationAngle,
                     endAngle = upperBoundRotationAngle,
-                    color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                    color = if (inBounds) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                     strokeWidth = 18.dp,
                     borderWidth = 6.dp,
                     innerBorderWidth = 4.dp

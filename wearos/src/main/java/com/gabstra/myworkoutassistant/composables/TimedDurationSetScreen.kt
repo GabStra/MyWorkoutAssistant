@@ -508,7 +508,7 @@ fun TimedDurationSetScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
-                    SetScreen(customModifier = Modifier)
+                    SetScreen(customModifier = Modifier.fillMaxWidth())
                 }
             }
         }

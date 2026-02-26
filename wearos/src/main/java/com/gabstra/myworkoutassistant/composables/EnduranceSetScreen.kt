@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -273,7 +272,7 @@ fun EnduranceSetScreen (
         val displayMillis = setData?.endTimer ?: initialMillis
         val overLimit = setData != null && displayMillis >= setData.startTimer && !set.autoStop
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -300,7 +299,7 @@ fun EnduranceSetScreen (
         val previousTimer = previousSetStartTimer ?: currentSet.startTimer
         val isDifferent = currentSet.startTimer != previousTimer
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -518,7 +517,7 @@ fun EnduranceSetScreen (
                         }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
-                    SetScreen(customModifier = Modifier)
+                    SetScreen(customModifier = Modifier.fillMaxWidth())
                 }
             }
         }

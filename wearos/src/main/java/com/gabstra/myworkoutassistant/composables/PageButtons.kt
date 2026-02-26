@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -48,6 +49,7 @@ fun PageButtons(
     navController: NavController,
     onBeforeGoHome: (() -> Unit)? = null
 ) {
+    val isInspectionMode = LocalInspectionMode.current
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
     val screenState by viewModel.screenState.collectAsState()
     val currentWorkoutState = screenState.workoutState
@@ -88,19 +90,18 @@ fun PageButtons(
                 )
             )
         }
-    ) { contentPadding ->
+    ) { _ ->
         TransformingLazyColumn(
             modifier = Modifier.padding(horizontal = 10.dp),
-            contentPadding = contentPadding,
             state = state,
         ) {
             item {
-                ButtonWithText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    transformation = SurfaceTransformation(spec),
-                    text = "Back",
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Back",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         // Handle go back for calibration flow:
@@ -144,8 +145,8 @@ fun PageButtons(
                 CheckboxButton(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    transformation = SurfaceTransformation(spec),
+                        .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     colors = checkboxButtonColors(),
                     label = { Text(
                         text = "Keep on",
@@ -164,8 +165,8 @@ fun PageButtons(
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .transformedHeight(this, spec),
-                        transformation = SurfaceTransformation(spec),
+                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                         text = "Add Rest-Pause set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
@@ -183,8 +184,8 @@ fun PageButtons(
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .transformedHeight(this, spec),
-                        transformation = SurfaceTransformation(spec),
+                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                         text = "Add Set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
@@ -213,8 +214,8 @@ fun PageButtons(
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    transformation = SurfaceTransformation(spec),
+                        .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     text = "Go Home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()

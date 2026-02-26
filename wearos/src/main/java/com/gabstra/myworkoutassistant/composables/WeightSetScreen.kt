@@ -60,9 +60,6 @@ import java.time.temporal.ChronoUnit
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WeightSetScreen(
-    // #region agent log
-    // Log composable entry
-    // #endregion
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     modifier: Modifier,
@@ -435,7 +432,7 @@ fun WeightSetScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Column(
-                        modifier = Modifier.width(70.dp),
+                        modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
@@ -449,7 +446,7 @@ fun WeightSetScreen(
                     }
 
                     Column(
-                        modifier = Modifier.width(70.dp),
+                        modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {
@@ -534,7 +531,7 @@ fun WeightSetScreen(
                 )
             }
 
-            if (isRepsInEditMode || isWeightInEditMode) {
+            if (isInEditMode) {
                 ControlButtonsVertical(
                     modifier = Modifier
                         .fillMaxSize()

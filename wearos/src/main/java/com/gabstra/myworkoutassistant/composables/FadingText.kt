@@ -58,6 +58,7 @@ fun FadingText(
     textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
 ) {
+    val isInspectionMode = false //LocalInspectionMode.current
     val density = LocalDensity.current
     val fadeColor = MaterialTheme.colorScheme.background
 
@@ -74,19 +75,29 @@ fun FadingText(
     val boxModifier = modifier
         .fillMaxWidth()
         .clipToBounds()
-        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .then(
+            if (isInspectionMode) {
+                Modifier
+            } else {
+                Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+            }
+        )
         .onGloballyPositioned { containerWidth = it.size.width.toFloat() }
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
 
-    val textModifier =  Modifier
-        .fillMaxWidth()
-        .trackableMarquee(
-            state = marqueeState,
-            iterations = Int.MAX_VALUE,
-            // fades are drawn inside the marquee node (updates every frame)
-            edgeFadeWidth = fadeWidth,
-            edgeFadeColor = fadeColor,
-        )
+    val textModifier = if (isInspectionMode) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .trackableMarquee(
+                state = marqueeState,
+                iterations = Int.MAX_VALUE,
+                // fades are drawn inside the marquee node (updates every frame)
+                edgeFadeWidth = fadeWidth,
+                edgeFadeColor = fadeColor,
+            )
+    }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         Text(

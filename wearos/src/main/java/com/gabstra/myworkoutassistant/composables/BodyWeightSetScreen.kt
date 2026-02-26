@@ -430,7 +430,7 @@ fun BodyWeightSetScreen(
                 ) {
                     if(shouldShowWeights) {
                         Column(
-                            modifier = Modifier.width(70.dp),
+                            modifier = Modifier.weight(1f),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                         ) {
@@ -444,7 +444,7 @@ fun BodyWeightSetScreen(
                         }
                     }
                     Column(
-                        modifier = Modifier.width(70.dp),
+                        modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
                     ) {

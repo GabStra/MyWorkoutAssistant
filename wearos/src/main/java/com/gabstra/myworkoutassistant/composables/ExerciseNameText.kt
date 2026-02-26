@@ -16,7 +16,7 @@ fun ExerciseNameText(
     ),
     textAlign: TextAlign = TextAlign.Center,
 ) {
-    ScalableFadingText(
+    FadingText(
         modifier = modifier,
         text = text,
         style = style,
