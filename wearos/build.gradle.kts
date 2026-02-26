@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("com.android.compose.screenshot")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -79,6 +80,12 @@ android {
     buildFeatures {
         compose = true
     }
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
+    testOptions {
+        screenshotTests {
+            imageDifferenceThreshold = 0.0001f
+        }
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -91,6 +98,7 @@ dependencies {
     implementation("androidx.wear.compose:compose-material-core:1.6.0-alpha09")
     implementation("androidx.navigation:navigation-compose:2.9.7")
     implementation("androidx.compose.ui:ui-graphics:1.10.2")
+    implementation("androidx.compose.ui:ui-graphics:1.10.3")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -105,6 +113,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-text-google-fonts")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    screenshotTestImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
@@ -162,4 +171,5 @@ dependencies {
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-alpha07")
+    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha11")
 }
