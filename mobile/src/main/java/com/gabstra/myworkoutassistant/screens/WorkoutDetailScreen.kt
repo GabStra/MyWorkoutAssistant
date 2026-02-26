@@ -9,8 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.Interaction
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,10 +54,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -99,6 +93,7 @@ import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.SetRestRowCard
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
+import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
@@ -118,11 +113,9 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -999,68 +992,21 @@ fun WorkoutDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                TabRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                    contentColor = MaterialTheme.colorScheme.onBackground,
-                    selectedTabIndex = 0,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[0]),
-                            color = MaterialTheme.colorScheme.primary,
-                            height = 2.dp // Set the indicator thickness
-                        )
-                    }
-                ) {
-                    Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        selected = true,
-                        onClick = { },
-                        text = {
-                            Text(
-                                text = "Overview"
-                            )
-                        },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
-
-                            override fun tryEmit(interaction: Interaction): Boolean = true
-                        }
-                    )
-                    Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        selected = false,
-                        onClick = {
+                var selectedTopTab by remember { mutableStateOf(0) }
+                SwipeableTabs(
+                    tabTitles = listOf("Overview", "History"),
+                    selectedTabIndex = selectedTopTab,
+                    onTabSelected = { index ->
+                        selectedTopTab = index
+                        if (index == 1) {
                             appViewModel.setScreenData(
                                 ScreenData.WorkoutHistory(workout.id),
                                 true
                             )
-                        },
-                        text = {
-                            Text(
-
-                                text = "History"
-                            )
-                        },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
-
-                            override fun tryEmit(interaction: Interaction): Boolean = true
                         }
-                    )
-                }
+                    },
+                    renderPager = false
+                )
 
                 val scrollState = rememberScrollState()
 
@@ -1070,8 +1016,7 @@ fun WorkoutDetailScreen(
                         .fillMaxWidth()
                         .padding(top = 10.dp)
                         .padding(bottom = 10.dp)
-                        .verticalColumnScrollbar(scrollState)
-                        .verticalScroll(scrollState)
+                        .verticalColumnScrollbarContainer(scrollState)
                         .padding(horizontal = 15.dp),
                 ) {
                     if (workout.workoutComponents.isEmpty()) {
@@ -1463,5 +1408,6 @@ fun WorkoutDetailScreen(
         }
     }
 }
+
 
 

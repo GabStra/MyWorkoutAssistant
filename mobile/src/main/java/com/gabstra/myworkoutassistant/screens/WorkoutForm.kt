@@ -34,10 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TimePickerState
@@ -75,10 +71,11 @@ import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -177,8 +174,7 @@ fun WorkoutForm(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                    .verticalColumnScrollbar(scrollState)
-                    .verticalScroll(scrollState),
+                    .verticalColumnScrollbarContainer(scrollState),
             ) {
                 // ----- Essentials -----
                 FormSectionTitle(text = "Essentials")
@@ -737,34 +733,17 @@ fun BatchScheduleDialog(
                     .fillMaxWidth()
                     .padding(Spacing.sm)
             ) {
-                TabRow(
-                    modifier = Modifier.fillMaxWidth(),
+                SwipeableTabs(
+                    tabTitles = listOf("One-time", "Recurring"),
+                    selectedTabIndex = selectedTabIndex.value,
+                    onTabSelected = { selectedTabIndex.value = it },
                     containerColor = Color.Transparent,
                     contentColor = MaterialTheme.colorScheme.onBackground,
-                    selectedTabIndex = selectedTabIndex.value,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex.value]),
-                            color = MaterialTheme.colorScheme.primary,
-                            height = 2.dp
-                        )
-                    }
-                ) {
-                    Tab(
-                        selected = selectedTabIndex.value == 0,
-                        onClick = { selectedTabIndex.value = 0 },
-                        text = { Text(text = "One-time", style = MaterialTheme.typography.bodyMedium) },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Tab(
-                        selected = selectedTabIndex.value == 1,
-                        onClick = { selectedTabIndex.value = 1 },
-                        text = { Text(text = "Recurring", style = MaterialTheme.typography.bodyMedium) },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
+                    tabTextStyle = MaterialTheme.typography.bodyMedium,
+                    renderPager = false
+                )
 
                 Spacer(Modifier.height(Spacing.lg))
 
@@ -981,5 +960,6 @@ fun BatchScheduleDialog(
         ) { DatePicker(state = datePickerState) }
     }
 }
+
 
 

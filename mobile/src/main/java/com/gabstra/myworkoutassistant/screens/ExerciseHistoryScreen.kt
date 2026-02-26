@@ -37,10 +37,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -67,6 +63,7 @@ import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
@@ -87,7 +84,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
@@ -558,49 +555,21 @@ fun ExerciseHistoryScreen(
                 .padding(paddingValues),
             verticalArrangement = Arrangement.Top,
         ) {
-            TabRow(
-                contentColor = MaterialTheme.colorScheme.background,
-                selectedTabIndex = 1,
-                indicator = { tabPositions ->
-                    TabRowDefaults.Indicator(
-                        Modifier.tabIndicatorOffset(tabPositions[1]),
-                        color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                        height = 2.dp // Set the indicator thickness
-                    )
-                }
-            ) {
-                Tab(
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    selected = false,
-                    onClick = {
+            var selectedTopTab by remember { mutableIntStateOf(1) }
+            SwipeableTabs(
+                tabTitles = listOf("Overview", "History"),
+                selectedTabIndex = selectedTopTab,
+                onTabSelected = { index ->
+                    selectedTopTab = index
+                    if (index == 0) {
                         appViewModel.setScreenData(
-                            ScreenData.ExerciseDetail(
-                                workout.id,
-                                exercise.id
-                            ), true
+                            ScreenData.ExerciseDetail(workout.id, exercise.id),
+                            true
                         )
-                    },
-                    text = {
-                        Text(
-                            text = "Overview"
-                        )
-                    },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                )
-                Tab(
-                    modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                    selected = true,
-                    onClick = { },
-                    text = {
-                        Text(
-                            text = "History"
-                        )
-                    },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                )
-            }
+                    }
+                },
+                renderPager = false
+            )
 
             if(isLoading){
                 if (selectedMode == 0) {
@@ -673,8 +642,7 @@ fun ExerciseHistoryScreen(
                                 .fillMaxSize()
                                 .padding(top = 10.dp)
                                 .padding(bottom = 10.dp)
-                                .verticalColumnScrollbar(scrollState)
-                                .verticalScroll(scrollState)
+                                .verticalColumnScrollbarContainer(scrollState)
                                 .padding(horizontal = 15.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
@@ -933,3 +901,4 @@ fun ExerciseHistoryScreen(
         }
     }
 }
+

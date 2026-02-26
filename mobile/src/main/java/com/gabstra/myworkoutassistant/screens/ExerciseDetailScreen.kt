@@ -6,8 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.Interaction
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,10 +45,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -59,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +77,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MenuItem
 import com.gabstra.myworkoutassistant.composables.SetRestRowCard
+import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -102,10 +98,8 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -736,307 +730,270 @@ fun ExerciseDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                TabRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.background,
-                    contentColor = MaterialTheme.colorScheme.onBackground,
-                    selectedTabIndex = 0,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
-                            Modifier.tabIndicatorOffset(tabPositions[0]),
-                            color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                            height = 2.dp // Set the indicator thickness
-                        )
-                    }
-                ) {
-                    Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        selected = true,
-                        onClick = { },
-                        text = { Text(text = "Overview") },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
-
-                            override fun tryEmit(interaction: Interaction): Boolean = true
-                        }
-                    )
-                    Tab(
-                        modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                        enabled = !exercise.doNotStoreHistory,
-                        selected = false,
-                        onClick = {
+                var selectedTopTab by remember { mutableIntStateOf(0) }
+                SwipeableTabs(
+                    tabTitles = listOf("Overview", "History"),
+                    selectedTabIndex = selectedTopTab,
+                    onTabSelected = { index ->
+                        if (index == 1 && exercise.doNotStoreHistory) return@SwipeableTabs
+                        selectedTopTab = index
+                        if (index == 1) {
                             appViewModel.setScreenData(
                                 ScreenData.ExerciseHistory(workout.id, exercise.id),
                                 true
                             )
-                        },
-                        text = { Text(text = "History") },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                        interactionSource = object : MutableInteractionSource {
-                            override val interactions: Flow<Interaction> = emptyFlow()
-
-                            override suspend fun emit(interaction: Interaction) {
-                                // Empty implementation
-                            }
-
-                            override fun tryEmit(interaction: Interaction): Boolean = true
                         }
-                    )
-                }
+                    },
+                    tabEnabled = { index -> index == 0 || !exercise.doNotStoreHistory },
+                    modifier = Modifier.fillMaxSize(),
+                    pagerModifier = Modifier.fillMaxSize()
+                ) { pageIndex ->
+                    when (pageIndex) {
+                        0 -> {
+                            val scrollState = rememberScrollState()
 
-                val scrollState = rememberScrollState()
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(top = 10.dp)
-                        .padding(bottom = 10.dp)
-                        .verticalColumnScrollbar(scrollState)
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 15.dp),
-                ) {
-                    if (sets.isEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(5.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AppPrimaryButton(
-                                text = "Add Set",
-                                onClick = {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewSet(workout.id, exercise.id)
-                                    );
-                                },
-                            )
-                        }
-                    } else {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 15.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                modifier = Modifier.then(
-                                    if (selectedEquipmentId == null) Modifier.alpha(
-                                        0f
-                                    ) else Modifier
-                                )
-                            ) {
-                                Text(
-                                    text = "Equipment:",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                val selectedEquipment =
-                                    if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
-                                Text(
-                                    text = selectedEquipment?.name ?: "None",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.padding(vertical = 15.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(15.dp)
-                            ) {
-                                Checkbox(
-                                    modifier = Modifier.size(10.dp),
-                                    checked = showRest,
-                                    onCheckedChange = { showRest = it },
-                                    colors = CheckboxDefaults.colors().copy(
-                                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                                Text(
-                                    text = "Show Rests",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                        }
-
-                        // Calibration status text - centered below tabs and labels
-                        if (exercise.requiresLoadCalibration &&
-                            CalibrationHelper.supportsCalibrationForExercise(exercise)
-                        ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .fillMaxSize()
+                                    .padding(top = 10.dp)
+                                    .padding(bottom = 10.dp)
+                                    .verticalColumnScrollbarContainer(scrollState)
+                                    .padding(horizontal = 15.dp),
                             ) {
-                                Text(
-                                    text = "Waiting for calibration. Turn off \"Use Calibration mode\" to disable.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        GenericSelectableList(
-                            it = null,
-                            items = if (!showRest) sets.filter { it !is RestSet } else sets,
-                            selectedItems = selectedSets,
-                            isSelectionModeActive,
-                            onItemClick = {
-                                if (it is RestSet) {
-                                    appViewModel.setScreenData(
-                                        ScreenData.EditRestSet(
-                                            workout.id,
-                                            it,
-                                            exercise.id
-                                        )
-                                    )
-                                } else {
-                                    appViewModel.setScreenData(
-                                        ScreenData.EditSet(
-                                            workout.id,
-                                            it,
-                                            exercise.id
-                                        )
-                                    )
-                                }
-                            },
-                            onEnableSelection = { isSelectionModeActive = true },
-                            onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection ->
-                                selectedSetIds = newSelection.map { it.id }.toSet()
-                            },
-                            onOrderChange = { newComponents ->
-                                if (!showRest) return@GenericSelectableList
-                                val adjustedComponents = ensureRestSeparatedBySets(newComponents)
-                                val updatedExercise = exercise.copy(
-                                    sets = adjustedComponents,
-                                    requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
-                                        ?: emptyList()
-                                )
-                                updateExerciseWithHistory(updatedExercise)
-                            },
-                            isDragDisabled = true,
-                            itemContent = { it, onItemClick, onItemLongClick ->
-                                val bringIntoViewRequester = remember { BringIntoViewRequester() }
-                                LaunchedEffect(pendingSetBringIntoViewId == it.id) {
-                                    if (pendingSetBringIntoViewId == it.id) {
-                                        bringIntoViewRequester.bringIntoView()
-                                        pendingSetBringIntoViewId = null
-                                    }
-                                }
-                                Box(
-                                    modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
-                                ) {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                if (sets.isEmpty()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(5.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        ComponentRenderer(
-                                            it,
-                                            appViewModel,
-                                            exercise,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .then(
-                                                    if (it is RestSet) {
-                                                        Modifier
-                                                    } else {
-                                                        Modifier.heightIn(min = 48.dp)
-                                                    }
+                                        AppPrimaryButton(
+                                            text = "Add Set",
+                                            onClick = {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.NewSet(workout.id, exercise.id)
                                                 )
-                                                .combinedClickable(
-                                                    onClick = onItemClick,
-                                                    onLongClick = onItemLongClick
-                                                )
+                                            },
                                         )
-                                        // Show "Add rest" button when:
-                                        // - Current item is not a RestSet
-                                        // - Not the last item in the actual sets list
-                                        // - Next item in actual sets list is not a RestSet
-                                        if (showRest && !isSelectionModeActive && it !is RestSet) {
-                                            val currentIndex =
-                                                sets.indexOfFirst { set -> set.id == it.id }
-                                            val isNotLast =
-                                                currentIndex >= 0 && currentIndex < sets.size - 1
-                                            val nextItem =
-                                                if (isNotLast && currentIndex + 1 < sets.size) {
-                                                    sets[currentIndex + 1]
-                                                } else {
-                                                    null
-                                                }
-                                            val shouldShowButton =
-                                                isNotLast && nextItem != null && nextItem !is RestSet
+                                    }
+                                } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 15.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                            modifier = Modifier.then(
+                                                if (selectedEquipmentId == null) Modifier.alpha(
+                                                    0f
+                                                ) else Modifier
+                                            )
+                                        ) {
+                                            Text(
+                                                text = "Equipment:",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            val selectedEquipment =
+                                                if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
+                                            Text(
+                                                text = selectedEquipment?.name ?: "None",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
 
-                                            if (shouldShowButton) {
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    AppPrimaryOutlinedButton(
-                                                        text = "Add Rest",
-                                                        onClick = {
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.InsertRestSetAfter(
-                                                                    workout.id,
-                                                                    exercise.id,
-                                                                    it.id
-                                                                )
-                                                            )
-                                                        }
-                                                    )
-                                                }
-                                            }
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 15.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(15.dp)
+                                        ) {
+                                            Checkbox(
+                                                modifier = Modifier.size(10.dp),
+                                                checked = showRest,
+                                                onCheckedChange = { showRest = it },
+                                                colors = CheckboxDefaults.colors().copy(
+                                                    checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                                                    uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                                                )
+                                            )
+                                            Text(
+                                                text = "Show Rests",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
                                         }
                                     }
-                                }
-                            },
-                            keySelector = { set -> set.id }
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                        ) {
-                            GenericButtonWithMenu(
-                                menuItems = listOf(
-                                    MenuItem("Add Set") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewSet(workout.id, exercise.id)
-                                        );
-                                    },
-                                    MenuItem("Add Rests between sets") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewRestSet(workout.id, exercise.id)
-                                        );
+
+                                    if (exercise.requiresLoadCalibration &&
+                                        CalibrationHelper.supportsCalibrationForExercise(exercise)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "Waiting for calibration. Turn off \"Use Calibration mode\" to disable.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
-                                ),
-                                content = {
-                                    Icon(
-                                        imageVector = Icons.Filled.Add,
-                                        contentDescription = "Add",
-                                        tint = MaterialTheme.colorScheme.background,
+
+                                    GenericSelectableList(
+                                        it = null,
+                                        items = if (!showRest) sets.filter { it !is RestSet } else sets,
+                                        selectedItems = selectedSets,
+                                        isSelectionModeActive,
+                                        onItemClick = {
+                                            if (it is RestSet) {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditRestSet(
+                                                        workout.id,
+                                                        it,
+                                                        exercise.id
+                                                    )
+                                                )
+                                            } else {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.EditSet(
+                                                        workout.id,
+                                                        it,
+                                                        exercise.id
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        onEnableSelection = { isSelectionModeActive = true },
+                                        onDisableSelection = { isSelectionModeActive = false },
+                                        onSelectionChange = { newSelection ->
+                                            selectedSetIds = newSelection.map { it.id }.toSet()
+                                        },
+                                        onOrderChange = { newComponents ->
+                                            if (!showRest) return@GenericSelectableList
+                                            val adjustedComponents = ensureRestSeparatedBySets(newComponents)
+                                            val updatedExercise = exercise.copy(
+                                                sets = adjustedComponents,
+                                                requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                                    ?: emptyList()
+                                            )
+                                            updateExerciseWithHistory(updatedExercise)
+                                        },
+                                        isDragDisabled = true,
+                                        itemContent = { it, onItemClick, onItemLongClick ->
+                                            val bringIntoViewRequester = remember { BringIntoViewRequester() }
+                                            LaunchedEffect(pendingSetBringIntoViewId == it.id) {
+                                                if (pendingSetBringIntoViewId == it.id) {
+                                                    bringIntoViewRequester.bringIntoView()
+                                                    pendingSetBringIntoViewId = null
+                                                }
+                                            }
+                                            Box(
+                                                modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
+                                            ) {
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                                ) {
+                                                    ComponentRenderer(
+                                                        it,
+                                                        appViewModel,
+                                                        exercise,
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .then(
+                                                                if (it is RestSet) {
+                                                                    Modifier
+                                                                } else {
+                                                                    Modifier.heightIn(min = 48.dp)
+                                                                }
+                                                            )
+                                                            .combinedClickable(
+                                                                onClick = onItemClick,
+                                                                onLongClick = onItemLongClick
+                                                            )
+                                                    )
+                                                    if (showRest && !isSelectionModeActive && it !is RestSet) {
+                                                        val currentIndex =
+                                                            sets.indexOfFirst { set -> set.id == it.id }
+                                                        val isNotLast =
+                                                            currentIndex >= 0 && currentIndex < sets.size - 1
+                                                        val nextItem =
+                                                            if (isNotLast && currentIndex + 1 < sets.size) {
+                                                                sets[currentIndex + 1]
+                                                            } else {
+                                                                null
+                                                            }
+                                                        val shouldShowButton =
+                                                            isNotLast && nextItem != null && nextItem !is RestSet
+
+                                                        if (shouldShowButton) {
+                                                            Box(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                AppPrimaryOutlinedButton(
+                                                                    text = "Add Rest",
+                                                                    onClick = {
+                                                                        appViewModel.setScreenData(
+                                                                            ScreenData.InsertRestSetAfter(
+                                                                                workout.id,
+                                                                                exercise.id,
+                                                                                it.id
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        keySelector = { set -> set.id }
                                     )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize(),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        GenericButtonWithMenu(
+                                            menuItems = listOf(
+                                                MenuItem("Add Set") {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewSet(workout.id, exercise.id)
+                                                    )
+                                                },
+                                                MenuItem("Add Rests between sets") {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.NewRestSet(workout.id, exercise.id)
+                                                    )
+                                                }
+                                            ),
+                                            content = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Add,
+                                                    contentDescription = "Add",
+                                                    tint = MaterialTheme.colorScheme.background,
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
-                            )
+                            }
                         }
+
+                        1 -> Box(modifier = Modifier.fillMaxSize())
                     }
                 }
+
             }
         }
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
-

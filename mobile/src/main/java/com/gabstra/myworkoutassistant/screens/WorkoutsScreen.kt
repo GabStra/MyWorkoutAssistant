@@ -8,15 +8,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.interaction.Interaction
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
@@ -28,10 +24,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -64,6 +56,7 @@ import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsMenu
+import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
@@ -80,11 +73,8 @@ import com.kizitonwose.calendar.core.DayPosition
 import com.kizitonwose.calendar.core.yearMonth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 import java.time.LocalDate
 import android.util.Log
 import java.time.format.DateTimeFormatter
@@ -490,31 +480,6 @@ fun WorkoutsScreen(
         appViewModel.scheduleWorkoutSave(context)
     }
 
-    val pagerState = rememberPagerState(
-        initialPage = selectedTabIndex,
-        pageCount = {
-            4
-        }
-    )
-
-    LaunchedEffect(selectedTabIndex) {
-        if (selectedTabIndex == pagerState.currentPage) {
-            return@LaunchedEffect
-        }
-        val pageDistance = abs(selectedTabIndex - pagerState.currentPage)
-        if (pageDistance > 1) {
-            pagerState.scrollToPage(selectedTabIndex)
-        } else {
-            pagerState.animateScrollToPage(selectedTabIndex)
-        }
-    }
-
-    LaunchedEffect(pagerState.currentPage) {
-        if (selectedTabIndex != pagerState.currentPage) {
-            appViewModel.setHomeTab(pagerState.currentPage)
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -587,7 +552,7 @@ fun WorkoutsScreen(
                     )
                 },
                 bottomBar = {
-                    when (pagerState.currentPage) {
+                    when (selectedTabIndex) {
                         1 -> WorkoutsBottomBar(
                             selectedWorkouts = selectedWorkouts,
                             activeWorkouts = activeWorkouts,
@@ -642,50 +607,18 @@ fun WorkoutsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
 
-                    TabRow(
-                        contentColor = MaterialTheme.colorScheme.background,
-                        selectedTabIndex = pagerState.currentPage,
-                        indicator = { tabPositions ->
-                            TabRowDefaults.Indicator(
-                                Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
-                                color = MaterialTheme.colorScheme.primary, // Set the indicator color
-                                height = 2.dp,
-                            )
-                        }
-                    ) {
-                        tabTitles.forEachIndexed { index, title ->
-                            val isSelected = index == pagerState.currentPage
-                            Tab(
-                                modifier = Modifier.background(MaterialTheme.colorScheme.background),
-                                selected = isSelected,
-                                onClick = {
-                                    appViewModel.setHomeTab(index)
-                                },
-                                text = {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                },
-                                selectedContentColor = MaterialTheme.colorScheme.primary,
-                                unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                                interactionSource = object : MutableInteractionSource {
-                                    override val interactions: Flow<Interaction> = emptyFlow()
-                                    override suspend fun emit(interaction: Interaction) {
-                                        // Empty implementation
-                                    }
-
-                                    override fun tryEmit(interaction: Interaction): Boolean = true
-                                }
-                            )
-                        }
-                    }
-
-                    HorizontalPager(
+                    SwipeableTabs(
+                        tabTitles = tabTitles,
+                        selectedTabIndex = selectedTabIndex,
+                        onTabSelected = { appViewModel.setHomeTab(it) },
+                        tabTextStyle = MaterialTheme.typography.bodySmall,
+                        containerColor = MaterialTheme.colorScheme.background,
+                        contentColor = MaterialTheme.colorScheme.onBackground,
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background),
-                        state = pagerState,
                     ) { pageIndex ->
                         Column(
                             modifier = Modifier
