@@ -44,7 +44,7 @@ import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.gabstra.myworkoutassistant.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -118,8 +118,7 @@ fun RestForm(
                 .fillMaxSize()
                 .padding(it)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
                 Text(
@@ -173,5 +172,6 @@ fun RestForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 
 

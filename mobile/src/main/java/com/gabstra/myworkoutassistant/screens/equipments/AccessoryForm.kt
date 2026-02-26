@@ -36,7 +36,7 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,8 +102,7 @@ fun AccessoryForm(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
@@ -144,4 +143,5 @@ fun AccessoryForm(
         }
     }
 }
+
 

@@ -36,7 +36,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.verticalScroll
 
@@ -60,8 +60,7 @@ fun WorkoutsGearTab(
         modifier = Modifier
             .fillMaxSize()
             .padding(vertical = 10.dp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
+            .verticalColumnScrollbarContainer(scrollState)
             .padding(horizontal = 15.dp)
     ) {
         Text(
@@ -259,3 +258,4 @@ fun WorkoutsGearTab(
         }
     }
 }
+

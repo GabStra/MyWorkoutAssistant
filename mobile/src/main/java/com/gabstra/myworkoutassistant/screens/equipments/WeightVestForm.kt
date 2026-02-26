@@ -56,7 +56,7 @@ import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,8 +136,7 @@ fun WeightVestForm(
                 .fillMaxSize()
                 .padding(it)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             FormSectionTitle(text = "Essentials")
@@ -267,6 +266,7 @@ fun WeightVestForm(
         )
     }
 }
+
 
 
 

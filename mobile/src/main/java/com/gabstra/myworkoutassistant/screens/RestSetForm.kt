@@ -41,7 +41,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 
@@ -110,8 +110,7 @@ fun RestSetForm(
                 .fillMaxSize()
                 .padding(it)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
                 Text(
@@ -164,5 +163,6 @@ fun RestSetForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 
 

@@ -30,7 +30,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,8 +119,7 @@ fun WorkoutsAlarmsTab(
                 .fillMaxSize()
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
+                .verticalColumnScrollbarContainer(scrollState)
                 .padding(horizontal = 15.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -204,3 +203,4 @@ fun WorkoutsAlarmsTab(
         }
     }
 }
+

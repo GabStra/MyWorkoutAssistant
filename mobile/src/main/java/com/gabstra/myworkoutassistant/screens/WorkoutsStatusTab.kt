@@ -37,7 +37,7 @@ import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import java.time.LocalDate
@@ -70,8 +70,7 @@ fun WorkoutsStatusTab(
             .fillMaxWidth()
             .padding(top = 10.dp)
             .padding(bottom = 10.dp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
+            .verticalColumnScrollbarContainer(scrollState)
             .padding(horizontal = 15.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -317,3 +316,4 @@ private fun WorkoutHistoriesByWorkoutGroup(
             }
         }
 }
+

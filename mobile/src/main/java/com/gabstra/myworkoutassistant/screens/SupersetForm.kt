@@ -49,7 +49,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.gabstra.myworkoutassistant.Spacing
 import java.util.UUID
 
@@ -143,8 +143,7 @@ fun SupersetForm(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             FormSectionTitle(text = "Essentials")
@@ -297,4 +296,5 @@ fun SupersetForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 

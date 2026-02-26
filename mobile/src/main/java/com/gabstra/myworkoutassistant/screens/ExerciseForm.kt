@@ -80,7 +80,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -311,8 +311,7 @@ fun ExerciseForm(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .verticalColumnScrollbarContainer(scrollState),
         ) {
             // ----- Essentials -----
             FormSectionTitle(text = "Essentials")
@@ -1020,5 +1019,6 @@ fun ExerciseForm(
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }
+
 
 

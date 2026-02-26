@@ -49,7 +49,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 fun SetType.toReadableString(): String {
     return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
@@ -131,8 +131,7 @@ fun SetForm(
                     .fillMaxSize()
                     .padding(paddingValues)
                     .padding(top = 10.dp, bottom = 10.dp)
-                    .verticalColumnScrollbar(scrollState)
-                    .verticalScroll(scrollState)
+                    .verticalColumnScrollbarContainer(scrollState)
                     .padding(horizontal = 15.dp),
             ) {
                 if (set == null) {
@@ -215,3 +214,4 @@ fun SetForm(
         )
     }
 }
+

@@ -20,7 +20,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 private const val DEFAULT_VISIBLE_LINES = 2.5f
 
@@ -78,8 +78,7 @@ fun ScrollableTextColumn(
     Column(
         modifier = modifier
             .heightIn(max = heightDp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
+            .verticalColumnScrollbarContainer(scrollState)
     ) {
         Text(
             text = text,
@@ -102,3 +101,4 @@ fun ScrollableTextColumn(
         )
     }
 }
+

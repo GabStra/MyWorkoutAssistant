@@ -30,7 +30,7 @@ import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -51,8 +51,7 @@ fun WorkoutsListTab(
         modifier = Modifier
             .fillMaxSize()
             .padding(vertical = 10.dp)
-            .verticalColumnScrollbar(scrollState)
-            .verticalScroll(scrollState)
+            .verticalColumnScrollbarContainer(scrollState)
             .padding(horizontal = 15.dp)
     ) {
         Text(
@@ -161,3 +160,4 @@ fun WorkoutsListTab(
         }
     }
 }
+

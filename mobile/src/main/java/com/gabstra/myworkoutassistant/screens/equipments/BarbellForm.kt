@@ -58,7 +58,7 @@ import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -134,9 +134,8 @@ fun BarbellForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState),
+                .padding(vertical = Spacing.sm)
+                .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             FormSectionTitle(text = "Essentials")
@@ -324,6 +323,7 @@ fun BarbellForm(
         )
     }
 }
+
 
 
 

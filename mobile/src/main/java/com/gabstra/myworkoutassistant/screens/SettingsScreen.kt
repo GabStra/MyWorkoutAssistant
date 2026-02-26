@@ -47,7 +47,7 @@ import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -162,8 +162,7 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
-                .verticalColumnScrollbar(scrollState)
-                .verticalScroll(scrollState)
+                .verticalColumnScrollbarContainer(scrollState)
                 .padding(horizontal = 15.dp)
         ) {
             OutlinedTextField(
@@ -341,4 +340,5 @@ fun SettingsScreen(
 
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }
+
 
