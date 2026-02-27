@@ -156,6 +156,7 @@ fun SetTableRow(
     modifier: Modifier = Modifier,
     setState: WorkoutState.Set,
     setIdentifier: String? = null,
+    sideBadge: String? = null,
     index: Int?,
     isCurrentSet: Boolean,
     markAsDone: Boolean,
@@ -185,7 +186,12 @@ fun SetTableRow(
         ) {
             ScalableFadingText(
                 modifier = Modifier.weight(1f),
-                text = setIdentifier.orEmpty(),
+                text = when {
+                    !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
+                    !setIdentifier.isNullOrBlank() -> setIdentifier
+                    !sideBadge.isNullOrBlank() -> sideBadge
+                    else -> ""
+                },
                 style = itemStyle,
                 textAlign = TextAlign.Center,
                 color = textColor
@@ -380,6 +386,23 @@ fun ExerciseSetsViewer(
     val density = LocalDensity.current
 
     val itemHeightDp = 27.5.dp
+    val unilateralSideBadgeByRowIndex = displayRows.mapIndexedNotNull { rowIndex, displayRow ->
+        val setRow = displayRow as? ExerciseSetDisplayRow.SetRow ?: return@mapIndexedNotNull null
+        val intraSetTotal = setRow.state.intraSetTotal?.toInt() ?: return@mapIndexedNotNull null
+        if (!setRow.state.isUnilateral) return@mapIndexedNotNull null
+        val sideIndex = displayRows
+            .subList(0, rowIndex + 1)
+            .count { row ->
+                row is ExerciseSetDisplayRow.SetRow && row.state.set.id == setRow.state.set.id
+            }
+            .coerceIn(1, intraSetTotal)
+        val sideBadge = when (sideIndex) {
+            1 -> "①"
+            2 -> "②"
+            else -> "($sideIndex/$intraSetTotal)"
+        }
+        rowIndex to sideBadge
+    }.toMap()
 
     // Reset scroll position immediately when exercise changes
     LaunchedEffect(exercise.id) {
@@ -459,9 +482,10 @@ fun ExerciseSetsViewer(
                         exerciseId = exercise.id,
                         setState = displayRow.state
                     ),
+                    sideBadge = unilateralSideBadgeByRowIndex[rowIndex],
                     index = rowIndex,
                     isCurrentSet = rowIndex == setIndex,
-                    markAsDone = false,
+                    markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
                     textColor = textColor,
                     hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
                 )

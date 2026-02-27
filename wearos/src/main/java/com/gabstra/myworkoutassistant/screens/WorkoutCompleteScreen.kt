@@ -33,6 +33,7 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.ProgressionSection
 import com.gabstra.myworkoutassistant.composables.ScalableText
+import com.gabstra.myworkoutassistant.composables.WorkoutPagerHeaderReservedHeight
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -212,12 +213,14 @@ private fun WorkoutCompleteScreenContent(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 5.dp)
-            .padding(top = 25.dp, bottom = 25.dp)
+            .padding(
+                top = WorkoutPagerHeaderReservedHeight + 2.5.dp,
+                bottom = 25.dp
+            )
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 2.5.dp),
+                .fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {

@@ -276,7 +276,9 @@ fun ExerciseScreen(
                 pagerState = horizontalPagerState,
                 userScrollEnabled = !isEditModeEnabled,
                 animatePages = false,
-                beyondViewportPageCount = 0,
+                // Keep one neighbor composed to reduce page-switch jank on Wear devices.
+                beyondViewportPageCount = 1,
+                movingPlaceholder = null,
                 pageOverlay = { pageIndex ->
                     if (pageTypes[pageIndex] == ExerciseHorizontalPage.EXERCISE_DETAIL) {
                         hearthRateChart(Modifier.fillMaxSize())
@@ -399,14 +401,10 @@ fun ExerciseScreen(
             },
             message = when {
                 state.isCalibrationSet -> "Rate your RIR after completing this set."
-                state.isAutoRegulationWorkSet -> "Rate your RIR (or we'll auto-apply)."
                 else -> "Do you want to proceed?"
             },
             handleYesClick = {
                 shouldResumeTimerAfterDialog = false
-                if (state.intraSetTotal != null) {
-                    state.intraSetCounter++
-                }
 
                 hapticsViewModel.doGentleVibration()
                 viewModel.storeSetData()
@@ -1036,7 +1034,7 @@ private fun ExerciseDetailContent(
                             ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
                         repRange = repRange,
                         sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
-                        currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
+                        currentSideIndex = viewModel.getUnilateralSideIndex(state),
                         isUnilateral = state.isUnilateral
                     )
 

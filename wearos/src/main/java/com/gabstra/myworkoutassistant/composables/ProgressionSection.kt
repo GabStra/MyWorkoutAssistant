@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -56,6 +57,29 @@ data class ProgressionInfo(
     val vsExpected: Ternary,
     val vsLast: Ternary
 )
+
+private fun SetHistory.isExcludedFromProgressionComparison(): Boolean {
+    return when (val setData = setData) {
+        is BodyWeightSetData ->
+            setData.subCategory == SetSubCategory.RestPauseSet ||
+                setData.subCategory == SetSubCategory.CalibrationSet
+        is WeightSetData ->
+            setData.subCategory == SetSubCategory.RestPauseSet ||
+                setData.subCategory == SetSubCategory.CalibrationSet
+        is RestSetData ->
+            setData.subCategory == SetSubCategory.RestPauseSet ||
+                setData.subCategory == SetSubCategory.CalibrationSet
+        else -> false
+    }
+}
+
+private fun SetHistory.toSimpleSetOrNull(): SimpleSet? {
+    return when (val setData = setData) {
+        is WeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
+        is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
+        else -> null
+    }
+}
 
 @Composable
 private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modifier) {
@@ -128,29 +152,8 @@ fun ProgressionSection(
 
                 val executedSets = viewModel.executedSetsHistory
                     .filter { it.exerciseId == exerciseId }
-                    .filter { it -> 
-                        when(val setData = it.setData){
-                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                            else -> true
-                        }
-                    }
-                    .mapNotNull { when(val setData = it.setData){
-                        is WeightSetData -> {
-                            val weight = setData.getWeight()
-                            val reps = setData.actualReps
-
-                            SimpleSet(weight,reps)
-                        }
-                        is BodyWeightSetData -> {
-                            val weight = setData.getWeight()
-                            val reps = setData.actualReps
-
-                            SimpleSet(weight,reps)
-                        }
-                        else -> null
-                    } }
+                    .filterNot { it.isExcludedFromProgressionComparison() }
+                    .mapNotNull { it.toSimpleSetOrNull() }
 
                 val progressionData =
                     if (viewModel.exerciseProgressionByExerciseId.containsKey(exerciseId)) viewModel.exerciseProgressionByExerciseId[exerciseId] else null
@@ -162,11 +165,13 @@ fun ProgressionSection(
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
-                // Get actual executed sets from the last completed workout
-                val lastSessionSets = viewModel.getLastCompletedWorkoutExecutedSets(exerciseId)
+                // Compare against the pre-session snapshot to avoid including the current session.
+                val lastSessionSets = viewModel.latestSetHistoriesByExerciseId[exerciseId]
+                    ?.filterNot { it.isExcludedFromProgressionComparison() }
+                    ?.mapNotNull { it.toSimpleSetOrNull() }
+                    ?.takeIf { it.isNotEmpty() }
 
                 val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
-                // If no previous completed workout exists, use EQUAL as neutral state
                 val vsLast = if (lastSessionSets != null) {
                     compareSetListsUnordered(executedSets, lastSessionSets)
                 } else {

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -31,6 +32,35 @@ import kotlin.math.min
 @Composable
 fun ScalableText(
     text: String,
+    modifier: Modifier = Modifier,
+    textModifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onBackground,
+    style: TextStyle = LocalTextStyle.current,
+    textAlign: TextAlign? = TextAlign.Center,
+    overflow: TextOverflow = LocalTextConfiguration.current.overflow,
+    minTextSize: TextUnit = 12.sp,
+    contentAlignment: Alignment = Alignment.Center,
+    fadeInMillis: Int = 250, // Slower fade for a premium feel
+    scaleDownOnly: Boolean = true
+) {
+    ScalableText(
+        text = AnnotatedString(text),
+        modifier = modifier,
+        textModifier = textModifier,
+        color = color,
+        style = style,
+        textAlign = textAlign,
+        overflow = overflow,
+        minTextSize = minTextSize,
+        contentAlignment = contentAlignment,
+        fadeInMillis = fadeInMillis,
+        scaleDownOnly = scaleDownOnly
+    )
+}
+
+@Composable
+fun ScalableText(
+    text: AnnotatedString,
     modifier: Modifier = Modifier,
     textModifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onBackground,

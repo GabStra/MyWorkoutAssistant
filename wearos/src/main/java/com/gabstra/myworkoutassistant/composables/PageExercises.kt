@@ -135,7 +135,10 @@ fun PageExercises(
             }
 
             if (currentSet != null) {
-                val shouldApplyProgressColors = workoutState is WorkoutState.Set
+                val isSelectedCurrentContainer =
+                    selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value
+                val shouldApplyProgressColors =
+                    selectedExerciseOrSupersetIndex.value >= 0 && currentExerciseOrSupersetIndex.value >= 0
                 ExerciseSetsViewer(
                     modifier = Modifier.padding(horizontal = 22.5.dp),
                     viewModel = viewModel,
@@ -165,10 +168,12 @@ fun PageExercises(
                     } else {
                         null
                     },
-                    overrideSetIndex = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) {
+                    overrideSetIndex = if (isSelectedCurrentContainer) {
                         overrideSetIndex
-                    } else null,
-                    currentWorkoutStateOverride = if (selectedExerciseOrSupersetIndex.value == currentExerciseOrSupersetIndex.value) workoutState else null
+                    } else {
+                        -1
+                    },
+                    currentWorkoutStateOverride = if (isSelectedCurrentContainer) workoutState else null
                 )
             }
         }

@@ -29,8 +29,11 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.tasks.Tasks
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -275,13 +278,50 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     /**
-     * Discards an interrupted workout: deletes the workout record and marks the workout history
-     * as done so it no longer appears in [getInterruptedWorkouts].
+     * Discards an interrupted workout: deletes the workout record and persisted interrupted history
+     * locally, then notifies mobile to mirror the deletion.
      */
     fun discardInterruptedWorkout(interruptedWorkout: InterruptedWorkout) {
         launchIO {
+            setHistoryDao.deleteByWorkoutHistoryId(interruptedWorkout.workoutHistory.id)
             workoutRecordDao.deleteByWorkoutId(interruptedWorkout.workoutId)
-            workoutHistoryDao.updateIsDone(interruptedWorkout.workoutHistory.id, true)
+            workoutHistoryDao.deleteById(interruptedWorkout.workoutHistory.id)
+            sendDiscardInterruptedWorkoutToPhone(
+                workoutId = interruptedWorkout.workoutId,
+                workoutHistoryId = interruptedWorkout.workoutHistory.id
+            )
+        }
+    }
+
+    private suspend fun sendDiscardInterruptedWorkoutToPhone(
+        workoutId: UUID,
+        workoutHistoryId: UUID
+    ) {
+        val client = dataClient ?: run {
+            Log.w("WorkoutSync", "Discard sync skipped: dataClient not initialized")
+            return
+        }
+        val transactionId = UUID.randomUUID().toString()
+        val path = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_DISCARD_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(path).apply {
+            dataMap.putString("transactionId", transactionId)
+            dataMap.putString("workoutId", workoutId.toString())
+            dataMap.putString("workoutHistoryId", workoutHistoryId.toString())
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+
+        runCatching {
+            Tasks.await(client.putDataItem(request))
+            Log.d(
+                "WorkoutSync",
+                "Sent workout discard event tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+            )
+        }.onFailure { exception ->
+            Log.e(
+                "WorkoutSync",
+                "Failed to send workout discard event tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId",
+                exception
+            )
         }
     }
 
@@ -289,6 +329,8 @@ open class AppViewModel : WorkoutViewModel() {
     val hrDisplayMode: State<Int> = _hrDisplayMode.asIntState()
     private val _headerDisplayMode = mutableStateOf(0)
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
+    private val _isRestTimerPageVisible = mutableStateOf(true)
+    val isRestTimerPageVisible: State<Boolean> = _isRestTimerPageVisible
 
     private val _isSyncingToPhone = mutableStateOf(false)
     val isSyncingToPhone: State<Boolean> = _isSyncingToPhone
@@ -363,6 +405,12 @@ open class AppViewModel : WorkoutViewModel() {
         rebuildScreenState()
     }
 
+    fun setRestTimerPageVisibility(isVisible: Boolean) {
+        if (_isRestTimerPageVisible.value == isVisible) return
+        _isRestTimerPageVisible.value = isVisible
+        rebuildScreenState()
+    }
+
     fun onPhoneConnectionChanged(isConnected: Boolean) {
         if (!isConnected || !pendingSyncAfterReconnect) return
         pendingSyncAfterReconnect = false
@@ -392,6 +440,7 @@ open class AppViewModel : WorkoutViewModel() {
             currentScreenDimmingState = currentScreenDimmingState.value,
             headerDisplayMode = headerDisplayMode.value,
             hrDisplayMode = hrDisplayMode.value,
+            isRestTimerPageVisible = isRestTimerPageVisible.value,
         )
         
         // Only emit if state actually changed
@@ -782,6 +831,7 @@ open class AppViewModel : WorkoutViewModel() {
     override fun startWorkout() {
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
+        _isRestTimerPageVisible.value = true
         super.startWorkout()
     }
 
@@ -837,6 +887,7 @@ open class AppViewModel : WorkoutViewModel() {
     override fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit) {
         _headerDisplayMode.value = 0
         _hrDisplayMode.value = 0
+        _isRestTimerPageVisible.value = true
         skipNextResumeLastState = false
         val checkpoint = pendingRecoveryCheckpoint ?: getSavedRecoveryCheckpoint()
         val runtimeSnapshot = checkpointStore()
@@ -1152,4 +1203,3 @@ open class AppViewModel : WorkoutViewModel() {
         }
     }
 }
-

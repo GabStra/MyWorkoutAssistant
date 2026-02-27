@@ -54,7 +54,7 @@ fun ExerciseMetadataStrip(
                 }
 
                 fun separator() {
-                    withStyle(baseStyle.toSpanStyle().copy(baselineShift = BaselineShift(0.18f))) {
+                    withStyle(baseStyle.toSpanStyle().copy(baselineShift = BaselineShift(0.25f))) {
                         append("↔")
                     }
                 }
@@ -99,7 +99,7 @@ fun ExerciseMetadataStrip(
 
                 repRange?.let {
                     sep()
-                    append("Reps: ")
+                    append("Rep Range: ")
                     append(it)
                 }
 

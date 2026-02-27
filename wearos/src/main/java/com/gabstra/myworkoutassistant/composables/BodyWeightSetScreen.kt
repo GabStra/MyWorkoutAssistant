@@ -326,7 +326,6 @@ fun BodyWeightSetScreen(
             }
 
             ScalableText(
-                modifier = Modifier.fillMaxWidth(),
                 text = repsText,
                 style = style,
                 color = textColor,
@@ -402,7 +401,6 @@ fun BodyWeightSetScreen(
             }
 
             ScalableText(
-                modifier = Modifier.fillMaxWidth(),
                 text = weightText,
                 style = style,
                 color =  textColor,
@@ -425,14 +423,13 @@ fun BodyWeightSetScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Row(
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)
                 ) {
                     if(shouldShowWeights) {
                         Column(
-                            modifier = Modifier.weight(1f),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
                         ) {
                             Text(
                                 text = "WEIGHT (KG)",
@@ -440,13 +437,12 @@ fun BodyWeightSetScreen(
                                 textAlign = TextAlign.Center,
                                 color =  MaterialTheme.colorScheme.onBackground,
                             )
-                            WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                            WeightRow(style = itemStyle)
                         }
                     }
                     Column(
-                        modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Top)
+                        verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
                     ) {
                         Text(
                             text = "REPS",
@@ -454,7 +450,7 @@ fun BodyWeightSetScreen(
                             textAlign = TextAlign.Center,
                             color =  MaterialTheme.colorScheme.onBackground,
                         )
-                        RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                        RepsRow(style = itemStyle)
                     }
                 }
             }
@@ -552,8 +548,8 @@ fun BodyWeightSetScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            if (isRepsInEditMode) RepsRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
-                            if (isWeightInEditMode) WeightRow(modifier = Modifier.fillMaxWidth(), style = itemStyle)
+                            if (isRepsInEditMode) RepsRow(style = itemStyle)
+                            if (isWeightInEditMode) WeightRow(style = itemStyle)
                         }
                     }
                 )

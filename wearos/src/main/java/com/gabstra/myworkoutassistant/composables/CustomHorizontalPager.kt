@@ -29,13 +29,17 @@ import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
 import androidx.wear.compose.foundation.LocalReduceMotion
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.PagerDefaults
 import androidx.wear.compose.foundation.pager.PagerState
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.HorizontalPageIndicator
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -149,6 +153,7 @@ fun CustomHorizontalPager(
     animatePages: Boolean = true,
     beyondViewportPageCount: Int = 1,
     pageContentPadding: PaddingValues = PaddingValues(),
+    movingPlaceholder: (@Composable BoxScope.() -> Unit)? = null,
     pageOverlay: (@Composable BoxScope.(Int) -> Unit)? = null,
     content: @Composable (Int) -> Unit
 ) {
@@ -193,12 +198,21 @@ fun CustomHorizontalPager(
                 userScrollEnabled = userScrollEnabled,
                 beyondViewportPageCount = beyondViewportPageCount,
             ) { page ->
+                val isMoving =
+                    pagerState.isScrollInProgress || pagerState.currentPageOffsetFraction != 0f
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                 ) {
-                    if (animatePages) {
-                        CustomAnimatedPage(pageIndex = page, pagerState = pagerState) {
+                    if (isMoving && movingPlaceholder != null) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            movingPlaceholder()
+                        }
+                    } else if (animatePages) {
+                        CustomAnimatedPage(
+                            pageIndex = page,
+                            pagerState = pagerState
+                        ) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 pageOverlay?.invoke(this, page)
                                 Box(
@@ -236,6 +250,22 @@ fun CustomHorizontalPager(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun DefaultPagerMovingPlaceholder() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.padding(8.dp),
+            colors = ProgressIndicatorDefaults.colors(
+                indicatorColor = MaterialTheme.colorScheme.onBackground,
+                trackColor = MediumDarkGray
+            )
+        )
     }
 }
 

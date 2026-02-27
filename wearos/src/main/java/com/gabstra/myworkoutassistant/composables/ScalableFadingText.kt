@@ -75,9 +75,6 @@ fun ScalableFadingText(
     val density = LocalDensity.current
     val fadeColor = MaterialTheme.colorScheme.background
     
-    // Convert AnnotatedString to String for ScalableText
-    val textString = text.text
-    
     // Use text measurer to detect overflow
     val measurer = rememberTextMeasurer()
     var containerWidth: Float by remember { mutableStateOf(0f) }
@@ -95,7 +92,7 @@ fun ScalableFadingText(
     }
     
     // Calculate fitted size using ScalableText logic
-    val fittedSize = remember(textString, containerWidth, containerHeight, baseStyle, minTextSize, scaleDownOnly) {
+    val fittedSize = remember(text, containerWidth, containerHeight, baseStyle, minTextSize, scaleDownOnly) {
         if (containerWidth <= 0f || containerHeight <= 0f) return@remember minTextSize
         
         val baseFontSize = baseStyle.fontSize
@@ -104,7 +101,7 @@ fun ScalableFadingText(
         
         // Measure text at the largest allowed size
         val result = measurer.measure(
-            text = textString,
+            text = text,
             style = baseStyle.copy(fontSize = upperBound),
             maxLines = 1,
             softWrap = false
@@ -128,10 +125,10 @@ fun ScalableFadingText(
     }
     
     // Measure text at fitted size to detect actual overflow after scaling
-    val scaledTextLayoutResult = remember(textString, fittedSize, containerWidth, baseStyle) {
+    val scaledTextLayoutResult = remember(text, fittedSize, containerWidth, baseStyle) {
         if (containerWidth > 0f) {
             measurer.measure(
-                text = textString,
+                text = text,
                 style = baseStyle.copy(fontSize = fittedSize),
                 maxLines = 1,
                 softWrap = false
@@ -185,7 +182,7 @@ fun ScalableFadingText(
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         ScalableText(
-            text = textString,
+            text = text,
             modifier = Modifier.fillMaxWidth(),
             textModifier = textModifier,
             color = color,

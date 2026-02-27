@@ -33,13 +33,13 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import java.time.Duration
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -56,6 +56,11 @@ internal fun RecoveryDialog(
     val showTimerChoice = uiState.showTimerOptions
     val showCalibrationChoice = uiState.showCalibrationOptions
     val showResumeButton = uiState.showResumeButton
+    val resolvedWorkoutName = uiState.displayName.ifBlank { workout.workoutName }
+    val startedText = uiState.workoutStartTime?.format(
+        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm")
+    ).orEmpty()
+    val elapsedText = formatElapsedDuration(workout.workoutHistory.duration)
     var timerChoice by remember(workout.workoutHistory.id) { mutableStateOf(TimerRecoveryChoice.CONTINUE) }
     var calibrationChoice by remember(workout.workoutHistory.id) { mutableStateOf(CalibrationRecoveryChoice.CONTINUE) }
     val resumeWithChoices: (TimerRecoveryChoice, CalibrationRecoveryChoice) -> Unit = { timer, calibration ->
@@ -96,7 +101,6 @@ internal fun RecoveryDialog(
                 }
             ) { contentPadding ->
                 TransformingLazyColumn(
-                    modifier = Modifier.padding(horizontal = 10.dp),
                     contentPadding = contentPadding,
                     state = state
                 ) {
@@ -122,16 +126,31 @@ internal fun RecoveryDialog(
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                                .padding(bottom = 10.dp)
                         ) {
-                            Column(Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                            ) {
                                 Text(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = uiState.displayName,
+                                    text = "Workout",
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                    text = resolvedWorkoutName,
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MediumLighterGray
+                                    color = MaterialTheme.colorScheme.secondary
                                 )
 
                                 Spacer(Modifier.height(5.dp))
@@ -140,15 +159,46 @@ internal fun RecoveryDialog(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = uiState.workoutStartTime?.format(
-                                        DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
-                                    ) ?: "",
+                                    text = "Started",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MediumLighterGray
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
+
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                    text = startedText,
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+
+                                if (elapsedText.isNotEmpty()) {
+                                    Spacer(Modifier.height(5.dp))
+
+                                    Text(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                        text = "Elapsed",
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+
+                                    Text(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
+                                        text = elapsedText,
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
                             }
-                            Spacer(Modifier.height(5.dp))
                         }
                     }
 
@@ -298,5 +348,18 @@ internal fun RecoveryDialog(
                 }
             }
         }
+    }
+}
+
+private fun formatElapsedDuration(durationSeconds: Int): String {
+    if (durationSeconds <= 0) return ""
+    val duration = Duration.ofSeconds(durationSeconds.toLong())
+    val totalHours = duration.toHours()
+    val minutes = duration.toMinutesPart()
+    val seconds = duration.toSecondsPart()
+    return if (totalHours > 0) {
+        String.format("%dh %02dm", totalHours, minutes)
+    } else {
+        String.format("%dm %02ds", minutes, seconds)
     }
 }

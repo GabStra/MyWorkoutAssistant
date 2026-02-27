@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -285,9 +286,7 @@ private fun RestTimerBlock(
                 Spacer(modifier = Modifier.height(7.5.dp))
                 ExerciseNameText(
                     text = exerciseName,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = WorkoutPagerLayoutTokens.ExerciseTitleHorizontalPadding),
+                    modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center
                 )
@@ -450,11 +449,7 @@ fun RestScreen(
     val metadataSideIndicator = remember(setStateForPages) {
         if (setStateForPages?.intraSetTotal != null) "① ↔ ②" else null
     }
-    val metadataCurrentSideIndex = remember(setStateForPages) {
-        setStateForPages
-            ?.intraSetCounter
-            ?.takeIf { setStateForPages.intraSetTotal != null }
-    }
+    val metadataCurrentSideIndex = setStateForPages?.let { viewModel.getUnilateralSideIndex(it) }
     val metadataIsUnilateral = remember(setStateForPages) {
         setStateForPages?.isUnilateral ?: false
     }
@@ -462,6 +457,14 @@ fun RestScreen(
     LaunchedEffect(set.id) {
         if (horizontalPagerState.currentPage != restTimerPageIndex) {
             horizontalPagerState.scrollToPage(restTimerPageIndex)
+        }
+    }
+    LaunchedEffect(horizontalPagerState.currentPage, restTimerPageIndex) {
+        viewModel.setRestTimerPageVisibility(horizontalPagerState.currentPage == restTimerPageIndex)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.setRestTimerPageVisibility(true)
         }
     }
 
