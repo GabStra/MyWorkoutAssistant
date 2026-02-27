@@ -1056,6 +1056,38 @@ open class WorkoutViewModel(
         return if (currentIndex >= 0) Pair(currentIndex + 1, total) else null
     }
 
+    /**
+     * Resolves unilateral side index (1..intraSetTotal) from the current workout position,
+     * without relying on mutable in-place counter updates on WorkoutState.Set.
+     */
+    fun getUnilateralSideIndex(setState: WorkoutState.Set): UInt? {
+        val total = setState.intraSetTotal ?: return null
+        if (!setState.isUnilateral) return null
+
+        val machine = stateMachine ?: return setState.intraSetCounter.takeIf { it > 0u }
+        val targetSetId = setState.set.id
+        val currentIndex = machine.currentIndex
+        val currentState = machine.currentState
+
+        val completedOccurrences = machine.allStates
+            .subList(0, currentIndex + 1)
+            .count { state ->
+                state is WorkoutState.Set && WorkoutStateQueries.stateSetId(state) == targetSetId
+            }
+
+        val isUpcomingAfterIntraSetRest = currentState is WorkoutState.Rest &&
+            currentState.isIntraSetRest &&
+            (currentState.nextState as? WorkoutState.Set)?.set?.id == targetSetId
+
+        val resolved = if (isUpcomingAfterIntraSetRest) {
+            completedOccurrences + 1
+        } else {
+            completedOccurrences.coerceAtLeast(1)
+        }
+
+        return resolved.coerceIn(1, total.toInt()).toUInt()
+    }
+
     suspend fun createStatesFromExercise(exercise: Exercise): List<WorkoutState> {
         return addStatesFromExercise(exercise, priorExercises = emptyList()).flatMap { item ->
             when (item) {

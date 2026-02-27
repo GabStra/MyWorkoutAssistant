@@ -30,6 +30,7 @@ data class WorkoutScreenState(
     // WearOS-specific display modes (default to 0 for mobile)
     val headerDisplayMode: Int = 0,
     val hrDisplayMode: Int = 0,
+    val isRestTimerPageVisible: Boolean = true,
 ) {
     companion object {
         /**
@@ -67,6 +68,7 @@ data class WorkoutScreenState(
                 currentScreenDimmingState = false,
                 headerDisplayMode = 0,
                 hrDisplayMode = 0,
+                isRestTimerPageVisible = true,
             )
         }
     }

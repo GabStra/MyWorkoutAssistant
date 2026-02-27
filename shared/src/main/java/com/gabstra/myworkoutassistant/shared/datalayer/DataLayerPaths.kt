@@ -12,6 +12,7 @@ object DataLayerPaths {
     const val SYNC_ERROR_PREFIX = "/sync/error"
     const val WORKOUT_HISTORY_START_PREFIX = "/workoutHistory/start"
     const val WORKOUT_HISTORY_CHUNK_PREFIX = "/workoutHistory/chunk"
+    const val WORKOUT_HISTORY_DISCARD_PREFIX = "/workoutHistory/discard"
     const val APP_BACKUP_START_PREFIX = "/appBackup/start"
     const val APP_BACKUP_CHUNK_PREFIX = "/appBackup/chunk"
     const val WORKOUT_STORE_PREFIX = "/workoutStore"
