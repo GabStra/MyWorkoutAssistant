@@ -528,6 +528,24 @@ data class WorkoutStateMachine(
     }
 
     /**
+     * Get all states for a superset in execution order (unified: A1, B1, REST, A2, B2, ...).
+     */
+    fun getStatesForSuperset(supersetId: UUID): List<WorkoutState> {
+        return stateSequence.flatMap { item ->
+            when (item) {
+                is WorkoutStateSequenceItem.Container -> {
+                    when (val container = item.container) {
+                        is WorkoutStateContainer.SupersetState ->
+                            if (container.supersetId == supersetId) container.childStates else emptyList()
+                        else -> emptyList()
+                    }
+                }
+                is WorkoutStateSequenceItem.RestBetweenExercises -> emptyList()
+            }
+        }
+    }
+
+    /**
      * Helper to find the container containing a specific state.
      */
     private fun findContainerForState(targetState: WorkoutState): WorkoutStateContainer? {

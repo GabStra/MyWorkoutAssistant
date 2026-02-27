@@ -1030,6 +1030,15 @@ open class WorkoutViewModel(
     }
 
     /**
+     * Returns the ordered list of workout states for a superset in execution order (unified:
+     * A1, B1, REST, A2, B2, ...).
+     */
+    fun getStatesForSuperset(supersetId: UUID): List<WorkoutState> {
+        val machine = stateMachine ?: return emptyList()
+        return machine.getStatesForSuperset(supersetId)
+    }
+
+    /**
      * Returns the total number of logical sets for an exercise, from the state machine.
      * Counts Set states only (including calibration execution sets; unilateral counts once).
      */
