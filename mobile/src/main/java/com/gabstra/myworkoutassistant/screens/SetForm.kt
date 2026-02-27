@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.BodyWeightSetForm
 import com.gabstra.myworkoutassistant.composables.EnduranceSetForm
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -130,9 +131,8 @@ fun SetForm(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
-                    .padding(top = 10.dp, bottom = 10.dp)
+                    .padding(vertical = Spacing.sm)
                     .verticalColumnScrollbarContainer(scrollState)
-                    .padding(horizontal = 15.dp),
             ) {
                 if (set == null) {
                     Row(

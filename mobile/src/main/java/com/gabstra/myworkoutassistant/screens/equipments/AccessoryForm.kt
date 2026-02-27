@@ -101,7 +101,7 @@ fun AccessoryForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
+                .padding(vertical = Spacing.sm)
                 .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {

@@ -119,8 +119,7 @@ fun WorkoutsAlarmsTab(
                 .fillMaxSize()
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
-                .verticalColumnScrollbarContainer(scrollState)
-                .padding(horizontal = 15.dp),
+                .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts

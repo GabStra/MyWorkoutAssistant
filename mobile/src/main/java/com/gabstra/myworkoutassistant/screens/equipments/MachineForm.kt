@@ -142,7 +142,7 @@ fun MachineForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
+                .padding(vertical = Spacing.sm)
                 .verticalColumnScrollbarContainer(scrollState),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {

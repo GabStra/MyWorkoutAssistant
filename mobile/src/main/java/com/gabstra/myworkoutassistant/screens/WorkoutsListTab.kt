@@ -52,7 +52,6 @@ fun WorkoutsListTab(
             .fillMaxSize()
             .padding(vertical = 10.dp)
             .verticalColumnScrollbarContainer(scrollState)
-            .padding(horizontal = 15.dp)
     ) {
         Text(
             modifier = Modifier.fillMaxWidth(),

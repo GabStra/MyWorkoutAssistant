@@ -142,7 +142,7 @@ fun SupersetForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
+                .padding(vertical = Spacing.sm)
                 .verticalColumnScrollbarContainer(scrollState),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

@@ -173,7 +173,7 @@ fun WorkoutForm(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
+                    .padding(vertical = Spacing.sm)
                     .verticalColumnScrollbarContainer(scrollState),
             ) {
                 // ----- Essentials -----
@@ -731,7 +731,6 @@ fun BatchScheduleDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(Spacing.sm)
             ) {
                 SwipeableTabs(
                     tabTitles = listOf("One-time", "Recurring"),

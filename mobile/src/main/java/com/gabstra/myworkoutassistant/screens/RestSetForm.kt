@@ -109,7 +109,7 @@ fun RestSetForm(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(it)
-                .padding(vertical = Spacing.sm, horizontal = Spacing.lg)
+                .padding(vertical = Spacing.sm)
                 .verticalColumnScrollbarContainer(scrollState),
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
