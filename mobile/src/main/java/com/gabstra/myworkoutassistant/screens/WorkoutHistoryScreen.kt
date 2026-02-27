@@ -12,6 +12,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -79,6 +81,7 @@ import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
+import com.gabstra.myworkoutassistant.composables.swipeToAdjacentTab
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -322,7 +325,9 @@ fun WorkoutHistoryScreen(
     workoutHistoryId: UUID? = null,
     setHistoryDao: SetHistoryDao,
     workout: Workout,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    embedded: Boolean = false,
+    onNavigateToOverview: (() -> Unit)? = null
 ) {
 
     val context = LocalContext.current
@@ -676,12 +681,12 @@ fun WorkoutHistoryScreen(
             volumeMarkerTarget = null
             durationMarkerTarget = null
             workoutDurationMarkerTarget = null
-            ensureMinimumLoadingDuration(loadingStartedAt)
+            ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
             isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
-        ensureMinimumLoadingDuration(loadingStartedAt)
+        ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
         isLoading = false
     }
 
@@ -692,12 +697,9 @@ fun WorkoutHistoryScreen(
             ?.toDouble()
 
         Column(
-            modifier = Modifier
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            RangeDropdown(selectedRange) { selectedRange = it }
-
             if (historiesToShow.isEmpty()) {
                 PrimarySurface(
                     modifier = Modifier.fillMaxWidth()
@@ -706,60 +708,63 @@ fun WorkoutHistoryScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(15.dp),
-                        text = "No history found for this range",
+                        text = "No history in selected range",
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                     )
                 }
             }
 
-            if (volumeEntryModel != null) {
-                StandardChart(
-                    isZoomEnabled = true,
-                    modifier = Modifier,
-                    cartesianChartModel = volumeEntryModel!!,
-                    title = "Total volume (KG)",
-                    markerTextFormatter = { formatNumber(it) },
-                    startAxisValueFormatter = volumeAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    xAxisTickValues = volumes.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: volumeMarkerTarget?.first?.toDouble()
-                )
-            }
-            if (durationEntryModel != null) {
-                StandardChart(
-                    modifier = Modifier,
-                    cartesianChartModel = durationEntryModel!!,
-                    title = "Total duration",
-                    markerTextFormatter = { formatTime(it.toInt() / 1000) },
-                    startAxisValueFormatter = durationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    xAxisTickValues = durations.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: durationMarkerTarget?.first?.toDouble()
-                )
-            }
-            if (workoutDurationEntryModel != null) {
-                StandardChart(
-                    isZoomEnabled = true,
-                    modifier = Modifier,
-                    cartesianChartModel = workoutDurationEntryModel!!,
-                    title = "Workout duration (hh:mm)",
-                    markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
-                    startAxisValueFormatter = workoutDurationAxisValueFormatter,
-                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                    xAxisTickValues = workoutDurations.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: workoutDurationMarkerTarget?.first?.toDouble()
-                )
-            }
+                if (volumeEntryModel != null) {
+                    StandardChart(
+                        isZoomEnabled = true,
+                        modifier = Modifier,
+                        cartesianChartModel = volumeEntryModel!!,
+                        title = "Total volume (KG)",
+                        markerTextFormatter = { formatNumber(it) },
+                        startAxisValueFormatter = volumeAxisValueFormatter,
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                        xAxisTickValues = volumes.map { it.first.toDouble() },
+                        markerPosition = selectedHistoryMarkerPosition
+                            ?: volumeMarkerTarget?.first?.toDouble()
+                    )
+                }
+                if (durationEntryModel != null) {
+                    StandardChart(
+                        modifier = Modifier,
+                        cartesianChartModel = durationEntryModel!!,
+                        title = "Total duration",
+                        markerTextFormatter = { formatTime(it.toInt() / 1000) },
+                        startAxisValueFormatter = durationAxisValueFormatter,
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                        xAxisTickValues = durations.map { it.first.toDouble() },
+                        markerPosition = selectedHistoryMarkerPosition
+                            ?: durationMarkerTarget?.first?.toDouble()
+                    )
+                }
+                if (workoutDurationEntryModel != null) {
+                    StandardChart(
+                        isZoomEnabled = true,
+                        modifier = Modifier,
+                        cartesianChartModel = workoutDurationEntryModel!!,
+                        title = "Workout duration (hh:mm)",
+                        markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
+                        startAxisValueFormatter = workoutDurationAxisValueFormatter,
+                        bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                        xAxisTickValues = workoutDurations.map { it.first.toDouble() },
+                        markerPosition = selectedHistoryMarkerPosition
+                            ?: workoutDurationMarkerTarget?.first?.toDouble()
+                    )
+                }
         }
     }
 
     val workoutSelector = @Composable {
-        val canGoBack = selectedWorkoutHistory != workoutHistories.first()
-        val canGoForward = selectedWorkoutHistory != workoutHistories.last()
+        val selectableWorkoutHistories = historiesToShow
+        val canGoBack = selectableWorkoutHistories.size > 1 &&
+            selectedWorkoutHistory != selectableWorkoutHistories.first()
+        val canGoForward = selectableWorkoutHistories.size > 1 &&
+            selectedWorkoutHistory != selectableWorkoutHistories.last()
         
         val navIconColors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground,
@@ -783,10 +788,10 @@ fun WorkoutHistoryScreen(
                         IconButton(
                             modifier = Modifier.size(25.dp),
                             onClick = {
-                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
+                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
                                 if (index > 0) { // Check to avoid IndexOutOfBoundsException
                                     isLoading = true
-                                    selectedWorkoutHistory = workoutHistories[index - 1]
+                                    selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
                                 }
                             },
                             colors = navIconColors
@@ -816,10 +821,10 @@ fun WorkoutHistoryScreen(
                         IconButton(
                             modifier = Modifier.size(25.dp),
                             onClick = {
-                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                                if (index < workoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
+                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                                if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
                                     isLoading = true
-                                    selectedWorkoutHistory = workoutHistories[index + 1]
+                                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
                                 }
                             },
                             colors = navIconColors
@@ -837,7 +842,7 @@ fun WorkoutHistoryScreen(
 
     val setsTabContent = @Composable {
         Column(
-            modifier = Modifier.padding(top=10.dp),
+            modifier = Modifier,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             workoutSelector()
@@ -1334,128 +1339,113 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
-                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
-                ),
-                title = {
-                    Text(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE),
-                        textAlign = TextAlign.Center,
-                        text = workout.name
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onGoBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                actions = {
-                    val modifier = if(selectedWorkoutHistory == null || workoutHistories.isEmpty() || selectedMode == 0) Modifier.alpha(0f) else Modifier
-                    Menu(
-                        modifier = modifier,
-                        onDeleteHistory = {
-                            scope.launch {
-                                val index = workoutHistories.indexOf(selectedWorkoutHistory)
-                                try {
-                                    deleteWorkoutHistoriesFromHealthConnect(listOf(selectedWorkoutHistory) as List<WorkoutHistory>,healthConnectClient)
-                                }catch (e: Exception) {
-                                    Log.e("MainActivity", "Error deleting workout histories from HealthConnect", e)
-                                    Toast.makeText(context, "Failed to delete workout histories from HealthConnect", Toast.LENGTH_SHORT).show()
-                                }
-
-                                workoutHistoryDao.deleteById(selectedWorkoutHistory!!.id)
-                                workoutRecordDao.deleteByWorkoutHistoryId(selectedWorkoutHistory!!.id)
-
-                                if (workoutHistories.size > 1) {
-                                    selectedWorkoutHistory = if (index == workoutHistories.size - 1) {
-                                        workoutHistories[index - 1]
-                                    }else {
-                                        workoutHistories[index + 1]
-                                    }
-                                }
-
-                                workoutHistories = workoutHistories.toMutableList().apply { removeAt(index) }
-
-                                setCharts(workoutHistories)
-
-                                Toast.makeText(context, "History Deleted", Toast.LENGTH_SHORT).show()
-                                if(workoutHistories.isEmpty()) {
-                                    onGoBack()
-                                }
-                            }
-                        }
-                    )
-                }
-            )
-        },
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues),
-            verticalArrangement = Arrangement.Top,
-        ) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.Top,
+    ) {
             var selectedTopTab by remember { mutableIntStateOf(1) }
-            SwipeableTabs(
-                tabTitles = listOf("Overview", "History"),
-                selectedTabIndex = selectedTopTab,
-                onTabSelected = { index ->
-                    selectedTopTab = index
-                    if (index == 0) {
-                        appViewModel.setScreenData(
-                            ScreenData.WorkoutDetail(workout.id),
-                            true
-                        )
-                    }
-                },
-                renderPager = false
-            )
+            if (!embedded) {
+                SwipeableTabs(
+                    tabTitles = listOf("Overview", "History"),
+                    selectedTabIndex = selectedTopTab,
+                    onTabSelected = { index ->
+                        selectedTopTab = index
+                        if (index == 0) {
+                            appViewModel.setScreenData(
+                                ScreenData.WorkoutDetail(workout.id),
+                                true
+                            )
+                        }
+                    },
+                    renderPager = false
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            RangeDropdown(selectedRange) { selectedRange = it }
+            Spacer(modifier = Modifier.height(6.dp))
 
             if(isLoading){
                 if (selectedMode == 0) {
+                    val loadingScrollState = rememberScrollState()
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 10.dp)
-                            .padding(bottom = 10.dp)
-                            .padding(horizontal = 15.dp),
+                            .then(
+                                if (!embedded) {
+                                    Modifier.swipeToAdjacentTab(
+                                        selectedTabIndex = selectedTopTab,
+                                        tabCount = 2,
+                                        onTabSelected = { index ->
+                                            selectedTopTab = index
+                                            if (index == 0) {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(workout.id),
+                                                    true
+                                                )
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .then(
+                                if (embedded) Modifier else Modifier
+                                    .padding(top = 10.dp)
+                                    .padding(bottom = 10.dp)
+                            )
+                            .verticalColumnScrollbarContainer(loadingScrollState),
                         verticalArrangement = Arrangement.Top
                     ) {
-                        RangeDropdown(selectedRange) { selectedRange = it }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            contentAlignment = Alignment.Center
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.width(32.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MediumDarkGray,
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.width(32.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MediumDarkGray,
+                                )
+                            }
                         }
                     }
                 } else if (selectedMode == 1 && selectedWorkoutHistory != null) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = 10.dp)
-                            .padding(bottom = 10.dp)
-                            .padding(horizontal = 15.dp),
+                            .then(
+                                if (!embedded) {
+                                    Modifier.swipeToAdjacentTab(
+                                        selectedTabIndex = selectedTopTab,
+                                        tabCount = 2,
+                                        onTabSelected = { index ->
+                                            selectedTopTab = index
+                                            if (index == 0) {
+                                                appViewModel.setScreenData(
+                                                    ScreenData.WorkoutDetail(workout.id),
+                                                    true
+                                                )
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .then(
+                                if (embedded) Modifier else Modifier
+                                    .padding(top = 10.dp)
+                                    .padding(bottom = 10.dp)
+                            ),
                         verticalArrangement = Arrangement.Top
                     ) {
                         Column(
-                            modifier = Modifier.padding(top = 10.dp),
+                            modifier = if (embedded) Modifier else Modifier.padding(top = 10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             workoutSelector()
@@ -1518,10 +1508,31 @@ fun WorkoutHistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = 10.dp)
-                                .padding(bottom = 10.dp)
-                                .verticalColumnScrollbarContainer(scrollState)
-                                .padding(horizontal = 15.dp),
+                                .then(
+                                    if (!embedded) {
+                                        Modifier.swipeToAdjacentTab(
+                                            selectedTabIndex = selectedTopTab,
+                                            tabCount = 2,
+                                            onTabSelected = { index ->
+                                                selectedTopTab = index
+                                                if (index == 0) {
+                                                    appViewModel.setScreenData(
+                                                        ScreenData.WorkoutDetail(workout.id),
+                                                        true
+                                                    )
+                                                }
+                                            }
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .then(
+                                    if (embedded) Modifier else Modifier
+                                        .padding(top = 10.dp)
+                                        .padding(bottom = 10.dp)
+                                )
+                                .verticalColumnScrollbarContainer(scrollState),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             when (updatedSelectedMode) {
@@ -1532,10 +1543,10 @@ fun WorkoutHistoryScreen(
                     }
                 }
             }
-            if (selectedWorkoutHistory != null) {
+            if (historiesToShow.isNotEmpty() && selectedWorkoutHistory != null) {
+                Spacer(modifier = Modifier.height(6.dp))
                 customBottomBar()
             }
-        }
     }
 }
 

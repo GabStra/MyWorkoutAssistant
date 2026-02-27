@@ -63,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,9 +74,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
+import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
@@ -94,6 +97,7 @@ import com.gabstra.myworkoutassistant.composables.SetRestRowCard
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
+import com.gabstra.myworkoutassistant.composables.swipeToAdjacentTab
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
@@ -142,14 +146,17 @@ fun Menu(
             onDismissRequest = { expanded = false }
         ) {
             AppDropdownMenuItem(
-                text = { Text("Edit Workout") },
+                text = { Text(text = "Edit Workout", fontWeight = FontWeight.Normal) },
                 onClick = {
                     onEditWorkout()
                     expanded = false
                 }
             )
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+            )
             AppDropdownMenuItem(
-                text = { Text("Clear History") },
+                text = { Text(text = "Clear History", fontWeight = FontWeight.Normal) },
                 onClick = {
                     onClearHistory()
                     expanded = false
@@ -219,6 +226,7 @@ private const val TAG = "WorkoutDetailScreen"
 @Composable
 fun WorkoutDetailScreen(
     appViewModel: AppViewModel,
+    healthConnectClient: HealthConnectClient,
     workoutViewModel: WorkoutViewModel,
     workoutHistoryDao: WorkoutHistoryDao,
     workoutRecordDao: WorkoutRecordDao,
@@ -226,6 +234,8 @@ fun WorkoutDetailScreen(
     exerciseInfoDao: ExerciseInfoDao,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     workout: Workout,
+    initialSelectedTabIndex: Int = 0,
+    initialWorkoutHistoryId: UUID? = null,
     onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -992,343 +1002,61 @@ fun WorkoutDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                var selectedTopTab by remember { mutableStateOf(0) }
+                var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
+                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 1))
+                }
                 SwipeableTabs(
                     tabTitles = listOf("Overview", "History"),
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
-                        if (index == 1) {
-                            appViewModel.setScreenData(
-                                ScreenData.WorkoutHistory(workout.id),
-                                true
-                            )
-                        }
                     },
-                    renderPager = false
-                )
-
-                val scrollState = rememberScrollState()
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(top = 10.dp)
-                        .padding(bottom = 10.dp)
-                        .verticalColumnScrollbarContainer(scrollState)
-                        .padding(horizontal = 15.dp),
-                ) {
-                    if (workout.workoutComponents.isEmpty()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(5.dp),
-                            horizontalArrangement = Arrangement.Center, // Space items evenly, including space at the edges
-                            verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-                        ) {
-                            GenericButtonWithMenu(
-                                menuItems = listOf(
-                                    MenuItem("Add Exercise") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewExercise(
-                                                workout.id
-                                            )
-                                        );
-                                    },
-                                    MenuItem("Add Superset") {
-                                        appViewModel.setScreenData(
-                                            ScreenData.NewSuperset(
-                                                workout.id
-                                            )
-                                        );
-                                    }
-                                ),
-                                content = {
-                                    Text(
-                                        "Add Workout Component",
-                                        color = MaterialTheme.colorScheme.background
-                                    )
-                                }
-                            )
-                        }
-                    } else {
-                        if (workout.enabled) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                AppPrimaryButton(
-                                    text = "Start Workout",
-                                    onClick = {
-                                        if (hasWorkoutRecord) {
-                                            showStartConfirmationDialog = true
-                                        } else {
-                                            startWorkoutDirectly()
-                                        }
-                                    },
-                                )
-                            }
-
-                            // Only show resume/delete buttons after check completes and if there's a workout record
-                            if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id && hasWorkoutRecord) {
-                                Spacer(Modifier.height(Spacing.sm))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    AppPrimaryButton(
-                                        text = "Resume",
-                                        onClick = {
-                                            resumeWorkoutDirectly()
-                                        },
-                                    )
-                                }
-                                Spacer(Modifier.height(Spacing.sm))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    AppPrimaryButton(
-                                        text = InterruptedWorkoutCopy.DELETE_BUTTON,
-                                        onClick = {
-                                            showDeleteDialog = true
-                                        },
-                                    )
-                                }
-                            }
-
-                            Spacer(Modifier.height(Spacing.md))
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
-
-                        // Display schedules for this workout
-                        var workoutSchedules by remember {
-                            mutableStateOf<List<WorkoutSchedule>>(
-                                emptyList()
-                            )
-                        }
-
-                        LaunchedEffect(workout.globalId) {
-                            withContext(Dispatchers.IO) {
-                                workoutSchedules =
-                                    workoutScheduleDao.getSchedulesByWorkoutId(workout.globalId)
-                            }
-                        }
-
-                        if (workoutSchedules.isNotEmpty()) {
-                            Spacer(Modifier.height(Spacing.md))
-                            StyledCard {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(15.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Text(
-                                        text = "Alarms",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-
-                                    workoutSchedules.forEachIndexed { index, schedule ->
-                                        ActiveScheduleCard(
-                                            schedule = schedule,
-                                            index = index,
-                                            workout = workout
-                                        )
-                                        if (index < workoutSchedules.size - 1) {
-                                            HorizontalDivider(
-                                                color = MaterialTheme.colorScheme.outlineVariant,
-                                                modifier = Modifier.padding(vertical = 5.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(Spacing.md))
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
-
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.End,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(vertical = 15.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(15.dp)
-                            ) {
-                                Checkbox(
-                                    modifier = Modifier.size(10.dp),
-                                    checked = showRest,
-                                    onCheckedChange = { showRest = it },
-                                    colors = CheckboxDefaults.colors().copy(
-                                        checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
-                                        uncheckedBorderColor = MaterialTheme.colorScheme.primary
-                                    )
-                                )
-                                Text(
-                                    text = "Show Rests",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                        }
-
-                        GenericSelectableList(
-                            it = null,
-                            items = if (!showRest) workout.workoutComponents.filter { it !is Rest } else workout.workoutComponents,
-                            selectedItems = selectedWorkoutComponents,
-                            isSelectionModeActive,
-                            onItemClick = {
-                                Log.d(TAG, "onItemClick: component=${it::class.simpleName} id=${it.id}")
-                                when (it) {
-                                    is Exercise -> {
-                                        appViewModel.setScreenData(
-                                            ScreenData.ExerciseDetail(
-                                                workout.id,
-                                                it.id
-                                            )
-                                        )
-                                    }
-
-                                    is Rest -> {
-                                        appViewModel.setScreenData(
-                                            ScreenData.EditRest(
-                                                workout.id,
-                                                it
-                                            )
-                                        )
-                                    }
-
-                                    is Superset -> {
-                                        appViewModel.setScreenData(
-                                            ScreenData.EditSuperset(
-                                                workout.id,
-                                                it.id
-                                            )
-                                        )
-                                    }
-
-                                    else -> {}
-                                }
-                            },
+                    modifier = Modifier.fillMaxSize(),
+                    pagerModifier = Modifier.fillMaxSize()
+                ) { pageIndex ->
+                    when (pageIndex) {
+                        0 -> WorkoutOverviewTab(
+                            appViewModel = appViewModel,
+                            workout = workout,
+                            hasWorkoutRecord = hasWorkoutRecord,
+                            isCheckingWorkoutRecord = isCheckingWorkoutRecord,
+                            currentSelectedWorkoutId = currentSelectedWorkoutId,
+                            showRest = showRest,
+                            onShowRestChange = { showRest = it },
+                            selectedWorkoutComponents = selectedWorkoutComponents,
+                            isSelectionModeActive = isSelectionModeActive,
                             onEnableSelection = { isSelectionModeActive = true },
                             onDisableSelection = { isSelectionModeActive = false },
-                            onSelectionChange = { newSelection ->
-                                selectedComponentIds = newSelection.map { it.id }.toSet()
+                            onSelectedComponentIdsChange = { selectedComponentIds = it },
+                            pendingComponentBringIntoViewId = pendingComponentBringIntoViewId,
+                            onPendingComponentBringIntoViewConsumed = {
+                                pendingComponentBringIntoViewId = null
                             },
-                            onOrderChange = { newWorkoutComponents ->
-                                if (!showRest) return@GenericSelectableList
-
-                                val adjustedComponents =
-                                    ensureRestSeparatedByExercises(newWorkoutComponents)
-                                val updatedWorkout =
-                                    workout.copy(workoutComponents = adjustedComponents)
+                            onRequestStartWorkout = {
+                                if (hasWorkoutRecord) {
+                                    showStartConfirmationDialog = true
+                                } else {
+                                    startWorkoutDirectly()
+                                }
+                            },
+                            onResumeWorkout = { resumeWorkoutDirectly() },
+                            onRequestDeleteInterruptedWorkout = { showDeleteDialog = true },
+                            onWorkoutComponentsReordered = { adjustedComponents ->
+                                val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                                 updateWorkoutWithHistory(updatedWorkout)
                             },
-                            itemContent = { it, onItemClick, onItemLongClick ->
-                                val bringIntoViewRequester = remember { BringIntoViewRequester() }
-                                LaunchedEffect(pendingComponentBringIntoViewId == it.id) {
-                                    if (pendingComponentBringIntoViewId == it.id) {
-                                        bringIntoViewRequester.bringIntoView()
-                                        pendingComponentBringIntoViewId = null
-                                    }
-                                }
-                                Box(
-                                    modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
-                                ) {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-                                    ) {
-                                        WorkoutComponentRenderer(
-                                            workout = workout,
-                                            workoutComponent = it,
-                                            showRest = showRest,
-                                            appViewModel = appViewModel,
-                                            titleModifier = Modifier.combinedClickable(
-                                                onClick = onItemClick,
-                                                onLongClick = onItemLongClick
-                                            )
-                                        )
-                                        // Show "Add rest" button when:
-                                        // - Current component is not a Rest
-                                        // - Not the last component in the actual workout components list
-                                        // - Next component in actual workout components list is not a Rest
-                                        if (showRest && !isSelectionModeActive && it !is Rest) {
-                                            val currentIndex = workout.workoutComponents.indexOfFirst { component -> component.id == it.id }
-                                            val isNotLast = currentIndex >= 0 && currentIndex < workout.workoutComponents.size - 1
-                                            val nextComponent = if (isNotLast && currentIndex + 1 < workout.workoutComponents.size) {
-                                                workout.workoutComponents[currentIndex + 1]
-                                            } else {
-                                                null
-                                            }
-                                            val shouldShowButton = isNotLast && nextComponent != null && nextComponent !is Rest
-                                            
-                                            if (shouldShowButton) {
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    AppPrimaryOutlinedButton(
-                                                        text = "Add Rest",
-                                                        onClick = {
-                                                            appViewModel.setScreenData(
-                                                                ScreenData.InsertRestAfter(workout.id, it.id)
-                                                            )
-                                                        }
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            isDragDisabled = true,
-                            keySelector = { component -> component.id }
+                            workoutScheduleDao = workoutScheduleDao
                         )
-                        GenericButtonWithMenu(
-                            menuItems = listOf(
-                                MenuItem("Add Exercise") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewExercise(
-                                            workout.id
-                                        )
-                                    );
-                                },
-                                MenuItem("Add Rests Between Exercises") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewRest(
-                                            workout.id,
-                                            null
-                                        )
-                                    );
-                                },
-                                MenuItem("Add Superset") {
-                                    appViewModel.setScreenData(
-                                        ScreenData.NewSuperset(
-                                            workout.id
-                                        )
-                                    );
-                                }
-                            ),
-                            content = {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "Add",
-                                    tint = MaterialTheme.colorScheme.background,
-                                )
-                            }
+                        1 -> WorkoutHistoryTab(
+                            appViewModel = appViewModel,
+                            healthConnectClient = healthConnectClient,
+                            workoutHistoryDao = workoutHistoryDao,
+                            workoutRecordDao = workoutRecordDao,
+                            workoutHistoryId = initialWorkoutHistoryId,
+                            setHistoryDao = setHistoryDao,
+                            workout = workout,
+                            onGoBack = onGoBack,
+                            onNavigateToOverview = { selectedTopTab = 0 }
                         )
                     }
                 }
