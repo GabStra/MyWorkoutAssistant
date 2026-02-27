@@ -1,12 +1,15 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontWeight
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 
 @Composable
@@ -28,16 +31,24 @@ fun <T> GenericDropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false }
         ) {
-            items.forEach { item ->
+            items.forEachIndexed { index, item ->
                 AppDropdownMenuItem(
                     text = {
-                        Text(itemLabel(item))
+                        Text(
+                            text = itemLabel(item),
+                            fontWeight = FontWeight.Normal
+                        )
                     },
                     onClick = {
                         onItemSelected(item)
                         showMenu = false
                     }
                 )
+                if (index < items.lastIndex) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                    )
+                }
             }
         }
     }

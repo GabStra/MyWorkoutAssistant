@@ -54,106 +54,112 @@ fun WorkoutsMenu(
             .padding(vertical = 8.dp)
     ) {
         MenuSectionHeader("Settings", showDivider = false)
-        AppDropdownMenuItem(
-            text = { Text("Settings") },
+        WorkoutsMenuItem(
+            label = "Settings",
             onClick = {
                 onOpenSettingsClick()
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
 
         MenuSectionHeader("Sync")
-        AppDropdownMenuItem(
-            text = { Text("Sync with Watch") },
+        WorkoutsMenuItem(
+            label = "Sync with Watch",
             onClick = {
                 onSyncClick()
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Sync with Health Connect") },
+        WorkoutsMenuItem(
+            label = "Sync with Health Connect",
             onClick = {
                 onSyncWithHealthConnectClick()
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
 
         MenuSectionHeader("Export")
-        AppDropdownMenuItem(
-            text = { Text("Export Workouts") },
+        WorkoutsMenuItem(
+            label = "Export Workouts",
             onClick = {
                 onExportWorkouts()
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Export Workout Plan (Markdown)") },
+        WorkoutsMenuItem(
+            label = "Export Workout Plan (Markdown)",
             onClick = {
                 onExportWorkoutPlan()
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Export Equipment (JSON)") },
+        WorkoutsMenuItem(
+            label = "Export Equipment (JSON)",
             onClick = {
                 onExportEquipment()
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
 
         MenuSectionHeader("Data")
-        AppDropdownMenuItem(
-            text = { Text("Save Backup") },
+        WorkoutsMenuItem(
+            label = "Save Backup",
             onClick = {
                 onBackupClick()
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Restore Backup") },
+        WorkoutsMenuItem(
+            label = "Restore Backup",
             onClick = {
                 onRestoreClick()
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Import Workout Plan") },
+        WorkoutsMenuItem(
+            label = "Import Workout Plan",
             onClick = {
                 onImportWorkoutsClick()
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
 
         MenuSectionHeader("Maintenance")
-        AppDropdownMenuItem(
-            text = { Text(InterruptedWorkoutCopy.CLEAR_MENU_LABEL) },
+        WorkoutsMenuItem(
+            label = InterruptedWorkoutCopy.CLEAR_MENU_LABEL,
             onClick = {
                 showClearIncompleteDialog = true
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Clear workout history") },
+        WorkoutsMenuItem(
+            label = "Clear workout history",
             onClick = {
                 showClearHistoryDialog = true
                 onMenuItemClick()
             }
         )
-        AppDropdownMenuItem(
-            text = { Text("Clear all exercise info") },
+        WorkoutsMenuItem(
+            label = "Clear all exercise info",
             onClick = {
                 showClearExerciseInfoDialog = true
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
 
         MenuSectionHeader("Diagnostics")
-        AppDropdownMenuItem(
-            text = { Text("View Error Logs") },
+        WorkoutsMenuItem(
+            label = "View Error Logs",
             onClick = {
                 onViewErrorLogs()
                 onMenuItemClick()
-            }
+            },
+            showDivider = false
         )
     }
 
@@ -207,6 +213,28 @@ fun WorkoutsMenu(
             showClearExerciseInfoDialog = false
         }
     )
+}
+
+@Composable
+private fun WorkoutsMenuItem(
+    label: String,
+    onClick: () -> Unit,
+    showDivider: Boolean = true
+) {
+    AppDropdownMenuItem(
+        text = {
+            Text(
+                text = label,
+                fontWeight = FontWeight.Normal
+            )
+        },
+        onClick = onClick
+    )
+    if (showDivider) {
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+        )
+    }
 }
 
 @Composable

@@ -1,8 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.Spacing
 
@@ -69,21 +70,20 @@ fun MinMaxStepperRow(
         maxText = maxValue.toString()
     }
 
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
         // Min column
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 text = minLabel,
                 style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.width(32.dp)
+                modifier = Modifier.width(28.dp)
             )
             IconButton(
                 onClick = {
@@ -116,6 +116,7 @@ fun MinMaxStepperRow(
                     }
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.End),
                 modifier = Modifier.weight(1f)
             )
             IconButton(
@@ -135,18 +136,16 @@ fun MinMaxStepperRow(
             }
         }
 
-        Spacer(Modifier.width(Spacing.sm))
-
         // Max column
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 text = maxLabel,
                 style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.width(32.dp)
+                modifier = Modifier.width(28.dp)
             )
             IconButton(
                 onClick = {
@@ -179,6 +178,7 @@ fun MinMaxStepperRow(
                     }
                 },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.End),
                 modifier = Modifier.weight(1f)
             )
             IconButton(
@@ -196,6 +196,77 @@ fun MinMaxStepperRow(
                     contentDescription = "Increase $maxLabel"
                 )
             }
+        }
+    }
+}
+
+/**
+ * Reusable single numeric field with decrement/increment stepper buttons.
+ * Enforces [minBound]..[maxBound].
+ */
+@Composable
+fun SingleValueStepperRow(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    minBound: Int,
+    maxBound: Int,
+    step: Int = 1,
+    modifier: Modifier = Modifier
+) {
+    fun clamp(newValue: Int): Int = newValue.coerceIn(minBound, maxBound)
+
+    var valueText by remember { mutableStateOf(value.toString()) }
+    androidx.compose.runtime.LaunchedEffect(value) {
+        valueText = value.toString()
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        IconButton(
+            onClick = {
+                val newValue = clamp(value - step)
+                onValueChange(newValue)
+                valueText = newValue.toString()
+            },
+            enabled = value > minBound
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = "Decrease value"
+            )
+        }
+        OutlinedTextField(
+            value = valueText,
+            onValueChange = { s ->
+                if (s.isEmpty() || s.all { it.isDigit() }) {
+                    valueText = s
+                    val parsed = s.toIntOrNull()
+                    if (parsed != null) {
+                        val newValue = clamp(parsed)
+                        onValueChange(newValue)
+                        valueText = newValue.toString()
+                    }
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.End),
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(
+            onClick = {
+                val newValue = clamp(value + step)
+                onValueChange(newValue)
+                valueText = newValue.toString()
+            },
+            enabled = value < maxBound
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowUp,
+                contentDescription = "Increase value"
+            )
         }
     }
 }

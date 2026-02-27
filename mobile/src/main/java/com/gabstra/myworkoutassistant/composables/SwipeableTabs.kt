@@ -21,6 +21,35 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import kotlin.math.abs
 
+fun Modifier.swipeToAdjacentTab(
+    selectedTabIndex: Int,
+    tabCount: Int,
+    onTabSelected: (Int) -> Unit
+): Modifier {
+    if (tabCount <= 1) return this
+
+    return this.pointerInput(selectedTabIndex, tabCount) {
+        var dragTotal = 0f
+        detectHorizontalDragGestures(
+            onHorizontalDrag = { _, dragAmount ->
+                dragTotal += dragAmount
+            },
+            onDragEnd = {
+                val swipeThresholdPx = 48f
+                if (abs(dragTotal) >= swipeThresholdPx) {
+                    val direction = if (dragTotal < 0f) 1 else -1
+                    val targetIndex = (selectedTabIndex + direction).coerceIn(0, tabCount - 1)
+                    if (targetIndex != selectedTabIndex) {
+                        onTabSelected(targetIndex)
+                    }
+                }
+                dragTotal = 0f
+            },
+            onDragCancel = { dragTotal = 0f }
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SwipeableTabs(
@@ -74,27 +103,11 @@ fun SwipeableTabs(
                 if (renderPager) {
                     Modifier
                 } else {
-                    Modifier.pointerInput(clampedSelectedIndex, tabTitles.size) {
-                        var dragTotal = 0f
-                        detectHorizontalDragGestures(
-                            onHorizontalDrag = { _, dragAmount ->
-                                dragTotal += dragAmount
-                            },
-                            onDragEnd = {
-                                val swipeThresholdPx = 48f
-                                if (abs(dragTotal) >= swipeThresholdPx) {
-                                    val direction = if (dragTotal < 0f) 1 else -1
-                                    val targetIndex =
-                                        (clampedSelectedIndex + direction).coerceIn(0, tabTitles.lastIndex)
-                                    if (targetIndex != clampedSelectedIndex) {
-                                        onTabSelected(targetIndex)
-                                    }
-                                }
-                                dragTotal = 0f
-                            },
-                            onDragCancel = { dragTotal = 0f }
-                        )
-                    }
+                    Modifier.swipeToAdjacentTab(
+                        selectedTabIndex = clampedSelectedIndex,
+                        tabCount = tabTitles.size,
+                        onTabSelected = onTabSelected
+                    )
                 }
             ),
             containerColor = containerColor,

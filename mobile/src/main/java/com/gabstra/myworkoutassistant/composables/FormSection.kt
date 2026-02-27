@@ -111,9 +111,9 @@ fun CollapsibleSection(
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Start
                     )
-                    if (summary.isNotBlank()) {
+                    if (!expanded && summary.isNotBlank()) {
+                        Spacer(Modifier.height(Spacing.xs))
                         Text(
-                            modifier = Modifier.alpha(if(expanded) 0f else 1f),
                             text = summary,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant

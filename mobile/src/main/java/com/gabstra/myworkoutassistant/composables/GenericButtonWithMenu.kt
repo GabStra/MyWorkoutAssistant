@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -15,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -46,8 +48,6 @@ fun GenericButtonWithMenu(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
         Box {
@@ -68,14 +68,24 @@ fun GenericButtonWithMenu(
                 ) {
                     MenuSurface {
                         Column {
-                            menuItems.forEach { item ->
+                            menuItems.forEachIndexed { index, item ->
                                 AppDropdownMenuItem(
                                     onClick = {
                                         item.onClick()
                                         expanded = false
                                     },
-                                    text = { Text(item.label) }
+                                    text = {
+                                        Text(
+                                            text = item.label,
+                                            fontWeight = FontWeight.Normal
+                                        )
+                                    }
                                 )
+                                if (index < menuItems.lastIndex) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                                    )
+                                }
                             }
                         }
                     }
