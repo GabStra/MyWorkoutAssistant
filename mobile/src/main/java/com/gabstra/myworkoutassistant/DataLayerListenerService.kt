@@ -55,6 +55,7 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.UUID
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -492,6 +493,58 @@ class DataLayerListenerService : WearableListenerService() {
                             }
                         } else {
                             Log.w("DataLayerSync", "Received SYNC_REQUEST without transactionId")
+                        }
+                    }
+                    DataLayerPaths.matchesPrefix(path, DataLayerPaths.WORKOUT_HISTORY_DISCARD_PREFIX) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val transactionId = DataLayerPaths.parseTransactionId(
+                            path,
+                            DataLayerPaths.WORKOUT_HISTORY_DISCARD_PREFIX
+                        ) ?: dataMap.getString("transactionId")
+                        val workoutIdRaw = dataMap.getString("workoutId")
+                        val workoutHistoryIdRaw = dataMap.getString("workoutHistoryId")
+
+                        if (workoutIdRaw.isNullOrBlank() || workoutHistoryIdRaw.isNullOrBlank()) {
+                            Log.w(
+                                "WorkoutSync",
+                                "Discard event missing ids tx=$transactionId workoutId=$workoutIdRaw workoutHistoryId=$workoutHistoryIdRaw"
+                            )
+                            return@forEach
+                        }
+
+                        val workoutId = runCatching { UUID.fromString(workoutIdRaw) }.getOrNull()
+                        val workoutHistoryId = runCatching { UUID.fromString(workoutHistoryIdRaw) }.getOrNull()
+                        if (workoutId == null || workoutHistoryId == null) {
+                            Log.w(
+                                "WorkoutSync",
+                                "Discard event has invalid UUID tx=$transactionId workoutId=$workoutIdRaw workoutHistoryId=$workoutHistoryIdRaw"
+                            )
+                            return@forEach
+                        }
+
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                withContext(NonCancellable) {
+                                    setHistoryDao.deleteByWorkoutHistoryId(workoutHistoryId)
+                                    workoutRecordDao.deleteByWorkoutId(workoutId)
+                                    workoutHistoryDao.deleteById(workoutHistoryId)
+                                }
+                                val intent = Intent(INTENT_ID).apply {
+                                    putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+                                    setPackage(packageName)
+                                }
+                                sendBroadcast(intent)
+                                Log.d(
+                                    "WorkoutSync",
+                                    "Applied workout discard tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+                                )
+                            }.onFailure { exception ->
+                                Log.e(
+                                    "WorkoutSync",
+                                    "Failed applying workout discard tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId",
+                                    exception
+                                )
+                            }
                         }
                     }
 

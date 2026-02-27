@@ -1575,6 +1575,7 @@ fun MyWorkoutAssistantNavHost(
                         key(screenData.workoutId) {
                             WorkoutDetailScreen(
                                 appViewModel,
+                                healthConnectClient,
                                 workoutViewModel,
                                 workoutHistoryDao,
                                 workoutRecordDao,
@@ -1594,14 +1595,18 @@ fun MyWorkoutAssistantNavHost(
                         val workouts by appViewModel.workoutsFlow.collectAsState()
                         val selectedWorkout = workouts.find { it.id == screenData.workoutId }!!
 
-                        WorkoutHistoryScreen(
-                            appViewModel,
-                            healthConnectClient,
-                            workoutHistoryDao,
-                            workoutRecordDao,
-                            screenData.workoutHistoryId,
-                            setHistoryDao,
-                            selectedWorkout,
+                        WorkoutDetailScreen(
+                            appViewModel = appViewModel,
+                            healthConnectClient = healthConnectClient,
+                            workoutViewModel = workoutViewModel,
+                            workoutHistoryDao = workoutHistoryDao,
+                            workoutRecordDao = workoutRecordDao,
+                            setHistoryDao = setHistoryDao,
+                            exerciseInfoDao = exerciseInfoDao,
+                            workoutScheduleDao = workoutScheduleDao,
+                            workout = selectedWorkout,
+                            initialSelectedTabIndex = 1,
+                            initialWorkoutHistoryId = screenData.workoutHistoryId
                         ) {
                             appViewModel.goBack()
                         }
@@ -1649,7 +1654,7 @@ fun MyWorkoutAssistantNavHost(
                                     selectedWorkout,
                                     workoutHistoryDao,
                                     setHistoryDao,
-                                    selectedExercise
+                                    selectedExercise,
                                 ) {
                                     appViewModel.goBack()
                                 }
@@ -1694,13 +1699,14 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 }
                             } else {
-                                ExerciseHistoryScreen(
-                                    appViewModel,
-                                    selectedWorkout,
-                                    workoutHistoryDao,
-                                    setHistoryDao,
-                                    selectedExercise,
-                                    screenData.selectedTabIndex
+                                ExerciseDetailScreen(
+                                    appViewModel = appViewModel,
+                                    workout = selectedWorkout,
+                                    workoutHistoryDao = workoutHistoryDao,
+                                    setHistoryDao = setHistoryDao,
+                                    exercise = selectedExercise,
+                                    initialSelectedTabIndex = 1,
+                                    initialHistoryMode = screenData.selectedTabIndex
                                 ) {
                                     appViewModel.goBack()
                                 }

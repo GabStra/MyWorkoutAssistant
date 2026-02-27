@@ -38,6 +38,9 @@
                 <data android:pathPrefix="/workoutHistory/chunk"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
+                <data android:pathPrefix="/workoutHistory/discard"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
                 <data android:pathPrefix="/openPagePath"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
