@@ -82,6 +82,29 @@ class WearWorkoutDriver(
         return null
     }
 
+    /**
+     * Scrolls within a specific container until the selector is found.
+     * Use when the default scrollable (e.g. horizontal pager) would scroll the wrong element.
+     */
+    fun scrollUntilFoundWithin(
+        containerSelector: BySelector,
+        selector: BySelector,
+        direction: Direction,
+        initialWaitMs: Long = 1_000
+    ): UiObject2? {
+        device.wait(Until.findObject(selector), initialWaitMs)?.let { return it }
+
+        val container = device.findObject(containerSelector) ?: return null
+        val scrollable = container.findObject(By.scrollable(true)) ?: return null
+        return runCatching {
+            scrollable.scrollUntil(direction, Until.findObject(selector))
+        }.getOrNull()
+    }
+
+    /**
+     * Swipes the horizontal pager to change pages.
+     * On Wear, Direction.LEFT advances to the next page (swipe left = content moves left = next).
+     */
     fun navigateToPagerPage(direction: Direction) {
         val width = device.displayWidth
         val height = device.displayHeight
@@ -97,6 +120,52 @@ class WearWorkoutDriver(
             device.swipe(startX, swipeY, endX, swipeY, 5)
         }
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    /**
+     * Navigates to the Exercises page (PageExercises) by swiping left until it is visible.
+     * Works from RestScreen or ExerciseScreen where the pager includes an exercises tab.
+     *
+     * @param maxSwipes Maximum number of swipes to attempt
+     * @return true if the exercises page became visible, false otherwise
+     */
+    fun navigateToExercisesPage(maxSwipes: Int = 4): Boolean {
+        val exercisesPageSelector = By.desc("Exercise sets viewer")
+        val setHeaderSelector = By.text("SET")
+        var swipeCount = 0
+        while (swipeCount < maxSwipes) {
+            if (device.wait(Until.hasObject(exercisesPageSelector), 1_000) ||
+                device.wait(Until.hasObject(setHeaderSelector), 500)
+            ) {
+                return true
+            }
+            navigateToPagerPage(Direction.LEFT)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            swipeCount++
+        }
+        return device.wait(Until.hasObject(exercisesPageSelector), 2_000) ||
+            device.wait(Until.hasObject(setHeaderSelector), 2_000)
+    }
+
+    /**
+     * Finds an element, scrolling in the given directions if not immediately visible.
+     * Use when content may be off-screen (e.g. in a scrollable list).
+     *
+     * @param selector Selector for the element
+     * @param initialWaitMs Time to wait before attempting scroll
+     * @param directions Directions to try scrolling (e.g. UP then DOWN)
+     * @return The found UiObject2, or null if not found
+     */
+    fun findWithScrollFallback(
+        selector: BySelector,
+        initialWaitMs: Long = 2_000,
+        directions: List<Direction> = listOf(Direction.UP, Direction.DOWN)
+    ): UiObject2? {
+        device.wait(Until.findObject(selector), initialWaitMs)?.let { return it }
+        for (direction in directions) {
+            scrollUntilFound(selector, direction, 500)?.let { return it }
+        }
+        return null
     }
 
     fun dismissResumeDialogIfPresent(timeoutMs: Long = 2_000) {
