@@ -567,7 +567,6 @@ fun PageProgressionComparison(
                     setState = previousSetStates.value[currentSetIndex],
                     index = currentSetIndex,
                     isCurrentSet = false,
-                    markAsDone = false,
                     textColor = textColor
                 )
             } else {
@@ -700,7 +699,6 @@ fun PageProgressionComparison(
                     setState = progressionSetStates[currentSetIndex],
                     index = currentSetIndex,
                     isCurrentSet = false,
-                    markAsDone = false,
                     textColor = textColor
                 )
             } else {

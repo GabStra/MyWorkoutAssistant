@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +49,8 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
+enum class ProgressState { PAST, CURRENT, FUTURE }
+
 /**
  * Display model for one row in the exercise set viewer. Each row corresponds to one state
  * from the exercise's container in the workout state machine.
@@ -71,6 +74,23 @@ internal fun buildExerciseSetDisplayRows(
     exerciseId: UUID,
 ): List<ExerciseSetDisplayRow> {
     return viewModel.getStatesForExercise(exerciseId).mapNotNull { state ->
+        when (state) {
+            is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
+            is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
+            is WorkoutState.CalibrationLoadSelection ->
+                if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
+            is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
+            is WorkoutState.AutoRegulationRIRSelection -> null
+            else -> null
+        }
+    }
+}
+
+internal fun buildSupersetSetDisplayRows(
+    viewModel: AppViewModel,
+    supersetId: UUID,
+): List<ExerciseSetDisplayRow> {
+    return viewModel.getStatesForSuperset(supersetId).mapNotNull { state ->
         when (state) {
             is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
             is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
@@ -159,7 +179,6 @@ fun SetTableRow(
     sideBadge: String? = null,
     index: Int?,
     isCurrentSet: Boolean,
-    markAsDone: Boolean,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     hasUnconfirmedLoadSelectionForExercise: Boolean = false,
 ){
@@ -184,14 +203,23 @@ fun SetTableRow(
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val setDisplayText = when {
+                !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
+                !setIdentifier.isNullOrBlank() -> setIdentifier!!
+                !sideBadge.isNullOrBlank() -> sideBadge
+                else -> ""
+            }
             ScalableFadingText(
-                modifier = Modifier.weight(1f),
-                text = when {
-                    !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
-                    !setIdentifier.isNullOrBlank() -> setIdentifier
-                    !sideBadge.isNullOrBlank() -> sideBadge
-                    else -> ""
-                },
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (!setIdentifier.isNullOrBlank()) {
+                            Modifier.semantics(mergeDescendants = false) {
+                                contentDescription = setIdentifier
+                            }
+                        } else Modifier
+                    ),
+                text = setDisplayText,
                 style = itemStyle,
                 textAlign = TextAlign.Center,
                 color = textColor
@@ -311,18 +339,6 @@ fun SetTableRow(
                 else -> throw RuntimeException("Unsupported set type")
             }
         }
-
-        if(markAsDone){
-            Spacer(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.5.dp)
-                    .height(2.dp)
-                    .background(textColor)
-                    .clip(RoundedCornerShape(50))
-            )
-        }
     }
 }
 
@@ -355,30 +371,34 @@ fun ExerciseSetsViewer(
     hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
-    customMarkAsDone: Boolean? = null,
-    customBorderColor: Color? = null,
+    progressState: ProgressState = ProgressState.CURRENT,
     customBackgroundColor: Color? = null,
-    customTextColor: Color? = null,
     overrideSetIndex: Int? = null,
     currentWorkoutStateOverride: WorkoutState? = null,
 ){
-    val displayRows = buildExerciseSetDisplayRows(
-        viewModel = viewModel,
-        exerciseId = exercise.id
-    )
+    val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
+    val displayRows = if (supersetId != null) {
+        buildSupersetSetDisplayRows(viewModel = viewModel, supersetId = supersetId)
+    } else {
+        buildExerciseSetDisplayRows(viewModel = viewModel, exerciseId = exercise.id)
+    }
 
     val currentWorkoutState by viewModel.workoutState.collectAsState()
-    val hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
-        allWorkoutStates = viewModel.allWorkoutStates,
-        exerciseId = exercise.id
-    )
 
     val stateToMatch = currentWorkoutStateOverride ?: currentWorkoutState
-    val setIndex = overrideSetIndex ?: findDisplayRowIndex(
-        displayRows = displayRows,
-        stateToMatch = stateToMatch,
-        fallbackSetId = currentSet.id
-    )
+    val setIndex = if (supersetId != null) {
+        findDisplayRowIndex(
+            displayRows = displayRows,
+            stateToMatch = stateToMatch,
+            fallbackSetId = currentSet.id
+        )
+    } else {
+        overrideSetIndex ?: findDisplayRowIndex(
+            displayRows = displayRows,
+            stateToMatch = stateToMatch,
+            fallbackSetId = currentSet.id
+        )
+    }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
@@ -404,13 +424,15 @@ fun ExerciseSetsViewer(
         rowIndex to sideBadge
     }.toMap()
 
-    // Reset scroll position immediately when exercise changes
-    LaunchedEffect(exercise.id) {
+    val scrollKey = if (supersetId != null) supersetId else exercise.id
+
+    // Reset scroll position immediately when exercise/superset changes
+    LaunchedEffect(scrollKey) {
         scrollState.animateScrollTo(0)
     }
 
     // Scroll to current set when it changes
-    LaunchedEffect(setIndex, exercise.id) {
+    LaunchedEffect(setIndex, scrollKey) {
         if (setIndex in displayRows.indices) {
             val scrollPosition = with(density) { (setIndex * itemHeightDp.toPx()).toInt() }
             scrollState.animateScrollTo(scrollPosition)
@@ -428,20 +450,32 @@ fun ExerciseSetsViewer(
             is ExerciseSetDisplayRow.SetRow -> CalibrationHelper.isWarmupSet(displayRow.state.set)
             else -> false
         }
-        val borderColor = when {
-            customBorderColor != null -> customBorderColor
-            rowIndex == setIndex -> Orange
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        val borderColor = when (progressState) {
+            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+            ProgressState.CURRENT -> when {
+                rowIndex == setIndex -> Orange
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
         val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background
 
-        val textColor = when {
-            customTextColor != null -> customTextColor
-            rowIndex == setIndex -> Orange
-            rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        val textColor = when (progressState) {
+            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+            ProgressState.CURRENT -> when {
+                rowIndex == setIndex -> Orange
+                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+
+        val markAsDone = when (progressState) {
+            ProgressState.PAST -> true
+            ProgressState.CURRENT -> rowIndex < setIndex
+            ProgressState.FUTURE -> false
         }
 
         Row(
@@ -479,15 +513,17 @@ fun ExerciseSetsViewer(
                     setState = displayRow.state,
                     setIdentifier = buildSetIdentifier(
                         viewModel = viewModel,
-                        exerciseId = exercise.id,
+                        exerciseId = displayRow.state.exerciseId,
                         setState = displayRow.state
                     ),
                     sideBadge = unilateralSideBadgeByRowIndex[rowIndex],
                     index = rowIndex,
                     isCurrentSet = rowIndex == setIndex,
-                    markAsDone = customMarkAsDone ?: (rowIndex < setIndex),
                     textColor = textColor,
-                    hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
+                    hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+                        allWorkoutStates = viewModel.allWorkoutStates,
+                        exerciseId = displayRow.state.exerciseId
+                    )
                 )
                 is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
                     modifier = rowModifier,
@@ -515,11 +551,18 @@ fun ExerciseSetsViewer(
         }
     }
 
+    val hasWeightRows = displayRows.any { row ->
+        (row as? ExerciseSetDisplayRow.SetRow)?.state?.currentSetData?.let { data ->
+            data is WeightSetData || data is BodyWeightSetData
+        } ?: false
+    }
+    val useWeightHeader = if (supersetId != null) hasWeightRows else (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+
     Column(
-        modifier = modifier,
+        modifier = modifier.semantics { contentDescription = "Exercise sets viewer" },
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        if (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+        if (useWeightHeader) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

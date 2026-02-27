@@ -56,12 +56,6 @@ fun CalibrationRIRScreen(
         viewModel.exercisesById[state.exerciseId]!!
     }
 
-    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
-        viewModel.setsByExerciseId.keys.toList()
-            .mapNotNull { if (viewModel.supersetIdByExerciseId.containsKey(it)) viewModel.supersetIdByExerciseId[it] else it }
-            .distinct()
-    }
-
     var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
 
     val pageTypes = remember {
@@ -210,7 +204,6 @@ fun CalibrationRIRScreen(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
                                     currentExercise = exercise,
-                                    exerciseOrSupersetIds = exerciseOrSupersetIds,
                                     onExerciseSelected = {
                                         selectedExercise = it
                                     }

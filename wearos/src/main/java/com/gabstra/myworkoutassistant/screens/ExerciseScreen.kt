@@ -212,17 +212,6 @@ fun ExerciseScreen(
         }
     }
 
-    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
-        viewModel.setsByExerciseId.keys.toList()
-            .mapNotNull {
-                if (viewModel.supersetIdByExerciseId.containsKey(it)) {
-                    viewModel.supersetIdByExerciseId[it]
-                } else {
-                    it
-                }
-            }
-            .distinct()
-    }
     val exerciseOrSupersetId = remember(state.exerciseId) {
         viewModel.supersetIdByExerciseId[state.exerciseId] ?: state.exerciseId
     }
@@ -382,7 +371,6 @@ fun ExerciseScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 currentExercise = exercise,
-                                exerciseOrSupersetIds = exerciseOrSupersetIds,
                                 onExerciseSelected = { selectedExercise = it }
                             )
                         }

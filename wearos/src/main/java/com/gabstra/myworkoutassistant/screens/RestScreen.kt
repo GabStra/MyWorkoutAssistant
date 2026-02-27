@@ -406,17 +406,6 @@ fun RestScreen(
         pageCount = { horizontalPageTypes.size }
     )
     var selectedExercise by remember(exerciseForPages.id) { mutableStateOf(exerciseForPages) }
-    val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
-        viewModel.setsByExerciseId.keys.toList()
-            .mapNotNull {
-                if (viewModel.supersetIdByExerciseId.containsKey(it)) {
-                    viewModel.supersetIdByExerciseId[it]
-                } else {
-                    it
-                }
-            }
-            .distinct()
-    }
     val setStateForPages = remember(state.nextState) {
         (state.nextState as? WorkoutState.Set) ?: viewModel.getFirstSetStateAfterCurrent()
     }
@@ -576,7 +565,6 @@ fun RestScreen(
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 currentExercise = exerciseForPages,
-                                exerciseOrSupersetIds = exerciseOrSupersetIds,
                                 onExerciseSelected = { selectedExercise = it }
                             )
                         }
