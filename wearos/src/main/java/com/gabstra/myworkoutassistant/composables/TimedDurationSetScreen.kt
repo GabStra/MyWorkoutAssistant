@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -103,6 +104,7 @@ fun TimedDurationSetScreen(
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? TimedDurationSetData)?.startTimer
     }
+    val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var currentSet by remember(set.id) {
         val setData = state.currentSetData as? TimedDurationSetData
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
@@ -331,7 +333,7 @@ fun TimedDurationSetScreen(
     @Composable
     fun TimedDurationRunningDisplay(initialMillis: Int) {
         val setData = state.currentSetData as? TimedDurationSetData
-        val displayMillis = setData?.endTimer ?: initialMillis
+        val displayMillis = timerUiState?.displayMillis ?: setData?.endTimer ?: initialMillis
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

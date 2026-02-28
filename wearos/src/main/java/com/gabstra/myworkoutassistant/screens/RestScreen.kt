@@ -94,6 +94,7 @@ private fun RestTimerBlock(
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.endTimer) }
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
+    val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -154,6 +155,9 @@ private fun RestTimerBlock(
         isTimerInEditMode = enabled
         if (enabled) {
             wasTimerRunningBeforeEditMode = viewModel.workoutTimerService.isTimerRegistered(set.id)
+            val syncedSeconds = timerUiState?.displaySeconds ?: currentSetData.endTimer
+            currentSeconds = syncedSeconds.coerceAtLeast(0)
+            amountToWait = currentSetData.startTimer
             currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
             state.currentSetData = currentSetData
             unregisterRestTimer()
@@ -231,7 +235,7 @@ private fun RestTimerBlock(
                     },
                     onDoubleClick = {}
                 ),
-                seconds = seconds,
+                seconds = if (isTimerInEditMode) seconds else (timerUiState?.displaySeconds ?: seconds),
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
             )

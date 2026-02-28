@@ -36,7 +36,8 @@ fun CurrentTime() {
             }
             currentTime = LocalDateTime.now()
             showDots = !showDots
-            delay(Duration.between(now, nextHalfSecond).toMillis())
+            val delayMs = Duration.between(now, nextHalfSecond).toMillis().coerceAtLeast(1L)
+            delay(delayMs)
         }
     }
 
@@ -64,5 +65,4 @@ fun CurrentTime() {
         textAlign = TextAlign.Center
     )
 }
-
 

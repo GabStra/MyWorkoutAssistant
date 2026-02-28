@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -104,6 +105,7 @@ fun EnduranceSetScreen (
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? EnduranceSetData)?.startTimer
     }
+    val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var currentSet by remember(set.id) {
         val setData = state.currentSetData as? EnduranceSetData
         mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
@@ -269,7 +271,7 @@ fun EnduranceSetScreen (
     @Composable
     fun EnduranceRunningDisplay(initialMillis: Int) {
         val setData = state.currentSetData as? EnduranceSetData
-        val displayMillis = setData?.endTimer ?: initialMillis
+        val displayMillis = timerUiState?.displayMillis ?: setData?.endTimer ?: initialMillis
         val overLimit = setData != null && displayMillis >= setData.startTimer && !set.autoStop
         Row(
             modifier = Modifier.fillMaxWidth(),

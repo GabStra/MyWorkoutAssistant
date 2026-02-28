@@ -14,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -32,6 +31,8 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDateTime
@@ -53,39 +54,35 @@ fun WorkoutStateHeader(
     val showRestTimerInHeader = restState != null && !screenState.isRestTimerPageVisible
     val restSetData = restState?.currentSetData as? RestSetData
     var duration by remember { mutableStateOf(Duration.ZERO) }
-    var restTimerSeconds by remember(restState?.set?.id) {
-        mutableIntStateOf(restSetData?.endTimer ?: 0)
+    var restTimerUiState by remember(restState?.set?.id) {
+        mutableStateOf<WorkoutTimerService.TimerUiState?>(null)
     }
 
-    if(displayMode == 1 && startWorkoutTime != null){
-        LaunchedEffect(Unit) {
+    LaunchedEffect(restState?.set?.id) {
+        restTimerUiState = null
+    }
+    LaunchedEffect(showRestTimerInHeader, restState?.set?.id) {
+        if (!showRestTimerInHeader) return@LaunchedEffect
+        val activeRestState = restState ?: return@LaunchedEffect
+        viewModel.workoutTimerService.timerUiState(activeRestState.set.id).collect { latest ->
+            restTimerUiState = latest
+        }
+    }
+
+    if (displayMode == 1 && startWorkoutTime != null) {
+        LaunchedEffect(displayMode, startWorkoutTime) {
             while (true) {
                 val now = LocalDateTime.now()
                 duration = Duration.between(startWorkoutTime,now)
                 val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-                delay(Duration.between(now, nextSecond).toMillis())
+                val delayMs = Duration.between(now, nextSecond).toMillis().coerceAtLeast(1L)
+                delay(delayMs)
             }
-        }
-    }
-    LaunchedEffect(showRestTimerInHeader, restState?.set?.id, restState?.startTime, restSetData?.startTimer, restSetData?.endTimer) {
-        if (!showRestTimerInHeader) return@LaunchedEffect
-        val activeRestState = restState ?: return@LaunchedEffect
-
-        while (true) {
-            val latestSetData = activeRestState.currentSetData as? RestSetData ?: break
-            val seconds = activeRestState.startTime?.let { startTime ->
-                val elapsed = Duration.between(startTime, LocalDateTime.now()).seconds.toInt().coerceAtLeast(0)
-                (latestSetData.startTimer - elapsed).coerceAtLeast(0)
-            } ?: latestSetData.endTimer.coerceAtLeast(0)
-            restTimerSeconds = seconds
-
-            val now = LocalDateTime.now()
-            val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-            delay(Duration.between(now, nextSecond).toMillis())
         }
     }
 
     val interactionSource = remember { MutableInteractionSource() }
+    val restTimerSeconds = restTimerUiState?.displaySeconds ?: restSetData?.endTimer ?: 0
 
     Row(
         modifier = modifier
