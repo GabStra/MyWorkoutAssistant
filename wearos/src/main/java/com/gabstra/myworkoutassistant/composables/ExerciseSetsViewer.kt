@@ -110,6 +110,41 @@ internal fun ExerciseSetDisplayRow.setLikeIdOrNull(): UUID? = when (this) {
     is ExerciseSetDisplayRow.CalibrationRIRRow -> state.calibrationSet.id
 }
 
+private data class DisplayRowIdentity(
+    val exerciseId: UUID?,
+    val setId: UUID?,
+    val order: UInt?
+)
+
+private fun WorkoutState.displayRowIdentityOrNull(): DisplayRowIdentity? = when (this) {
+    is WorkoutState.Set -> DisplayRowIdentity(
+        exerciseId = exerciseId,
+        setId = set.id,
+        order = setIndex
+    )
+    is WorkoutState.Rest -> DisplayRowIdentity(
+        exerciseId = exerciseId,
+        setId = set.id,
+        order = order
+    )
+    is WorkoutState.CalibrationLoadSelection -> DisplayRowIdentity(
+        exerciseId = exerciseId,
+        setId = calibrationSet.id,
+        order = setIndex
+    )
+    is WorkoutState.CalibrationRIRSelection -> DisplayRowIdentity(
+        exerciseId = exerciseId,
+        setId = calibrationSet.id,
+        order = setIndex
+    )
+    is WorkoutState.AutoRegulationRIRSelection -> DisplayRowIdentity(
+        exerciseId = exerciseId,
+        setId = workSet.id,
+        order = setIndex
+    )
+    else -> null
+}
+
 internal fun findDisplayRowIndex(
     displayRows: List<ExerciseSetDisplayRow>,
     stateToMatch: WorkoutState,
@@ -117,6 +152,14 @@ internal fun findDisplayRowIndex(
 ): Int {
     val byReference = displayRows.indexOfFirst { it.workoutState() === stateToMatch }
     if (byReference >= 0) return byReference
+
+    val targetIdentity = stateToMatch.displayRowIdentityOrNull()
+    if (targetIdentity != null) {
+        val byIdentity = displayRows.indexOfFirst { row ->
+            row.workoutState().displayRowIdentityOrNull() == targetIdentity
+        }
+        if (byIdentity >= 0) return byIdentity
+    }
 
     if (fallbackSetId != null) {
         val bySetId = displayRows.indexOfFirst { it.setLikeIdOrNull() == fallbackSetId }
@@ -373,7 +416,6 @@ fun ExerciseSetsViewer(
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
     progressState: ProgressState = ProgressState.CURRENT,
     customBackgroundColor: Color? = null,
-    overrideSetIndex: Int? = null,
     currentWorkoutStateOverride: WorkoutState? = null,
 ){
     val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
@@ -386,19 +428,11 @@ fun ExerciseSetsViewer(
     val currentWorkoutState by viewModel.workoutState.collectAsState()
 
     val stateToMatch = currentWorkoutStateOverride ?: currentWorkoutState
-    val setIndex = if (supersetId != null) {
-        findDisplayRowIndex(
-            displayRows = displayRows,
-            stateToMatch = stateToMatch,
-            fallbackSetId = currentSet.id
-        )
-    } else {
-        overrideSetIndex ?: findDisplayRowIndex(
-            displayRows = displayRows,
-            stateToMatch = stateToMatch,
-            fallbackSetId = currentSet.id
-        )
-    }
+    val setIndex = findDisplayRowIndex(
+        displayRows = displayRows,
+        stateToMatch = stateToMatch,
+        fallbackSetId = currentSet.id
+    )
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
@@ -446,6 +480,7 @@ fun ExerciseSetsViewer(
         displayRow: ExerciseSetDisplayRow,
         rowIndex: Int,
     ) {
+        val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
         val isWarmupSetRow = when (displayRow) {
             is ExerciseSetDisplayRow.SetRow -> CalibrationHelper.isWarmupSet(displayRow.state.set)
             else -> false
@@ -455,7 +490,7 @@ fun ExerciseSetsViewer(
             ProgressState.CURRENT -> when {
                 rowIndex == setIndex -> Orange
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
@@ -467,7 +502,7 @@ fun ExerciseSetsViewer(
             ProgressState.CURRENT -> when {
                 rowIndex == setIndex -> Orange
                 rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
-                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }

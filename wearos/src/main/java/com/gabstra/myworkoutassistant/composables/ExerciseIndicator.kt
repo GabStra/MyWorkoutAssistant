@@ -335,13 +335,18 @@ fun ExerciseIndicator(
                         indicatorProgress == 0.0f -> MediumDarkGray // Future exercise (not started): subtle gray
                         else -> MaterialTheme.colorScheme.primary // In progress (shouldn't happen for non-current): orange
                     }
+                    val trackColor = if (isCurrent) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    } else {
+                        MediumDarkGray
+                    }
 
                     CircularProgressIndicator(
                         progress = { indicatorProgress },
                         modifier = Modifier.fillMaxSize(),
                         colors = ProgressIndicatorDefaults.colors(
                             indicatorColor = indicatorColor,
-                            trackColor = MediumDarkGray
+                            trackColor = trackColor
                         ),
                         strokeWidth = 4.dp,
                         startAngle = startA,

@@ -89,7 +89,12 @@ private fun StatusIcon(label: String, status: Ternary, modifier: Modifier = Modi
         Ternary.BELOW -> Icons.AutoMirrored.Filled.TrendingDown to Red
         Ternary.MIXED -> Icons.Filled.SwapVert to MaterialTheme.colorScheme.tertiary
     }
-    Icon(modifier = modifier, imageVector = icon, contentDescription = label, tint = tint)
+    Icon(
+        modifier = modifier,
+        imageVector = icon,
+        contentDescription = "$label:$status",
+        tint = tint
+    )
 }
 
 @SuppressLint("DefaultLocale")

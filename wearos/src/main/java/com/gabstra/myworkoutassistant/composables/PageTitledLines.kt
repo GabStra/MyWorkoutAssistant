@@ -6,22 +6,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.lazy.rememberTransformationSpec
-import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
@@ -65,8 +63,7 @@ fun PageTitledLines(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {
-    val state = rememberTransformingLazyColumnState()
-    val spec = rememberTransformationSpec()
+    val state = rememberLazyListState()
 
     ScreenScaffold(
         modifier = modifier.fillMaxSize(),
@@ -81,7 +78,7 @@ fun PageTitledLines(
             )
         }
     ) { _ ->
-        TransformingLazyColumn(
+        LazyColumn(
             modifier = Modifier.padding(horizontal = 10.dp),
             state = state,
             verticalArrangement = Arrangement.spacedBy(
@@ -89,20 +86,11 @@ fun PageTitledLines(
                 alignment = Alignment.Top
             ),
         ) {
-            sections.forEach { section ->
-                item{
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, spec)
-                            .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                    ) {
-                        TitledLinesSectionItem(
-                            section = section,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
+            items(items = sections) { section ->
+                TitledLinesSectionItem(
+                    section = section,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

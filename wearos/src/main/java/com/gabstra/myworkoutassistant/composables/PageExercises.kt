@@ -78,13 +78,6 @@ fun PageExercises(
         }
     }
 
-    val overrideSetIndex = remember(isSuperset, currentExercise, workoutState, viewModel.allWorkoutStates.size) {
-        if (!isSuperset && workoutState is WorkoutState.Set) {
-            viewModel.setsByExerciseId[currentExercise.id]!!.map { it.set.id }
-                .indexOf(workoutState.set.id)
-        } else null
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         val selectedExerciseOrSupersetId = remember(selectedExercise) {
             resolveExerciseOrSupersetId(viewModel, selectedExercise.id)
@@ -185,7 +178,6 @@ fun PageExercises(
                     exercise = selectedExercise,
                     currentSet = currentSet,
                     progressState = progressState,
-                    overrideSetIndex = if (isSelectedCurrentContainer) overrideSetIndex else -1,
                     currentWorkoutStateOverride = if (isSelectedCurrentContainer) workoutState else null
                 )
             }
