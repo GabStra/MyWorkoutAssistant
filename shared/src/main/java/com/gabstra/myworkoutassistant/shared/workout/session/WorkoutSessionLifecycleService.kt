@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
@@ -50,7 +51,10 @@ internal class WorkoutSessionLifecycleService(
     suspend fun loadWorkoutHistory(workout: Workout): LoadedWorkoutHistory {
         val workoutHistories = workoutHistoryDao()
             .getAllWorkoutHistories()
-            .filter { it.globalId == workout.globalId && it.isDone }
+            .filter {
+                it.isDone &&
+                    it.globalId == workout.globalId
+            }
             .sortedWith(compareByDescending<WorkoutHistory> { it.date }.thenByDescending { it.time })
 
         val latestByExerciseId = mutableMapOf<UUID, List<SetHistory>>()
@@ -58,28 +62,47 @@ internal class WorkoutSessionLifecycleService(
         val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
 
         exercises.forEach { exercise ->
-            var workoutHistoryIndex = 0
-            val setHistoriesFound = mutableListOf<SetHistory>()
+            val expectedSetIds = exercise.sets
+                .filterNot { it is RestSet }
+                .map { it.id }
+                .toSet()
 
-            while (workoutHistoryIndex < workoutHistories.size) {
+            var fallbackSetHistories: List<SetHistory> = emptyList()
+            var fallbackCoverage = 0
+            var selectedSetHistories: List<SetHistory> = emptyList()
+
+            for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                    workoutHistories[workoutHistoryIndex].id,
+                    workoutHistory.id,
                     exercise.id
                 )
-                setHistoriesFound.clear()
-                setHistoriesFound.addAll(sanitizeRestPlacementInSetHistories(setHistories.sortedBy { it.order }))
+                if (setHistories.isEmpty()) continue
 
-                if (setHistories.isNotEmpty()) {
+                val sanitized = sanitizeRestPlacementInSetHistories(setHistories.sortedBy { it.order })
+                val bySetId = sanitized.distinctBy { it.setId }
+                val coveredSetIds = bySetId.map { it.setId }.toSet()
+                val coverage = coveredSetIds.size
+
+                if (coverage > fallbackCoverage) {
+                    fallbackCoverage = coverage
+                    fallbackSetHistories = sanitized
+                }
+
+                if (expectedSetIds.isNotEmpty() && expectedSetIds.all { it in coveredSetIds }) {
+                    selectedSetHistories = sanitized
                     break
                 }
-                workoutHistoryIndex++
             }
 
-            for (setHistoryFound in setHistoriesFound) {
+            if (selectedSetHistories.isEmpty()) {
+                selectedSetHistories = fallbackSetHistories
+            }
+
+            for (setHistoryFound in selectedSetHistories) {
                 latestByExerciseAndSet[exercise.id to setHistoryFound.setId] = setHistoryFound
             }
 
-            latestByExerciseId[exercise.id] = setHistoriesFound.distinctBy { it.setId }.toList()
+            latestByExerciseId[exercise.id] = selectedSetHistories.distinctBy { it.setId }.toList()
         }
 
         return LoadedWorkoutHistory(
