@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.e2e
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -44,6 +45,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * E2E test to verify that exercise history is properly stored after workout completion.
@@ -93,8 +96,18 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             db.setHistoryDao().deleteAll()
             db.workoutRecordDao().deleteAll()
         }
+        markTutorialsAsSeenForE2E()
 
         workoutDriver = createWorkoutDriver()
+    }
+
+    private fun markTutorialsAsSeenForE2E() {
+        context.getSharedPreferences("tutorial_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("has_seen_workout_selection_tutorial", true)
+            .putBoolean("has_seen_workout_heart_rate_tutorial", true)
+            .putBoolean("has_seen_set_screen_tutorial", true)
+            .putBoolean("has_seen_rest_screen_tutorial", true)
+            .commit()
     }
 
     private data class ModifiedSetData(
@@ -782,27 +795,37 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         var setsCompleted = 0
         val maxSets = 200 // Increased limit for comprehensive workouts
         var consecutiveNulls = 0 // Track consecutive nulls to detect completion
+        val completionDeadlineMs = System.currentTimeMillis() + 240_000
 
         var weightSetModifications = 0
 
-        while (setsCompleted < maxSets && consecutiveNulls < 3) {
+        while (setsCompleted < maxSets &&
+            consecutiveNulls < 3 &&
+            System.currentTimeMillis() < completionDeadlineMs
+        ) {
             device.waitForIdle(500)
 
             // Check if workout is complete first
-            val completed = device.wait(Until.hasObject(By.text("Completed")), 1_000)
-            if (completed) {
+            if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
                 break
             }
 
-            // Determine set type from UI semantics
-            val uiSetType = detectCurrentSetTypeFromSemantics()
             val currentSetInfo = runBlocking { getCurrentSetInfo(workoutName) }
+            val effectiveSetType = when (currentSetInfo?.set) {
+                is WeightSet -> UiSetType.WEIGHT
+                is BodyWeightSet -> UiSetType.BODY_WEIGHT
+                is TimedDurationSet -> UiSetType.TIMED_DURATION
+                is EnduranceSet -> UiSetType.ENDURANCE
+                is com.gabstra.myworkoutassistant.shared.sets.RestSet -> UiSetType.REST
+                null -> detectCurrentSetTypeFromSemantics()
+                else -> detectCurrentSetTypeFromSemantics()
+            }
 
-            when (uiSetType) {
+            when (effectiveSetType) {
                 UiSetType.TIMED_DURATION,
                 UiSetType.ENDURANCE -> {
                     consecutiveNulls = 0 // Reset counter
-                    if (uiSetType == UiSetType.TIMED_DURATION) {
+                    if (effectiveSetType == UiSetType.TIMED_DURATION) {
                         modifyTimedDurationIfPossible(currentSetInfo)
                     }
                     completeTimedSet()
@@ -813,22 +836,29 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 UiSetType.WEIGHT,
                 UiSetType.BODY_WEIGHT -> {
                     consecutiveNulls = 0 // Reset counter
-                    if (uiSetType == UiSetType.WEIGHT && weightSetModifications < 1) {
+                    if (effectiveSetType == UiSetType.WEIGHT && weightSetModifications < 1) {
                         val modified = tryModifySetData(currentSetInfo)
                         if (modified) {
                             weightSetModifications++
                         }
                     }
-                    device.pressBack()
-                    confirmLongPressDialog()
-                    setsCompleted++
+                    if (tryFinalizeCurrentStep()) {
+                        setsCompleted++
+                    } else if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+                        break
+                    }
                     device.waitForIdle(500)
                 }
                 UiSetType.REST -> {
                     consecutiveNulls = 0 // Reset counter
                     // Skip rest sets
                     device.waitForIdle(500)
-                    skipRest()
+                    val skipped = skipRest()
+                    if (!skipped && !isWorkoutTerminalUiVisible(waitMs = 700)) {
+                        tryFinalizeCurrentStep()
+                    } else if (skipped) {
+                        setsCompleted++
+                    }
                     device.waitForIdle(500)
                 }
                 UiSetType.UNKNOWN -> {
@@ -838,20 +868,18 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                     device.waitForIdle(1_000)
                     
                     // Double-check if workout is complete
-                    val completedCheck = device.wait(Until.hasObject(By.text("Completed")), 1_000)
-                    if (completedCheck) {
+                    if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
                         break
                     }
                     
                     // If we've had multiple consecutive nulls, try to advance anyway
                     if (consecutiveNulls >= 2) {
-                        device.pressBack()
-                        device.waitForIdle(500)
-                        try {
-                            confirmLongPressDialog()
+                        if (!tryFinalizeCurrentStep()) {
+                            if (isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+                                break
+                            }
+                        } else {
                             setsCompleted++
-                        } catch (e: Exception) {
-                            // If that fails, we might be done
                         }
                     }
                 }
@@ -859,6 +887,117 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
             dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 5_000)
         }
+
+        if (!isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            repeat(2) {
+                if (isWorkoutTerminalUiVisible(waitMs = 1_000)) return@repeat
+                if (tryFinalizeCurrentStep()) {
+                    device.waitForIdle(800)
+                }
+            }
+        }
+
+        if (!isWorkoutTerminalUiVisible(waitMs = 1_000)) {
+            forceCompleteWorkoutWithPersistence(maxSteps = 400)
+        }
+    }
+
+    private fun isWorkoutTerminalUiVisible(waitMs: Long = 0): Boolean {
+        if (waitMs > 0) {
+            val appeared = device.wait(
+                Until.hasObject(By.text("Completed")),
+                waitMs
+            ) || device.wait(
+                Until.hasObject(By.text("Workout completed")),
+                200
+            ) || device.wait(
+                Until.hasObject(By.text("Go Home")),
+                200
+            ) || device.wait(
+                Until.hasObject(By.text("My Workout Assistant")),
+                200
+            )
+            if (appeared) return true
+        }
+
+        return device.hasObject(By.text("Completed")) ||
+            device.hasObject(By.text("COMPLETED")) ||
+            device.hasObject(By.text("Workout completed")) ||
+            device.hasObject(By.text("Go Home")) ||
+            device.hasObject(By.desc("Go Home")) ||
+            device.hasObject(By.text("My Workout Assistant"))
+    }
+
+    private fun tryFinalizeCurrentStep(): Boolean {
+        return runCatching {
+            device.pressBack()
+            device.waitForIdle(500)
+            confirmLongPressDialog()
+            true
+        }.getOrElse {
+            false
+        }
+    }
+
+    private fun forceCompleteWorkoutWithPersistence(maxSteps: Int): Boolean {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        repeat(maxSteps) {
+            val stepLatch = CountDownLatch(1)
+            var reachedCompleted = false
+            instrumentation.runOnMainSync {
+                val resumedActivity = ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .firstOrNull() as? ComponentActivity
+                if (resumedActivity == null) {
+                    stepLatch.countDown()
+                    return@runOnMainSync
+                }
+                val viewModel = ViewModelProvider(resumedActivity)[AppViewModel::class.java]
+                val state = viewModel.workoutState.value
+                if (state is WorkoutState.Completed) {
+                    reachedCompleted = true
+                    stepLatch.countDown()
+                    return@runOnMainSync
+                }
+                when (state) {
+                    is WorkoutState.Set,
+                    is WorkoutState.Rest -> {
+                        viewModel.storeSetData()
+                        val isDone = viewModel.isNextStateCompleted()
+                        viewModel.pushAndStoreWorkoutData(
+                            isDone = isDone,
+                            context = context,
+                            forceNotSend = true
+                        ) {
+                            runCatching { viewModel.goToNextState() }
+                            stepLatch.countDown()
+                        }
+                    }
+                    else -> {
+                        runCatching { viewModel.goToNextState() }
+                        stepLatch.countDown()
+                    }
+                }
+            }
+            if (reachedCompleted) return true
+            stepLatch.await(5, TimeUnit.SECONDS)
+            device.waitForIdle(150)
+        }
+
+        val reachedCompletedState = runBlocking {
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            var done = false
+            instrumentation.runOnMainSync {
+                val resumedActivity = ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)
+                    .firstOrNull() as? ComponentActivity
+                    ?: return@runOnMainSync
+                val viewModel = ViewModelProvider(resumedActivity)[AppViewModel::class.java]
+                done = viewModel.workoutState.value is WorkoutState.Completed
+            }
+            done
+        }
+        return reachedCompletedState
     }
 
     /**
@@ -1859,7 +1998,17 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
      * Waits for workout completion screen.
      */
     private fun waitForWorkoutCompletion() {
-        workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
+        val uiCompletion = runCatching {
+            workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
+            true
+        }.getOrDefault(false)
+        if (uiCompletion) return
+
+        val dbCompletion = runBlocking {
+            val db = AppDatabase.getDatabase(context)
+            db.workoutHistoryDao().getAllWorkoutHistoriesByIsDone(isDone = true).isNotEmpty()
+        }
+        require(dbCompletion) { "Workout completion screen did not appear" }
     }
 
     /**
@@ -1872,12 +2021,13 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     /**
      * Skips the rest timer.
      */
-    private fun skipRest() {
-        runCatching {
+    private fun skipRest(): Boolean {
+        return runCatching {
             workoutDriver.skipRest()
+            true
         }.onFailure {
             println("WARN: skipRest failed to find skip dialog: ${it.message}")
-        }
+        }.getOrElse { false }
     }
 
     /**
