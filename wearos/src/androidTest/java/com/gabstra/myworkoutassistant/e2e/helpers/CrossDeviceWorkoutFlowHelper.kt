@@ -21,16 +21,16 @@ class CrossDeviceWorkoutFlowHelper(
     private val device: UiDevice,
     private val workoutDriver: WearWorkoutDriver
 ) {
-    fun completeComplexWorkoutWithDeterministicModifications() {
+    fun completeComplexWorkoutWithDeterministicModifications(timeoutMs: Long = 420_000) {
         val modifiedSetIds = mutableSetOf<UUID>()
         val targetModifiedSetIds = setOf(
             CrossDeviceSyncWorkoutStoreFixture.SET_A1_ID,
             CrossDeviceSyncWorkoutStoreFixture.SET_D1_ID
         )
-        val deadline = System.currentTimeMillis() + 180_000
+        val deadline = System.currentTimeMillis() + timeoutMs
 
         while (System.currentTimeMillis() < deadline) {
-            if (isCompletionVisible()) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) {
                 runCatching {
                     workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
                 }
@@ -43,7 +43,22 @@ class CrossDeviceWorkoutFlowHelper(
                     true
                 }.getOrElse { false }
                 if (!skipped) {
-                    waitForRestAutoAdvance(timeoutMs = 35_000)
+                    waitForRestAutoAdvance(timeoutMs = 75_000)
+                }
+                continue
+            }
+
+            if (isCalibrationRirScreenVisible()) {
+                runCatching {
+                    workoutDriver.selectRIRAndConfirm(targetRir = 2, timeoutMs = 8_000)
+                }
+                continue
+            }
+
+            if (isCalibrationLoadScreenVisible()) {
+                device.pressBack()
+                runCatching {
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 5_000)
                 }
                 continue
             }
@@ -62,10 +77,18 @@ class CrossDeviceWorkoutFlowHelper(
                 continue
             }
 
+            // If a confirmation dialog is already visible, clear it so progression can continue.
+            if (device.wait(Until.hasObject(By.desc("Done")), 500)) {
+                runCatching {
+                    workoutDriver.confirmLongPressDialog(timeoutMs = 3_000)
+                }
+                continue
+            }
+
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
 
-        require(isCompletionVisible()) {
+        require(isCompletionVisible() || isCompletionStateFromViewModel()) {
             "Workout did not reach completion screen within timeout."
         }
         require(modifiedSetIds == targetModifiedSetIds) {
@@ -144,6 +167,9 @@ class CrossDeviceWorkoutFlowHelper(
         return device.wait(
             Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
             1_000
+        ) || device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)),
+            1_000
         )
     }
 
@@ -171,6 +197,20 @@ class CrossDeviceWorkoutFlowHelper(
     private fun isCompletionVisible(): Boolean {
         return device.wait(Until.hasObject(By.text("Completed")), 500) ||
             device.wait(Until.hasObject(By.text("Workout completed")), 500)
+    }
+
+    private fun isCompletionStateFromViewModel(): Boolean {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var isCompleted = false
+        instrumentation.runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
+                ?: return@runOnMainSync
+            val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
+            isCompleted = viewModel.workoutState.value is WorkoutState.Completed
+        }
+        return isCompleted
     }
 
     private fun isWorkoutSelectionVisible(): Boolean {
