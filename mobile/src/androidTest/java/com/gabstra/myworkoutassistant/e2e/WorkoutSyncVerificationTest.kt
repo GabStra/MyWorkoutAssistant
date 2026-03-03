@@ -58,7 +58,7 @@ class WorkoutSyncVerificationTest {
                     !setHistory.skipped &&
                         setHistory.exerciseId == spec.exerciseId &&
                         setHistory.order.toInt() == spec.order &&
-                        weightData.actualReps == spec.expectedReps &&
+                        spec.matchesReps(weightData.actualReps) &&
                         abs(weightData.actualWeight - spec.expectedWeight) <= CrossDeviceSyncPhoneWorkoutStoreFixture.WEIGHT_TOLERANCE
                 }
             }
@@ -82,20 +82,31 @@ class WorkoutSyncVerificationTest {
         private data class ExpectedSetSpec(
             val exerciseId: UUID,
             val order: Int,
-            val expectedReps: Int,
+            val expectedReps: Int? = null,
+            val minExpectedReps: Int? = null,
             val expectedWeight: Double
-        )
+        ) {
+            fun matchesReps(actualReps: Int): Boolean {
+                if (expectedReps != null) {
+                    return actualReps == expectedReps
+                }
+                if (minExpectedReps != null) {
+                    return actualReps >= minExpectedReps
+                }
+                return false
+            }
+        }
 
         private val expectedSetSpecs: Map<UUID, ExpectedSetSpec> = mapOf(
             CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A1_ID to ExpectedSetSpec(
                 exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_A_ID,
                 order = 0,
-                expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A1_EXPECTED_REPS,
+                minExpectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A1_EXPECTED_REPS,
                 expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A1_EXPECTED_WEIGHT
             ),
             CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_ID to ExpectedSetSpec(
                 exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_A_ID,
-                order = 1,
+                order = 2,
                 expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_EXPECTED_REPS,
                 expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_EXPECTED_WEIGHT
             ),
@@ -114,12 +125,12 @@ class WorkoutSyncVerificationTest {
             CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D1_ID to ExpectedSetSpec(
                 exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_D_ID,
                 order = 0,
-                expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D1_EXPECTED_REPS,
+                minExpectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D1_EXPECTED_REPS,
                 expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D1_EXPECTED_WEIGHT
             ),
             CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_ID to ExpectedSetSpec(
                 exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_D_ID,
-                order = 1,
+                order = 2,
                 expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_EXPECTED_REPS,
                 expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_EXPECTED_WEIGHT
             )

@@ -39,14 +39,11 @@ class PhoneAppDriver(
             val clicked = clickIfPresent(
                 "Not now",
                 "NOT NOW",
-                "Allow",
                 "ALLOW",
                 "While using the app",
                 "Allow all the time",
                 "Only this time"
             ) || clickIfPresent(
-                "Continue",
-                "CONTINUE",
                 "OK"
             )
 
@@ -97,6 +94,19 @@ class PhoneAppDriver(
             val obj = device.wait(Until.findObject(By.text(text)), 400)
                 ?: device.wait(Until.findObject(By.textContains(text)), 400)
             if (obj != null) {
+                // Avoid tapping non-clickable labels (can trigger unintended navigations in Settings)
+                // and limit generic "Allow/ALLOW" taps to permission controller dialogs.
+                if (!obj.isClickable) {
+                    return@forEach
+                }
+                val ownerPackage = obj.applicationPackage?.toString().orEmpty()
+                if (
+                    (text == "Allow" || text == "ALLOW") &&
+                    ownerPackage != "com.android.permissioncontroller" &&
+                    ownerPackage != "com.google.android.permissioncontroller"
+                ) {
+                    return@forEach
+                }
                 clickWithRetry { obj.click() }
                 return true
             }
