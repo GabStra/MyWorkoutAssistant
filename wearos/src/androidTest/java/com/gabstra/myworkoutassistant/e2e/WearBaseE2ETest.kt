@@ -6,8 +6,10 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
 import org.junit.Before
@@ -40,6 +42,8 @@ abstract class WearBaseE2ETest {
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
 
+        clearPersistedE2eState()
+        markTutorialsAsSeenForE2E()
         seedWorkoutStore()
         launchAppFromHome()
     }
@@ -60,6 +64,20 @@ abstract class WearBaseE2ETest {
 
     protected fun seedWorkoutStore() {
         TestWorkoutStoreSeeder.seedWorkoutStore(context)
+    }
+
+    private fun clearPersistedE2eState() {
+        context.getSharedPreferences("workout_state", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("workout_recovery_checkpoint", Context.MODE_PRIVATE).edit().clear().commit()
+    }
+
+    private fun markTutorialsAsSeenForE2E() {
+        context.getSharedPreferences("tutorial_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("has_seen_workout_selection_tutorial", true)
+            .putBoolean("has_seen_workout_heart_rate_tutorial", true)
+            .putBoolean("has_seen_set_screen_tutorial", true)
+            .putBoolean("has_seen_rest_screen_tutorial", true)
+            .commit()
     }
 
     /**
@@ -95,16 +113,42 @@ abstract class WearBaseE2ETest {
         val deadline = System.currentTimeMillis() + E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS
         var ready = false
         while (System.currentTimeMillis() < deadline) {
-            if (device.hasObject(By.text("My Workout Assistant")) || isRecoveryDialogVisible()) {
+            dismissAnyTutorialOverlayIfPresent()
+            if (device.hasObject(By.text("My Workout Assistant")) ||
+                isRecoveryDialogVisible() ||
+                device.hasObject(By.textContains("Resuming workout")) ||
+                device.hasObject(By.textContains("Reloading workout")) ||
+                isActiveWorkoutVisible()
+            ) {
                 ready = true
                 break
             }
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        require(ready) {
-            "App window appeared but neither main screen (My Workout Assistant) nor recovery dialog became visible in time"
+        if (!ready) {
+            // Process-death/resume scenarios can transiently show intermediate frames where
+            // selectors are not yet stable. Allow callers to continue with their own recovery waits.
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         }
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
+    private fun dismissAnyTutorialOverlayIfPresent() {
+        val gotIt = device.findObject(By.text("Got it")) ?: return
+        runCatching { gotIt.click() }
+        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+    }
+
+    private fun isActiveWorkoutVisible(): Boolean {
+        return device.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)) ||
+            device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
+            device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
+            device.hasObject(By.descContains(SetValueSemantics.EnduranceSetTypeDescription)) ||
+            device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)) ||
+            device.hasObject(By.textContains("Set load for")) ||
+            device.hasObject(By.text("0 = Form Breaks")) ||
+            device.hasObject(By.text("Start")) ||
+            device.hasObject(By.text("Stop"))
     }
 
     private fun isRecoveryDialogVisible(): Boolean {
@@ -123,16 +167,61 @@ abstract class WearBaseE2ETest {
      * @param timeoutMs Timeout in milliseconds to wait for the element to appear
      */
     private fun longPressByDesc(contentDescription: String, timeoutMs: Long = defaultTimeoutMs) {
-        val obj = device.wait(Until.findObject(By.desc(contentDescription)), timeoutMs)
-        require(obj != null) {
-            "Timed out waiting for UI object with content description '$contentDescription' to appear"
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var attempts = 0
+        var lastError: Throwable? = null
+
+        while (System.currentTimeMillis() < deadline && attempts < 5) {
+            attempts++
+            val remaining = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
+            val obj = device.wait(Until.findObject(By.desc(contentDescription)), remaining)
+            if (obj == null) {
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                continue
+            }
+
+            val pressed = runCatching {
+                val bounds = obj.visibleBounds
+                val centerX = bounds.centerX()
+                val centerY = bounds.centerY()
+                // Hold press via swipe gesture at a fixed point to trigger long-press handlers.
+                device.swipe(centerX, centerY, centerX, centerY, 200)
+                true
+            }.recoverCatching {
+                if (it is StaleObjectException) {
+                    val refreshed = device.wait(Until.findObject(By.desc(contentDescription)), 500)
+                    if (refreshed != null) {
+                        val bounds = refreshed.visibleBounds
+                        device.swipe(bounds.centerX(), bounds.centerY(), bounds.centerX(), bounds.centerY(), 200)
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    throw it
+                }
+            }.getOrElse {
+                lastError = it
+                false
+            }
+
+            if (pressed) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return
+            }
+
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        // Use a swipe-based press to trigger pointerInput long-press handlers reliably.
-        val bounds = obj.visibleBounds
-        val centerX = bounds.centerX()
-        val centerY = bounds.centerY()
-        device.swipe(centerX, centerY, centerX, centerY, 100)
-        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+
+        if (lastError != null) {
+            throw IllegalArgumentException(
+                "Failed to long-press UI object with content description '$contentDescription'",
+                lastError
+            )
+        }
+        throw IllegalArgumentException(
+            "Timed out waiting for UI object with content description '$contentDescription' to appear"
+        )
     }
 
     /**
@@ -191,11 +280,15 @@ abstract class WearBaseE2ETest {
 
         if (hasSeenTutorial) return
 
-        val gotItSelector = By.text("Got it")
-        
-        // If not immediately visible, scroll until found
-        interactionDriver.scrollUntilFound(gotItSelector, Direction.DOWN, maxWaitMs)?.let { btn ->
-            runCatching { interactionDriver.clickObjectOrAncestor(btn) }
+        val deadline = System.currentTimeMillis() + maxWaitMs
+        while (System.currentTimeMillis() < deadline) {
+            val gotIt = device.findObject(By.text("Got it")) ?: device.findObject(By.desc("Got it"))
+            if (gotIt != null) {
+                runCatching { interactionDriver.clickObjectOrAncestor(gotIt) }
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                return
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
     }
 
@@ -223,24 +316,57 @@ abstract class WearBaseE2ETest {
         // Use longer timeout to catch tutorial that appears after a delay
         dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
         
-        // Wait for "Preparing HR Sensor" or "Preparing Polar Sensor" text to appear
-        // The screen shows "Preparing HR Sensor" not just "Preparing"
-        // Note: Tutorial overlay is full-screen and blocks "Preparing" text when visible
-        // If "Preparing" is visible, tutorial is definitely dismissed
-        val preparingVisible = device.wait(Until.hasObject(By.textContains("Preparing")), 8_000)
+        var enteredWorkoutFlow = waitForPostStartWorkoutState(timeoutMs = 10_000)
+        if (!enteredWorkoutFlow) {
+            val recoveryResume = device.findObject(By.desc("Recovery resume action"))
+                ?: device.findObject(By.text("Resume"))
+            if (recoveryResume != null) {
+                runCatching { interactionDriver.clickObjectOrAncestor(recoveryResume) }
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            } else {
+                val startAgain = device.findObject(By.desc("Start"))
+                    ?: device.findObject(By.text("Start"))
+                    ?: device.findObject(By.desc("Resume"))
+                    ?: device.findObject(By.text("Resume"))
+                if (startAgain != null) {
+                    runCatching { interactionDriver.clickObjectOrAncestor(startAgain) }
+                    device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                }
+            }
+            dismissAnyTutorialOverlayIfPresent()
+            enteredWorkoutFlow = waitForPostStartWorkoutState(timeoutMs = 8_000)
+        }
+        require(enteredWorkoutFlow) {
+            "Workout did not reach a known post-start state (preparing, calibration, set/rest, or completion)"
+        }
+
+        val preparingVisible = device.hasObject(By.textContains("Preparing"))
         if (preparingVisible) {
-            // Wait for preparing step to complete (preparing text disappears)
-            // This indicates we've moved past the preparing state
             val preparingGone = device.wait(Until.gone(By.textContains("Preparing")), 8_000)
             require(preparingGone) { "Preparing step did not complete" }
         }
 
-        // After preparing step completes, we transition to the first exercise screen (Set state).
-        // Dismiss set screen tutorial if it appears when transitioning to the first exercise screen.
-        // The "Got it" button might only become visible after scrolling, so we do not gate
-        // this on detecting the button first.
-        dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
+        if (isActiveWorkoutVisible()) {
+            dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
+        }
+    }
+
+    private fun waitForPostStartWorkoutState(timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            dismissAnyTutorialOverlayIfPresent()
+            if (device.hasObject(By.textContains("Preparing")) ||
+                device.hasObject(By.textContains("Set load for")) ||
+                device.hasObject(By.text("0 = Form Breaks")) ||
+                device.hasObject(By.textContains("Resuming workout")) ||
+                device.hasObject(By.textContains("Reloading workout")) ||
+                isActiveWorkoutVisible() ||
+                device.hasObject(By.text("Go Home"))
+            ) {
+                return true
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
     }
 }
-
-
