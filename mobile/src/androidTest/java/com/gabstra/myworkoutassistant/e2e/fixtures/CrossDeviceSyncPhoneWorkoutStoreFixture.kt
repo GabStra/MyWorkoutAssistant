@@ -22,6 +22,10 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
     const val SET_D1_EXPECTED_REPS = 9  // modified during workout
     const val SET_D2_EXPECTED_REPS = 6
     const val WEIGHT_TOLERANCE = 0.01
+    const val PHONE_TO_WEAR_HISTORY_A1_REPS = 11
+    const val PHONE_TO_WEAR_HISTORY_A1_WEIGHT = 42.5
+    const val PHONE_TO_WEAR_HISTORY_A2_REPS = 9
+    const val PHONE_TO_WEAR_HISTORY_A2_WEIGHT = 52.5
 
     const val SET_A1_EXPECTED_WEIGHT = 40.0
     const val SET_A2_EXPECTED_WEIGHT = 50.0
@@ -48,6 +52,10 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
     val SET_D2_ID: UUID = UUID.fromString("4f5a4e8d-b58e-4868-b66c-f2aa147537f1")
     val CALIBRATION_EXERCISE_ID: UUID = UUID.fromString("b6b0d71e-72fa-4f3f-8d22-09c4c65ad0e7")
     val CALIBRATION_SET_ID: UUID = UUID.fromString("f0935f93-a416-44ee-90de-9f8d7fd5a0fc")
+    val PHONE_TO_WEAR_HISTORY_ID: UUID = UUID.fromString("c8f95ab8-4a27-448d-8f1a-45698b1d56a9")
+    val PHONE_TO_WEAR_HISTORY_GLOBAL_ID: UUID = WORKOUT_GLOBAL_ID
+    val PHONE_TO_WEAR_SET_HISTORY_A1_ID: UUID = UUID.fromString("2f9802de-89d8-43b2-95e4-b7d73bc0cf84")
+    val PHONE_TO_WEAR_SET_HISTORY_A2_ID: UUID = UUID.fromString("c5d9eb2e-f056-41d5-83cf-d0904a47aa7e")
 
     fun createWorkoutStore(): WorkoutStore {
         val exercise = Exercise(
@@ -70,7 +78,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -96,7 +104,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -122,7 +130,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -151,7 +159,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
@@ -196,7 +204,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             equipmentId = null,
             bodyWeightPercentage = null,
             generateWarmUpSets = false,
-            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.DOUBLE_PROGRESSION,
             keepScreenOn = false,
             showCountDownTimer = false,
             intraSetRestInSeconds = null,
