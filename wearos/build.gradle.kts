@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("com.android.compose.screenshot")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
 }
@@ -95,10 +94,10 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.wear.compose:compose-material-core:1.6.0-alpha09")
+    implementation("androidx.wear.compose:compose-material-core:1.6.0-beta01")
     implementation("androidx.navigation:navigation-compose:2.9.7")
-    implementation("androidx.compose.ui:ui-graphics:1.10.2")
-    implementation("androidx.compose.ui:ui-graphics:1.10.3")
+    implementation("androidx.compose.ui:ui-graphics:1.10.4")
+    implementation("androidx.compose.ui:ui-graphics:1.10.4")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -118,16 +117,16 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.0-alpha09")
-    implementation("androidx.wear.compose:compose-navigation:1.6.0-alpha09")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-alpha09")
-    implementation("androidx.wear.compose:compose-foundation:1.6.0-alpha09")
+    implementation("androidx.wear.compose:compose-material3:1.6.0-beta01")
+    implementation("androidx.wear.compose:compose-navigation:1.6.0-beta01")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-beta01")
+    implementation("androidx.wear.compose:compose-foundation:1.6.0-beta01")
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.3")
+    implementation("androidx.activity:activity-compose:1.12.4")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
-    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    implementation("androidx.work:work-runtime-ktx:2.11.1")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
@@ -159,7 +158,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Test
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.mockito:mockito-core:5.21.0")
+    testImplementation("org.mockito:mockito-core:5.22.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
@@ -170,6 +169,6 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-alpha07")
-    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha11")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta01")
+    screenshotTestImplementation("com.android.tools.screenshot:screenshot-validation-api:0.0.1-alpha13")
 }

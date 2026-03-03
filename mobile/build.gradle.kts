@@ -1,7 +1,6 @@
 plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
 
@@ -106,6 +105,7 @@ dependencies {
     implementation("androidx.compose.material3:material3-window-size-class") // Material 3 adaptive
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.wear:wear-tooling-preview:1.0.0") // for Wear preview in PageMuscles
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
@@ -115,8 +115,8 @@ dependencies {
 
     // AndroidX core
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.3")
-    implementation("androidx.work:work-runtime-ktx:2.10.5")
+    implementation("androidx.activity:activity-compose:1.12.4")
+    implementation("androidx.work:work-runtime-ktx:2.11.1")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
@@ -129,9 +129,8 @@ dependencies {
     implementation("com.google.android.horologist:horologist-datalayer:0.7.15")
     implementation("com.google.android.horologist:horologist-datalayer-phone:0.7.15")
 
-    // Accompanist
+    // Accompanist (permissions only; system UI controller replaced by enableEdgeToEdge)
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
-    implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
 
     // Room
     ksp("androidx.room:room-compiler:2.8.4")
@@ -139,7 +138,7 @@ dependencies {
 
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")
-    implementation("com.patrykandpatrick.vico:compose:2.4.3")
+    implementation("com.patrykandpatrick.vico:compose:3.0.2")
     implementation("com.kizitonwose.calendar:compose:2.10.0")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
@@ -149,7 +148,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-alpha07")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta01")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
