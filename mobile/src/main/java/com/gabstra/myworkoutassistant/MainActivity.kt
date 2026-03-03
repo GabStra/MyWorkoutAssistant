@@ -15,6 +15,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -116,7 +117,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
-import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CancellationException
@@ -246,6 +246,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         // #region agent log
         val intentAction = intent?.action ?: "null"
         val intentComponent = intent?.component?.shortClassName ?: "null"
@@ -385,27 +386,6 @@ fun MyWorkoutAssistantNavHost(
         workoutViewModel.initExerciseInfoDao(context)
         workoutViewModel.initExerciseSessionProgressionDao(context)
         workoutViewModel.initWorkoutStoreRepository(workoutStoreRepository)
-    }
-
-    val systemUiController = rememberSystemUiController()
-    val backgroundColor = MaterialTheme.colorScheme.background
-
-    DisposableEffect(systemUiController, backgroundColor) {
-        // Update all of the system bar colors to be transparent, and use
-        // dark icons if we're in light theme
-        systemUiController.setSystemBarsColor(
-            color = backgroundColor,
-            darkIcons = false
-        )
-
-        systemUiController.setNavigationBarColor(
-            color = backgroundColor,
-            darkIcons = false
-        )
-
-        // setStatusBarColor() and setNavigationBarColor() also exist
-
-        onDispose {}
     }
 
     val setHistoryDao = db.setHistoryDao()
@@ -821,13 +801,11 @@ fun MyWorkoutAssistantNavHost(
                             workoutScheduleDao.insertAll(*chunk.toTypedArray())
                         }
 
-                        if (appBackup.WorkoutRecords != null) {
-                            val validWorkoutRecords =
-                                appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
+                        val validWorkoutRecords =
+                            appBackup.WorkoutRecords.filter { allowedWorkouts.any { workout -> workout.id == it.workoutId } }
 
-                            validWorkoutRecords.chunked(BATCH_SIZE).forEach { chunk ->
-                                workoutRecordDao.insertAll(*chunk.toTypedArray())
-                            }
+                        validWorkoutRecords.chunked(BATCH_SIZE).forEach { chunk ->
+                            workoutRecordDao.insertAll(*chunk.toTypedArray())
                         }
 
                         val validExerciseSessionProgressions =
