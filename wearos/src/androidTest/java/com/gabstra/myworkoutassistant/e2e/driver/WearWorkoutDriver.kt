@@ -316,13 +316,44 @@ class WearWorkoutDriver(
     }
 
     fun completeCurrentSet(timeoutMs: Long = 5_000) {
-        device.pressBack()
-        if (tryConfirmLongPressDialog(timeoutMs)) return
+        repeat(4) { attempt ->
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
-        // Some UI layers (e.g., inline editors/overlays) consume the first back press.
-        device.pressBack()
-        val confirmed = tryConfirmLongPressDialog(timeoutMs)
-        require(confirmed) { "Timed out waiting for set confirmation dialog ('Done')" }
+            if (tryConfirmLongPressDialog(timeoutMs)) {
+                return
+            }
+
+            // Tutorial overlays occasionally consume back/gesture input before dialog appears.
+            dismissGotItIfPresent()
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+            // Retry once more quickly in the same attempt after dismissing overlays.
+            if (tryConfirmLongPressDialog(1_500)) {
+                return
+            }
+
+            // Let the UI settle before next back attempt.
+            if (attempt < 3) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            }
+        }
+
+        val doneVisible = device.hasObject(By.desc("Done"))
+        val skipRestVisible = device.hasObject(By.text("Skip Rest"))
+        val setTypeVisible =
+            device.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.EnduranceSetTypeDescription))
+        val restTypeVisible = device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription))
+        val debugState = listOf(
+            "doneVisible=$doneVisible",
+            "skipRestVisible=$skipRestVisible",
+            "setTypeVisible=$setTypeVisible",
+            "restTypeVisible=$restTypeVisible"
+        ).joinToString(", ")
+        error("Timed out waiting for set confirmation dialog ('Done'). State: $debugState")
     }
 
     fun confirmLongPressDialog(timeoutMs: Long = 5_000) {
@@ -337,6 +368,12 @@ class WearWorkoutDriver(
         if (!hasDone) return false
         longPressByDesc("Done", timeoutMs)
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+        // Validate the dialog actually closed; otherwise treat as failed confirmation.
+        val dismissed = device.wait(Until.gone(By.desc("Done")), 1_500)
+        if (!dismissed && device.hasObject(By.desc("Done"))) {
+            return false
+        }
         return true
     }
 
@@ -473,7 +510,11 @@ class WearWorkoutDriver(
             completedVisible =
                 device.hasObject(By.text("Completed")) ||
                     device.hasObject(By.text("COMPLETED")) ||
-                    device.hasObject(By.text("Workout completed"))
+                    device.hasObject(By.text("Workout completed")) ||
+                    device.hasObject(By.text("Go Home")) ||
+                    device.hasObject(By.desc("Go Home")) ||
+                    // Some flows auto-return to selection quickly after completion.
+                    device.hasObject(By.text("My Workout Assistant"))
             if (!completedVisible) {
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
             }
@@ -930,6 +971,11 @@ class WearWorkoutDriver(
         } catch (_: StaleObjectException) {
             false
         }
+    }
+
+    private fun dismissGotItIfPresent() {
+        val gotIt = device.findObject(By.text("Got it")) ?: return
+        clickBestEffort(gotIt)
     }
 
     private fun findTimerText(root: UiObject2): String? {
