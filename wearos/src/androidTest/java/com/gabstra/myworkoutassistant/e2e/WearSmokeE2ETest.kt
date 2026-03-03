@@ -20,7 +20,7 @@ class WearSmokeE2ETest : WearBaseE2ETest() {
         startWorkout(AutoRegulationWorkoutStoreFixture.getWorkoutName())
 
         val calibrationLoadAppeared = device.wait(
-            Until.hasObject(By.textContains("Select load for")),
+            Until.hasObject(By.textContains("Set load for")),
             3_000L
         )
         require(!calibrationLoadAppeared) {

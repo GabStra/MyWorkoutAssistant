@@ -182,7 +182,7 @@ class CrossDeviceWorkoutFlowHelper(
 
     private fun isCalibrationLoadScreenVisible(): Boolean {
         return device.wait(
-            Until.hasObject(By.textContains("Select load for")),
+            Until.hasObject(By.textContains("Set load for")),
             1_000
         )
     }
