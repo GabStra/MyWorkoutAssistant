@@ -1,6 +1,9 @@
 Param(
     [string]$WearTestClass = "WearCrossDeviceSyncProducerE2ETest",
+    [string]$WearPhoneToWatchHistoryTestClass = "PhoneToWearWorkoutHistorySyncVerificationE2ETest",
+    [string]$WearVsLastComparisonTestClass = "PhoneToWearVsLastComparisonE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
+    [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
     [string]$AppPackage = "com.gabstra.myworkoutassistant.debug",
@@ -296,6 +299,44 @@ try {
 
     Wait-ForWatchWorkoutStoreSync -watchSerial $watchSerial -appPackage $AppPackage -expectedWorkoutName $ExpectedWorkoutName
     Bring-PhoneAppToForeground -phoneSerial $phoneSerial -appPackage $AppPackage
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
+    $wearPhoneToWatchArgs = @(
+        "-NoProfile",
+        "-File",
+        "./scripts/run_wear_e2e.ps1",
+        "-TestClass",
+        $WearPhoneToWatchHistoryTestClass,
+        "-WearEmulatorSerial",
+        $watchSerial,
+        "-StartEmulatorIfNeeded:`$false"
+    )
+    & pwsh @wearPhoneToWatchArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wear phone->watch history verification E2E failed."
+    }
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
+    $wearVsLastArgs = @(
+        "-NoProfile",
+        "-File",
+        "./scripts/run_wear_e2e.ps1",
+        "-TestClass",
+        $WearVsLastComparisonTestClass,
+        "-WearEmulatorSerial",
+        $watchSerial,
+        "-StartEmulatorIfNeeded:`$false"
+    )
+    & pwsh @wearVsLastArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wear VS LAST comparison verification E2E failed."
+    }
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    Write-Host "Resetting phone workout history state before Wear producer run..." -ForegroundColor Cyan
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileResetTestClass -appPackage $AppPackage
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
     Write-Host "Running Wear producer E2E test..." -ForegroundColor Cyan
