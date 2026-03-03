@@ -54,8 +54,7 @@
             android:name=".DataLayerListenerService"
             android:exported="true">
             <intent-filter>
-                <!-- listeners receive events that match the action and data filters -->
-                <action android:name="com.google.android.gms.wearable.BIND_LISTENER" />
+                <!-- DATA_CHANGED with path filters (no deprecated BIND_LISTENER) -->
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
