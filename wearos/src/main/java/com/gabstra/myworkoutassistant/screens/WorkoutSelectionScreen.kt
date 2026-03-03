@@ -389,7 +389,7 @@ fun WorkoutSelectionScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "Install the companion app",
+                                    text = "Open the companion app on your phone and sync to connect",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                     color = MediumLighterGray
