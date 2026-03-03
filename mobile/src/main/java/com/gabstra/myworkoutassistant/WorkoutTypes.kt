@@ -132,7 +132,8 @@ class WorkoutTypes {
                 throw IllegalArgumentException("Invalid exercise type: $exerciseType")
             }
 
-            return WORKOUT_TYPE_INT_TO_STRING_MAP[exerciseType]!!.replace('_', ' ').capitalize(Locale.ROOT)
+            return WORKOUT_TYPE_INT_TO_STRING_MAP[exerciseType]!!.replace('_', ' ')
+                .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
         }
     }
 }

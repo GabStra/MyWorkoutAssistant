@@ -53,7 +53,9 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 fun SetType.toReadableString(): String {
-    return this.name.replace('_', ' ').split(' ').joinToString(" ") { it.capitalize() }
+    return this.name.replace('_', ' ').split(' ').joinToString(" ") {
+        it.replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() }
+    }
 }
 
 fun getSetTypeFromExerciseType(exerciseType: ExerciseType): SetType {
@@ -144,7 +146,8 @@ fun SetForm(
                         Text(text = "Set Type:")
                         Box(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = selectedSetType.value.name.replace('_', ' ').capitalize(),
+                                text = selectedSetType.value.name.replace('_', ' ')
+                                    .replaceFirstChar { c -> if (c.isLowerCase()) c.titlecase() else c.toString() },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(8.dp),

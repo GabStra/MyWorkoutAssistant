@@ -1,10 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.os.Build
-import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
@@ -23,8 +24,6 @@ import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
@@ -35,36 +34,34 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import com.patrykandpatrick.vico.compose.common.fill
-import com.patrykandpatrick.vico.compose.common.shape.dashedShape
-import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
-import com.patrykandpatrick.vico.core.cartesian.CartesianMeasuringContext
-import com.patrykandpatrick.vico.core.cartesian.Zoom
-import com.patrykandpatrick.vico.core.cartesian.axis.Axis
-import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
-import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
-import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
-import com.patrykandpatrick.vico.core.cartesian.decoration.HorizontalLine
-import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
-import com.patrykandpatrick.vico.core.cartesian.marker.CandlestickCartesianLayerMarkerTarget
-import com.patrykandpatrick.vico.core.cartesian.marker.CartesianMarker
-import com.patrykandpatrick.vico.core.cartesian.marker.ColumnCartesianLayerMarkerTarget
-import com.patrykandpatrick.vico.core.cartesian.marker.DefaultCartesianMarker
-import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
-import com.patrykandpatrick.vico.core.common.Insets
-import com.patrykandpatrick.vico.core.common.Position
-import com.patrykandpatrick.vico.core.common.shape.CorneredShape
+import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.compose.cartesian.CartesianMeasuringContext
+import com.patrykandpatrick.vico.compose.cartesian.Zoom
+import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
+import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerRangeProvider
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
+import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
+import com.patrykandpatrick.vico.compose.cartesian.decoration.HorizontalLine
+import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.marker.CandlestickCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.ColumnCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.cartesian.marker.DefaultCartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.common.DashedShape
+import com.patrykandpatrick.vico.compose.common.Fill
+import com.patrykandpatrick.vico.compose.common.Insets
+import com.patrykandpatrick.vico.compose.common.Position
 
 @Composable
 private fun rememberHorizontalLine(
     color: Color,
     y: Double,
 ): HorizontalLine {
-    val fill = fill(color)
-    val line = rememberLineComponent(fill = fill, thickness = 1.dp, shape = dashedShape())
+    val line = rememberLineComponent(fill = Fill(color), thickness = 1.dp, shape = DashedShape())
     return remember(y, color) {
         HorizontalLine(
             y = { y },
@@ -156,11 +153,11 @@ internal class DefaultValueFormatter(
     private val textColor: Int,
     private val colorCode: Boolean = true,
 ) : DefaultCartesianMarker.ValueFormatter {
-    private fun SpannableStringBuilder.append(y: Double, color: Int? = null) {
+    private fun SpannableStringBuilder.appendValue(y: Double, color: Color? = null) {
         if (colorCode && color != null) {
             appendCompat(
                 formatter(y),
-                ForegroundColorSpan(textColor),
+                ForegroundColorSpan(color.toArgb()),
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
             )
         } else {
@@ -168,31 +165,31 @@ internal class DefaultValueFormatter(
         }
     }
 
-    private fun SpannableStringBuilder.append(target: CartesianMarker.Target, shorten: Boolean) {
+    private fun SpannableStringBuilder.appendTarget(target: CartesianMarker.Target, shorten: Boolean) {
         when (target) {
             is CandlestickCartesianLayerMarkerTarget -> {
                 if (shorten) {
-                    append(target.entry.closing, target.closingColor)
+                    appendValue(target.entry.closing, target.closingColor)
                 } else {
                     append("O ")
-                    append(target.entry.opening, target.openingColor)
+                    appendValue(target.entry.opening, target.openingColor)
                     append(", C ")
-                    append(target.entry.closing, target.closingColor)
+                    appendValue(target.entry.closing, target.closingColor)
                     append(", L ")
-                    append(target.entry.low, target.lowColor)
+                    appendValue(target.entry.low, target.lowColor)
                     append(", H ")
-                    append(target.entry.high, target.highColor)
+                    appendValue(target.entry.high, target.highColor)
                 }
             }
 
             is ColumnCartesianLayerMarkerTarget -> {
                 val includeSum = target.columns.size > 1
                 if (includeSum) {
-                    append(target.columns.sumOf { it.entry.y })
+                    appendValue(target.columns.sumOf { it.entry.y })
                     append(" (")
                 }
                 target.columns.forEachIndexed { index, column ->
-                    append(column.entry.y, column.color)
+                    appendValue(column.entry.y, column.color)
                     if (index != target.columns.lastIndex) append(", ")
                 }
                 if (includeSum) append(")")
@@ -200,7 +197,7 @@ internal class DefaultValueFormatter(
 
             is LineCartesianLayerMarkerTarget -> {
                 target.points.forEachIndexed { index, point ->
-                    append(point.entry.y, point.color)
+                    appendValue(point.entry.y, point.color)
                     if (index != target.points.lastIndex) append(", ")
                 }
             }
@@ -215,7 +212,7 @@ internal class DefaultValueFormatter(
     ): CharSequence =
         SpannableStringBuilder().apply {
             targets.forEachIndexed { index, target ->
-                append(target = target, shorten = targets.size > 1)
+                appendTarget(target = target, shorten = targets.size > 1)
                 if (index != targets.lastIndex) append(", ")
             }
         }
@@ -314,7 +311,7 @@ fun HeartRateChartContent(
         }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
-    val shapeComponent = rememberShapeComponent(fill(Color.White), CorneredShape.Pill)
+    val shapeComponent = rememberShapeComponent(Fill(Color.White), RoundedCornerShape(percent = 50))
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
@@ -322,11 +319,10 @@ fun HeartRateChartContent(
             }, textColor)
         },
         label = rememberTextComponent(
-            color = Color.White,
-            padding = Insets(8f),
-            textAlignment = Layout.Alignment.ALIGN_CENTER
+            style = TextStyle(color = Color.White, textAlign = TextAlign.Center),
+            padding = Insets(8.dp),
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(MaterialTheme.colorScheme.background)),
+        guideline = rememberAxisGuidelineComponent(Fill(MaterialTheme.colorScheme.background)),
         indicatorSize = 10.dp,
         indicator = { _ -> shapeComponent }
     )
@@ -355,7 +351,7 @@ fun HeartRateChartContent(
     val lines = if (effectiveLineZoneIndices != null) {
         effectiveLineZoneIndices.map { zoneIndex ->
             LineCartesianLayer.rememberLine(
-                fill = LineCartesianLayer.LineFill.single(fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])),
+                fill = LineCartesianLayer.LineFill.single(Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])),
                 areaFill = null,
                 pointProvider = null,
                 pointConnector = LineCartesianLayer.PointConnector.Sharp,
@@ -365,7 +361,7 @@ fun HeartRateChartContent(
         listOf(
             LineCartesianLayer.rememberLine(
                 fill = LineCartesianLayer.LineFill.single(
-                    fill(
+                    Fill(
                         Color(
                             0xFFff6700
                         )
@@ -402,16 +398,16 @@ fun HeartRateChartContent(
                 )
             },
             startAxis = VerticalAxis.rememberStart(
-                line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
+                tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
                 guideline = null,
                 valueFormatter = startAxisValueFormatter,
                 itemPlacer = remember(zoneAxisValues) {
                     FixedValuesVerticalAxisItemPlacer(zoneAxisValues)
                 }),
             bottomAxis = HorizontalAxis.rememberBottom(
-                line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
-                tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.outlineVariant)),
+                line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
+                tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
                 guideline = null,
                 valueFormatter = bottomAxisValueFormatter,
                 itemPlacer = remember { HorizontalAxis.ItemPlacer.aligned(spacing = { 30 }) }),
@@ -421,3 +417,4 @@ fun HeartRateChartContent(
         model = cartesianChartModel,
     )
 }
+

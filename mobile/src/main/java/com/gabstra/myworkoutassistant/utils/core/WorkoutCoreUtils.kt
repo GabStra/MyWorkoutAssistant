@@ -159,7 +159,6 @@ fun getEnabledStatusOfWorkoutComponent(workoutComponent: WorkoutComponent): Bool
         is Exercise -> workoutComponent.enabled
         is Rest -> workoutComponent.enabled
         is Superset -> workoutComponent.enabled
-        else -> false // Default case if the component type is unknown
     }
 }
 

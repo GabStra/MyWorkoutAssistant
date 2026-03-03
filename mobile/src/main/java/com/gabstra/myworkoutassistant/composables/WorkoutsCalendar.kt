@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -72,7 +72,7 @@ fun MonthHeader(
     modifier: Modifier = Modifier,
     daysOfWeek: List<DayOfWeek> = emptyList(),
 ) {
-    Row(modifier.fillMaxWidth().padding(bottom = 5.dp)) {
+    Row(modifier.fillMaxWidth().padding(bottom = 2.dp)) {
         for (dayOfWeek in daysOfWeek) {
             Text(
                 modifier = Modifier.weight(1f),
@@ -113,7 +113,7 @@ private fun Day(
             .fillMaxWidth()
             .padding(
                 horizontal = 0.dp,
-                vertical = 2.dp
+                vertical = 1.dp
             )
             .drawBehind {
                 if (isInSelectedWeek) {
@@ -153,33 +153,6 @@ private fun Day(
                             strokeWidth = strokeWidth
                         )
                     }
-                } else if (isToday) {
-                    val strokeWidth = 2f
-                    val borderColor = secondaryColor
-                    drawLine(
-                        color = borderColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(size.width, 0f),
-                        strokeWidth = strokeWidth
-                    )
-                    drawLine(
-                        color = borderColor,
-                        start = Offset(0f, size.height),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = strokeWidth
-                    )
-                    drawLine(
-                        color = borderColor,
-                        start = Offset(0f, 0f),
-                        end = Offset(0f, size.height),
-                        strokeWidth = strokeWidth
-                    )
-                    drawLine(
-                        color = borderColor,
-                        start = Offset(size.width, 0f),
-                        end = Offset(size.width, size.height),
-                        strokeWidth = strokeWidth
-                    )
                 }
             }
     , contentAlignment = Alignment.Center) {
@@ -199,6 +172,7 @@ private fun Day(
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
                 shouldHighlight -> MaterialTheme.colorScheme.background
+                isToday -> secondaryColor
                 else -> MaterialTheme.colorScheme.onBackground
             }
 
@@ -287,7 +261,7 @@ fun SimpleCalendarTitle(
                     colors = navIconColors
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.ArrowBack,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Previous Month"
                     )
                 }
@@ -317,7 +291,7 @@ fun SimpleCalendarTitle(
                     colors = navIconColors
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.ArrowForward,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = "Next Month"
                     )
                 }

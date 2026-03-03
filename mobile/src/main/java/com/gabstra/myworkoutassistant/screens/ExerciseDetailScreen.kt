@@ -692,7 +692,6 @@ fun ExerciseDetailScreen(
                                                         is EnduranceSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is TimedDurationSet -> it.copy(id = java.util.UUID.randomUUID())
                                                         is RestSet -> it.copy(id = java.util.UUID.randomUUID())
-                                                        else -> throw IllegalArgumentException("Unknown type")
                                                     }
                                                 }
 

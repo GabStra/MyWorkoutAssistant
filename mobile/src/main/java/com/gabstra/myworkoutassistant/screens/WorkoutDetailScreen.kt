@@ -590,7 +590,6 @@ fun WorkoutDetailScreen(
                                                         is Exercise -> workoutComponent.copy(enabled = true)
                                                         is Rest -> workoutComponent.copy(enabled = true)
                                                         is Superset -> workoutComponent.copy(enabled = true)
-                                                        else -> workoutComponent
                                                     }
                                                 } else {
                                                     workoutComponent
@@ -638,7 +637,6 @@ fun WorkoutDetailScreen(
                                                         is Exercise -> workoutComponent.copy(enabled = false)
                                                         is Rest -> workoutComponent.copy(enabled = false)
                                                         is Superset -> workoutComponent.copy(enabled = false)
-                                                        else -> workoutComponent
                                                     }
                                                 } else {
                                                     workoutComponent
@@ -690,7 +688,6 @@ fun WorkoutDetailScreen(
                                                         is Exercise -> workoutComponent.copy(enabled = true)
                                                         is Rest -> workoutComponent.copy(enabled = true)
                                                         is Superset -> workoutComponent.copy(enabled = true)
-                                                        else -> workoutComponent
                                                     }
                                                 } else {
                                                     workoutComponent
@@ -738,7 +735,6 @@ fun WorkoutDetailScreen(
                                                         is Exercise -> workoutComponent.copy(enabled = false)
                                                         is Rest -> workoutComponent.copy(enabled = false)
                                                         is Superset -> workoutComponent.copy(enabled = false)
-                                                        else -> workoutComponent
                                                     }
                                                 } else {
                                                     workoutComponent

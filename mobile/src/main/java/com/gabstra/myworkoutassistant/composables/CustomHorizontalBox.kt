@@ -1,16 +1,13 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.graphics.RectF
-import androidx.annotation.RestrictTo
-import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
-import com.patrykandpatrick.vico.core.cartesian.axis.Axis
-import com.patrykandpatrick.vico.core.cartesian.decoration.Decoration
-import com.patrykandpatrick.vico.core.cartesian.decoration.HorizontalBox
-import com.patrykandpatrick.vico.core.common.Position
-import com.patrykandpatrick.vico.core.common.component.ShapeComponent
-import com.patrykandpatrick.vico.core.common.component.TextComponent
-import com.patrykandpatrick.vico.core.common.data.ExtraStore
-import com.patrykandpatrick.vico.core.common.half
+import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
+import com.patrykandpatrick.vico.compose.cartesian.decoration.Decoration
+import com.patrykandpatrick.vico.compose.cartesian.decoration.HorizontalBox
+import com.patrykandpatrick.vico.compose.common.Position
+import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
+import com.patrykandpatrick.vico.compose.common.component.TextComponent
+import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import java.text.DecimalFormat
 
 
@@ -48,3 +45,4 @@ public class CustomHorizontalBox(
             "${decimalFormat.format(y.start)}–${decimalFormat.format(y.endInclusive)}"
     }
 }
+

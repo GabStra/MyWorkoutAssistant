@@ -9,9 +9,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,7 +97,7 @@ fun SwipeableTabs(
     }
 
     Column(modifier = modifier) {
-        TabRow(
+        SecondaryTabRow(
             modifier = tabRowModifier.then(
                 if (renderPager) {
                     Modifier
@@ -113,9 +112,9 @@ fun SwipeableTabs(
             containerColor = containerColor,
             contentColor = contentColor,
             selectedTabIndex = activeTabIndex,
-            indicator = { tabPositions ->
-                TabRowDefaults.Indicator(
-                    Modifier.tabIndicatorOffset(tabPositions[activeTabIndex]),
+            indicator = {
+                TabRowDefaults.SecondaryIndicator(
+                    modifier = Modifier.tabIndicatorOffset(activeTabIndex),
                     color = selectedContentColor,
                 )
             }

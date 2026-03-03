@@ -1,9 +1,9 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.text.Layout
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -20,8 +21,6 @@ import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottom
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStart
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
@@ -30,19 +29,18 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import com.patrykandpatrick.vico.compose.common.fill
-import com.patrykandpatrick.vico.core.cartesian.CartesianDrawingContext
-import com.patrykandpatrick.vico.core.cartesian.CartesianMeasuringContext
-import com.patrykandpatrick.vico.core.cartesian.Zoom
-import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
-import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
-import com.patrykandpatrick.vico.core.cartesian.layer.LineCartesianLayer
-import com.patrykandpatrick.vico.core.cartesian.marker.LineCartesianLayerMarkerTarget
-import com.patrykandpatrick.vico.core.common.Insets
-import com.patrykandpatrick.vico.core.common.shape.CorneredShape
+import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.compose.cartesian.CartesianMeasuringContext
+import com.patrykandpatrick.vico.compose.cartesian.Zoom
+import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerRangeProvider
+import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
+import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.common.Fill
+import com.patrykandpatrick.vico.compose.common.Insets
 
 private class FixedValuesHorizontalAxisItemPlacer(
     values: List<Double>,
@@ -94,13 +92,13 @@ private class FixedValuesHorizontalAxisItemPlacer(
 
     override fun getWidthMeasurementLabelValues(
         context: CartesianMeasuringContext,
-        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        layerDimensions: com.patrykandpatrick.vico.compose.cartesian.layer.CartesianLayerDimensions,
         fullXRange: ClosedFloatingPointRange<Double>,
     ): List<Double> = valuesInRange(fullXRange)
 
     override fun getHeightMeasurementLabelValues(
         context: CartesianMeasuringContext,
-        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        layerDimensions: com.patrykandpatrick.vico.compose.cartesian.layer.CartesianLayerDimensions,
         fullXRange: ClosedFloatingPointRange<Double>,
         maxLabelWidth: Float,
     ): List<Double> = valuesInRange(fullXRange)
@@ -114,14 +112,14 @@ private class FixedValuesHorizontalAxisItemPlacer(
 
     override fun getStartLayerMargin(
         context: CartesianMeasuringContext,
-        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        layerDimensions: com.patrykandpatrick.vico.compose.cartesian.layer.CartesianLayerDimensions,
         tickThickness: Float,
         maxLabelWidth: Float,
     ): Float = delegate.getStartLayerMargin(context, layerDimensions, tickThickness, maxLabelWidth)
 
     override fun getEndLayerMargin(
         context: CartesianMeasuringContext,
-        layerDimensions: com.patrykandpatrick.vico.core.cartesian.layer.CartesianLayerDimensions,
+        layerDimensions: com.patrykandpatrick.vico.compose.cartesian.layer.CartesianLayerDimensions,
         tickThickness: Float,
         maxLabelWidth: Float,
     ): Float = delegate.getEndLayerMargin(context, layerDimensions, tickThickness, maxLabelWidth)
@@ -151,15 +149,14 @@ fun StandardChart(
 ) {
     val onBackgroundColor = MaterialTheme.colorScheme.onBackground
     val onBackgroundColorArgb = onBackgroundColor.toArgb()
-    val shapeComponent =  rememberShapeComponent(fill(onBackgroundColor), CorneredShape.Pill)
+    val shapeComponent = rememberShapeComponent(Fill(onBackgroundColor), RoundedCornerShape(percent = 50))
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            color = onBackgroundColor,
-            padding = Insets(8f),
-            textAlignment = Layout.Alignment.ALIGN_CENTER,
+            style = TextStyle(color = onBackgroundColor, textAlign = TextAlign.Center),
+            padding = Insets(8.dp),
         ),
-        guideline =  rememberAxisGuidelineComponent(fill(onBackgroundColor)),
+        guideline = rememberAxisGuidelineComponent(Fill(onBackgroundColor)),
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
@@ -214,7 +211,7 @@ fun StandardChart(
                             LineCartesianLayer.LineProvider.series(
                                 listOf(
                                     LineCartesianLayer.rememberLine(
-                                        fill = LineCartesianLayer.LineFill.single(fill(Color(0xFFff6700))),
+                                        fill = LineCartesianLayer.LineFill.single(Fill(Color(0xFFff6700))),
                                         pointConnector =  LineCartesianLayer.PointConnector.cubic(),
                                         areaFill = null,
                                         pointProvider = null,
@@ -224,31 +221,35 @@ fun StandardChart(
                             rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
                         ),
                         startAxis = VerticalAxis.rememberStart(
-                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.onBackground)),
+                            line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                color = MaterialTheme.colorScheme.onBackground,
-                                textSize = 12.sp,
-                                padding = Insets(4f, 4f),
-                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                                style = TextStyle(
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.End,
+                                ),
+                                padding = Insets(4.dp, 4.dp),
                             ),
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
-                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
+                            tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             guideline = null,
                         ),
                         bottomAxis = HorizontalAxis.rememberBottom(
-                            line = rememberAxisLineComponent(fill(MaterialTheme.colorScheme.onBackground)),
+                            line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                color = MaterialTheme.colorScheme.onBackground,
-                                textSize = 12.sp,
-                                padding = Insets(4f, 4f),
-                                textAlignment = Layout.Alignment.ALIGN_OPPOSITE,
+                                style = TextStyle(
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.End,
+                                ),
+                                padding = Insets(4.dp, 4.dp),
                                 //minWidth = TextComponent.MinWidth.fixed(20f)
                             ),
                             labelRotationDegrees = -90f,
                             valueFormatter = bottomAxisValueFormatter,
                             guideline = null,
-                            tick = rememberAxisTickComponent(fill(MaterialTheme.colorScheme.onBackground)),
+                            tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             itemPlacer = remember(xAxisTickValues, maxVisibleXLabels) {
                                 if (xAxisTickValues.isNullOrEmpty()) {
                                     HorizontalAxis.ItemPlacer.aligned()
@@ -272,3 +273,4 @@ fun StandardChart(
         )
     }
 }
+
