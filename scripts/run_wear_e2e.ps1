@@ -4,7 +4,8 @@ Param(
     [string]$TestMethod,
     [string]$WearEmulatorSerial,
     [switch]$StartEmulatorIfNeeded = $true,
-    [string]$WearAvdName
+    [string]$WearAvdName,
+    [switch]$IncludeCrossDeviceTests = $false
 )
 
 $adb = "adb"
@@ -165,6 +166,7 @@ Start-Sleep -Milliseconds 500
 
 $gradleArgs = @(":wearos:assembleDebug", ":wearos:assembleDebugAndroidTest")
 $classArgument = $null
+$notClassArgument = $null
 
 if ($TestMethod) {
     if (-not $TestClass) {
@@ -187,6 +189,15 @@ if ($TestMethod) {
     $classArgument = $classes -join ","
 } elseif ($SmokeOnly) {
     $classArgument = "com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
+} elseif (-not $IncludeCrossDeviceTests) {
+    $excludedCrossDeviceClasses = @(
+        "com.gabstra.myworkoutassistant.e2e.PhoneToWearWorkoutHistorySyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.PhoneToWearVsLastComparisonE2ETest"
+    )
+    $notClassArgument = $excludedCrossDeviceClasses -join ","
+    Write-Host "Excluding cross-device Wear E2E classes by default:" -ForegroundColor Yellow
+    $excludedCrossDeviceClasses | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host "Use -IncludeCrossDeviceTests to include them." -ForegroundColor Yellow
 }
 
 $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
@@ -255,6 +266,8 @@ try {
     $instrumentArgs = @("-s", $targetWearSerial, "shell", "am", "instrument", "-w", "-r")
     if ($classArgument) {
         $instrumentArgs += @("-e", "class", $classArgument)
+    } elseif ($notClassArgument) {
+        $instrumentArgs += @("-e", "notClass", $notClassArgument)
     }
     $instrumentArgs += $runner
 
