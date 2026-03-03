@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import android.os.SystemClock
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -14,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,7 +38,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -53,7 +54,7 @@ fun WorkoutStateHeader(
     val restState = workoutState as? WorkoutState.Rest
     val showRestTimerInHeader = restState != null && !screenState.isRestTimerPageVisible
     val restSetData = restState?.currentSetData as? RestSetData
-    var duration by remember { mutableStateOf(Duration.ZERO) }
+    var durationSeconds by remember(startWorkoutTime) { mutableLongStateOf(0L) }
     var restTimerUiState by remember(restState?.set?.id) {
         mutableStateOf<WorkoutTimerService.TimerUiState?>(null)
     }
@@ -71,11 +72,17 @@ fun WorkoutStateHeader(
 
     if (displayMode == 1 && startWorkoutTime != null) {
         LaunchedEffect(displayMode, startWorkoutTime) {
+            val initialElapsedMs = Duration.between(startWorkoutTime, LocalDateTime.now())
+                .toMillis()
+                .coerceAtLeast(0L)
+            val baselineRealtimeMs = SystemClock.elapsedRealtime()
+
             while (true) {
-                val now = LocalDateTime.now()
-                duration = Duration.between(startWorkoutTime,now)
-                val nextSecond = now.plusSeconds(1).truncatedTo(ChronoUnit.SECONDS)
-                val delayMs = Duration.between(now, nextSecond).toMillis().coerceAtLeast(1L)
+                val nowRealtimeMs = SystemClock.elapsedRealtime()
+                val elapsedMs = initialElapsedMs + (nowRealtimeMs - baselineRealtimeMs)
+                durationSeconds = (elapsedMs / 1000L).coerceAtLeast(0L)
+
+                val delayMs = (200L - (nowRealtimeMs % 200L)).coerceAtLeast(1L)
                 delay(delayMs)
             }
         }
@@ -129,9 +136,9 @@ fun WorkoutStateHeader(
                 fontWeight = FontWeight.Medium
             )
 
-            val hours = remember(duration) { duration.toHours() }
-            val minutes = remember(duration) { duration.toMinutes() % 60 }
-            val seconds = remember(duration) { duration.seconds % 60 }
+            val hours = remember(durationSeconds) { durationSeconds / 3600L }
+            val minutes = remember(durationSeconds) { (durationSeconds % 3600L) / 60L }
+            val seconds = remember(durationSeconds) { durationSeconds % 60L }
 
             val clockText = remember(hours, minutes, seconds) {
                 buildAnnotatedString {
