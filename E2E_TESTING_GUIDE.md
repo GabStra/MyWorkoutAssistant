@@ -120,7 +120,7 @@ Default flow:
 2. Build/install Wear debug app.
 3. Build/install mobile debug + mobile androidTest APKs.
 4. Run mobile prep instrumentation.
-5. Run Wear verification classes.
+5. Run Wear VS LAST verification class (`PhoneToWearVsLastComparisonE2ETest`).
 6. Run Wear producer class.
 7. Run mobile verification instrumentation.
 
@@ -158,7 +158,7 @@ Reuse Wear install/build after first Wear class (default enabled):
 pwsh ./scripts/run_cross_device_sync_e2e.ps1 -SkipWearRebuildAfterFirstRun
 ```
 
-This runs the first Wear class normally, then runs subsequent Wear classes via `run_wear_e2e.ps1` with `-SkipAssemble -SkipInstall`.
+This runs the first Wear class normally, then runs subsequent Wear classes via `run_wear_e2e.ps1` with `-SkipAssemble -SkipInstall` (currently the VS LAST verifier runs first, then producer).
 
 ## Outputs
 

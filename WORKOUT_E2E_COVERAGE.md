@@ -26,20 +26,16 @@ This document summarizes core workout business logic (from `shared/`) and how th
 
 ## E2E Coverage (Wear OS)
 
-### `WorkoutE2ETest`
+### `WearWorkoutFlowE2ETest`
 
 Covered:
-- Countdown dialog for timed duration exercises.
-- Set completion flow to rest; rest timer auto-advance.
-- Rest timer edit (UI entry) and skip dialog flow.
-- Workout completion screen, auto-close countdown, and completion dialog navigation.
-- Pager navigation on exercise and rest screens; auto-return to detail.
-- Go Home and resume flows; delete paused workout flow.
-- Timed duration set auto-start and completion flow.
-- Endurance set countdown; manual start flow.
-- Back dialog on workout-in-progress (single press + pause on double press).
+- Rest timer skip flow and transition to next set.
+- Workout completion screen visibility after finishing a workout.
+- Calibration-required workout start flow.
+- Restart-timer recovery flow after process death on rest screen.
+- Timed-duration set process-death recovery with running timer continuity.
 
-### `ExerciseHistoryStorageE2ETest`
+### `WearExerciseHistoryE2ETest`
 
 Covered:
 - Weight set: modify reps and weight, assert `SetHistory` stores updated values.
