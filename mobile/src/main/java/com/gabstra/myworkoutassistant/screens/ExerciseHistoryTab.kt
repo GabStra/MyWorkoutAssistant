@@ -16,7 +16,6 @@ fun ExerciseHistoryTab(
     exercise: Exercise,
     initialHistoryMode: Int,
     onGoBack: () -> Unit,
-    onNavigateToOverview: () -> Unit
 ) {
     ExerciseHistoryScreen(
         appViewModel = appViewModel,
@@ -26,7 +25,5 @@ fun ExerciseHistoryTab(
         exercise = exercise,
         initialSelectedTabIndex = initialHistoryMode,
         onGoBack = onGoBack,
-        embedded = true,
-        onNavigateToOverview = onNavigateToOverview
     )
 }

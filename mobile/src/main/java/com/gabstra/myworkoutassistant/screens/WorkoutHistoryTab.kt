@@ -19,7 +19,6 @@ fun WorkoutHistoryTab(
     setHistoryDao: SetHistoryDao,
     workout: Workout,
     onGoBack: () -> Unit,
-    onNavigateToOverview: () -> Unit
 ) {
     WorkoutHistoryScreen(
         appViewModel = appViewModel,
@@ -30,7 +29,5 @@ fun WorkoutHistoryTab(
         setHistoryDao = setHistoryDao,
         workout = workout,
         onGoBack = onGoBack,
-        embedded = true,
-        onNavigateToOverview = onNavigateToOverview
     )
 }

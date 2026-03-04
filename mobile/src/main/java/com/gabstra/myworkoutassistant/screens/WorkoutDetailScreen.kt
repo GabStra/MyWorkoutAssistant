@@ -1051,8 +1051,7 @@ fun WorkoutDetailScreen(
                             workoutHistoryId = initialWorkoutHistoryId,
                             setHistoryDao = setHistoryDao,
                             workout = workout,
-                            onGoBack = onGoBack,
-                            onNavigateToOverview = { selectedTopTab = 0 }
+                            onGoBack = onGoBack
                         )
                     }
                 }
@@ -1132,6 +1131,5 @@ fun WorkoutDetailScreen(
         }
     }
 }
-
 
 

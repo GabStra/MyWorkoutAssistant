@@ -802,8 +802,7 @@ fun ExerciseDetailScreen(
                             setHistoryDao = setHistoryDao,
                             exercise = exercise,
                             initialHistoryMode = initialHistoryMode,
-                            onGoBack = onGoBack,
-                            onNavigateToOverview = { selectedTopTab = 0 }
+                            onGoBack = onGoBack
                         )
                     }
                 }

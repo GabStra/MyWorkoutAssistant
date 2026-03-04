@@ -64,8 +64,6 @@ import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
-import com.gabstra.myworkoutassistant.composables.SwipeableTabs
-import com.gabstra.myworkoutassistant.composables.swipeToAdjacentTab
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
@@ -116,8 +114,6 @@ fun ExerciseHistoryScreen(
     exercise: Exercise,
     initialSelectedTabIndex: Int = 0,
     onGoBack: () -> Unit,
-    embedded: Boolean = false,
-    onNavigateToOverview: (() -> Unit)? = null
 ) {
     var isLoading by remember { mutableStateOf(true) }
 
@@ -520,135 +516,54 @@ fun ExerciseHistoryScreen(
             .background(MaterialTheme.colorScheme.background),
         verticalArrangement = Arrangement.Top,
     ) {
-            var selectedTopTab by remember { mutableIntStateOf(1) }
-            if (!embedded) {
-                SwipeableTabs(
-                    tabTitles = listOf("Overview", "History"),
-                    selectedTabIndex = selectedTopTab,
-                    onTabSelected = { index ->
-                        selectedTopTab = index
-                        if (index == 0) {
-                            appViewModel.setScreenData(
-                                ScreenData.ExerciseDetail(workout.id, exercise.id),
-                                true
-                            )
-                        }
-                    },
-                    renderPager = false
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            RangeDropdown(selectedRange) { selectedRange = it }
-            Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+        RangeDropdown(selectedRange) { selectedRange = it }
+        Spacer(modifier = Modifier.height(6.dp))
 
-            if(isLoading){
-                if (selectedMode == 0) {
-                    val loadingScrollState = rememberScrollState()
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (!embedded) {
-                                    Modifier.swipeToAdjacentTab(
-                                        selectedTabIndex = selectedTopTab,
-                                        tabCount = 2,
-                                        onTabSelected = { index ->
-                                            selectedTopTab = index
-                                            if (index == 0) {
-                                                appViewModel.setScreenData(
-                                                    ScreenData.ExerciseDetail(workout.id, exercise.id),
-                                                    true
-                                                )
-                                            }
-                                        }
-                                    )
-                                } else {
-                                    Modifier
-                                }
-                            )
-                            .verticalColumnScrollbarContainer(loadingScrollState),
-                        verticalArrangement = Arrangement.Top
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.width(32.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MediumDarkGray,
-                            )
-                        }
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ){
-                        CircularProgressIndicator(
-                            modifier = Modifier.width(32.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MediumDarkGray,
+        when {
+            isLoading -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                }
+            }
+            historiesToShow.isEmpty() -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PrimarySurface(modifier = Modifier.padding(15.dp)) {
+                        Text(
+                            modifier = Modifier.padding(15.dp),
+                            text = "No history found",
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 }
-            } else {
-                if (historiesToShow.isEmpty()) {
-                    Box(
+            }
+            else -> {
+                AnimatedContent(
+                    modifier = Modifier.weight(1f),
+                    targetState = selectedMode,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                    },
+                    label = "",
+                ) { updatedSelectedMode ->
+                    val scrollState = rememberScrollState()
+                    Column(
                         modifier = Modifier
-                            .fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                            .fillMaxSize()
+                            .verticalColumnScrollbarContainer(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(15.dp),
                     ) {
-                        PrimarySurface(
-                            modifier = Modifier
-                                .padding(15.dp),
-                            ) {
-                            Text(
-                                modifier = Modifier
-                                    .padding(15.dp),
-                                text = "No history found",
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                }else{
-                    AnimatedContent(
-                        modifier = Modifier.weight(1f),
-                        targetState = selectedMode,
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                        }, label = ""
-                    ) { updatedSelectedMode ->
-                        val scrollState = rememberScrollState()
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .then(
-                                    if (!embedded) {
-                                        Modifier.swipeToAdjacentTab(
-                                            selectedTabIndex = selectedTopTab,
-                                            tabCount = 2,
-                                            onTabSelected = { index ->
-                                                selectedTopTab = index
-                                                if (index == 0) {
-                                                    appViewModel.setScreenData(
-                                                        ScreenData.ExerciseDetail(workout.id, exercise.id),
-                                                        true
-                                                    )
-                                                }
-                                            }
-                                        )
-                                    } else {
-                                        Modifier
-                                    }
-                                )
-                                .verticalColumnScrollbarContainer(scrollState),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
                             when (updatedSelectedMode) {
                                 0 -> {
                                     val selectedHistoryMarkerPosition = selectedWorkoutHistory
