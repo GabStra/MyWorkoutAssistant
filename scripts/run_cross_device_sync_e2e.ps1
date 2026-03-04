@@ -11,10 +11,38 @@ Param(
     [string]$PhoneEmulatorSerial,
     [switch]$StartEmulatorIfNeeded = $true,
     [string]$WearAvdName,
-    [string]$PhoneAvdName
+    [string]$PhoneAvdName,
+    [switch]$SkipWearRebuildAfterFirstRun = $true,
+    [switch]$FastTimeoutProfile = $false,
+    [string]$TimingOutputPath
 )
 
 $ErrorActionPreference = "Stop"
+$runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$timings = [ordered]@{}
+$timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
+$timings["skipWearRebuildAfterFirstRun"] = $SkipWearRebuildAfterFirstRun.IsPresent
+$timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
+
+function Save-TimingOutput {
+    param(
+        [hashtable]$timingMap,
+        [string]$outputPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($outputPath)) {
+        return
+    }
+
+    $parent = Split-Path -Parent $outputPath
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $timingMap["endedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
+    ($timingMap | ConvertTo-Json -Depth 10) | Out-File -FilePath $outputPath -Encoding utf8
+    Write-Host "Timing output saved to: $outputPath" -ForegroundColor Green
+}
 
 function Get-ConnectedDevices {
     $lines = & adb devices
@@ -190,10 +218,14 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     }
 }
 
-function Run-MobileInstrumentationClass([string]$phoneSerial, [string]$className, [string]$appPackage) {
+function Run-MobileInstrumentationClass([string]$phoneSerial, [string]$className, [string]$appPackage, [switch]$fastTimeoutProfile) {
     Write-Host "Running mobile instrumentation class: $className" -ForegroundColor Cyan
     $runner = "$appPackage.test/androidx.test.runner.AndroidJUnitRunner"
-    $instrumentArgs = @("-s", $phoneSerial, "shell", "am", "instrument", "-w", "-r", "-e", "class", $className, $runner)
+    $instrumentArgs = @("-s", $phoneSerial, "shell", "am", "instrument", "-w", "-r", "-e", "class", $className)
+    if ($fastTimeoutProfile) {
+        $instrumentArgs += @("-e", "e2e_profile", "fast")
+    }
+    $instrumentArgs += $runner
     Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
     $instrumentOutput = & adb $instrumentArgs 2>&1
     $instrumentOutput | Out-Host
@@ -230,7 +262,7 @@ function Assert-CrossDevicePackageParity([string]$watchSerial, [string]$phoneSer
     Assert-DeviceAndPackage -serial $phoneSerial -deviceLabel "Phone" -packageName $packageName
 }
 
-function Wait-ForWatchWorkoutStoreSync([string]$watchSerial, [string]$appPackage, [string]$expectedWorkoutName, [int]$timeoutSeconds = 120) {
+function Wait-ForWatchWorkoutStoreSync([string]$watchSerial, [string]$appPackage, [string]$expectedWorkoutName, [int]$timeoutSeconds = 60) {
     Write-Host "Waiting for watch workout_store sync (expecting '$expectedWorkoutName')..." -ForegroundColor Cyan
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -239,13 +271,13 @@ function Wait-ForWatchWorkoutStoreSync([string]$watchSerial, [string]$appPackage
             Write-Host "Watch workout store contains expected workout." -ForegroundColor Green
             return
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 500
     }
 
     throw "Timed out waiting for watch workout_store.json to contain '$expectedWorkoutName'. Ensure manual pairing is active."
 }
 
-function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage, [string]$expectedWorkoutName, [int]$timeoutSeconds = 120) {
+function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage, [string]$expectedWorkoutName, [int]$timeoutSeconds = 60) {
     Write-Host "Waiting for phone workout_store sync (expecting '$expectedWorkoutName')..." -ForegroundColor Cyan
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -254,7 +286,7 @@ function Wait-ForPhoneWorkoutStoreSync([string]$phoneSerial, [string]$appPackage
             Write-Host "Phone workout store contains expected workout." -ForegroundColor Green
             return
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 500
     }
 
     throw "Timed out waiting for phone workout_store.json to contain '$expectedWorkoutName'."
@@ -270,76 +302,132 @@ function Ensure-PhonePackageState([string]$phoneSerial) {
     & adb -s $phoneSerial uninstall com.gabstra.myworkoutassistant | Out-Null
 }
 
+function Invoke-WearRunnerClass {
+    param(
+        [string]$className,
+        [string]$watchSerial,
+        [string]$timingPath,
+        [bool]$skipAssemble,
+        [bool]$skipInstall,
+        [bool]$fastProfile
+    )
+
+    $args = @(
+        "-NoProfile",
+        "-File",
+        "./scripts/run_wear_e2e.ps1",
+        "-TestClass",
+        $className,
+        "-WearEmulatorSerial",
+        $watchSerial,
+        "-StartEmulatorIfNeeded:`$false",
+        "-TimingOutputPath",
+        $timingPath
+    )
+
+    if ($skipAssemble) {
+        $args += "-SkipAssemble"
+    }
+    if ($skipInstall) {
+        $args += "-SkipInstall"
+    }
+    if ($fastProfile) {
+        $args += "-FastTimeoutProfile"
+    }
+
+    & pwsh @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wear runner failed for class '$className'."
+    }
+}
+
 Write-Host "Discovering connected emulators..." -ForegroundColor Cyan
 
+$resolvePhase = [System.Diagnostics.Stopwatch]::StartNew()
 $watchSerial = Resolve-EmulatorSerial -preferredSerial $WearEmulatorSerial -kind "watch" -avdName $WearAvdName
 $phoneSerial = Resolve-EmulatorSerial -preferredSerial $PhoneEmulatorSerial -kind "phone" -avdName $PhoneAvdName
-
 if (-not $watchSerial -or -not $phoneSerial) {
     throw "Could not find both watch and phone emulators. watch='$watchSerial' phone='$phoneSerial'."
 }
+$resolvePhase.Stop()
+$timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeconds, 3)
 
 Write-Host "Using watch: $watchSerial" -ForegroundColor Green
 Write-Host "Using phone: $phoneSerial" -ForegroundColor Green
 Write-Host "Required package on both: $AppPackage" -ForegroundColor Green
 
+$logsDir = "wearos/build/e2e-logs"
+if (-not (Test-Path $logsDir)) {
+    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+}
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+if (-not $TimingOutputPath) {
+    $TimingOutputPath = Join-Path $logsDir "cross_device_timings_$timestamp.json"
+}
+$timings["timingOutputPath"] = $TimingOutputPath
+
 $previousAndroidSerial = $env:ANDROID_SERIAL
 try {
+    $wearInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Install-WearDebugApp -watchSerial $watchSerial
+    $wearInstallPhase.Stop()
+    $timings["wearBuildInstallSeconds"] = [math]::Round($wearInstallPhase.Elapsed.TotalSeconds, 3)
 
     Ensure-PhonePackageState -phoneSerial $phoneSerial
 
+    $mobileInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
+    $mobileInstallPhase.Stop()
+    $timings["mobileBuildInstallSeconds"] = [math]::Round($mobileInstallPhase.Elapsed.TotalSeconds, 3)
+
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
+    $mobilePrepPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "Preparing phone app state (seed workout store + dismiss startup dialogs)..." -ForegroundColor Cyan
-    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobilePrepTestClass -appPackage $AppPackage
-    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
-    Wait-ForPhoneWorkoutStoreSync -phoneSerial $phoneSerial -appPackage $AppPackage -expectedWorkoutName $ExpectedWorkoutName
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobilePrepTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    $mobilePrepPhase.Stop()
+    $timings["mobilePrepInstrumentationSeconds"] = [math]::Round($mobilePrepPhase.Elapsed.TotalSeconds, 3)
 
+    Wait-ForPhoneWorkoutStoreSync -phoneSerial $phoneSerial -appPackage $AppPackage -expectedWorkoutName $ExpectedWorkoutName
     Wait-ForWatchWorkoutStoreSync -watchSerial $watchSerial -appPackage $AppPackage -expectedWorkoutName $ExpectedWorkoutName
     Bring-PhoneAppToForeground -phoneSerial $phoneSerial -appPackage $AppPackage
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
+    $wearClassTimings = [ordered]@{}
+    $skipAssemble = $false
+    $skipInstall = $false
+
     Write-Host "Running Wear verification for phone->watch workout history sync..." -ForegroundColor Cyan
-    $wearPhoneToWatchArgs = @(
-        "-NoProfile",
-        "-File",
-        "./scripts/run_wear_e2e.ps1",
-        "-TestClass",
-        $WearPhoneToWatchHistoryTestClass,
-        "-WearEmulatorSerial",
-        $watchSerial,
-        "-StartEmulatorIfNeeded:`$false"
-    )
-    & pwsh @wearPhoneToWatchArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Wear phone->watch history verification E2E failed."
+    $phase = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+    $phase.Stop()
+    $wearClassTimings["phoneToWatchSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+
+    if ($SkipWearRebuildAfterFirstRun) {
+        $skipAssemble = $true
+        $skipInstall = $true
     }
+
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
     Write-Host "Running Wear VS LAST comparison verification against synced phone history..." -ForegroundColor Cyan
-    $wearVsLastArgs = @(
-        "-NoProfile",
-        "-File",
-        "./scripts/run_wear_e2e.ps1",
-        "-TestClass",
-        $WearVsLastComparisonTestClass,
-        "-WearEmulatorSerial",
-        $watchSerial,
-        "-StartEmulatorIfNeeded:`$false"
-    )
-    & pwsh @wearVsLastArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Wear VS LAST comparison verification E2E failed."
-    }
+    $phase = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-WearRunnerClass -className $WearVsLastComparisonTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_vs_last_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+    $phase.Stop()
+    $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
+    $mobileResetPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "Resetting phone workout history state before Wear producer run..." -ForegroundColor Cyan
-    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileResetTestClass -appPackage $AppPackage
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileResetTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    $mobileResetPhase.Stop()
+    $timings["mobileResetInstrumentationSeconds"] = [math]::Round($mobileResetPhase.Elapsed.TotalSeconds, 3)
+
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
     Write-Host "Running Wear producer E2E test..." -ForegroundColor Cyan
+    $producerPhase = [System.Diagnostics.Stopwatch]::StartNew()
     $wearArgs = @(
         "-NoProfile",
         "-File",
@@ -348,23 +436,43 @@ try {
         $WearTestClass,
         "-WearEmulatorSerial",
         $watchSerial,
-        "-StartEmulatorIfNeeded:`$false"
+        "-StartEmulatorIfNeeded:`$false",
+        "-TimingOutputPath",
+        (Join-Path $logsDir "wear_producer_$timestamp.json")
     )
+    if ($skipAssemble) { $wearArgs += "-SkipAssemble" }
+    if ($skipInstall) { $wearArgs += "-SkipInstall" }
+    if ($FastTimeoutProfile) { $wearArgs += "-FastTimeoutProfile" }
+
     $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru
+    $lastParityCheck = Get-Date
     while (-not $wearProcess.HasExited) {
-        Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
-        Start-Sleep -Seconds 2
+        if (((Get-Date) - $lastParityCheck).TotalSeconds -ge 15) {
+            Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+            $lastParityCheck = Get-Date
+        }
+        Start-Sleep -Milliseconds 750
     }
     if ($wearProcess.ExitCode -ne 0) {
         throw "Wear producer E2E test failed."
     }
+    $producerPhase.Stop()
+    $wearClassTimings["producerSeconds"] = [math]::Round($producerPhase.Elapsed.TotalSeconds, 3)
+
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
     Write-Host "Running mobile verification instrumentation test..." -ForegroundColor Cyan
-    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileTestClass -appPackage $AppPackage
+    $mobileVerifyPhase = [System.Diagnostics.Stopwatch]::StartNew()
+    Run-MobileInstrumentationClass -phoneSerial $phoneSerial -className $MobileTestClass -appPackage $AppPackage -fastTimeoutProfile:$FastTimeoutProfile
+    $mobileVerifyPhase.Stop()
+    $timings["mobileVerificationInstrumentationSeconds"] = [math]::Round($mobileVerifyPhase.Elapsed.TotalSeconds, 3)
+
+    $timings["wearClassTimings"] = $wearClassTimings
 
     Write-Host "Cross-device sync E2E completed successfully." -ForegroundColor Green
 } finally {
     $env:ANDROID_SERIAL = $previousAndroidSerial
+    $runStopwatch.Stop()
+    $timings["totalSeconds"] = [math]::Round($runStopwatch.Elapsed.TotalSeconds, 3)
+    Save-TimingOutput -timingMap $timings -outputPath $TimingOutputPath
 }
-

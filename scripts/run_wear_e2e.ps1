@@ -5,10 +5,43 @@ Param(
     [string]$WearEmulatorSerial,
     [switch]$StartEmulatorIfNeeded = $true,
     [string]$WearAvdName,
-    [switch]$IncludeCrossDeviceTests = $false
+    [switch]$IncludeCrossDeviceTests = $false,
+    [switch]$SkipAssemble = $false,
+    [switch]$SkipInstall = $false,
+    [switch]$NoLogcat = $false,
+    [string]$TimingOutputPath,
+    [switch]$FastTimeoutProfile = $false
 )
 
 $adb = "adb"
+$runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$timings = [ordered]@{}
+$timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
+$timings["fastTimeoutProfile"] = $FastTimeoutProfile.IsPresent
+$timings["skipAssemble"] = $SkipAssemble.IsPresent
+$timings["skipInstall"] = $SkipInstall.IsPresent
+$timings["logcatEnabled"] = (-not $NoLogcat)
+$timings["installFallbackUsed"] = $false
+
+function Save-TimingOutput {
+    param(
+        [hashtable]$timingMap,
+        [string]$outputPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($outputPath)) {
+        return
+    }
+
+    $parent = Split-Path -Parent $outputPath
+    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $timingMap["endedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
+    ($timingMap | ConvertTo-Json -Depth 10) | Out-File -FilePath $outputPath -Encoding utf8
+    Write-Host "Timing output saved to: $outputPath" -ForegroundColor Green
+}
 
 function Get-ConnectedDevices {
     $lines = & $adb devices
@@ -109,7 +142,61 @@ function Start-WearEmulator {
     exit 1
 }
 
+function Install-WearApks {
+    param(
+        [string]$serial,
+        [string]$appApk,
+        [string]$testApk
+    )
+
+    Write-Host "Installing APKs on $serial..." -ForegroundColor Cyan
+    & $adb -s $serial install -r $appApk 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install app APK on $serial" }
+
+    & $adb -s $serial install -r $testApk 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install test APK on $serial" }
+}
+
+function Invoke-Instrumentation {
+    param(
+        [string]$serial,
+        [string]$classArgument,
+        [string]$notClassArgument,
+        [bool]$fastProfile
+    )
+
+    $runner = "com.gabstra.myworkoutassistant.debug.test/androidx.test.runner.AndroidJUnitRunner"
+    $instrumentArgs = @("-s", $serial, "shell", "am", "instrument", "-w", "-r")
+    if ($classArgument) {
+        $instrumentArgs += @("-e", "class", $classArgument)
+    } elseif ($notClassArgument) {
+        $instrumentArgs += @("-e", "notClass", $notClassArgument)
+    }
+    if ($fastProfile) {
+        $instrumentArgs += @("-e", "e2e_profile", "fast")
+    }
+    $instrumentArgs += $runner
+
+    Write-Host "Executing instrumentation on $serial..." -ForegroundColor Yellow
+    Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
+
+    $instrumentOutput = & $adb $instrumentArgs 2>&1
+    $instrumentOutput | Out-Host
+
+    $exitCode = $LASTEXITCODE
+    $outputText = $instrumentOutput -join "`n"
+    $hasOkSummary = $outputText -match "(?m)^OK \("
+    $hasFailureMarker = $outputText -match "FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed"
+    $missingInstrumentation = $outputText -match "Unable to find instrumentation info|INSTRUMENTATION_FAILED: .* does not exist"
+
+    return [PSCustomObject]@{
+        ExitCode = if ($exitCode -ne 0 -or $hasFailureMarker -or -not $hasOkSummary) { if ($exitCode -eq 0) { 1 } else { $exitCode } } else { 0 }
+        MissingInstrumentation = $missingInstrumentation
+    }
+}
+
 Write-Host "Checking connected Android devices..." -ForegroundColor Cyan
+$resolvePhase = [System.Diagnostics.Stopwatch]::StartNew()
 $devices = Get-ConnectedDevices
 if ($devices.Count -eq 0) {
     Write-Host "No devices currently connected." -ForegroundColor Yellow
@@ -137,51 +224,51 @@ if (-not $targetWearSerial) {
     Write-Error "No connected Wear emulator found. Start one or pass -WearEmulatorSerial."
     exit 1
 }
+$resolvePhase.Stop()
+$timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeconds, 3)
 
 Write-Host "Using Wear emulator: $targetWearSerial" -ForegroundColor Green
 Write-Host "Running Wear OS E2E tests..." -ForegroundColor Cyan
 
-# Setup logcat capture
 $logsDir = "wearos/build/e2e-logs"
 if (-not (Test-Path $logsDir)) {
     New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
 }
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$logFile = Join-Path $logsDir "logcat_$timestamp.txt"
-Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
-New-Item -ItemType File -Path $logFile -Force | Out-Null
+if (-not $TimingOutputPath) {
+    $TimingOutputPath = Join-Path $logsDir "timings_$timestamp.json"
+}
+$timings["timingOutputPath"] = $TimingOutputPath
 
-# Clear logcat buffer and start capturing logs in background
-Write-Host "Starting logcat capture..." -ForegroundColor Cyan
-& $adb -s $targetWearSerial logcat -c | Out-Null
-# Use a job to capture raw logcat output
-$logcatJob = Start-Job -ScriptBlock {
-    param($adbPath, $serial, $logFilePath)
-    & $adbPath -s $serial logcat -v threadtime *:V *>&1 |
-        Out-File -FilePath $logFilePath -Encoding utf8 -Append
-} -ArgumentList $adb, $targetWearSerial, $logFile
+$logFile = $null
+$logcatJob = $null
+if (-not $NoLogcat) {
+    $logFile = Join-Path $logsDir "logcat_$timestamp.txt"
+    Write-Host "Capturing device logs to: $logFile" -ForegroundColor Cyan
+    New-Item -ItemType File -Path $logFile -Force | Out-Null
 
-# Wait a moment for logcat to start
-Start-Sleep -Milliseconds 500
+    Write-Host "Starting logcat capture..." -ForegroundColor Cyan
+    & $adb -s $targetWearSerial logcat -c | Out-Null
+    $logcatJob = Start-Job -ScriptBlock {
+        param($adbPath, $serial, $logFilePath)
+        & $adbPath -s $serial logcat -v threadtime *:V *>&1 |
+            Out-File -FilePath $logFilePath -Encoding utf8 -Append
+    } -ArgumentList $adb, $targetWearSerial, $logFile
 
-$gradleArgs = @(":wearos:assembleDebug", ":wearos:assembleDebugAndroidTest")
+    Start-Sleep -Milliseconds 500
+}
+
 $classArgument = $null
 $notClassArgument = $null
 
 if ($TestMethod) {
     if (-not $TestClass) {
         Write-Error "TestMethod requires TestClass to be specified. Use: -TestClass <ClassName> -TestMethod <MethodName>"
-        if ($logcatJob) {
-            Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
-            Remove-Job -Job $logcatJob -Force -ErrorAction SilentlyContinue
-        }
         exit 1
     }
-    # Format: ClassName#methodName
     $fullClassName = if ($TestClass -notmatch "^com\.") { "com.gabstra.myworkoutassistant.e2e.$TestClass" } else { $TestClass }
     $classArgument = "$fullClassName#$TestMethod"
 } elseif ($TestClass) {
-    # Support comma-separated list of classes
     $classes = $TestClass -split "," | ForEach-Object {
         $class = $_.Trim()
         if ($class -notmatch "^com\.") { "com.gabstra.myworkoutassistant.e2e.$class" } else { $class }
@@ -200,27 +287,17 @@ if ($TestMethod) {
     Write-Host "Use -IncludeCrossDeviceTests to include them." -ForegroundColor Yellow
 }
 
-$cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
-Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
-Write-Host "Press Ctrl+C to cancel the test execution" -ForegroundColor Gray
-
 $exitCode = 0
 
-# Function to clean up resources
 function Stop-TestExecution {
     param([string]$reason = "interrupted")
     Write-Host "`n$reason - Stopping test execution..." -ForegroundColor Yellow
-    
-    # Try to stop any gradle processes (the main process should already be stopped by Ctrl+C)
-    # This is a best-effort cleanup for any child processes
-    Write-Host "Cleaning up any remaining processes..." -ForegroundColor Yellow
+
     try {
-        # Stop gradle daemon if it was started (optional - usually not needed)
         & .\gradlew --stop 2>&1 | Out-Null
     } catch {
-        # Ignore errors - gradle might not be running
     }
-    
+
     Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
     if ($logcatJob) {
         Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
@@ -229,25 +306,36 @@ function Stop-TestExecution {
     }
 }
 
-# Trap Ctrl+C (SIGINT) - this will catch when user presses Ctrl+C
 trap {
     if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) {
         Stop-TestExecution -reason "Test execution cancelled by user (Ctrl+C)"
-        exit 130  # Standard exit code for Ctrl+C
+        exit 130
     }
     throw
 }
 
 try {
-    # Build debug and androidTest APKs.
-    & .\gradlew $gradleArgs 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "Gradle assemble failed with exit code $exitCode"
-    }
-
     $appApk = "wearos/build/outputs/apk/debug/wearos-debug.apk"
     $testApk = "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk"
+
+    if (-not $SkipAssemble) {
+        $assemblePhase = [System.Diagnostics.Stopwatch]::StartNew()
+        $gradleArgs = @(":wearos:assembleDebug", ":wearos:assembleDebugAndroidTest")
+        $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
+        Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
+        Write-Host "Press Ctrl+C to cancel the test execution" -ForegroundColor Gray
+        & .\gradlew $gradleArgs 2>&1
+        $exitCode = $LASTEXITCODE
+        $assemblePhase.Stop()
+        $timings["assembleSeconds"] = [math]::Round($assemblePhase.Elapsed.TotalSeconds, 3)
+        if ($exitCode -ne 0) {
+            throw "Gradle assemble failed with exit code $exitCode"
+        }
+    } else {
+        Write-Host "Skipping Gradle assemble due to -SkipAssemble." -ForegroundColor Yellow
+        $timings["assembleSeconds"] = 0.0
+    }
+
     if (-not (Test-Path $appApk)) {
         throw "Missing app APK: $appApk"
     }
@@ -255,62 +343,66 @@ try {
         throw "Missing androidTest APK: $testApk"
     }
 
-    Write-Host "Installing APKs on $targetWearSerial..." -ForegroundColor Cyan
-    & $adb -s $targetWearSerial install -r $appApk 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install app APK on $targetWearSerial" }
-
-    & $adb -s $targetWearSerial install -r $testApk 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install test APK on $targetWearSerial" }
-
-    $runner = "com.gabstra.myworkoutassistant.debug.test/androidx.test.runner.AndroidJUnitRunner"
-    $instrumentArgs = @("-s", $targetWearSerial, "shell", "am", "instrument", "-w", "-r")
-    if ($classArgument) {
-        $instrumentArgs += @("-e", "class", $classArgument)
-    } elseif ($notClassArgument) {
-        $instrumentArgs += @("-e", "notClass", $notClassArgument)
+    if (-not $SkipInstall) {
+        $installAppPhase = [System.Diagnostics.Stopwatch]::StartNew()
+        Install-WearApks -serial $targetWearSerial -appApk $appApk -testApk $testApk
+        $installAppPhase.Stop()
+        $timings["installSeconds"] = [math]::Round($installAppPhase.Elapsed.TotalSeconds, 3)
+    } else {
+        Write-Host "Skipping APK install due to -SkipInstall." -ForegroundColor Yellow
+        $timings["installSeconds"] = 0.0
     }
-    $instrumentArgs += $runner
 
-    Write-Host "Executing instrumentation on $targetWearSerial..." -ForegroundColor Yellow
-    Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
-    $instrumentOutput = & $adb $instrumentArgs 2>&1
-    $instrumentOutput | Out-Host
+    $instrumentPhase = [System.Diagnostics.Stopwatch]::StartNew()
+    $result = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile
+    $instrumentPhase.Stop()
+    $timings["instrumentationSeconds"] = [math]::Round($instrumentPhase.Elapsed.TotalSeconds, 3)
+    $exitCode = $result.ExitCode
 
-    $exitCode = $LASTEXITCODE
-    $outputText = $instrumentOutput -join "`n"
-    $hasOkSummary = $outputText -match "(?m)^OK \("
-    $hasFailureMarker = $outputText -match "FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed"
-    if ($exitCode -ne 0 -or $hasFailureMarker -or -not $hasOkSummary) {
-        $exitCode = if ($exitCode -eq 0) { 1 } else { $exitCode }
+    if ($exitCode -ne 0 -and $SkipInstall -and $result.MissingInstrumentation) {
+        Write-Host "Instrumentation target missing; retrying once with APK install fallback..." -ForegroundColor Yellow
+        $retryInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
+        Install-WearApks -serial $targetWearSerial -appApk $appApk -testApk $testApk
+        $retryInstallPhase.Stop()
+        $timings["installFallbackSeconds"] = [math]::Round($retryInstallPhase.Elapsed.TotalSeconds, 3)
+        $timings["installFallbackUsed"] = $true
+
+        $retryInstrumentPhase = [System.Diagnostics.Stopwatch]::StartNew()
+        $retryResult = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile
+        $retryInstrumentPhase.Stop()
+        $timings["retryInstrumentationSeconds"] = [math]::Round($retryInstrumentPhase.Elapsed.TotalSeconds, 3)
+        $exitCode = $retryResult.ExitCode
     }
 } catch {
-    # Handle other errors (Ctrl+C is handled by trap above)
-    Write-Error "Error running Gradle: $($_.Exception.Message)"
+    Write-Error "Error running Wear E2E: $($_.Exception.Message)"
     $exitCode = 1
 } finally {
-    # Stop logcat capture (always run, even on error or Ctrl+C)
-    Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
     if ($logcatJob) {
+        Write-Host "Stopping logcat capture..." -ForegroundColor Cyan
         Stop-Job -Job $logcatJob -ErrorAction SilentlyContinue
         Remove-Job -Job $logcatJob -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 200
     }
+
+    $runStopwatch.Stop()
+    $timings["totalSeconds"] = [math]::Round($runStopwatch.Elapsed.TotalSeconds, 3)
+    if ($logFile) {
+        $timings["logFile"] = $logFile
+    }
+    Save-TimingOutput -timingMap $timings -outputPath $TimingOutputPath
 }
 
-if (Test-Path $logFile) {
+if ($logFile -and (Test-Path $logFile)) {
     $logSize = (Get-Item $logFile).Length
     Write-Host "Device logs saved to: $logFile ($([math]::Round($logSize / 1KB, 2)) KB)" -ForegroundColor Green
-} else {
-    Write-Warning "Log file was not created: $logFile"
 }
 
 if ($exitCode -ne 0) {
     Write-Error "Wear OS E2E tests failed with exit code $exitCode."
-    Write-Host "Device logs available at: $logFile" -ForegroundColor Yellow
+    if ($logFile) {
+        Write-Host "Device logs available at: $logFile" -ForegroundColor Yellow
+    }
     exit $exitCode
 }
 
 Write-Host "Wear OS E2E tests completed successfully." -ForegroundColor Green
-
-
-
