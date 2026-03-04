@@ -21,7 +21,9 @@ class CrossDeviceWorkoutFlowHelper(
     private val device: UiDevice,
     private val workoutDriver: WearWorkoutDriver
 ) {
-    fun completeComplexWorkoutWithDeterministicModifications(timeoutMs: Long = 420_000) {
+    fun completeComplexWorkoutWithDeterministicModifications(
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+    ) {
         val modifiedSetIds = mutableSetOf<UUID>()
         val targetModifiedSetIds = setOf(
             CrossDeviceSyncWorkoutStoreFixture.SET_A1_ID,
@@ -43,7 +45,7 @@ class CrossDeviceWorkoutFlowHelper(
                     true
                 }.getOrElse { false }
                 if (!skipped) {
-                    waitForRestAutoAdvance(timeoutMs = 75_000)
+                    waitForRestAutoAdvance(timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
                 }
                 continue
             }
@@ -103,7 +105,7 @@ class CrossDeviceWorkoutFlowHelper(
         var sawCalibrationLoad = false
         var sawCalibrationRir = false
         var progressedAfterCalibrationRir = false
-        val deadline = System.currentTimeMillis() + 180_000
+        val deadline = System.currentTimeMillis() + E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
 
         while (System.currentTimeMillis() < deadline) {
             if (isCompletionVisible()) {
@@ -134,7 +136,7 @@ class CrossDeviceWorkoutFlowHelper(
                     true
                 }.getOrElse { false }
                 if (!skipped) {
-                    waitForRestAutoAdvance(timeoutMs = 35_000)
+                    waitForRestAutoAdvance(timeoutMs = E2ETestTimings.CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS)
                 }
                 continue
             }

@@ -538,7 +538,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         val startClicked = clickButtonWithRetry("Start", timeoutMs = 3_000, attempts = 4)
         require(startClicked) { "Start button not found for timed duration set" }
-        Thread.sleep(3_000)
+        require(waitForElapsedAfterStart(timeoutMs = 5_000)) {
+            "Timed duration set did not appear to progress after pressing Start"
+        }
 
         val stopClicked = clickButtonWithRetry("Stop", timeoutMs = 3_000, attempts = 4)
         require(stopClicked) { "Stop button not found for timed duration set" }
@@ -598,7 +600,9 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         val startClicked = clickButtonWithRetry("Start", timeoutMs = 3_000, attempts = 4)
         require(startClicked) { "Start button not found for endurance set" }
-        Thread.sleep(3_000)
+        require(waitForElapsedAfterStart(timeoutMs = 5_000)) {
+            "Endurance set did not appear to progress after pressing Start"
+        }
 
         val stopClicked = clickButtonWithRetry("Stop", timeoutMs = 3_000, attempts = 4)
         require(stopClicked) { "Stop button not found for endurance set" }
@@ -1325,6 +1329,28 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     private fun waitForButtonByLabel(label: String, timeoutMs: Long = 2_000): UiObject2? {
         return device.wait(Until.findObject(By.desc(label)), timeoutMs)
             ?: device.wait(Until.findObject(By.text(label)), timeoutMs)
+    }
+
+    private fun waitForElapsedAfterStart(timeoutMs: Long): Boolean {
+        val stopVisible = waitForButtonByLabel("Stop", timeoutMs) != null
+        if (!stopVisible) return false
+
+        val initialTimerText = readAnyVisibleTimerText() ?: return true
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val current = readAnyVisibleTimerText()
+            if (!current.isNullOrBlank() && current != initialTimerText) {
+                return true
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
+    }
+
+    private fun readAnyVisibleTimerText(): String? {
+        return device.findObjects(By.textContains(":"))
+            .mapNotNull { node -> runCatching { node.text }.getOrNull() }
+            .firstOrNull { it.matches(Regex("\\d{1,2}:\\d{2}(:\\d{2})?")) }
     }
 
     private fun clickButtonWithRetry(

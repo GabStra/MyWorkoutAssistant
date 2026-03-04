@@ -108,7 +108,9 @@ class PhoneToWearVsLastComparisonE2ETest : WearBaseE2ETest() {
         return null
     }
 
-    private suspend fun waitForSyncedPhoneHistoryOnWear(timeoutMs: Long = 120_000): List<SimpleSet> {
+    private suspend fun waitForSyncedPhoneHistoryOnWear(
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
+    ): List<SimpleSet> {
         val db = AppDatabase.getDatabase(ApplicationProvider.getApplicationContext())
         val workoutHistoryDao = db.workoutHistoryDao()
         val setHistoryDao = db.setHistoryDao()
@@ -140,7 +142,7 @@ class PhoneToWearVsLastComparisonE2ETest : WearBaseE2ETest() {
                     SimpleSet(weight = syncedA2.actualWeight, reps = syncedA2.actualReps)
                 )
             }
-            delay(2_000)
+            delay(500)
         }
         error("Synced phone history was not found on Wear within timeout.")
     }

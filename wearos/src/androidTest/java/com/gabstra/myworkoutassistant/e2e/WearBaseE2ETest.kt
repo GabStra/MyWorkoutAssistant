@@ -90,20 +90,36 @@ abstract class WearBaseE2ETest {
         val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             ?: error("Launch intent for package $pkg not found")
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val launchComponent = launchIntent.component
 
         val windowSelector = By.pkg(pkg).depth(0)
         var windowAppeared = false
-        repeat(2) { attempt ->
+        repeat(4) {
             device.pressHome()
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
-            context.startActivity(launchIntent)
+            runCatching { context.startActivity(launchIntent) }
             windowAppeared = device.wait(
                 Until.hasObject(windowSelector),
                 E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS
             )
             if (windowAppeared) return@repeat
+
+            if (launchComponent != null) {
+                runCatching {
+                    device.executeShellCommand(
+                        "am start -W -n ${launchComponent.packageName}/${launchComponent.className}"
+                    )
+                }
+                windowAppeared = device.wait(
+                    Until.hasObject(windowSelector),
+                    E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS
+                )
+                if (windowAppeared) return@repeat
+            }
         }
-        require(windowAppeared) { "Timed out waiting for app ($pkg) to appear on screen after 2 launch attempts" }
+        require(windowAppeared) {
+            "Timed out waiting for app ($pkg) to appear on screen after 4 launch attempts"
+        }
 
         // Wait for app to settle and optionally show tutorial
         device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)

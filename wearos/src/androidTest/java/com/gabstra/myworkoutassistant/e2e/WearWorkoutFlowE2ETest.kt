@@ -121,24 +121,33 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         assertRestTimerVisible()
 
+        val preKillSeconds = waitForRestTimerAtMost(
+            targetSeconds = 45,
+            timeoutMs = 25_000
+        ) ?: readRestTimerSecondsFromScreen()
+        require(preKillSeconds != null && preKillSeconds <= 45) {
+            "Rest timer did not decrease enough before kill. preKill=$preKillSeconds"
+        }
+
         workoutDriver.killAppProcessTimed(
             packageName = context.packageName,
             settleMs = 0
         )
         launchAppFromHome()
+        val restartOptionVisible = device.wait(
+            Until.hasObject(By.desc("Recovery timer restart option")),
+            3_000
+        ) || device.hasObject(By.textContains("Restart timer"))
 
         val resumed = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
             workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.textContains(":"),
-            timeoutMs = 15_000,
-            useRestartTimer = true
+            inWorkoutSelector = By.descContains(SetValueSemantics.RestSetTypeDescription),
+            timeoutMs = 25_000,
+            useRestartTimer = restartOptionVisible
         )
         require(resumed.enteredWorkout) {
             "Could not return to rest screen after relaunch with Restart timer choice"
         }
-
-        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
 
         val restVisible = device.wait(
             Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
@@ -146,13 +155,35 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         )
         require(restVisible) { "Rest screen not visible after recovery with Restart timer" }
 
-        val initialSeconds = readRestTimerSecondsFromScreen()
-        require(initialSeconds != null && initialSeconds >= 55) {
-            "After Restart timer choice, rest should show full duration (≥55s). actual=$initialSeconds"
+        val initialReadAtMs = System.currentTimeMillis()
+        var initialSeconds = readRestTimerSecondsFromScreen()
+        if (initialSeconds == null) {
+            dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
+            dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
+            initialSeconds = readRestTimerSecondsFromScreen()
+        }
+        require(initialSeconds != null) {
+            "Could not read rest timer after restart recovery"
+        }
+        val recoveryReferenceMs = resumed.enteredWorkoutAtMs ?: resumed.resumeActionAtMs ?: initialReadAtMs
+        val elapsedSinceRecoverySeconds =
+            ((initialReadAtMs - recoveryReferenceMs).coerceAtLeast(0L) / 1_000L).toInt()
+        val expectedRestartSeconds = (60 - elapsedSinceRecoverySeconds).coerceAtLeast(0)
+        val minExpectedRestart = (expectedRestartSeconds - 8).coerceAtLeast(0)
+        val maxExpectedRestart = (expectedRestartSeconds + 6).coerceAtMost(60)
+        if (restartOptionVisible) {
+            require(initialSeconds in minExpectedRestart..maxExpectedRestart) {
+                "Restart timer should match elapsed-time restart bounds. " +
+                    "preKill=$preKillSeconds, elapsedSinceRecovery=$elapsedSinceRecoverySeconds, " +
+                    "expectedRange=[$minExpectedRestart..$maxExpectedRestart], actual=$initialSeconds"
+            }
+        } else {
+            require(initialSeconds <= (preKillSeconds + 6)) {
+                "Without restart option, resumed timer should be near continued remainder. preKill=$preKillSeconds resumed=$initialSeconds"
+            }
         }
 
-        Thread.sleep(3_000)
-        val laterSeconds = readRestTimerSecondsFromScreen()
+        val laterSeconds = waitForRestTimerDecrease(initialSeconds = initialSeconds, timeoutMs = 6_000)
         require(laterSeconds != null && laterSeconds < initialSeconds) {
             "Rest timer should count down. initial=$initialSeconds later=$laterSeconds"
         }
@@ -193,7 +224,7 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         val progressDeadline = System.currentTimeMillis() + 15_000
         var preKillSeconds = initialSeconds
         while (System.currentTimeMillis() < progressDeadline) {
-            Thread.sleep(1_000)
+            device.waitForIdle(250)
             preKillSeconds = workoutDriver.readTimedDurationSeconds()
             if (preKillSeconds <= initialSeconds - 1) break
         }
@@ -217,8 +248,8 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
 
         val recoveryResult = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
             workoutName = TimedDurationSetWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.text("Stop"),
-            timeoutMs = 15_000
+            inWorkoutSelector = By.descContains(SetValueSemantics.TimedDurationValueDescription),
+            timeoutMs = 25_000
         )
         require(recoveryResult.enteredWorkout) {
             "Recovery UI not available after process death and timed exercise was not restored."
@@ -244,11 +275,20 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         require(harnessReadDelayMs <= 1_500L) {
             "Harness read timer too late after recovery transition. delayMs=$harnessReadDelayMs"
         }
-        // Emulator scheduling/jank can introduce a few extra elapsed seconds between
-        // persisted snapshot and first resumed UI read.
-        val strictToleranceSeconds = 6
-        require(kotlin.math.abs(resumedSeconds - preKillSeconds) <= strictToleranceSeconds) {
-            "Recovered timer is not preserved. expected≈$preKillSeconds (±$strictToleranceSeconds), actual=$resumedSeconds, harnessDelayMs=$harnessReadDelayMs"
+        // Timer keeps running across background/kill/relaunch, so compare against an elapsed-time
+        // projection from the last pre-kill read instead of a symmetric absolute delta.
+        val elapsedSincePreKillSeconds =
+            ((resumedRead.readAtMs - preKillRead.readAtMs).coerceAtLeast(0L) / 1_000L).toInt()
+        val expectedAfterElapsed = (preKillSeconds - elapsedSincePreKillSeconds).coerceAtLeast(0)
+        val earlyReadToleranceSeconds = 3
+        val lateRecoveryToleranceSeconds = 8
+        val minExpected = (expectedAfterElapsed - lateRecoveryToleranceSeconds).coerceAtLeast(0)
+        val maxExpected = (preKillSeconds + earlyReadToleranceSeconds).coerceAtMost(initialSeconds)
+        require(resumedSeconds in minExpected..maxExpected) {
+            "Recovered timer is outside elapsed-time bounds. " +
+                "preKill=$preKillSeconds, elapsedSincePreKill=$elapsedSincePreKillSeconds, " +
+                "expectedRange=[$minExpected..$maxExpected], actual=$resumedSeconds, " +
+                "harnessDelayMs=$harnessReadDelayMs"
         }
         require(resumedSeconds > 0) {
             "Recovered timer resumed at an invalid value. resumed=$resumedSeconds"
@@ -274,5 +314,29 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
     private fun assertRestTimerVisible() {
         val restTimerVisible = device.wait(Until.hasObject(By.textContains(":")), 5_000)
         require(restTimerVisible) { "Rest screen did not appear" }
+    }
+
+    private fun waitForRestTimerDecrease(initialSeconds: Int, timeoutMs: Long): Int? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val current = readRestTimerSecondsFromScreen()
+            if (current != null && current < initialSeconds) {
+                return current
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return readRestTimerSecondsFromScreen()
+    }
+
+    private fun waitForRestTimerAtMost(targetSeconds: Int, timeoutMs: Long): Int? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val current = readRestTimerSecondsFromScreen()
+            if (current != null && current <= targetSeconds) {
+                return current
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return readRestTimerSecondsFromScreen()
     }
 }

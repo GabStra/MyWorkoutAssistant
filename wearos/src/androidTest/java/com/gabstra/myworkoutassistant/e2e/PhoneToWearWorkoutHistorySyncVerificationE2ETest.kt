@@ -23,7 +23,7 @@ class PhoneToWearWorkoutHistorySyncVerificationE2ETest {
         val workoutHistoryDao = db.workoutHistoryDao()
         val setHistoryDao = db.setHistoryDao()
 
-        val deadline = System.currentTimeMillis() + 120_000
+        val deadline = System.currentTimeMillis() + E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
         var exactMatchFound = false
 
         while (System.currentTimeMillis() < deadline) {
@@ -70,7 +70,7 @@ class PhoneToWearWorkoutHistorySyncVerificationE2ETest {
             if (exactMatchFound) {
                 break
             }
-            delay(2_000)
+            delay(500)
         }
 
         require(exactMatchFound) {
