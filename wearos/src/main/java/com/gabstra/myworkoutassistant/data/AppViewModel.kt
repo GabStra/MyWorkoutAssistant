@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -226,7 +227,9 @@ open class AppViewModel : WorkoutViewModel() {
         workoutId: UUID
     ): Boolean {
         if (checkpoint == null || checkpoint.workoutId != workoutId) return false
-        if (checkpoint.stateType != RecoveryStateType.SET) return false
+        val timerEligibleState =
+            checkpoint.stateType == RecoveryStateType.SET || checkpoint.stateType == RecoveryStateType.REST
+        if (!timerEligibleState) return false
         if (checkpoint.isCalibrationSetExecution) return false
 
         val targetExercise = findExerciseForCheckpoint(checkpoint, workoutId) ?: return false
@@ -236,7 +239,7 @@ open class AppViewModel : WorkoutViewModel() {
             targetExercise.sets.getOrNull(setIndex)
         } ?: return false
 
-        return targetSet is TimedDurationSet || targetSet is EnduranceSet
+        return targetSet is TimedDurationSet || targetSet is EnduranceSet || targetSet is RestSet
     }
 
     private fun resolveRecoveryDisplayName(
@@ -952,6 +955,19 @@ open class AppViewModel : WorkoutViewModel() {
             )
         }
 
+        if (recoveryApplied && checkpoint != null && checkpoint.workoutId == selectedWorkoutId) {
+            val stateAligned = doesCurrentStateMatchCheckpointType(checkpoint)
+            if (!stateAligned) {
+                recoveryApplied = moveToRecoveredState(
+                    stateType = checkpoint.stateType.name,
+                    exerciseId = checkpoint.exerciseId,
+                    setId = checkpoint.setId,
+                    setIndex = checkpoint.setIndex,
+                    restOrder = checkpoint.restOrder
+                )
+            }
+        }
+
         if (recoveryApplied) {
             if (shouldRestartCalibration) {
                 resetCurrentCalibrationLoadSelectionState()
@@ -970,6 +986,18 @@ open class AppViewModel : WorkoutViewModel() {
         pendingRecoveryResumeOptions = RecoveryResumeOptions()
         lightScreenUp()
         onEnd()
+    }
+
+    private fun doesCurrentStateMatchCheckpointType(checkpoint: WorkoutRecoveryCheckpoint): Boolean {
+        val state = workoutState.value
+        return when (checkpoint.stateType) {
+            RecoveryStateType.SET -> state is WorkoutState.Set
+            RecoveryStateType.REST -> state is WorkoutState.Rest
+            RecoveryStateType.CALIBRATION_LOAD -> state is WorkoutState.CalibrationLoadSelection
+            RecoveryStateType.CALIBRATION_RIR -> state is WorkoutState.CalibrationRIRSelection
+            RecoveryStateType.AUTO_REGULATION_RIR -> state is WorkoutState.AutoRegulationRIRSelection
+            RecoveryStateType.UNKNOWN -> false
+        }
     }
 
     private fun applyTimerRecoveryChoice(choice: TimerRecoveryChoice) {
