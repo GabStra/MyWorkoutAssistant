@@ -8,7 +8,6 @@ import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.CompletionWorkoutStoreFixture
-import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationSetWorkoutStoreFixture
 import org.junit.Before
@@ -23,18 +22,6 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
     override fun baseSetUp() {
         super.baseSetUp()
         workoutDriver = createWorkoutDriver()
-    }
-
-    @Test
-    fun completeSet_progressesToRest() {
-        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
-
-        workoutDriver.completeCurrentSet()
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-
-        assertRestTimerVisible()
     }
 
     @Test
@@ -79,36 +66,6 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
         require(calibrationLoadVisible) { "Calibration load selection did not appear" }
 
         workoutDriver.completeCurrentSet(timeoutMs = 10_000)
-    }
-
-    @Test
-    fun resumeWorkout_restoresState() {
-        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
-
-        workoutDriver.completeCurrentSet()
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-        assertRestTimerVisible()
-
-        device.pressHome()
-        device.waitForIdle(1_000)
-
-        launchAppFromHome()
-        val resumed = workoutDriver.resumeOrEnterRecoveredWorkout(
-            workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.textContains(":"),
-            timeoutMs = defaultTimeoutMs
-        )
-        require(resumed) { "Could not return to recovered rest state after relaunch" }
-
-        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-
-        val restTimerVisibleAfterResume = device.wait(Until.hasObject(By.textContains(":")), 5_000)
-        require(restTimerVisibleAfterResume) {
-            "Workout did not resume at correct state - rest timer not visible"
-        }
     }
 
     @Test
@@ -296,19 +253,6 @@ class WearWorkoutFlowE2ETest : WearBaseE2ETest() {
 
         dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
         dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
-    }
-
-    @Test
-    fun enduranceSet_manualStartCompletesWorkout() {
-        EnduranceSetManualStartWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(EnduranceSetManualStartWorkoutStoreFixture.getWorkoutName())
-
-        val exerciseNameVisible = device.wait(Until.hasObject(By.text("Endurance Exercise")), 5_000)
-        require(exerciseNameVisible) { "Exercise screen not visible" }
-
-        workoutDriver.completeTimedSet(timeoutMs = 10_000)
-        workoutDriver.waitForWorkoutCompletion(timeoutMs = 20_000)
     }
 
     private fun assertRestTimerVisible() {

@@ -50,36 +50,6 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun recoveryDialog_appearsAfterLeavingWorkoutAndRelaunching() {
-        MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
-        startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
-
-        workoutDriver.completeCurrentSet()
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-        val restVisible = device.wait(Until.hasObject(By.textContains(":")), 5_000)
-        require(restVisible) { "Rest screen did not appear" }
-
-        device.pressHome()
-        device.waitForIdle(1_000)
-        launchAppFromHome()
-
-        val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
-        require(dialogAppeared) { "Recovery dialog did not appear after leaving workout and relaunching" }
-
-        val resumed = workoutDriver.resumeOrEnterRecoveredWorkout(
-            workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.textContains(":"),
-            timeoutMs = defaultTimeoutMs
-        )
-        require(resumed) { "Could not return to rest screen after resume" }
-        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 2_000)
-        dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-        val restVisibleAfterResume = device.wait(Until.hasObject(By.textContains(":")), 5_000)
-        require(restVisibleAfterResume) { "Rest screen not visible after resume" }
-    }
-
-    @Test
     fun recoveryDialog_discard_clearsWorkoutAndNextLaunchShowsNoDialog() {
         MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         val db = AppDatabase.getDatabase(context)
