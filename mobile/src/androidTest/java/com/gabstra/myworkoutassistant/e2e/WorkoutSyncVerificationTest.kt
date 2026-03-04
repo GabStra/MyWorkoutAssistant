@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncPhoneWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -17,6 +18,13 @@ import kotlin.math.abs
 @RunWith(AndroidJUnit4::class)
 class WorkoutSyncVerificationTest {
 
+    private fun resolvedSyncTimeoutMs(): Long {
+        val fastProfile = InstrumentationRegistry.getArguments()
+            .getString("e2e_profile")
+            ?.equals("fast", true) == true
+        return if (fastProfile) 45_000 else 120_000
+    }
+
     @Test
     fun crossDeviceSync_wearWorkoutHistoryArrivesOnPhone() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
@@ -24,7 +32,7 @@ class WorkoutSyncVerificationTest {
         val workoutHistoryDao = db.workoutHistoryDao()
         val setHistoryDao = db.setHistoryDao()
 
-        val deadline = System.currentTimeMillis() + 120_000
+        val deadline = System.currentTimeMillis() + resolvedSyncTimeoutMs()
         var exactMatchFound = false
 
         while (System.currentTimeMillis() < deadline) {
@@ -67,7 +75,7 @@ class WorkoutSyncVerificationTest {
                 break
             }
 
-            delay(2_000)
+            delay(500)
         }
 
         require(exactMatchFound) {

@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -26,6 +27,13 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class PhoneSyncPreparationTest {
 
+    private fun resolvedWorkerTimeoutMs(): Long {
+        val fastProfile = InstrumentationRegistry.getArguments()
+            .getString("e2e_profile")
+            ?.equals("fast", true) == true
+        return if (fastProfile) 60_000 else 180_000
+    }
+
     @Test
     fun preparePhoneForCrossDeviceSync() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
@@ -44,7 +52,7 @@ class PhoneSyncPreparationTest {
             ExistingWorkPolicy.REPLACE,
             request
         )
-        waitForSyncWorkerSuccess(context, request.id)
+        waitForSyncWorkerSuccess(context, request.id, resolvedWorkerTimeoutMs())
     }
 
     private suspend fun seedDeterministicPhoneHistory(db: AppDatabase) {
