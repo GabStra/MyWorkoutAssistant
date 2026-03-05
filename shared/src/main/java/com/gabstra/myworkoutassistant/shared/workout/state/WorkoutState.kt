@@ -117,6 +117,7 @@ sealed class WorkoutState {
         val isCalibrationSet: Boolean = false, // Identifies if this Set is a calibration set execution
         val isCalibrationManagedWorkSet: Boolean = false, // Normal work set under an exercise that requires calibration
         val isAutoRegulationWorkSet: Boolean = false, // Non-last work set when progressionMode == AUTO_REGULATION
+        var hasBeenExecuted: Boolean = false,
     ) : WorkoutState() {
         var currentSetData by currentSetDataState // <-- observe changes
     }
@@ -184,4 +185,3 @@ sealed class WorkoutState {
         var endWorkoutTime: LocalDateTime by mutableStateOf(LocalDateTime.now())
     }
 }
-

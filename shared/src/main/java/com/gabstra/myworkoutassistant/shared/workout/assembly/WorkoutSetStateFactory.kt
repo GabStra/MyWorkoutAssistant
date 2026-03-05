@@ -5,8 +5,10 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.initializeSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -98,7 +100,12 @@ class WorkoutSetStateFactory {
             isUnilateral = isUnilateral,
             isCalibrationSet = isCalibrationSet,
             isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
-            isAutoRegulationWorkSet = isAutoRegulationWorkSet
+            isAutoRegulationWorkSet = isAutoRegulationWorkSet,
+            hasBeenExecuted = when (currentSetData) {
+                is TimedDurationSetData -> currentSetData.hasBeenExecuted
+                is EnduranceSetData -> currentSetData.hasBeenExecuted
+                else -> false
+            }
         )
     }
 

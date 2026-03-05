@@ -41,9 +41,11 @@ import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -134,6 +136,18 @@ private class ResettableLazy<T>(private val initializer: () -> T) {
         _value = null
         initialized = false
     }
+}
+
+internal fun resetTimeSetProgressForNewSession(setData: SetData): SetData = when (setData) {
+    is TimedDurationSetData -> setData.copy(
+        endTimer = setData.startTimer.coerceAtLeast(0),
+        hasBeenExecuted = false
+    )
+    is EnduranceSetData -> setData.copy(
+        endTimer = 0,
+        hasBeenExecuted = false
+    )
+    else -> setData
 }
 
 open class WorkoutViewModel(
@@ -1919,7 +1933,7 @@ open class WorkoutViewModel(
                 if (historySet != null) {
                     val historySetData = historySet.setData
                     if (isSetDataValid(set, historySetData) && exerciseProgression == null) {
-                        currentSetData = copySetData(historySetData)
+                        currentSetData = resetTimeSetProgressForNewSession(copySetData(historySetData))
                         previousSetData = historySet.setData
                     }
                 }

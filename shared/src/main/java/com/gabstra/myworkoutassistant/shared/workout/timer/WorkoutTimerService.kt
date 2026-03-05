@@ -292,7 +292,10 @@ class WorkoutTimerService(
                 // Check if timer reached startTimer (for autoStop) or exceeded it
                 if (reachedLimit) {
                     if (state.set.let { it is com.gabstra.myworkoutassistant.shared.sets.EnduranceSet && it.autoStop }) {
-                        state.currentSetData = setData.copy(endTimer = setData.startTimer)
+                        state.currentSetData = setData.copy(
+                            endTimer = setData.startTimer,
+                            hasBeenExecuted = true
+                        )
                         return true
                     }
                 }
@@ -316,7 +319,7 @@ class WorkoutTimerService(
 
                 // Timer completed when it reaches 0
                 if (remainingMillis <= 0) {
-                    state.currentSetData = setData.copy(endTimer = 0)
+                    state.currentSetData = setData.copy(endTimer = 0, hasBeenExecuted = true)
                     return true
                 }
                 return false
