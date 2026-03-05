@@ -46,7 +46,9 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -77,6 +79,11 @@ fun WeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
+    val historicalPreviousSetData = remember(state.exerciseId, state.set.id) {
+        viewModel.getAllSetHistoriesByExerciseId(state.exerciseId)
+            .firstOrNull { it.setId == state.set.id }
+            ?.setData as? WeightSetData
+    }
 
     val plateauReason = remember(state.exerciseId) {
         viewModel.plateauReasonByExerciseId[state.exerciseId]
@@ -105,6 +112,9 @@ fun WeightSetScreen(
     }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val isWorkSet = remember(state.set.id) {
+        (state.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
+    }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet) {
         state.isCalibrationSet
     }
@@ -483,6 +493,13 @@ fun WeightSetScreen(
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
+                    }
+                    if (isWorkSet && historicalPreviousSetData != null) {
+                        HistoricalSetDeltaBadge(
+                            previousSetData = historicalPreviousSetData,
+                            currentSetData = currentSetData,
+                            equipment = equipment
+                        )
                     }
                     if (isPlateauDetected) {
                         Row(
