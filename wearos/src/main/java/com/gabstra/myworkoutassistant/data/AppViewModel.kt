@@ -458,9 +458,10 @@ open class AppViewModel : WorkoutViewModel() {
         val context = applicationContext ?: return
         val selectedWorkoutId = selectedWorkout.value.id
 
-        // Clear checkpoint only when workout is completed.
+        // Clear checkpoint only when workout is completed. Use synchronous write so the clear
+        // is durable before process death (e.g. user leaves immediately after completion).
         if (screenState.workoutState is WorkoutState.Completed) {
-            checkpointStore()?.clear()
+            checkpointStore()?.clear(synchronous = true)
             lastCheckpointFingerprint = null
             return
         }

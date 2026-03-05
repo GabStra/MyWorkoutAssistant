@@ -56,8 +56,8 @@ internal class WorkoutRecoveryCheckpointStore(context: Context) {
         )
     }
 
-    fun clear() {
-        prefs.edit {
+    fun clear(synchronous: Boolean = false) {
+        prefs.edit(commit = synchronous) {
             remove(KEY_WORKOUT_ID)
             remove(KEY_WORKOUT_HISTORY_ID)
             remove(KEY_STATE_TYPE)

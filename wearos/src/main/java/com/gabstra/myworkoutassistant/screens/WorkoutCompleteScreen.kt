@@ -97,38 +97,40 @@ fun WorkoutCompleteScreen(
         }
     }
 
-    LaunchedEffect(Unit){
-        delay(500)
-
-        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-        prefs.edit { putBoolean("isWorkoutInProgress", false) }
-        viewModel.clearRecoveryCheckpoint()
-
-        viewModel.setDimming(false)
-        hapticsViewModel.doShortImpulse()
-        if(!workout.usePolarDevice){
-            hrViewModel.stopMeasuringHeartRate()
-        }else{
-            polarViewModel.disconnectFromDevice()
-        }
-        cancelWorkoutInProgressNotification(context)
-
-        // Ensure final workout history is stored with isDone=true and scheduled for sync.
-        // Guard against duplicate execution if LaunchedEffect runs multiple times
+    // Run critical completion persistence immediately so next app launch does not show recovery.
+    LaunchedEffect(Unit) {
         if (!completionSyncInitiated) {
             completionSyncInitiated = true
+
+            if (!workout.usePolarDevice) {
+                hrViewModel.stopMeasuringHeartRate()
+            } else {
+                polarViewModel.disconnectFromDevice()
+            }
+            cancelWorkoutInProgressNotification(context)
+
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            prefs.edit { putBoolean("isWorkoutInProgress", false) }
+
             viewModel.pushAndStoreWorkoutData(isDone = true, context = context, forceNotSend = false) {
                 android.util.Log.d(
                     "WorkoutSync",
                     "SYNC_TRACE event=completion_force_send side=wear isDone=true"
                 )
+                viewModel.clearRecoveryCheckpoint()
+                viewModel.deleteWorkoutRecord()
                 viewModel.flushWorkoutSync()
             }
-            WorkoutHistorySyncWorker.enqueue(context)
         }
+    }
 
-        // Clean up the workout record on the watch after final sync attempt.
-        viewModel.deleteWorkoutRecord()
+    // Defer UX-only side effects (haptics, sensors, notification) so they don't run on first frame.
+    LaunchedEffect(Unit) {
+
+        viewModel.setDimming(false)
+
+        delay(500)
+        hapticsViewModel.doShortImpulse()
     }
 
     // Start countdown when progression data is ready; sync runs independently in background.

@@ -91,6 +91,8 @@ fun WorkoutScreen(
 
     val onBeforeGoHome = remember(selectedWorkout) {
         {
+            // Ensure no timer background loop remains active after leaving workout flow.
+            viewModel.workoutTimerService.unregisterAll()
             try {
                 if (selectedWorkout != null && selectedWorkout.usePolarDevice) {
                     polarViewModel.disconnectFromDevice()
@@ -101,6 +103,13 @@ fun WorkoutScreen(
                 android.util.Log.e("WorkoutScreen", "Error stopping sensors on Go Home", exception)
             }
             Unit
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            // Defensive cleanup for any navigation path that leaves WorkoutScreen.
+            viewModel.workoutTimerService.unregisterAll()
         }
     }
 
@@ -604,4 +613,3 @@ fun WorkoutScreen(
         }
     }
 }
-
