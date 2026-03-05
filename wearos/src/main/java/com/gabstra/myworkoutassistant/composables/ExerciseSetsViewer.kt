@@ -489,7 +489,7 @@ fun ExerciseSetsViewer(
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
                 rowIndex == setIndex -> Orange
-                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -501,7 +501,7 @@ fun ExerciseSetsViewer(
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
                 rowIndex == setIndex -> Orange
-                rowIndex < setIndex -> MaterialTheme.colorScheme.onBackground
+                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
