@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -101,6 +102,19 @@ fun EnduranceSetScreen (
     var showStartButton by remember(set.id) {
         mutableStateOf(!set.autoStart && state.startTime == null && !hasRecoveredProgress)
     }
+    var showRepeatButton by remember(set.id) { mutableStateOf(false) }
+
+    fun markSetExecuted() {
+        val setData = state.currentSetData as? EnduranceSetData ?: return
+        state.currentSetData = setData.copy(hasBeenExecuted = true)
+        state.hasBeenExecuted = true
+    }
+
+    fun clearExecutedFlag() {
+        val setData = state.currentSetData as? EnduranceSetData ?: return
+        state.currentSetData = setData.copy(hasBeenExecuted = false)
+        state.hasBeenExecuted = false
+    }
 
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? EnduranceSetData)?.startTimer
@@ -161,6 +175,7 @@ fun EnduranceSetScreen (
                 state = state,
                 callbacks = WorkoutTimerService.TimerCallbacks(
                     onTimerEnd = {
+                        markSetExecuted()
                         hapticsViewModel.doHardVibrationTwice()
                         onTimerEnd()
                     },
@@ -340,6 +355,7 @@ fun EnduranceSetScreen (
             state = state,
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
+                    markSetExecuted()
                     hapticsViewModel.doHardVibrationTwice()
                     onTimerEnd()
                 },
@@ -349,19 +365,31 @@ fun EnduranceSetScreen (
         )
 
         if (!hasBeenStartedOnce) hasBeenStartedOnce = true
+        showRepeatButton = false
     }
 
     LaunchedEffect(set.id, set.autoStart, isPaused) {
+        val setData = state.currentSetData as? EnduranceSetData
+        state.hasBeenExecuted = setData?.hasBeenExecuted == true
+
         // Check if timer has already started (e.g., resuming workout)
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
         // double-triggering when state.startTime changes from null to a value
         if (state.startTime != null) {
-            // Timer has started - ensure it's registered with service
-            // Don't check for completion here - let WorkoutTimerService handle it
-            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
-                // Timer should be running - register if not already registered
+            val isRegistered = viewModel.workoutTimerService.isTimerRegistered(set.id)
+            if (!isRegistered && state.hasBeenExecuted) {
+                // Set has already been executed and user navigated back to it.
+                // Do not auto-start here; show explicit repeat action.
+                showStartButton = false
+                showRepeatButton = true
+                autoStartJob?.cancel()
+                return@LaunchedEffect
+            }
+            if (!isPaused && !isRegistered && !state.hasBeenExecuted) {
                 startTimer()
             }
+            showStartButton = false
+            showRepeatButton = false
             autoStartJob?.cancel()
             return@LaunchedEffect
         }
@@ -374,6 +402,7 @@ fun EnduranceSetScreen (
             state.startTime = LocalDateTime.now()
                 .minusNanos(recoveredSetData.endTimer.toLong() * 1_000_000L)
             showStartButton = false
+            showRepeatButton = false
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 startTimer()
             }
@@ -440,6 +469,7 @@ fun EnduranceSetScreen (
                             startTimer()
 
                             showStartButton = false
+                            showRepeatButton = false
                             autoStartJob?.cancel()
                         }
                     },
@@ -450,6 +480,49 @@ fun EnduranceSetScreen (
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (showRepeatButton) {
+                IconButton(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .semantics { contentDescription = "Repeat set" },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    onClick = {
+                        autoStartJob?.cancel()
+                        viewModel.workoutTimerService.unregisterTimer(set.id)
+                        val setData = state.currentSetData as? EnduranceSetData
+                        if (setData != null) {
+                            val resetStartTimer = currentSet.startTimer.coerceAtLeast(0)
+                            state.currentSetData = setData.copy(
+                                startTimer = resetStartTimer,
+                                endTimer = 0,
+                                hasBeenExecuted = false
+                            )
+                            currentSet = state.currentSetData as EnduranceSetData
+                            currentMillis = 0
+                            isOverLimit = false
+                            state.startTime = null
+                            clearExecutedFlag()
+                            showStartButton = false
+                            showRepeatButton = false
+
+                            scope.launch {
+                                showCountDownIfEnabled()
+                                state.startTime = LocalDateTime.now()
+                                hapticsViewModel.doHardVibrationTwice()
+                                startTimer()
+                            }
+                        }
+                    }
+                ) {
+                    Icon(
+                        modifier = Modifier.size(26.dp),
+                        imageVector = Icons.Default.Replay,
+                        contentDescription = "Repeat set",
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
@@ -530,6 +603,7 @@ fun EnduranceSetScreen (
             message = "Do you want to proceed?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
+                markSetExecuted()
                 onTimerDisabled()
                 onTimerEnd()
             },

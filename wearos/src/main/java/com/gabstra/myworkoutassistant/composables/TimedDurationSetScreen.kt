@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -95,6 +96,19 @@ fun TimedDurationSetScreen(
     }
 
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
+    var showRepeatButton by remember(set.id) { mutableStateOf(false) }
+
+    fun markSetExecuted() {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return
+        state.currentSetData = setData.copy(hasBeenExecuted = true)
+        state.hasBeenExecuted = true
+    }
+
+    fun clearExecutedFlag() {
+        val setData = state.currentSetData as? TimedDurationSetData ?: return
+        state.currentSetData = setData.copy(hasBeenExecuted = false)
+        state.hasBeenExecuted = false
+    }
 
     var displayStartingDialog by remember(set.id) { mutableStateOf(false) }
     var countdownValue by remember(set.id) { mutableIntStateOf(3) }
@@ -137,6 +151,7 @@ fun TimedDurationSetScreen(
                     state = state,
                     callbacks = WorkoutTimerService.TimerCallbacks(
                         onTimerEnd = {
+                            markSetExecuted()
                             hapticsViewModel.doHardVibrationTwice()
                             onTimerEnd()
                         },
@@ -253,6 +268,7 @@ fun TimedDurationSetScreen(
             state = state,
             callbacks = WorkoutTimerService.TimerCallbacks(
                 onTimerEnd = {
+                    markSetExecuted()
                     hapticsViewModel.doHardVibrationTwice()
                     onTimerEnd()
                 },
@@ -264,9 +280,13 @@ fun TimedDurationSetScreen(
         if (!hasBeenStartedOnce) {
             hasBeenStartedOnce = true
         }
+        showRepeatButton = false
     }
 
     LaunchedEffect(set.id, set.autoStart, isPaused) {
+        val setData = state.currentSetData as? TimedDurationSetData
+        state.hasBeenExecuted = setData?.hasBeenExecuted == true
+
         // Check if timer has already started (e.g., resuming workout)
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
         // double-triggering when state.startTime changes from null to a value
@@ -274,14 +294,20 @@ fun TimedDurationSetScreen(
             // Re-anchor once after recovery so resumed value matches what user last saw
             // before process death, even if recovery navigation took time.
             viewModel.applyPostRecoveryTimerReanchorIfNeeded()
-            // Timer has started - ensure it's registered with service
-            // Don't check for completion here - let WorkoutTimerService handle it
-            if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
-                // Timer should be running - register if not already registered
-                // This handles Bug 5: Timer Service Not Re-registered on Resume
-                android.util.Log.d("TimedDurationSetScreen", "Re-registering timer on resume: setId=${set.id}, startTime=${state.startTime}")
+            val isRegistered = viewModel.workoutTimerService.isTimerRegistered(set.id)
+            if (!isRegistered && state.hasBeenExecuted) {
+                // Set has already been executed and user navigated back to it.
+                // Do not auto-start here; show explicit repeat action.
+                showStartButton = false
+                showRepeatButton = true
+                autoStartJob?.cancel()
+                return@LaunchedEffect
+            }
+            if (!isPaused && !isRegistered && !state.hasBeenExecuted) {
                 startTimer()
             }
+            showStartButton = false
+            showRepeatButton = false
             autoStartJob?.cancel()
             return@LaunchedEffect
         }
@@ -294,6 +320,7 @@ fun TimedDurationSetScreen(
             val elapsedMillis = (recoveredSetData.startTimer - recoveredSetData.endTimer).coerceAtLeast(0)
             state.startTime = LocalDateTime.now().minusNanos(elapsedMillis.toLong() * 1_000_000L)
             showStartButton = false
+            showRepeatButton = false
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
                 startTimer()
             }
@@ -430,6 +457,7 @@ fun TimedDurationSetScreen(
                             startTimer()
 
                             showStartButton = false
+                            showRepeatButton = false
                             autoStartJob?.cancel()
                         }
                     },
@@ -440,6 +468,48 @@ fun TimedDurationSetScreen(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (showRepeatButton) {
+                IconButton(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .semantics { contentDescription = "Repeat set" },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    onClick = {
+                        autoStartJob?.cancel()
+                        viewModel.workoutTimerService.unregisterTimer(set.id)
+                        val setData = state.currentSetData as? TimedDurationSetData
+                        if (setData != null) {
+                            val resetStartTimer = currentSet.startTimer.coerceAtLeast(0)
+                            state.currentSetData = setData.copy(
+                                startTimer = resetStartTimer,
+                                endTimer = resetStartTimer,
+                                hasBeenExecuted = false
+                            )
+                            currentSet = state.currentSetData as TimedDurationSetData
+                            currentMillis = currentSet.startTimer
+                            state.startTime = null
+                            clearExecutedFlag()
+                            showStartButton = false
+                            showRepeatButton = false
+
+                            scope.launch {
+                                showCountDownIfEnabled()
+                                state.startTime = LocalDateTime.now()
+                                hapticsViewModel.doHardVibrationTwice()
+                                startTimer()
+                            }
+                        }
+                    }
+                ) {
+                    Icon(
+                        modifier = Modifier.size(26.dp),
+                        imageVector = Icons.Default.Replay,
+                        contentDescription = "Repeat set",
+                        tint = MaterialTheme.colorScheme.onPrimary
                     )
                 }
             }
@@ -521,6 +591,7 @@ fun TimedDurationSetScreen(
             message = "Do you want to proceed?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
+                markSetExecuted()
                 onTimerDisabled()
                 onTimerEnd()
             },
