@@ -373,4 +373,3 @@ fun WorkoutsCalendar(
 
 
 }
-

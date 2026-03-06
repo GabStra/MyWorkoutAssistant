@@ -86,6 +86,7 @@ import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
@@ -117,8 +118,8 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
-import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -243,13 +244,16 @@ fun WorkoutDetailScreen(
     val isCheckingWorkoutRecord by workoutViewModel.isCheckingWorkoutRecord.collectAsState()
     val currentSelectedWorkoutId by workoutViewModel.selectedWorkoutId
     val hasWorkoutRecordFlow by workoutViewModel.hasWorkoutRecord.collectAsState()
+    val workoutResumeInfoFlow by workoutViewModel.workoutResumeInfo.collectAsState()
 
     // Stabilize hasWorkoutRecord to prevent blink - only update when check completes
     // Use remember with workout.id as key to reset when workout changes
     var hasWorkoutRecord by remember(workout.id) { mutableStateOf(false) }
+    var workoutResumeInfo by remember(workout.id) { mutableStateOf<WorkoutResumeInfo?>(null) }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
+    var showClearHistoryDialog by remember { mutableStateOf(false) }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
     val startWorkoutDirectly = {
@@ -285,6 +289,7 @@ fun WorkoutDetailScreen(
     ) {
         if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id) {
             hasWorkoutRecord = hasWorkoutRecordFlow
+            workoutResumeInfo = if (hasWorkoutRecordFlow) workoutResumeInfoFlow else null
         }
     }
 
@@ -966,17 +971,7 @@ fun WorkoutDetailScreen(
                                 appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
                             },
                             onClearHistory = {
-                                scope.launch {
-                                    withContext(Dispatchers.Main) {
-                                        workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                        workoutRecordDao.deleteByWorkoutId(workout.id)
-                                        Toast.makeText(
-                                            context,
-                                            "History deleted",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
+                                showClearHistoryDialog = true
                             }
                         )
                     }
@@ -1016,6 +1011,7 @@ fun WorkoutDetailScreen(
                             workout = workout,
                             hasWorkoutRecord = hasWorkoutRecord,
                             isCheckingWorkoutRecord = isCheckingWorkoutRecord,
+                            workoutResumeInfo = workoutResumeInfo,
                             currentSelectedWorkoutId = currentSelectedWorkoutId,
                             showRest = showRest,
                             onShowRestChange = { showRest = it },
@@ -1094,42 +1090,60 @@ fun WorkoutDetailScreen(
                 )
             }
 
-            CustomDialogYesOnLongPress(
+            ConfirmationDialog(
                 show = showDeleteDialog,
                 title = InterruptedWorkoutCopy.DELETE_TITLE,
                 message = InterruptedWorkoutCopy.DELETE_MESSAGE,
-                handleYesClick = {
+                confirmText = "Delete",
+                isDestructive = true,
+                onConfirm = {
                     workoutViewModel.deleteWorkoutRecord()
                     showDeleteDialog = false
                 },
-                handleNoClick = {
-                    showDeleteDialog = false
-                },
-                closeTimerInMillis = 5000,
-                handleOnAutomaticClose = {
+                onDismiss = {
                     showDeleteDialog = false
                 }
             )
 
-            CustomDialogYesOnLongPress(
+            ConfirmationDialog(
                 show = showStartConfirmationDialog,
-                title = "Start New Workout",
-                message = InterruptedWorkoutCopy.START_NEW_WORKOUT_MESSAGE,
-                handleYesClick = {
+                title = "Start Fresh Workout",
+                message = "This will delete the interrupted session and start from the beginning.",
+                confirmText = "Start Fresh",
+                isDestructive = true,
+                onConfirm = {
                     showStartConfirmationDialog = false
                     startWorkoutDirectly()
                 },
-                handleNoClick = {
+                onDismiss = {
                     showStartConfirmationDialog = false
+                }
+            )
+            ConfirmationDialog(
+                show = showClearHistoryDialog,
+                title = "Clear Workout History",
+                message = "Delete all saved history for this workout? This action cannot be undone.",
+                confirmText = "Clear",
+                isDestructive = true,
+                onConfirm = {
+                    scope.launch {
+                        withContext(Dispatchers.Main) {
+                            workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                            workoutRecordDao.deleteByWorkoutId(workout.id)
+                            Toast.makeText(
+                                context,
+                                "History deleted",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    showClearHistoryDialog = false
                 },
-                closeTimerInMillis = 5000,
-                handleOnAutomaticClose = {
-                    showStartConfirmationDialog = false
+                onDismiss = {
+                    showClearHistoryDialog = false
                 }
             )
             LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
         }
     }
 }
-
-

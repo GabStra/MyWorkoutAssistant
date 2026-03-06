@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.Red
 
 @Composable
 fun AppPrimaryButton(
@@ -92,6 +93,30 @@ fun AppSecondaryButton(
             disabledContentColor = DisabledContentGray
         ),
         enabledTextColor = MaterialTheme.colorScheme.onBackground
+    )
+}
+
+@Composable
+fun AppDestructiveButton(
+    modifier: Modifier = Modifier,
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    minHeight: Dp = 48.dp
+) {
+    AppFilledButton(
+        text = text,
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        minHeight = minHeight,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Red,
+            contentColor = MaterialTheme.colorScheme.onError,
+            disabledContainerColor = Red.copy(alpha = 0.5f),
+            disabledContentColor = DisabledContentGray
+        ),
+        enabledTextColor = MaterialTheme.colorScheme.onError
     )
 }
 

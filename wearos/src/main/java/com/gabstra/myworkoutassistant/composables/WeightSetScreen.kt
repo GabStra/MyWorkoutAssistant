@@ -496,6 +496,7 @@ fun WeightSetScreen(
                     }
                     if (isWorkSet && historicalPreviousSetData != null) {
                         HistoricalSetDeltaBadge(
+                            modifier = Modifier.fillMaxWidth(),
                             previousSetData = historicalPreviousSetData,
                             currentSetData = currentSetData,
                             equipment = equipment

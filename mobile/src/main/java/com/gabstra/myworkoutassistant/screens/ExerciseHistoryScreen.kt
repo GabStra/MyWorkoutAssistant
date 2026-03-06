@@ -453,7 +453,7 @@ fun ExerciseHistoryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp), // Fill the width of the container
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
                 verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
             ) {
@@ -518,6 +518,10 @@ fun ExerciseHistoryScreen(
     ) {
         Spacer(modifier = Modifier.height(10.dp))
         RangeDropdown(selectedRange) { selectedRange = it }
+        if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
+            Spacer(modifier = Modifier.height(12.dp))
+            customBottomBar()
+        }
         Spacer(modifier = Modifier.height(6.dp))
 
         when {
@@ -809,13 +813,7 @@ fun ExerciseHistoryScreen(
                         }
                     }
 
-                    if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        customBottomBar()
-                    }
                 }
             }
     }
 }
-
-

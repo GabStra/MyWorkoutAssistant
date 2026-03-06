@@ -1,8 +1,12 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -12,11 +16,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -25,7 +31,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 data class MenuItem(
@@ -40,6 +46,7 @@ fun GenericButtonWithMenu(
     enabled: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
     val density = LocalDensity.current
     val popupPositionProvider = remember(density) {
         TopCenterMenuPositionProvider(
@@ -67,23 +74,28 @@ fun GenericButtonWithMenu(
                     properties = PopupProperties(focusable = true)
                 ) {
                     MenuSurface {
-                        Column {
+                        Column(
+                            modifier = Modifier
+                                .width(IntrinsicSize.Min)
+                                .heightIn(max = 240.dp)
+                                .verticalColumnScrollbarContainer(scrollState)
+                        ) {
                             menuItems.forEachIndexed { index, item ->
-                                AppDropdownMenuItem(
-                                    onClick = {
-                                        item.onClick()
-                                        expanded = false
-                                    },
-                                    text = {
-                                        Text(
-                                            text = item.label,
-                                            fontWeight = FontWeight.Normal
-                                        )
-                                    }
+                                Text(
+                                    text = item.label,
+                                    fontWeight = FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clickable {
+                                            item.onClick()
+                                            expanded = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp)
                                 )
                                 if (index < menuItems.lastIndex) {
                                     HorizontalDivider(
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                                        color = appMenuBorderColor()
                                     )
                                 }
                             }

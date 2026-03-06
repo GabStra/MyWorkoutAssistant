@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -10,10 +11,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+
+@Composable
+fun appMenuBorderColor(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
 
 @Composable
 fun AppDropdownMenu(
@@ -30,6 +35,7 @@ fun AppDropdownMenu(
         offset = offset,
         shape = MaterialTheme.shapes.small,
         containerColor = DarkGray,
+        border = BorderStroke(1.dp, appMenuBorderColor()),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,
     ) {
@@ -60,6 +66,7 @@ fun MenuSurface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
         color = DarkGray,
+        border = BorderStroke(1.dp, appMenuBorderColor()),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,
     ) {

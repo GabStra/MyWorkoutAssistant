@@ -85,6 +85,7 @@ import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionLifec
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionOrchestrator
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutTimerRestoreService
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
@@ -766,6 +767,9 @@ open class WorkoutViewModel(
     private val _hasWorkoutRecord = MutableStateFlow<Boolean>(false)
     val hasWorkoutRecord = _hasWorkoutRecord.asStateFlow()
 
+    private val _workoutResumeInfo = MutableStateFlow<WorkoutResumeInfo?>(null)
+    val workoutResumeInfo = _workoutResumeInfo.asStateFlow()
+
     private val _isCheckingWorkoutRecord = MutableStateFlow<Boolean>(false)
     val isCheckingWorkoutRecord = _isCheckingWorkoutRecord.asStateFlow()
 
@@ -808,11 +812,13 @@ open class WorkoutViewModel(
 
         pendingResumeWorkoutHistoryId = null
         _selectedWorkoutId.value = workoutId
+        _workoutResumeInfo.value = null
 
         if (workout == null) {
             Log.w(TAG, "Workout not found for id: $workoutId")
             _hasExercises.value = false
             _hasWorkoutRecord.value = false
+            _workoutResumeInfo.value = null
             _isCheckingWorkoutRecord.value = false
             exercisesById = emptyMap()
             supersetIdByExerciseId = emptyMap()
@@ -856,11 +862,16 @@ open class WorkoutViewModel(
     protected open fun getWorkoutRecord(workout: Workout) {
         _isCheckingWorkoutRecord.value = true
         launchMain {
-            val recordState = withContext(dispatchers.io) {
-                workoutRecordService.resolveWorkoutRecord(workout.id)
+            val (recordState, resumeInfo) = withContext(dispatchers.io) {
+                val resolvedRecordState = workoutRecordService.resolveWorkoutRecord(workout.id)
+                val resolvedResumeInfo = resolvedRecordState.workoutRecord?.let { record ->
+                    resolveWorkoutResumeInfo(workout = workout, workoutRecord = record)
+                }
+                resolvedRecordState to resolvedResumeInfo
             }
             _workoutRecord = recordState.workoutRecord
             _hasWorkoutRecord.value = recordState.hasWorkoutRecord
+            _workoutResumeInfo.value = resumeInfo
             _isCheckingWorkoutRecord.value = false
             rebuildScreenState()
         }
@@ -886,6 +897,11 @@ open class WorkoutViewModel(
                 if (updatedRecord != null) {
                     _workoutRecord = updatedRecord
                     _hasWorkoutRecord.value = true
+                    _workoutResumeInfo.value = WorkoutResumeInfo(
+                        exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
+                        setNumber = setIndex.toInt() + 1,
+                        startedAt = currentWorkoutHistory?.startTime
+                    )
                 }
                 rebuildScreenState()
             }
@@ -903,6 +919,7 @@ open class WorkoutViewModel(
                 if (_workoutRecord?.id == recordIdToDelete) {
                     _workoutRecord = null
                     _hasWorkoutRecord.value = false
+                    _workoutResumeInfo.value = null
                     rebuildScreenState()
                 }
             }
@@ -914,6 +931,32 @@ open class WorkoutViewModel(
             val currentWorkoutStore = workoutStore
             workoutRecordService.getInterruptedWorkouts(currentWorkoutStore.workouts)
         }
+    }
+
+    private suspend fun resolveWorkoutResumeInfo(
+        workout: Workout,
+        workoutRecord: WorkoutRecord
+    ): WorkoutResumeInfo {
+        val resumeExerciseName = exercisesById[workoutRecord.exerciseId]?.name
+            ?: workout.workoutComponents
+                .flatMap { component ->
+                    when (component) {
+                        is Exercise -> listOf(component)
+                        is Superset -> component.exercises
+                        is Rest -> emptyList()
+                    }
+                }
+                .firstOrNull { it.id == workoutRecord.exerciseId }
+                ?.name
+            ?: "Current exercise"
+
+        val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
+
+        return WorkoutResumeInfo(
+            exerciseName = resumeExerciseName,
+            setNumber = workoutRecord.setIndex.toInt() + 1,
+            startedAt = workoutHistory?.startTime
+        )
     }
 
     /**
@@ -969,6 +1012,7 @@ open class WorkoutViewModel(
                     pendingResumeWorkoutHistoryId = null
                     withContext(dispatchers.main) {
                         _hasWorkoutRecord.value = false
+                        _workoutResumeInfo.value = null
                         rebuildScreenState()
                     }
                     return@withContext
@@ -981,6 +1025,7 @@ open class WorkoutViewModel(
                     _workoutRecord = null
                     withContext(dispatchers.main) {
                         _hasWorkoutRecord.value = false
+                        _workoutResumeInfo.value = null
                         rebuildScreenState()
                     }
                     return@withContext

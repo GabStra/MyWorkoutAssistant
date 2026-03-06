@@ -75,10 +75,8 @@ fun SetTable(
     }
     val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
 
-    SecondarySurface(
-        modifier = modifier.fillMaxWidth(),
-        enabled = enabled,
-    ) {
+    @Composable
+    fun TableContent() {
         Column(modifier = Modifier.fillMaxWidth()) {
             SetTableHeaderRow(
                 header = header,
@@ -104,6 +102,10 @@ fun SetTable(
                 }
             }
         }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        TableContent()
     }
 }
 

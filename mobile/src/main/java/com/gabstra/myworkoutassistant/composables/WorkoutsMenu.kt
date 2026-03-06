@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
-import com.gabstra.myworkoutassistant.workout.CustomDialogYesOnLongPress
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -59,8 +58,7 @@ fun WorkoutsMenu(
             onClick = {
                 onOpenSettingsClick()
                 onMenuItemClick()
-            },
-            showDivider = false
+            }
         )
 
         MenuSectionHeader("Sync")
@@ -76,8 +74,7 @@ fun WorkoutsMenu(
             onClick = {
                 onSyncWithHealthConnectClick()
                 onMenuItemClick()
-            },
-            showDivider = false
+            }
         )
 
         MenuSectionHeader("Export")
@@ -100,8 +97,7 @@ fun WorkoutsMenu(
             onClick = {
                 onExportEquipment()
                 onMenuItemClick()
-            },
-            showDivider = false
+            }
         )
 
         MenuSectionHeader("Data")
@@ -124,8 +120,7 @@ fun WorkoutsMenu(
             onClick = {
                 onImportWorkoutsClick()
                 onMenuItemClick()
-            },
-            showDivider = false
+            }
         )
 
         MenuSectionHeader("Maintenance")
@@ -143,14 +138,13 @@ fun WorkoutsMenu(
                 onMenuItemClick()
             }
         )
-        WorkoutsMenuItem(
-            label = "Clear all exercise info",
-            onClick = {
-                showClearExerciseInfoDialog = true
-                onMenuItemClick()
-            },
-            showDivider = false
-        )
+//        WorkoutsMenuItem(
+//            label = "Clear all exercise info",
+//            onClick = {
+//                showClearExerciseInfoDialog = true
+//                onMenuItemClick()
+//            }
+//        )
 
         MenuSectionHeader("Diagnostics")
         WorkoutsMenuItem(
@@ -158,58 +152,51 @@ fun WorkoutsMenu(
             onClick = {
                 onViewErrorLogs()
                 onMenuItemClick()
-            },
-            showDivider = false
+            }
         )
     }
 
-    CustomDialogYesOnLongPress(
+    ConfirmationDialog(
         show = showClearIncompleteDialog,
         title = InterruptedWorkoutCopy.CLEAR_TITLE,
         message = InterruptedWorkoutCopy.CLEAR_MESSAGE,
-        handleYesClick = {
+        confirmText = "Clear",
+        isDestructive = true,
+        onConfirm = {
             onClearUnfinishedWorkouts()
             showClearIncompleteDialog = false
         },
-        handleNoClick = {
-            showClearIncompleteDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
+        onDismiss = {
             showClearIncompleteDialog = false
         }
     )
 
-    CustomDialogYesOnLongPress(
+    ConfirmationDialog(
         show = showClearHistoryDialog,
         title = "Clear Workout History",
         message = "Are you sure you want to clear all workout history? This action cannot be undone.",
-        handleYesClick = {
+        confirmText = "Clear",
+        isDestructive = true,
+        onConfirm = {
             onClearAllHistories()
             showClearHistoryDialog = false
         },
-        handleNoClick = {
-            showClearHistoryDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
+        onDismiss = {
             showClearHistoryDialog = false
         }
     )
 
-    CustomDialogYesOnLongPress(
+    ConfirmationDialog(
         show = showClearExerciseInfoDialog,
         title = "Clear Exercise Info",
         message = "Are you sure you want to clear all exercise info? This action cannot be undone.",
-        handleYesClick = {
+        confirmText = "Clear",
+        isDestructive = true,
+        onConfirm = {
             onClearAllExerciseInfo()
             showClearExerciseInfoDialog = false
         },
-        handleNoClick = {
-            showClearExerciseInfoDialog = false
-        },
-        closeTimerInMillis = 5000,
-        handleOnAutomaticClose = {
+        onDismiss = {
             showClearExerciseInfoDialog = false
         }
     )
@@ -218,8 +205,7 @@ fun WorkoutsMenu(
 @Composable
 private fun WorkoutsMenuItem(
     label: String,
-    onClick: () -> Unit,
-    showDivider: Boolean = true
+    onClick: () -> Unit
 ) {
     AppDropdownMenuItem(
         text = {
@@ -230,11 +216,6 @@ private fun WorkoutsMenuItem(
         },
         onClick = onClick
     )
-    if (showDivider) {
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-        )
-    }
 }
 
 @Composable

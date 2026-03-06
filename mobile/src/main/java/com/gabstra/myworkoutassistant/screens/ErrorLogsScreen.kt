@@ -114,7 +114,8 @@ fun ErrorLogsScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
+                    .padding(paddingValues)
+                    .padding(top = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -128,6 +129,7 @@ fun ErrorLogsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
+                    .padding(top = 12.dp)
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {

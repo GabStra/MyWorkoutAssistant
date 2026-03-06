@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,8 +19,11 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
@@ -42,10 +48,12 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -54,6 +62,8 @@ import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
 
 @Composable
@@ -63,6 +73,7 @@ fun WorkoutOverviewTab(
     workout: Workout,
     hasWorkoutRecord: Boolean,
     isCheckingWorkoutRecord: Boolean,
+    workoutResumeInfo: WorkoutResumeInfo?,
     currentSelectedWorkoutId: UUID?,
     showRest: Boolean,
     onShowRestChange: (Boolean) -> Unit,
@@ -81,6 +92,10 @@ fun WorkoutOverviewTab(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    val currentLocale = Locale.getDefault()
+    val resumeTimeFormatter = remember(currentLocale) {
+        DateTimeFormatter.ofPattern("dd/MM/yy HH:mm", currentLocale)
+    }
     var workoutSchedules by remember {
         mutableStateOf<List<WorkoutSchedule>>(emptyList())
     }
@@ -126,41 +141,15 @@ fun WorkoutOverviewTab(
             }
         } else {
             if (workout.enabled) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    AppPrimaryButton(
-                        text = "Start Workout",
-                        onClick = onRequestStartWorkout,
-                    )
-                }
-
-                if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id && hasWorkoutRecord) {
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        AppPrimaryButton(
-                            text = "Resume",
-                            onClick = onResumeWorkout,
-                        )
-                    }
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        AppPrimaryButton(
-                            text = InterruptedWorkoutCopy.DELETE_BUTTON,
-                            onClick = onRequestDeleteInterruptedWorkout,
-                        )
-                    }
-                }
+                WorkoutSessionActionCard(
+                    isCheckingWorkoutRecord = isCheckingWorkoutRecord,
+                    hasWorkoutRecord = hasWorkoutRecord && currentSelectedWorkoutId == workout.id,
+                    workoutResumeInfo = if (currentSelectedWorkoutId == workout.id) workoutResumeInfo else null,
+                    timeFormatter = resumeTimeFormatter,
+                    onRequestStartWorkout = onRequestStartWorkout,
+                    onResumeWorkout = onResumeWorkout,
+                    onRequestDeleteInterruptedWorkout = onRequestDeleteInterruptedWorkout
+                )
 
                 Spacer(Modifier.height(Spacing.md))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -304,26 +293,195 @@ fun WorkoutOverviewTab(
                 keySelector = { component -> component.id }
             )
 
-            GenericButtonWithMenu(
-                menuItems = listOf(
-                    MenuItem("Add Exercise") {
-                        appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
-                    },
-                    MenuItem("Add Rests Between Exercises") {
-                        appViewModel.setScreenData(ScreenData.NewRest(workout.id, null))
-                    },
-                    MenuItem("Add Superset") {
-                        appViewModel.setScreenData(ScreenData.NewSuperset(workout.id))
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                GenericButtonWithMenu(
+                    menuItems = listOf(
+                        MenuItem("Add Exercise") {
+                            appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
+                        },
+                        MenuItem("Add Rests Between Exercises") {
+                            appViewModel.setScreenData(ScreenData.NewRest(workout.id, null))
+                        },
+                        MenuItem("Add Superset") {
+                            appViewModel.setScreenData(ScreenData.NewSuperset(workout.id))
+                        }
+                    ),
+                    content = {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Add",
+                            tint = MaterialTheme.colorScheme.background,
+                        )
                     }
-                ),
-                content = {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Add",
-                        tint = MaterialTheme.colorScheme.background,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutSessionActionCard(
+    isCheckingWorkoutRecord: Boolean,
+    hasWorkoutRecord: Boolean,
+    workoutResumeInfo: WorkoutResumeInfo?,
+    timeFormatter: DateTimeFormatter,
+    onRequestStartWorkout: () -> Unit,
+    onResumeWorkout: () -> Unit,
+    onRequestDeleteInterruptedWorkout: () -> Unit
+) {
+    PrimarySurface(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        when {
+            isCheckingWorkoutRecord -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Text(
+                        text = "Checking interrupted session...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
-            )
+            }
+
+            hasWorkoutRecord -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Text(
+                                text = "Interrupted session",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = buildResumeDescription(workoutResumeInfo, timeFormatter),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    AppPrimaryButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Resume Workout",
+                        onClick = onResumeWorkout
+                    )
+                    AppPrimaryOutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Start Fresh",
+                        onClick = onRequestStartWorkout
+                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = InterruptedWorkoutCopy.DELETE_BUTTON,
+                            modifier = Modifier.clickable(onClick = onRequestDeleteInterruptedWorkout),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+            else -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Text(
+                                text = "Ready to train",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Start this workout from the beginning when you're ready.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    AppPrimaryButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = "Start Workout",
+                        onClick = onRequestStartWorkout
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun buildResumeDescription(
+    workoutResumeInfo: WorkoutResumeInfo?,
+    timeFormatter: DateTimeFormatter
+): String {
+    if (workoutResumeInfo == null) {
+        return "Resume your last in-progress session."
+    }
+
+    val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
+
+    return buildString {
+        append("Resume at ")
+        append(workoutResumeInfo.exerciseName)
+        append(" - set ")
+        append(workoutResumeInfo.setNumber)
+        if (sessionTime != null) {
+            append(". Started ")
+            append(sessionTime)
         }
     }
 }

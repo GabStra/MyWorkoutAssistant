@@ -73,6 +73,7 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -324,6 +325,7 @@ fun ExerciseDetailScreen(
     }
 
     var isSelectionModeActive by remember { mutableStateOf(false) }
+    var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
 
@@ -651,19 +653,7 @@ fun ExerciseDetailScreen(
                                             .width(56.dp)
                                     ) {
                                         IconButton(onClick = {
-                                            val newSets = sets.filter { set ->
-                                                selectedSets.none { it.id == set.id }
-                                            }
-
-                                            val adjustedComponents =
-                                                ensureRestSeparatedBySets(newSets)
-                                            val updatedExercise =
-                                                exercise.copy(sets = adjustedComponents)
-
-                                            updateExerciseWithHistory(updatedExercise)
-
-                                            selectedSetIds = emptySet()
-                                            isSelectionModeActive = false
+                                            showDeleteSetsDialog = true
                                         }) {
                                             Icon(
                                                 imageVector = Icons.Default.Delete,
@@ -809,6 +799,34 @@ fun ExerciseDetailScreen(
 
             }
         }
+        ConfirmationDialog(
+            show = showDeleteSetsDialog,
+            title = if (selectedSets.size == 1) "Delete selected set?" else "Delete selected sets?",
+            message = if (selectedSets.size == 1) {
+                "This removes the selected set from the exercise."
+            } else {
+                "This removes the ${selectedSets.size} selected sets from the exercise."
+            },
+            confirmText = "Delete",
+            isDestructive = true,
+            onConfirm = {
+                val newSets = sets.filter { set ->
+                    selectedSets.none { it.id == set.id }
+                }
+
+                val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                val updatedExercise = exercise.copy(sets = adjustedComponents)
+
+                updateExerciseWithHistory(updatedExercise)
+
+                selectedSetIds = emptySet()
+                isSelectionModeActive = false
+                showDeleteSetsDialog = false
+            },
+            onDismiss = {
+                showDeleteSetsDialog = false
+            }
+        )
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
     }
 }

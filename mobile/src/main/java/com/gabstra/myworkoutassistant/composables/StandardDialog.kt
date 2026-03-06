@@ -32,6 +32,7 @@ fun StandardDialog(
     showConfirm: Boolean = true,
     showDismiss: Boolean = true,
     confirmEnabled: Boolean = true,
+    isConfirmDestructive: Boolean = false,
 ) {
     val hasConfirmButton = showConfirm && confirmText != null && onConfirm != null
     val hasDismissButton = showDismiss && dismissText != null
@@ -77,20 +78,32 @@ fun StandardDialog(
                     ){
                         if (hasDismissButton) {
                             AppSecondaryButton(
-                                text = dismissText!!,
+                                text = dismissText.orEmpty(),
                                 onClick = onDismissButton ?: onDismissRequest,
                                 modifier = Modifier.heightIn(min = 48.dp),
                                 minHeight = 48.dp
                             )
                         }
                         if (hasConfirmButton) {
-                            AppPrimaryButton(
-                                text = confirmText!!,
-                                onClick = onConfirm!!,
-                                enabled = confirmEnabled,
-                                modifier = Modifier.heightIn(min = 48.dp),
-                                minHeight = 48.dp
-                            )
+                            val confirmLabel = requireNotNull(confirmText)
+                            val confirmAction = requireNotNull(onConfirm)
+                            if (isConfirmDestructive) {
+                                AppDestructiveButton(
+                                    text = confirmLabel,
+                                    onClick = confirmAction,
+                                    enabled = confirmEnabled,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    minHeight = 48.dp
+                                )
+                            } else {
+                                AppPrimaryButton(
+                                    text = confirmLabel,
+                                    onClick = confirmAction,
+                                    enabled = confirmEnabled,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    minHeight = 48.dp
+                                )
+                            }
                         }
                     }
                 }

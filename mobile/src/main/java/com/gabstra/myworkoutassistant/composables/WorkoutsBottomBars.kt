@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -90,6 +91,7 @@ fun WorkoutsBottomBar(
     isSelectionModeActive: Boolean
 ) {
     if (isSelectionModeActive) {
+        var showDeleteConfirmation by remember(selectedWorkouts) { mutableStateOf(false) }
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             BottomAppBar(
@@ -251,24 +253,7 @@ fun WorkoutsBottomBar(
                                 ) {
                                     IconButton(
                                         onClick = {
-                                            appViewModel.deleteWorkouts(selectedWorkouts.map { it.id }.toSet())
-                                            appViewModel.scheduleWorkoutSave(context)
-                                            scope.launch(Dispatchers.IO) {
-                                                for (workout in selectedWorkouts) {
-                                                    val workoutHistories =
-                                                        workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
-                                                    for (workoutHistory in workoutHistories) {
-                                                        setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
-                                                    }
-                                                    workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                                                }
-                                                val groupedHistories =
-                                                    workoutHistoryDao.getAllWorkoutHistories()
-                                                        .groupBy { it.date }
-                                                onGroupedWorkoutsHistoriesChange(groupedHistories)
-                                            }
-                                            onSelectionChange(emptyList())
-                                            onSelectionModeChange(false)
+                                            showDeleteConfirmation = true
                                         }
                                     ) {
                                         Icon(
@@ -411,6 +396,43 @@ fun WorkoutsBottomBar(
                         }
                     }
                 }
+            )
+            ConfirmationDialog(
+                show = showDeleteConfirmation,
+                title = if (selectedWorkouts.size == 1) {
+                    "Delete \"${selectedWorkouts.first().name}\"?"
+                } else {
+                    "Delete ${selectedWorkouts.size} workouts?"
+                },
+                message = if (selectedWorkouts.size == 1) {
+                    "This removes the workout and its history from your mobile app. This action cannot be undone."
+                } else {
+                    "This removes the selected workouts and their history from your mobile app. This action cannot be undone."
+                },
+                confirmText = "Delete",
+                isDestructive = true,
+                onConfirm = {
+                    appViewModel.deleteWorkouts(selectedWorkouts.map { it.id }.toSet())
+                    appViewModel.scheduleWorkoutSave(context)
+                    scope.launch(Dispatchers.IO) {
+                        for (workout in selectedWorkouts) {
+                            val workoutHistories =
+                                workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                            for (workoutHistory in workoutHistories) {
+                                setHistoryDao.deleteByWorkoutHistoryId(workoutHistory.id)
+                            }
+                            workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                        }
+                        val groupedHistories =
+                            workoutHistoryDao.getAllWorkoutHistories()
+                                .groupBy { it.date }
+                        onGroupedWorkoutsHistoriesChange(groupedHistories)
+                    }
+                    onSelectionChange(emptyList())
+                    onSelectionModeChange(false)
+                    showDeleteConfirmation = false
+                },
+                onDismiss = { showDeleteConfirmation = false }
             )
         }
     }
