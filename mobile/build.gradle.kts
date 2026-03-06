@@ -1,7 +1,6 @@
 plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
-    id("com.google.devtools.ksp")
 }
 
 java {
@@ -80,6 +79,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = false
     }
     packaging {
         resources {
@@ -132,8 +132,7 @@ dependencies {
     // Accompanist (permissions only; system UI controller replaced by enableEdgeToEdge)
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
 
-    // Room
-    ksp("androidx.room:room-compiler:2.8.4")
+    // Room runtime only; shared owns Room annotation processing.
     implementation("androidx.room:room-runtime:2.8.4")
 
     // Misc

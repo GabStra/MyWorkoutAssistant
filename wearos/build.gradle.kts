@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("com.google.devtools.ksp")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -77,6 +76,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = false
     }
     packaging {
         resources {
@@ -131,7 +131,6 @@ dependencies {
     implementation("com.google.android.horologist:horologist-compose-layout:0.8.2-alpha")
 
     // Data / utils
-    ksp("androidx.room:room-compiler:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     implementation("com.google.guava:guava:33.5.0-android")
     implementation("com.google.code.gson:gson:2.13.2")
