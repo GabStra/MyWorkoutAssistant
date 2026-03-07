@@ -112,7 +112,6 @@ fun SetHistoriesRenderer(
                     )
                 }
 
-                else -> throw IllegalArgumentException("Unknown set type")
             }
         }
 

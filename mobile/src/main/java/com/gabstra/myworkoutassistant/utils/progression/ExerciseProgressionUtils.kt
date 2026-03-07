@@ -143,7 +143,6 @@ suspend fun backfillExerciseSessionProgressions(
         
         // Get all completed workouts chronologically
         val allWorkouts = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(isDone = true)
-            ?: emptyList()
         
         if (allWorkouts.isEmpty()) {
             Log.d("BackfillProgression", "No completed workouts found, skipping backfill")
@@ -154,16 +153,16 @@ suspend fun backfillExerciseSessionProgressions(
         Log.d("BackfillProgression", "Processing ${sortedWorkouts.size} completed workouts")
 
         // Build a map of workout ID to Workout for quick lookup
-        val workouts = workoutStore.workouts ?: emptyList()
+        val workouts = workoutStore.workouts
         val workoutMap = workouts.associateBy { it.id }
         
         // Build a map of exercise ID to Exercise for quick lookup
         val exerciseMap = mutableMapOf<UUID, Exercise>()
         workouts.forEach { workout ->
-            workout.workoutComponents?.forEach { component ->
+            workout.workoutComponents.forEach { component ->
                 when (component) {
                     is Exercise -> exerciseMap[component.id] = component
-                    is Superset -> component.exercises?.forEach { exercise ->
+                    is Superset -> component.exercises.forEach { exercise ->
                         exerciseMap[exercise.id] = exercise
                     }
                     is Rest -> Unit
@@ -172,7 +171,7 @@ suspend fun backfillExerciseSessionProgressions(
         }
 
         // Build equipment map
-        val equipments = workoutStore.equipments ?: emptyList()
+        val equipments = workoutStore.equipments
         val equipmentMap = equipments.associateBy { it.id }
         
         // Track ExerciseInfo state as we process workouts chronologically
@@ -188,7 +187,7 @@ suspend fun backfillExerciseSessionProgressions(
             
             // Get all exercises from this workout that have progression enabled
             val exercises = mutableListOf<Exercise>()
-            workout.workoutComponents?.forEach { component ->
+            workout.workoutComponents.forEach { component ->
                 when (component) {
                     is Exercise -> {
                         if (component.progressionMode != ProgressionMode.OFF &&
@@ -199,7 +198,7 @@ suspend fun backfillExerciseSessionProgressions(
                         }
                     }
                     is Superset -> {
-                        component.exercises?.forEach { exercise ->
+                        component.exercises.forEach { exercise ->
                             if (exercise.progressionMode != ProgressionMode.OFF &&
                                 !exercise.requiresLoadCalibration &&
                                 (exercise.exerciseType == ExerciseType.WEIGHT ||
@@ -214,7 +213,7 @@ suspend fun backfillExerciseSessionProgressions(
 
             // Get SetHistory entries for this workout
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-                ?.filter { it.exerciseId != null } ?: emptyList()
+                .filter { it.exerciseId != null }
 
             // Process each exercise
             for (exercise in exercises) {

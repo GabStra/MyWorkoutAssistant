@@ -330,7 +330,7 @@ fun ExerciseDetailScreen(
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
-    val selectedEquipmentId = exercise?.equipmentId
+    val selectedEquipmentId = exercise.equipmentId
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

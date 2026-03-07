@@ -313,7 +313,7 @@ suspend fun sendWorkoutsToHealthConnect(
                 val durationMinutes = workoutHistory.duration.toDouble() / 60
                 val kiloCaloriesBurned = calculateKiloCaloriesBurned(
                     age = age,
-                    weightKg = weightKg.toDouble(),
+                    weightKg = weightKg,
                     averageHeartRate = avgHeartRate,
                     durationMinutes = durationMinutes,
                     isMale = true

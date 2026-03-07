@@ -199,7 +199,7 @@ fun WorkoutComponentRenderer(
         }
 
         is Superset -> {
-            val superSet = workoutComponent as Superset
+            val superSet = workoutComponent
 
             SupersetRenderer(
                 superset = superSet,

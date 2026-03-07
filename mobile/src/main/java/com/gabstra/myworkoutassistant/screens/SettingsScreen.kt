@@ -66,7 +66,7 @@ fun SettingsScreen(
     val defaultRestingHeartRate = getEffectiveRestingHeartRate()
 
     val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
-    val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear?.toString() ?: "") }
+    val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear.toString()) }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
     val restingHeartRateState = remember {

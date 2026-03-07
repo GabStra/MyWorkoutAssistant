@@ -389,7 +389,7 @@ fun Modifier.verticalLazyColumnScrollbar(
 
         val componentWidth = size.width
         val componentHeight = size.height
-        val viewportHeight = componentHeight.toFloat()
+        val viewportHeight = componentHeight
 
         // Calculate scroll position and total content height
         val firstVisibleItem = visibleItemsInfo.firstOrNull()
@@ -746,4 +746,3 @@ suspend fun exportEquipmentToDownloads(
         }
     }
 }
-

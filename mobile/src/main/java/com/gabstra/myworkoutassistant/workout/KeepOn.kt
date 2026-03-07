@@ -56,7 +56,7 @@ fun KeepOn(
     val updatedDimDelay by rememberUpdatedState(dimDelay)
 
     fun setScreenBrightness(brightness: Float) {
-        window?.attributes = window?.attributes?.apply {
+        window?.attributes = window.attributes.apply {
             screenBrightness = brightness
         }
     }

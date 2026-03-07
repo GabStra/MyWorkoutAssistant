@@ -373,7 +373,7 @@ fun ExerciseSetsViewer(
 
         val borderColor = when {
             shouldUseCalibrationExecutionColors -> calibrationExecutionColor
-            else -> customBorderColor ?: customColor ?: null
+            else -> customBorderColor ?: customColor
         }
 
         val textColor = when {

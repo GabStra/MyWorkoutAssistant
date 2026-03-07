@@ -1070,7 +1070,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
                 }
 
                 val targetSaveUri = if (targetUri != null) {
-                    if (targetFile?.name != backupFileName) {
+                    if (targetFile.name != backupFileName) {
                         try {
                             val renameValues = ContentValues().apply {
                                 put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)

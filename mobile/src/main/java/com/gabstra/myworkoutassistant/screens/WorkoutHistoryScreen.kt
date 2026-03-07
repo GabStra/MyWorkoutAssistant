@@ -643,7 +643,7 @@ fun WorkoutHistoryScreen(
             val durationMinutes = selectedWorkoutHistory!!.duration.toDouble() / 60
             kiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
-                weightKg = weight.toDouble(),
+                weightKg = weight,
                 averageHeartRate = avgHeartRate,
                 durationMinutes = durationMinutes,
                 isMale = true

@@ -174,7 +174,7 @@ fun PageExercises(
                 
                 val setBelongsToSelected = setState?.exerciseId == selectedExercise.id
                 val sideIndicator = remember(setState, selectedExercise, currentExercise, setBelongsToSelected) {
-                    if (currentExercise == selectedExercise && setBelongsToSelected && setState?.intraSetTotal != null) {
+                    if (currentExercise == selectedExercise && setBelongsToSelected && setState.intraSetTotal != null) {
                         "① ↔ ②"
                     } else null
                 }
@@ -220,16 +220,16 @@ fun PageExercises(
                             "Exercise: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
                         },
                         supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
-                            "Exercise: ${supersetIndex + 1}/${supersetExercises!!.size}"
+                            "Exercise: ${supersetIndex + 1}/${supersetExercises.size}"
                         } else null,
                         supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
-                        supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises!!.size else null,
+                        supersetExerciseTotal = if (isSuperset && supersetExercises != null) supersetExercises.size else null,
                         setLabel = null, // Not showing set info in PageExercises
                         sideIndicator = sideIndicator,
                         currentSideIndex = if (currentExercise == selectedExercise && setBelongsToSelected) {
-                            setState?.intraSetCounter?.takeIf { setState?.intraSetTotal != null }
+                            setState.intraSetCounter?.takeIf { setState.intraSetTotal != null }
                         } else null,
-                        isUnilateral = currentExercise == selectedExercise && setBelongsToSelected && (setState?.isUnilateral == true),
+                        isUnilateral = currentExercise == selectedExercise && setBelongsToSelected && setState.isUnilateral,
                         equipmentName = selectedExerciseEquipment?.name,
                         accessoryNames = selectedExerciseAccessories.joinToString(", ") { it.name }.takeIf { selectedExerciseAccessories.isNotEmpty() },
                         textColor = MaterialTheme.colorScheme.onBackground,
@@ -331,5 +331,4 @@ fun PageExercises(
         }
     }
 }
-
 

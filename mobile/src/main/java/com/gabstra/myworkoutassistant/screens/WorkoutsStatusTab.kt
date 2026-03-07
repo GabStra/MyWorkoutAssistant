@@ -129,7 +129,7 @@ fun WorkoutsStatusTab(
                         )
                         ExpandableContainer(
                             isOpen = false,
-                            isExpandable = if (weeklyWorkoutsByActualTarget == null) false else weeklyWorkoutsByActualTarget!!.isNotEmpty(),
+                            isExpandable = !weeklyWorkoutsByActualTarget.isNullOrEmpty(),
                             title = { modifier ->
                                 Row(
                                     modifier = modifier
