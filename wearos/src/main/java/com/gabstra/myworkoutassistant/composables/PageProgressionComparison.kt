@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +28,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,7 +48,7 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.LighterGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -169,7 +167,7 @@ fun calculateSetDifference(
                 parts.add("$sign$repsDiff reps")
             }
 
-            if (parts.isEmpty()) "Equal" else parts.joinToString(", ")
+            if (parts.isEmpty()) "Equal" else parts.joinToString(" ")
         }
 
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
@@ -186,7 +184,7 @@ fun calculateSetDifference(
                 parts.add("$sign$repsDiff reps")
             }
 
-            if (parts.isEmpty()) "Equal" else parts.joinToString(" - ")
+            if (parts.isEmpty()) "Equal" else parts.joinToString(" ")
         }
 
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
@@ -198,7 +196,7 @@ fun calculateSetDifference(
                 "Equal"
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
-                "$sign${FormatTime(durationDiff.toInt())}"
+                "$sign${FormatTime(durationDiff)}"
             }
         }
 
@@ -211,7 +209,7 @@ fun calculateSetDifference(
                 "Equal"
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
-                "$sign${FormatTime(durationDiff.toInt())}"
+                "$sign${FormatTime(durationDiff)}"
             }
         }
 

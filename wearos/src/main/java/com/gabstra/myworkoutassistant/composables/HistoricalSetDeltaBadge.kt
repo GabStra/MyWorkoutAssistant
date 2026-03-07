@@ -3,11 +3,18 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
@@ -15,13 +22,6 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.ui.text.style.TextAlign
 
 @Composable
 fun HistoricalSetDeltaBadge(
@@ -36,6 +36,9 @@ fun HistoricalSetDeltaBadge(
     val differenceText by remember(previousSetData, currentSetData, equipment) {
         derivedStateOf { calculateSetDifference(previousSetData, currentSetData, equipment) }
     }
+
+    if(comparison == SetComparison.EQUAL) return
+
     val comparisonColor = when (comparison) {
         SetComparison.BETTER -> Green
         SetComparison.WORSE -> Red
