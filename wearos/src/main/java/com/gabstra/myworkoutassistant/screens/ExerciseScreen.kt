@@ -229,6 +229,13 @@ fun ExerciseScreen(
         }
     }
 
+    LaunchedEffect(selectedExercise.id, horizontalPagerState.currentPage) {
+        val isViewingExercisesPage = horizontalPagerState.currentPage == exercisesPageIndex
+        if (isViewingExercisesPage) {
+            restartGoBack()
+        }
+    }
+
     LaunchedEffect(horizontalPagerState.currentPage) {
         val isOnPlatesPage = platesPageIndex >= 0 && horizontalPagerState.currentPage == platesPageIndex
         if (isOnPlatesPage) viewModel.setDimming(false) else viewModel.reEvaluateDimmingForCurrentState()

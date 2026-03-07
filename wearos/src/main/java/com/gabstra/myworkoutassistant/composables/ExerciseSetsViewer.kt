@@ -21,12 +21,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -181,7 +180,7 @@ private fun toSupersetLetter(index: Int): String {
     return builder.reverse().toString()
 }
 
-private fun buildSetIdentifier(
+internal fun buildSetIdentifier(
     viewModel: AppViewModel,
     exerciseId: UUID,
     setState: WorkoutState.Set,
@@ -206,9 +205,79 @@ private fun buildSetIdentifier(
     }
 }
 
+internal fun buildUnilateralSideBadge(
+    sideIndex: UInt?,
+    intraSetTotal: UInt?,
+): String? {
+    val resolvedSideIndex = sideIndex?.toInt() ?: return null
+    val resolvedTotal = intraSetTotal?.toInt() ?: return null
+
+    return when (resolvedSideIndex.coerceIn(1, resolvedTotal)) {
+        1 -> "①"
+        2 -> "②"
+        else -> "(${resolvedSideIndex.coerceIn(1, resolvedTotal)}/$resolvedTotal)"
+    }
+}
+
 private fun buildRestLabel(restState: WorkoutState.Rest): String {
     val seconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
     return "REST ${FormatTime(seconds)}"
+}
+
+@Composable
+internal fun ExerciseSetsTableHeader(
+    modifier: Modifier = Modifier,
+    useWeightHeader: Boolean,
+) {
+    val headerStyle = MaterialTheme.typography.bodyExtraSmall
+
+    if (useWeightHeader) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                modifier = Modifier.weight(1f),
+                text = "SET",
+                style = headerStyle,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                modifier = Modifier.weight(2f),
+                text = "WEIGHT (KG)",
+                style = headerStyle,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                modifier = Modifier.weight(1f),
+                text = "REPS",
+                style = headerStyle,
+                textAlign = TextAlign.Center
+            )
+        }
+    } else {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                modifier = Modifier.weight(1f),
+                text = "SET",
+                style = headerStyle,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                modifier = Modifier.weight(3f),
+                text = "TIME (HH:MM:SS)",
+                style = headerStyle,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -243,7 +312,7 @@ fun SetTableRow(
     ){
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(2.dp),
+                .padding(2.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             val setDisplayText = when {
@@ -395,7 +464,7 @@ private fun CenteredLabelRow(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(2.dp),
+            .padding(2.5.dp),
         contentAlignment = Alignment.Center
     ) {
         ScalableFadingText(
@@ -433,8 +502,6 @@ fun ExerciseSetsViewer(
         stateToMatch = stateToMatch,
         fallbackSetId = currentSet.id
     )
-
-    val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
@@ -495,17 +562,17 @@ fun ExerciseSetsViewer(
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
-        val backgroundColor = customBackgroundColor ?: MaterialTheme.colorScheme.background
-
-        val textColor = when (progressState) {
-            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+        val backgroundColor = when (progressState) {
+            ProgressState.PAST -> MaterialTheme.colorScheme.background
             ProgressState.CURRENT -> when {
-                rowIndex == setIndex -> Orange
-                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
-                else -> currentExercisePendingColor
+                rowIndex == setIndex -> borderColor.copy(alpha = 0.25f)
+                rowIndex < setIndex -> borderColor.copy(alpha = 0.25f)
+                else ->  MaterialTheme.colorScheme.background
             }
-            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+            ProgressState.FUTURE -> MaterialTheme.colorScheme.background
         }
+
+        val textColor = borderColor
 
         val markAsDone = when (progressState) {
             ProgressState.PAST -> true
@@ -597,53 +664,7 @@ fun ExerciseSetsViewer(
         modifier = modifier.semantics { contentDescription = "Exercise sets viewer" },
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        if (useWeightHeader) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "SET",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(2f),
-                    text = "WEIGHT (KG)",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "REPS",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    modifier = Modifier.weight(1f),
-                    text = "SET",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    modifier = Modifier.weight(3f),
-                    text = "TIME (HH:MM:SS)",
-                    style = headerStyle,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
+        ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
 
         DynamicHeightColumn(
             modifier = Modifier

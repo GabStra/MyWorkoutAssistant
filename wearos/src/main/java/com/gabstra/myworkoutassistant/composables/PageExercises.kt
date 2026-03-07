@@ -41,6 +41,21 @@ private fun getRepresentativeExercise(viewModel: AppViewModel, exerciseOrSuperse
     }
 }
 
+internal fun resolvePageExercisesActiveState(
+    workoutState: WorkoutState?,
+    fallbackSetState: WorkoutState.Set? = null,
+): WorkoutState? {
+    if (workoutState !is WorkoutState.Rest) return workoutState
+
+    return when (val nextExecutableState = workoutState.nextState ?: fallbackSetState) {
+        is WorkoutState.Set,
+        is WorkoutState.CalibrationLoadSelection,
+        is WorkoutState.CalibrationRIRSelection,
+        is WorkoutState.AutoRegulationRIRSelection -> nextExecutableState
+        else -> workoutState
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PageExercises(
@@ -51,6 +66,13 @@ fun PageExercises(
     currentExercise: Exercise,
     onExerciseSelected: (Exercise) -> Unit
 ) {
+    val activeWorkoutState = remember(workoutState, viewModel.allWorkoutStates.size) {
+        resolvePageExercisesActiveState(
+            workoutState = workoutState,
+            fallbackSetState = viewModel.getFirstSetStateAfterCurrent()
+        )
+    }
+
     val exerciseOrSupersetIds = remember(viewModel.allWorkoutStates.size) {
         viewModel.setsByExerciseId.keys.toList()
             .map { resolveExerciseOrSupersetId(viewModel, it) }
@@ -68,12 +90,12 @@ fun PageExercises(
         viewModel.exercisesBySupersetId.containsKey(currentExerciseOrSupersetId)
     }
 
-    val currentSet = remember(workoutState) {
-        when (workoutState) {
-            is WorkoutState.Set -> workoutState.set
-            is WorkoutState.CalibrationLoadSelection -> workoutState.calibrationSet
-            is WorkoutState.CalibrationRIRSelection -> workoutState.calibrationSet
-            is WorkoutState.AutoRegulationRIRSelection -> workoutState.workSet
+    val currentSet = remember(activeWorkoutState, selectedExercise.id) {
+        when (activeWorkoutState) {
+            is WorkoutState.Set -> activeWorkoutState.set
+            is WorkoutState.CalibrationLoadSelection -> activeWorkoutState.calibrationSet
+            is WorkoutState.CalibrationRIRSelection -> activeWorkoutState.calibrationSet
+            is WorkoutState.AutoRegulationRIRSelection -> activeWorkoutState.workSet
             else -> selectedExercise.sets.firstOrNull()
         }
     }
@@ -178,7 +200,7 @@ fun PageExercises(
                     exercise = selectedExercise,
                     currentSet = currentSet,
                     progressState = progressState,
-                    currentWorkoutStateOverride = if (isSelectedCurrentContainer) workoutState else null
+                    currentWorkoutStateOverride = if (isSelectedCurrentContainer) activeWorkoutState else null
                 )
             }
         }
