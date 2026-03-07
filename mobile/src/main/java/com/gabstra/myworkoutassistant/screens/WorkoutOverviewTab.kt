@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
+import androidx.compose.foundation.basicMarquee
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -134,7 +135,9 @@ fun WorkoutOverviewTab(
                     content = {
                         Text(
                             "Add Workout Component",
-                            color = MaterialTheme.colorScheme.background
+                            color = MaterialTheme.colorScheme.background,
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                         )
                     }
                 )

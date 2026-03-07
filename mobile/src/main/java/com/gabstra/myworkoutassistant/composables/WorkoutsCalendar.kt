@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -28,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -168,24 +168,39 @@ private fun Day(
                 )
                 .padding(5.dp)
         ) {
+
+            val highlightBorderColor = if (isOutOfBounds || isAfterToday) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else if(isToday){
+                secondaryColor
+            }else{
+                MaterialTheme.colorScheme.primary
+            }
+
             val textColor = when {
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
-                shouldHighlight -> MaterialTheme.colorScheme.background
-                isToday -> secondaryColor
+                shouldHighlight -> highlightBorderColor
                 else -> MaterialTheme.colorScheme.onBackground
             }
 
             val shape = if(shouldHighlight) CircleShape else null
-
-            val backgroundColor = if(isOutOfBounds || isAfterToday) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary
 
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .optionalClip(shape)
                     .size(30.dp)
-                    .background(if (shouldHighlight) backgroundColor else Color.Transparent),
+
+                    .then(
+                        if (shouldHighlight && shape != null) {
+                            Modifier
+                                .background(highlightBorderColor.copy(alpha = 0.25f))
+                                .border(width = 1.dp, color = highlightBorderColor, shape = shape)
+                        } else {
+                            Modifier
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ){
                 Text(

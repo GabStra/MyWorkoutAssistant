@@ -87,7 +87,9 @@ fun WorkoutsGearTab(
                     content = {
                         Text(
                             "Add Equipment",
-                            color = MaterialTheme.colorScheme.background
+                            color = MaterialTheme.colorScheme.background,
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                         )
                     }
                 )
