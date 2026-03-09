@@ -2084,9 +2084,9 @@ open class WorkoutViewModel(
         startWorkoutTime = startTime
         if (stateMachine != null) updateStateFlowsFromMachine()
         rebuildScreenState()
-        // Persist a baseline unfinished workout immediately so process-death recovery
-        // can discover an incomplete workout before the first completed set.
-        pushAndStoreWorkoutData(isDone = false, context = null, forceNotSend = true)
+        // Persist and sync a baseline unfinished workout immediately so process-death recovery
+        // and cross-device resume can discover an incomplete workout before the first completed set.
+        pushAndStoreWorkoutData(isDone = false, context = null, forceNotSend = false)
     }
 
     /**
