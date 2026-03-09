@@ -34,7 +34,6 @@ import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.LocalDateTime
@@ -95,8 +94,8 @@ fun WorkoutStateHeader(
         modifier = modifier
             .fillMaxWidth()
             .clickable(
-                interactionSource = interactionSource,
-                indication = null
+                //interactionSource = interactionSource,
+                //indication = null
             ) {
                 if(workoutState is WorkoutState.Preparing || showRestTimerInHeader) return@clickable
                 viewModel.switchHeaderDisplayMode()

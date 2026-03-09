@@ -1,18 +1,18 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
@@ -23,6 +23,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -30,9 +31,12 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
@@ -77,7 +81,8 @@ internal fun RecoveryDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,
-            dismissOnClickOutside = false
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
         )
     ) {
         Box(
@@ -86,7 +91,18 @@ internal fun RecoveryDialog(
                 .fillMaxSize()
         ) {
             val state = rememberTransformingLazyColumnState()
-            val spec = rememberTransformationSpec()
+            val spec = rememberTransformationSpec(
+                ResponsiveTransformationSpec.smallScreen(
+                    containerAlpha = TransformationVariableSpec(1f),
+                    contentAlpha = TransformationVariableSpec(1f),
+                    scale = TransformationVariableSpec(0.7f)
+                ),
+                ResponsiveTransformationSpec.largeScreen(
+                    containerAlpha = TransformationVariableSpec(1f),
+                    contentAlpha = TransformationVariableSpec(1f),
+                    scale = TransformationVariableSpec(0.6f)
+                )
+            )
 
             ScreenScaffold(
                 scrollState = state,
@@ -121,131 +137,86 @@ internal fun RecoveryDialog(
                     }
 
                     item {
-                        Box(
+                        RecoveryBodyText(
+                            text = "Resume or discard this interrupted workout.",
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                                .padding(bottom = 10.dp)
-                        ) {
-                            Column(
+                        )
+                    }
+
+                    item {
+                        RecoveryInfoBlock(
+                            label = "Workout",
+                            value = resolvedWorkoutName,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec)
+                                .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                        )
+                    }
+
+                    if (startedText.isNotEmpty()) {
+                        item {
+                            RecoveryInfoBlock(
+                                label = "Started",
+                                value = startedText,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp)
-                            ) {
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "Workout",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
+                                    .transformedHeight(this, spec)
+                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                            )
+                        }
+                    }
 
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = resolvedWorkoutName,
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-
-                                Spacer(Modifier.height(5.dp))
-
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "Started",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = startedText,
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-
-                                if (elapsedText.isNotEmpty()) {
-                                    Spacer(Modifier.height(5.dp))
-
-                                    Text(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                        text = "Elapsed",
-                                        textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-
-                                    Text(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                        text = elapsedText,
-                                        textAlign = TextAlign.Center,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.secondary
-                                    )
-                                }
-                            }
+                    if (elapsedText.isNotEmpty()) {
+                        item {
+                            RecoveryInfoBlock(
+                                label = "Elapsed",
+                                value = elapsedText,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec)
+                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                            )
                         }
                     }
 
                     if (showTimerChoice) {
                         item {
-                            Box(
+                            RecoverySectionLabel(
+                                text = "Timer recovery",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp)
                                     .transformedHeight(this, spec)
                                     .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                            ) {
-                                Text(
-                                    text = "Timer recovery",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } }
-                                )
-                            }
+                            )
                         }
-
                         item {
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .semantics { contentDescription = "Recovery timer continue option" }
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
+                            RecoveryChoiceButton(
+                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                                 transformation = SurfaceTransformation(spec),
-                                text = if (timerChoice == TimerRecoveryChoice.CONTINUE) "Continue timer (selected)" else "Continue timer",
+                                contentDescription = "Recovery timer continue option",
+                                text = "Continue timer",
+                                colors = selectedRecoveryButtonColors(
+                                    selected = timerChoice == TimerRecoveryChoice.CONTINUE
+                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.CONTINUE
                                     resumeWithChoices(TimerRecoveryChoice.CONTINUE, calibrationChoice)
                                 }
                             )
                         }
-
                         item {
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .semantics { contentDescription = "Recovery timer restart option" }
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
+                            RecoveryChoiceButton(
+                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                                 transformation = SurfaceTransformation(spec),
-                                text = if (timerChoice == TimerRecoveryChoice.RESTART) "Restart timer (selected)" else "Restart timer",
+                                contentDescription = "Recovery timer restart option",
+                                text = "Restart timer",
+                                colors = selectedRecoveryButtonColors(
+                                    selected = timerChoice == TimerRecoveryChoice.RESTART
+                                ),
                                 onClick = {
                                     timerChoice = TimerRecoveryChoice.RESTART
                                     resumeWithChoices(TimerRecoveryChoice.RESTART, calibrationChoice)
@@ -256,48 +227,38 @@ internal fun RecoveryDialog(
 
                     if (showCalibrationChoice) {
                         item {
-                            Box(
+                            RecoverySectionLabel(
+                                text = "Calibration recovery",
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp)
                                     .transformedHeight(this, spec)
                                     .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                            ) {
-                                Text(
-                                    text = "Calibration recovery",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } }
-                                )
-                            }
+                            )
                         }
-
                         item {
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .semantics { contentDescription = "Recovery calibration continue option" }
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
+                            RecoveryChoiceButton(
+                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                                 transformation = SurfaceTransformation(spec),
-                                text = if (calibrationChoice == CalibrationRecoveryChoice.CONTINUE) "Continue calibration (selected)" else "Continue calibration",
+                                contentDescription = "Recovery calibration continue option",
+                                text =  "Continue calibration",
+                                colors = selectedRecoveryButtonColors(
+                                    selected = calibrationChoice == CalibrationRecoveryChoice.CONTINUE
+                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.CONTINUE
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.CONTINUE)
                                 }
                             )
                         }
-
                         item {
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .semantics { contentDescription = "Recovery calibration restart option" }
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
+                            RecoveryChoiceButton(
+                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                                 transformation = SurfaceTransformation(spec),
-                                text = if (calibrationChoice == CalibrationRecoveryChoice.RESTART) "Restart calibration (selected)" else "Restart calibration",
+                                contentDescription = "Recovery calibration restart option",
+                                text = "Restart calibration",
+                                colors = selectedRecoveryButtonColors(
+                                    selected = calibrationChoice == CalibrationRecoveryChoice.RESTART
+                                ),
                                 onClick = {
                                     calibrationChoice = CalibrationRecoveryChoice.RESTART
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.RESTART)
@@ -308,13 +269,12 @@ internal fun RecoveryDialog(
 
                     if (showResumeButton) {
                         item {
-                            ButtonWithText(
-                                modifier = Modifier
-                                    .semantics { contentDescription = "Recovery resume action" }
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec),
+                            RecoveryChoiceButton(
+                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                                 transformation = SurfaceTransformation(spec),
+                                contentDescription = "Recovery resume action",
                                 text = "Resume",
+                                colors = ButtonDefaults.buttonColors(),
                                 onClick = {
                                     resumeWithChoices(timerChoice, calibrationChoice)
                                 }
@@ -323,31 +283,132 @@ internal fun RecoveryDialog(
                     }
 
                     item {
-                        ButtonWithText(
-                            modifier = Modifier
-                                .semantics { contentDescription = "Recovery discard action" }
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec),
+                        RecoveryChoiceButton(
+                            modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                             transformation = SurfaceTransformation(spec),
+                            contentDescription = "Recovery discard action",
                             text = "Discard",
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            ),
                             onClick = { onDiscard(workout) }
                         )
                     }
 
-                    item {
-                        ButtonWithText(
-                            modifier = Modifier
-                                .semantics { contentDescription = "Recovery dismiss action" }
-                                .fillMaxWidth()
-                                .transformedHeight(this, spec),
+/*                    item {
+                        RecoveryChoiceButton(
+                            modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                             transformation = SurfaceTransformation(spec),
+                            contentDescription = "Recovery dismiss action",
                             text = "Dismiss",
                             onClick = onDismiss
                         )
-                    }
+                    }*/
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RecoveryInfoBlock(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onBackground
+) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        ) {
+            if (label.isNotEmpty()) {
+                Text(
+                    text = label,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color =  MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Text(
+                text = value,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge,
+                color = valueColor,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+
+}
+
+@Composable
+private fun RecoveryBodyText(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier.padding(horizontal = 10.dp).padding(bottom = 5.dp)
+    ){
+        Text(
+            text = text,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall,
+            color = MediumLighterGray,
+
+        )
+    }
+}
+
+@Composable
+private fun RecoverySectionLabel(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = text,
+        textAlign = TextAlign.Center,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = modifier.padding(top = 4.dp)
+    )
+}
+
+@Composable
+private fun RecoveryChoiceButton(
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
+    contentDescription: String,
+    text: String,
+    colors: androidx.wear.compose.material3.ButtonColors = ButtonDefaults.filledTonalButtonColors(),
+    onClick: () -> Unit
+) {
+    ButtonWithText(
+        modifier = modifier
+            .semantics { this.contentDescription = contentDescription }
+            .fillMaxWidth(),
+        transformation = transformation,
+        text = text,
+        colors = colors,
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun selectedRecoveryButtonColors(selected: Boolean): androidx.wear.compose.material3.ButtonColors {
+    return if (selected){
+        ButtonDefaults.buttonColors()
+    } else {
+        ButtonDefaults.filledTonalButtonColors()
     }
 }
 

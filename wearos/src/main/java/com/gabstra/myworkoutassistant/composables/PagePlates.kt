@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -46,24 +47,53 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlin.math.sqrt
+import java.util.UUID
+import androidx.compose.runtime.mutableStateOf
 
 private fun Double.compact(): String {
     val s = String.format("%.2f", this).replace(',', '.')
     return s.trimEnd('0').trimEnd('.')
+}
+
+private const val StopperViewportAnchorFraction = 0.44f
+private const val BarbellEndPaddingDp = 12
+
+private data class LabelBoundsPx(
+    val left: Float,
+    val right: Float
+) {
+    val width: Float get() = (right - left).coerceAtLeast(0f)
+    val center: Float get() = left + (width / 2f)
+}
+
+private fun computeBarbellStartX(
+    viewportWidthPx: Float,
+    density: Density
+): Float {
+    val shaftLength = with(density) { 20.dp.toPx() }
+    val stopperWidth = with(density) { 5.dp.toPx() }
+    val targetStopperCenterX = viewportWidthPx * StopperViewportAnchorFraction
+    return (targetStopperCenterX - shaftLength - (stopperWidth / 2f)).coerceAtLeast(0f)
 }
 
 /**
@@ -71,8 +101,9 @@ private fun Double.compact(): String {
  * geometry and collision logic as [BarbellVisualization]. Used to set content width so
  * horizontal scroll is only enabled when labels actually overflow the viewport.
  */
-private fun computeRequiredLabelRightEdgePx(
+private fun computeLabelBoundsPx(
     plateData: List<PlateData>,
+    canvasWidthPx: Float,
     viewportWidthPx: Float,
     sleeveLength: Float,
     extraLogicalOffset: Float,
@@ -80,14 +111,14 @@ private fun computeRequiredLabelRightEdgePx(
     currentTotalThickness: Float,
     density: Density,
     labelTextSizePx: Float
-): Float {
-    if (plateData.isEmpty()) return viewportWidthPx
+): LabelBoundsPx {
     val shaftLength = with(density) { 20.dp.toPx() }
     val stopperWidth = with(density) { 5.dp.toPx() }
     val spacing = with(density) { 0.dp.toPx() }
-    val paddingEnd = with(density) { 0.dp.toPx() }
-    val sleeveX = shaftLength + spacing + stopperWidth + spacing
-    val sleeveWidth = viewportWidthPx - sleeveX - paddingEnd
+    val paddingEnd = with(density) { BarbellEndPaddingDp.dp.toPx() }
+    val barbellStartX = computeBarbellStartX(viewportWidthPx = viewportWidthPx, density = density)
+    val sleeveX = barbellStartX + shaftLength + spacing + stopperWidth + spacing
+    val sleeveWidth = canvasWidthPx - sleeveX - paddingEnd
     val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
     val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
     val labelCollisionPadding = with(density) { 6.dp.toPx() }
@@ -101,6 +132,7 @@ private fun computeRequiredLabelRightEdgePx(
     var bottomRowRightX = sleeveX - labelCollisionPadding
     var currentX = sleeveX
     val unboundedMaxLabelCenterX = 1e6f
+    var minLeftX = Float.POSITIVE_INFINITY
     plateData.forEachIndexed { plateIndex, plateInfo ->
         val scaledThickness = plateInfo.thickness.toFloat() * scaleFactor
         val plateWidth = scaledThickness.coerceAtLeast(minPlateWidthPx).coerceAtMost(sleeveX + sleeveWidth - currentX)
@@ -118,11 +150,18 @@ private fun computeRequiredLabelRightEdgePx(
         } else {
             (rowRightX + labelCollisionPadding + (labelWidth / 2f)).coerceAtMost(maxLabelCenterX)
         }
+        minLeftX = minOf(minLeftX, adjustedCenterX - (labelWidth / 2f))
         val adjustedRight = adjustedCenterX + (labelWidth / 2f)
         if (isTop) topRowRightX = adjustedRight else bottomRowRightX = adjustedRight
         currentX += plateWidth
     }
-    return maxOf(topRowRightX, bottomRowRightX)
+    if (plateData.isEmpty()) {
+        return LabelBoundsPx(left = sleeveX, right = sleeveX)
+    }
+    return LabelBoundsPx(
+        left = minLeftX.coerceAtMost(maxOf(topRowRightX, bottomRowRightX)),
+        right = maxOf(topRowRightX, bottomRowRightX)
+    )
 }
 
 @SuppressLint("DefaultLocale")
@@ -149,6 +188,21 @@ fun PagePlates(
         return
     }
 
+    PagePlatesContent(
+        updatedState = updatedState,
+        equipment = equipment,
+        onHeaderTap = { hapticsViewModel.doGentleVibration() }
+    )
+}
+
+@SuppressLint("DefaultLocale")
+@Composable
+private fun PagePlatesContent(
+    updatedState: WorkoutState.Set,
+    equipment: WeightLoadedEquipment?,
+    onHeaderTap: () -> Unit = {},
+    animateSteps: Boolean = true
+) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -215,7 +269,7 @@ fun PagePlates(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
-                                hapticsViewModel.doGentleVibration()
+                                onHeaderTap()
                             }
                     )
                 } else {
@@ -240,7 +294,7 @@ fun PagePlates(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
-                                hapticsViewModel.doGentleVibration()
+                                onHeaderTap()
                             }
                     )
                 }
@@ -320,6 +374,23 @@ fun PagePlates(
                 }
 
                 maxThickness.toFloat()
+            }
+
+            val allPlateConfigurations = remember(steps, plateChangeResult.previousPlates, plateChangeResult.currentPlates) {
+                buildList {
+                    val workingPlates = plateChangeResult.previousPlates.sortedDescending().toMutableList()
+                    add(workingPlates.toList())
+                    steps.forEach { step ->
+                        when (step.action) {
+                            PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
+                            PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
+                        }
+                        add(workingPlates.sortedDescending())
+                    }
+                    if (isEmpty() || last() != plateChangeResult.currentPlates.sortedDescending()) {
+                        add(plateChangeResult.currentPlates.sortedDescending())
+                    }
+                }
             }
 
             // Build lists of plates to remove and to add (with instance index). Plates that
@@ -424,7 +495,13 @@ fun PagePlates(
             }
 
             // Animate the plate changes
-            LaunchedEffect(plateChangeResult) {
+            LaunchedEffect(plateChangeResult, animateSteps) {
+                if (!animateSteps) {
+                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                    currentStepIndex = steps.size
+                    return@LaunchedEffect
+                }
+
                 // If there are no steps we just show the current configuration and do not animate.
                 if (steps.isEmpty()) {
                     currentStepIndex = -1
@@ -477,7 +554,7 @@ fun PagePlates(
                     delay(1000)
                 }
             }
-
+            
             BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
@@ -489,6 +566,12 @@ fun PagePlates(
                 val viewportWidthPx = with(density) { viewportWidth.toPx() }
                 val labelTextSizePx = with(density) { MaterialTheme.typography.bodySmall.fontSize.toPx() }
                 val labelRightPaddingPx = with(density) { 4.dp.toPx() }
+                val barbellStartPx = remember(viewportWidthPx, density) {
+                    computeBarbellStartX(
+                        viewportWidthPx = viewportWidthPx,
+                        density = density
+                    )
+                }
                 val platesForDrawing = remember(animatedPlates, platesBeforeCurrentStep, activePlateInfo) {
                     if (activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
                         platesBeforeCurrentStep.sortedDescending()
@@ -496,48 +579,92 @@ fun PagePlates(
                         animatedPlates.sortedDescending()
                     }
                 }
-                val plateDataForWidth = remember(platesForDrawing, equipment.availablePlates) {
-                    platesForDrawing.map { weight ->
-                        val plate = equipment.availablePlates.find { it.weight == weight }
-                        PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
+                val plateDataForWidth = remember(allPlateConfigurations, equipment.availablePlates) {
+                    allPlateConfigurations.map { plateConfiguration ->
+                        plateConfiguration.map { weight ->
+                            val plate = equipment.availablePlates.find { it.weight == weight }
+                            PlateData(weight = weight, thickness = plate?.thickness ?: 30.0)
+                        }
                     }
                 }
                 val sleeveLength = equipment.sleeveLength.toFloat()
-                val currentTotalThickness = plateDataForWidth.sumOf { it.thickness }.toFloat()
                 val extraLogicalOffset = (sleeveLength * 0.15f).coerceAtLeast(0f)
-                val requiredLabelRightPx = computeRequiredLabelRightEdgePx(
-                    plateData = plateDataForWidth,
-                    viewportWidthPx = viewportWidthPx,
-                    sleeveLength = sleeveLength,
-                    extraLogicalOffset = extraLogicalOffset,
-                    maxLogicalThickness = maxLogicalThickness,
-                    currentTotalThickness = currentTotalThickness,
-                    density = density,
-                    labelTextSizePx = labelTextSizePx
+                val minimumContentWidthPx = viewportWidthPx + barbellStartPx
+                val labelBoundsAcrossConfigurations = remember(
+                    plateDataForWidth,
+                    minimumContentWidthPx,
+                    viewportWidthPx,
+                    sleeveLength,
+                    extraLogicalOffset,
+                    maxLogicalThickness,
+                    density,
+                    labelTextSizePx
+                ) {
+                    plateDataForWidth.map { plateData ->
+                        computeLabelBoundsPx(
+                            plateData = plateData,
+                            canvasWidthPx = minimumContentWidthPx,
+                            viewportWidthPx = viewportWidthPx,
+                            sleeveLength = sleeveLength,
+                            extraLogicalOffset = extraLogicalOffset,
+                            maxLogicalThickness = maxLogicalThickness,
+                            currentTotalThickness = plateData.sumOf { it.thickness }.toFloat(),
+                            density = density,
+                            labelTextSizePx = labelTextSizePx
+                        )
+                    }
+                }
+                val widestLabelBounds = remember(labelBoundsAcrossConfigurations) {
+                    labelBoundsAcrossConfigurations.maxByOrNull { it.width }
+                        ?: LabelBoundsPx(left = 0f, right = viewportWidthPx)
+                }
+                val contentWidthPx = maxOf(
+                    minimumContentWidthPx,
+                    widestLabelBounds.right + labelRightPaddingPx
                 )
-                val contentWidthPx = maxOf(viewportWidthPx, requiredLabelRightPx + labelRightPaddingPx)
                 val contentWidth = with(density) { contentWidthPx.toDp() }
+                val maxScrollPx = (contentWidthPx - viewportWidthPx).coerceAtLeast(0f)
+                val labelOverflowPx = (widestLabelBounds.right + labelRightPaddingPx - viewportWidthPx)
+                    .coerceAtLeast(0f)
+                val canPanHorizontally = labelOverflowPx > 0f
+                val initialScrollTargetPx = remember(widestLabelBounds, viewportWidthPx, maxScrollPx) {
+                    (widestLabelBounds.center - (viewportWidthPx / 2f))
+                        .coerceIn(0f, maxScrollPx)
+                        .toInt()
+                }
                 val scrollState = rememberScrollState()
+                LaunchedEffect(plateChangeResult, contentWidthPx, initialScrollTargetPx) {
+                    scrollState.scrollTo(initialScrollTargetPx)
+                }
                 Box(
                     modifier = Modifier
-                        .horizontalScroll(scrollState)
-                        .width(contentWidth)
+                        .horizontalScroll(
+                            state = scrollState,
+                            enabled = canPanHorizontally
+                        )
+                        .fillMaxWidth()
                         .fillMaxHeight()
                 ) {
-                    BarbellVisualization(
-                        plates = animatedPlates,
-                        barbell = equipment,
-                        activePlateInfo = activePlateInfo,
-                        shuffledPlates = shuffledPlates,
-                        addStepIndex = addStepIndex,
-                        maxLogicalThickness = maxLogicalThickness,
-                        platesBeforeCurrentStep = platesBeforeCurrentStep,
-                        previousPlates = plateChangeResult.previousPlates.sortedDescending(),
-                        currentStepIndex = currentStepIndex,
-                        totalSteps = steps.size,
-                        viewportWidth = viewportWidth,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    Box(
+                        modifier = Modifier
+                            .width(contentWidth)
+                            .fillMaxHeight()
+                    ) {
+                        BarbellVisualization(
+                            plates = animatedPlates,
+                            barbell = equipment,
+                            activePlateInfo = activePlateInfo,
+                            shuffledPlates = shuffledPlates,
+                            addStepIndex = addStepIndex,
+                            maxLogicalThickness = maxLogicalThickness,
+                            platesBeforeCurrentStep = platesBeforeCurrentStep,
+                            previousPlates = plateChangeResult.previousPlates.sortedDescending(),
+                            currentStepIndex = currentStepIndex,
+                            totalSteps = steps.size,
+                            viewportWidth = viewportWidth,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         }
@@ -692,12 +819,17 @@ private fun BarbellVisualization(
         val shaftLength = 20.dp.toPx()
         val stopperWidth = 5.dp.toPx()
         val spacing = 0.dp.toPx()
-        val paddingEnd = 0.dp.toPx()
+        val paddingEnd = BarbellEndPaddingDp.dp.toPx()
 
-        val sleeveX = shaftLength + spacing + stopperWidth + spacing
-        // When viewportWidth is set (scrollable layout), bar and plates use viewport width; labels use full canvas width.
         val viewportWidthPx = viewportWidth?.toPx()
-        val sleeveWidth = (viewportWidthPx ?: canvasWidth) - sleeveX - paddingEnd
+        val barbellStartX = computeBarbellStartX(
+            viewportWidthPx = viewportWidthPx ?: canvasWidth,
+            density = this
+        )
+        val shaftStartX = barbellStartX
+        val stopperX = shaftStartX + shaftLength
+        val sleeveX = stopperX + spacing + stopperWidth + spacing
+        val sleeveWidth = canvasWidth - sleeveX - paddingEnd
         // Scale against the full physical sleeve length so plate thickness remains proportional.
         val logicalUsedLength = if (sleeveLength > 0f) sleeveLength else sleeveWidth
         val scaleFactor = sleeveWidth / logicalUsedLength.coerceAtLeast(1f)
@@ -748,7 +880,6 @@ private fun BarbellVisualization(
         val globalPlateBottomY = centerY + (maxAvailablePlateHeight / 2f)
 
         // --- 3. DRAWING ---
-
         // 1. Proportions (Key to fixing the "Sword" look)
         // Shaft = Thinner (50%), Sleeve = Standard (100%), Collar = Stopper (150%)
         val sleeveDiameter = maxAvailablePlateHeight * 0.2f
@@ -763,31 +894,17 @@ private fun BarbellVisualization(
 
         // 2. Draw Barbell Anatomy
 
-        // A. SHAFT: The "Vertical Break" Effect
-        // We draw two pieces: a small starting block, a gap, then the rest.
-        val breakWidth = 3.dp.toPx()  // Width of the first "dash"
-        val breakGap = 2.dp.toPx()    // Width of the empty space
-        val mainShaftStart = breakWidth + breakGap
-
-        // Piece 1: The small detached start
+        // A. SHAFT
         drawRoundedBlock(
             topLeft = Offset(0f, shaftY),
-            size = Size(breakWidth, shaftDiameter),
-            cornerRadiusPx = 0f, // Slight roundness
-            fillColor = barbellColor.copy(alpha = 0.5f) // Slightly dimmer to imply distance
-        )
-
-        // Piece 2: The main shaft connecting to the collar
-        drawRoundedBlock(
-            topLeft = Offset(mainShaftStart, shaftY),
-            size = Size(shaftLength - mainShaftStart, shaftDiameter),
-            cornerRadiusPx = 0f, // Flat left edge facing the gap
+            size = Size(stopperX, shaftDiameter),
+            cornerRadiusPx = 0f,
             fillColor = barbellColor
         )
 
         // B. COLLAR (The Stopper)
         drawRoundedBlock(
-            topLeft = Offset(shaftLength, collarY),
+            topLeft = Offset(stopperX, collarY),
             size = Size(stopperWidth, collarDiameter),
             cornerRadiusPx = barbellCornerRadius,
             fillColor = barbellColor
@@ -922,3 +1039,77 @@ private data class PlateData(
     val weight: Double,
     val thickness: Double
 )
+
+@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
+@Composable
+private fun PagePlatesPreview() {
+    val previewBarbell = Barbell(
+        id = UUID.randomUUID(),
+        name = "Preview Barbell",
+        availablePlates = listOf(
+            Plate(20.0, 20.0),
+            Plate(20.0, 20.0),
+            Plate(10.0, 15.0),
+            Plate(10.0, 15.0),
+            Plate(5.0, 10.0),
+            Plate(5.0, 10.0),
+            Plate(2.5, 5.0),
+            Plate(2.5, 5.0)
+        ),
+        sleeveLength = 200,
+        barWeight = 20.0
+    )
+    val previewPlateChangeResult = PlateCalculator.Companion.PlateChangeResult(
+        change = PlateCalculator.Companion.PlateChange(
+            from = 60.0,
+            to = 100.0,
+            steps = listOf(
+                PlateCalculator.Companion.PlateStep(
+                    action = PlateCalculator.Companion.Action.ADD,
+                    weight = 10.0
+                ),
+                PlateCalculator.Companion.PlateStep(
+                    action = PlateCalculator.Companion.Action.ADD,
+                    weight = 10.0
+                )
+            )
+        ),
+        previousPlates = listOf(20.0),
+        currentPlates = listOf(20.0, 10.0)
+    )
+    val previewState = WorkoutState.Set(
+        exerciseId = UUID.randomUUID(),
+        set = WeightSet(
+            id = UUID.randomUUID(),
+            reps = 5,
+            weight = 100.0,
+            subCategory = SetSubCategory.WorkSet
+        ),
+        setIndex = 0u,
+        previousSetData = null,
+        currentSetDataState = mutableStateOf(
+            WeightSetData(
+                actualReps = 5,
+                actualWeight = 100.0,
+                volume = 500.0,
+                subCategory = SetSubCategory.WorkSet
+            )
+        ),
+        hasNoHistory = false,
+        skipped = false,
+        currentBodyWeight = 0.0,
+        plateChangeResult = previewPlateChangeResult,
+        streak = 0,
+        progressionState = null,
+        isWarmupSet = false,
+        equipmentId = previewBarbell.id
+    )
+
+    MyWorkoutAssistantTheme {
+        PagePlatesContent(
+            updatedState = previewState,
+            equipment = previewBarbell,
+            animateSteps = false
+        )
+    }
+}

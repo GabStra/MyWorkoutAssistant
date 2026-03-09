@@ -38,9 +38,9 @@ import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.Yellow
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -70,38 +70,30 @@ sealed class ExerciseSetDisplayRow {
     }
 }
 
+internal fun toExerciseSetDisplayRowOrNull(state: WorkoutState): ExerciseSetDisplayRow? {
+    return when (state) {
+        is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
+        is WorkoutState.Rest -> null
+        is WorkoutState.CalibrationLoadSelection ->
+            if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
+        is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
+        is WorkoutState.AutoRegulationRIRSelection -> null
+        else -> null
+    }
+}
+
 internal fun buildExerciseSetDisplayRows(
     viewModel: AppViewModel,
     exerciseId: UUID,
 ): List<ExerciseSetDisplayRow> {
-    return viewModel.getStatesForExercise(exerciseId).mapNotNull { state ->
-        when (state) {
-            is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
-            is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
-            is WorkoutState.CalibrationLoadSelection ->
-                if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
-            is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
-            is WorkoutState.AutoRegulationRIRSelection -> null
-            else -> null
-        }
-    }
+    return viewModel.getStatesForExercise(exerciseId).mapNotNull(::toExerciseSetDisplayRowOrNull)
 }
 
 internal fun buildSupersetSetDisplayRows(
     viewModel: AppViewModel,
     supersetId: UUID,
 ): List<ExerciseSetDisplayRow> {
-    return viewModel.getStatesForSuperset(supersetId).mapNotNull { state ->
-        when (state) {
-            is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
-            is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
-            is WorkoutState.CalibrationLoadSelection ->
-                if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
-            is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
-            is WorkoutState.AutoRegulationRIRSelection -> null
-            else -> null
-        }
-    }
+    return viewModel.getStatesForSuperset(supersetId).mapNotNull(::toExerciseSetDisplayRowOrNull)
 }
 
 internal fun ExerciseSetDisplayRow.setLikeIdOrNull(): UUID? = when (this) {
@@ -387,14 +379,14 @@ fun SetTableRow(
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = textColor,
                     )
                     ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = textColor,
                     )
                 }
 
@@ -425,7 +417,7 @@ fun SetTableRow(
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = textColor
                     )
                 }
 
@@ -437,7 +429,7 @@ fun SetTableRow(
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = textColor
                     )
                 }
 
@@ -449,7 +441,7 @@ fun SetTableRow(
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = textColor
                     )
                 }
 

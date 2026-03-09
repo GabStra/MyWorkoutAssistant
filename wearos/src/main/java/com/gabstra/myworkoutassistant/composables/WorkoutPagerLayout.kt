@@ -25,4 +25,4 @@ val WorkoutPagerPageSafeAreaPadding = PaddingValues(
 
 @Composable
 fun workoutPagerTitleTextStyle(): TextStyle =
-    MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+    MaterialTheme.typography.bodyExtraSmall.copy(fontWeight = FontWeight.SemiBold)

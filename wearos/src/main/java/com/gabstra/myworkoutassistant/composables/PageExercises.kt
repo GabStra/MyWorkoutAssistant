@@ -47,14 +47,10 @@ internal fun resolvePageExercisesActiveState(
     if (workoutState !is WorkoutState.Rest) return workoutState
 
     return when (val nextExecutableState = workoutState.nextState ?: fallbackSetState) {
-        is WorkoutState.Set ->
-            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
-        is WorkoutState.CalibrationLoadSelection ->
-            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
-        is WorkoutState.CalibrationRIRSelection ->
-            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
-        is WorkoutState.AutoRegulationRIRSelection ->
-            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
+        is WorkoutState.Set -> nextExecutableState
+        is WorkoutState.CalibrationLoadSelection -> nextExecutableState
+        is WorkoutState.CalibrationRIRSelection -> nextExecutableState
+        is WorkoutState.AutoRegulationRIRSelection -> nextExecutableState
         else -> workoutState
     }
 }
