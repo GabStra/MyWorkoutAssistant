@@ -11,12 +11,14 @@ import com.gabstra.myworkoutassistant.shared.ErrorLogDao
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
@@ -277,6 +279,42 @@ class DataLayerListenerService : WearableListenerService() {
         
         // Detect service restart and handle incomplete syncs
         detectAndHandleServiceRestart()
+    }
+
+    private suspend fun shouldApplyIncomingWorkoutRecord(
+        incomingHistory: WorkoutHistory,
+        incomingRecord: WorkoutRecord?,
+        workoutId: UUID
+    ): Boolean {
+        if (incomingRecord == null) {
+            return false
+        }
+
+        val existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workoutId) ?: return true
+        val existingHistory =
+            workoutHistoryDao.getWorkoutHistoryById(existingRecord.workoutHistoryId) ?: return true
+
+        if (incomingHistory.version > existingHistory.version) {
+            return true
+        }
+        if (incomingHistory.version < existingHistory.version) {
+            Log.w(
+                "WorkoutSync",
+                "Ignoring stale workout record for workoutId=$workoutId " +
+                    "incomingVersion=${incomingHistory.version} existingVersion=${existingHistory.version}"
+            )
+            return false
+        }
+        if (incomingHistory.id == existingHistory.id && incomingRecord.setIndex < existingRecord.setIndex) {
+            Log.w(
+                "WorkoutSync",
+                "Ignoring stale workout record for workoutId=$workoutId " +
+                    "incomingSetIndex=${incomingRecord.setIndex} existingSetIndex=${existingRecord.setIndex}"
+            )
+            return false
+        }
+
+        return true
     }
     
     /**
@@ -907,7 +945,13 @@ class DataLayerListenerService : WearableListenerService() {
                                                 )
                                                 setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
 
-                                                if (workoutHistoryStore.WorkoutRecord != null) {
+                                                if (
+                                                    shouldApplyIncomingWorkoutRecord(
+                                                        incomingHistory = workoutHistoryStore.WorkoutHistory,
+                                                        incomingRecord = workoutHistoryStore.WorkoutRecord,
+                                                        workoutId = workout.id
+                                                    )
+                                                ) {
                                                     workoutRecordDao.deleteByWorkoutId(workout.id)
                                                     workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
                                                 }
