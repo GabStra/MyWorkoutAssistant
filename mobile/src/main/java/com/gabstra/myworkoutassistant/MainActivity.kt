@@ -25,7 +25,12 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,6 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
@@ -137,6 +143,24 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+
+@Composable
+private fun PermissionRequirementRow(
+    label: String,
+    granted: Boolean
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Checkbox(
+            checked = granted,
+            onCheckedChange = null,
+            enabled = false
+        )
+        Text(
+            text = label,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
@@ -418,7 +442,6 @@ fun MyWorkoutAssistantNavHost(
     }
     var hasHealthPermissions by remember { mutableStateOf(false) }
     var showPrerequisitesDialog by remember { mutableStateOf(false) }
-    var prerequisitesMessage by remember { mutableStateOf("") }
 
     suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
         downloadsAccessGranted = (context as? MainActivity)?.hasDownloadsAccess() ?: false
@@ -434,21 +457,9 @@ fun MyWorkoutAssistantNavHost(
         appViewModel.setHealthPermissionsChecked()
 
         if (showDialogWhenMissing) {
-            val missingRequirements = buildList {
-                if (!downloadsAccessGranted) add("Downloads folder access")
-                if (!hasHealthPermissions) add("Health Connect permissions")
-            }
-
-            if (missingRequirements.isEmpty()) {
+            if (downloadsAccessGranted && hasHealthPermissions) {
                 showPrerequisitesDialog = false
-                prerequisitesMessage = ""
             } else {
-                prerequisitesMessage = buildString {
-                    append("To use the app, grant the following permissions:")
-                    missingRequirements.forEach { requirement ->
-                        append("\n• $requirement")
-                    }
-                }
                 showPrerequisitesDialog = true
             }
         }
@@ -536,7 +547,17 @@ fun MyWorkoutAssistantNavHost(
             onDismissRequest = {},
             title = "Permissions required",
             body = {
-                Text(prerequisitesMessage)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("To use the app, grant the following permissions:")
+                    PermissionRequirementRow(
+                        label = "Downloads folder access",
+                        granted = downloadsAccessGranted
+                    )
+                    PermissionRequirementRow(
+                        label = "Health Connect permissions",
+                        granted = hasHealthPermissions
+                    )
+                }
             },
             confirmText = "Continue",
             onConfirm = {
@@ -1843,50 +1864,59 @@ fun MyWorkoutAssistantNavHost(
                         val selectedExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.selectedExerciseId
-                        )
+                        ) as? Exercise
 
-                        var isSaving by remember { mutableStateOf(false) }
-                        ExerciseForm(
-                            appViewModel,
-                            onExerciseUpsert = { updatedExercise ->
-                                if (isSaving) return@ExerciseForm
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
-                                        appViewModel.updateWorkoutComponentVersioned(
-                                            selectedWorkout,
-                                            selectedExercise,
-                                            updatedExercise,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
-                                    }
-                                }
-                            },
-                            onCancel = {
+                        if (selectedExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.selectedExerciseId
+                            ) {
                                 appViewModel.goBack()
-                            },
-                            exercise = selectedExercise,
-                            allowSettingDoNotStoreHistory = true,
-                            isSaving = isSaving
-                        )
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            ExerciseForm(
+                                appViewModel,
+                                onExerciseUpsert = { updatedExercise ->
+                                    if (isSaving) return@ExerciseForm
+                                    isSaving = true
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.updateWorkoutComponentVersioned(
+                                                selectedWorkout,
+                                                selectedExercise,
+                                                updatedExercise,
+                                                hasHistory
+                                            )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
+                                        }
+                                    }
+                                },
+                                onCancel = {
+                                    appViewModel.goBack()
+                                },
+                                exercise = selectedExercise,
+                                allowSettingDoNotStoreHistory = true,
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.EditSuperset -> {
@@ -1908,49 +1938,58 @@ fun MyWorkoutAssistantNavHost(
                         val selectedSuperset = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.selectedSupersetId
-                        )
+                        ) as? Superset
 
-                        var isSaving by remember { mutableStateOf(false) }
-                        SupersetForm(
-                            onSupersetUpsert = { updatedSuperset ->
-                                if (isSaving) return@SupersetForm
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
-                                        appViewModel.updateWorkoutComponentVersioned(
-                                            selectedWorkout,
-                                            selectedSuperset,
-                                            updatedSuperset,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
-                                    }
-                                }
-                            },
-                            onCancel = {
+                        if (selectedSuperset == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.selectedSupersetId
+                            ) {
                                 appViewModel.goBack()
-                            },
-                            availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
-                            superset = selectedSuperset,
-                            isSaving = isSaving
-                        )
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            SupersetForm(
+                                onSupersetUpsert = { updatedSuperset ->
+                                    if (isSaving) return@SupersetForm
+                                    isSaving = true
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.updateWorkoutComponentVersioned(
+                                                selectedWorkout,
+                                                selectedSuperset,
+                                                updatedSuperset,
+                                                hasHistory
+                                            )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
+                                        }
+                                    }
+                                },
+                                onCancel = {
+                                    appViewModel.goBack()
+                                },
+                                availableExercises = selectedWorkout.workoutComponents.filterIsInstance<Exercise>(),
+                                superset = selectedSuperset,
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.NewSet -> {
@@ -1971,56 +2010,65 @@ fun MyWorkoutAssistantNavHost(
                         val parentExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.parentExerciseId
-                        )
-                        var isSaving by remember { mutableStateOf(false) }
-                        SetForm(
-                            onSetUpsert = { updatedSet ->
-                                if (isSaving) return@SetForm
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
+                        ) as? Exercise
+                        if (parentExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.parentExerciseId
+                            ) {
+                                appViewModel.goBack()
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            SetForm(
+                                onSetUpsert = { updatedSet ->
+                                    if (isSaving) return@SetForm
+                                    isSaving = true
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.addSetToExerciseVersioned(
+                                                selectedWorkout,
+                                                parentExercise,
+                                                updatedSet,
+                                                hasHistory
                                             )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
                                         }
-                                        appViewModel.addSetToExerciseVersioned(
-                                            selectedWorkout,
-                                            parentExercise,
-                                            updatedSet,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
+                                    }
+                                },
+                                onCancel = {
+                                    scope.launch {
                                         appViewModel.flushWorkoutSave(
                                             context,
                                             workoutStoreRepository,
                                             db
                                         )
                                         appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
                                     }
-                                }
-                            },
-                            onCancel = {
-                                scope.launch {
-                                    appViewModel.flushWorkoutSave(
-                                        context,
-                                        workoutStoreRepository,
-                                        db
-                                    )
-                                    appViewModel.goBack()
-                                }
-                            },
-                            exerciseType = parentExercise.exerciseType,
-                            viewModel = appViewModel,
-                            exercise = parentExercise,
-                            isSaving = isSaving
-                        )
+                                },
+                                exerciseType = parentExercise.exerciseType,
+                                viewModel = appViewModel,
+                                exercise = parentExercise,
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.NewRestSet -> {
@@ -2041,61 +2089,70 @@ fun MyWorkoutAssistantNavHost(
                         val parentExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.parentExerciseId
-                        )
-                        var isSaving by remember { mutableStateOf(false) }
-                        RestSetForm(
-                            onRestSetUpsert = { newRestSet ->
-                                if (isSaving) return@RestSetForm
-                                isSaving = true
-                                val oldSets = parentExercise.sets.filter { it !is RestSet }
-                                val modifiedSets = oldSets
-                                    .flatMapIndexed { index, element ->
-                                        if (index != oldSets.size - 1) {
-                                            listOf(
-                                                element,
-                                                newRestSet.copy(id = java.util.UUID.randomUUID())
-                                            )
-                                        } else {
-                                            listOf(element)
-                                        }
-                                    }
-
-                                val updatedExercise = parentExercise.copy(sets = modifiedSets)
-
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
-                                        appViewModel.updateWorkoutComponentVersioned(
-                                            selectedWorkout,
-                                            parentExercise,
-                                            updatedExercise,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
-                                    }
-                                }
-                            },
-                            onCancel = {
+                        ) as? Exercise
+                        if (parentExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.parentExerciseId
+                            ) {
                                 appViewModel.goBack()
-                            },
-                            isSaving = isSaving
-                        )
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            RestSetForm(
+                                onRestSetUpsert = { newRestSet ->
+                                    if (isSaving) return@RestSetForm
+                                    isSaving = true
+                                    val oldSets = parentExercise.sets.filter { it !is RestSet }
+                                    val modifiedSets = oldSets
+                                        .flatMapIndexed { index, element ->
+                                            if (index != oldSets.size - 1) {
+                                                listOf(
+                                                    element,
+                                                    newRestSet.copy(id = java.util.UUID.randomUUID())
+                                                )
+                                            } else {
+                                                listOf(element)
+                                            }
+                                        }
+
+                                    val updatedExercise = parentExercise.copy(sets = modifiedSets)
+
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.updateWorkoutComponentVersioned(
+                                                selectedWorkout,
+                                                parentExercise,
+                                                updatedExercise,
+                                                hasHistory
+                                            )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
+                                        }
+                                    }
+                                },
+                                onCancel = {
+                                    appViewModel.goBack()
+                                },
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.EditRestSet -> {
@@ -2117,48 +2174,57 @@ fun MyWorkoutAssistantNavHost(
                         val parentExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.parentExerciseId
-                        )
-                        var isSaving by remember { mutableStateOf(false) }
-                        RestSetForm(
-                            onRestSetUpsert = { updatedSet ->
-                                if (isSaving) return@RestSetForm
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
-                                        appViewModel.updateSetInExerciseVersioned(
-                                            selectedWorkout,
-                                            parentExercise,
-                                            screenData.selectedRestSet,
-                                            updatedSet,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
-                                    }
-                                }
-                            },
-                            onCancel = {
+                        ) as? Exercise
+                        if (parentExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.parentExerciseId
+                            ) {
                                 appViewModel.goBack()
-                            },
-                            restSet = screenData.selectedRestSet,
-                            isSaving = isSaving
-                        )
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            RestSetForm(
+                                onRestSetUpsert = { updatedSet ->
+                                    if (isSaving) return@RestSetForm
+                                    isSaving = true
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.updateSetInExerciseVersioned(
+                                                selectedWorkout,
+                                                parentExercise,
+                                                screenData.selectedRestSet,
+                                                updatedSet,
+                                                hasHistory
+                                            )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
+                                        }
+                                    }
+                                },
+                                onCancel = {
+                                    appViewModel.goBack()
+                                },
+                                restSet = screenData.selectedRestSet,
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.NewRest -> {
@@ -2319,79 +2385,88 @@ fun MyWorkoutAssistantNavHost(
                         val parentExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.exerciseId
-                        )
+                        ) as? Exercise
 
-                        val afterSetIndex =
-                            parentExercise.sets.indexOfFirst { it.id == screenData.afterSetId }
-
-                        if (afterSetIndex < 0) {
-                            LaunchedEffect(Unit) {
+                        if (parentExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.exerciseId
+                            ) {
                                 appViewModel.goBack()
                             }
-                        }
+                        } else {
+                            val afterSetIndex =
+                                parentExercise.sets.indexOfFirst { it.id == screenData.afterSetId }
 
-                        var isSaving by remember { mutableStateOf(false) }
+                            if (afterSetIndex < 0) {
+                                LaunchedEffect(Unit) {
+                                    appViewModel.goBack()
+                                }
+                            }
 
-                        if (afterSetIndex >= 0) {
-                            RestSetForm(
-                                onRestSetUpsert = { newRestSet ->
-                                    if (isSaving) return@RestSetForm
-                                    isSaving = true
-                                    val newSets = parentExercise.sets.toMutableList().apply {
-                                        add(
-                                            afterSetIndex + 1,
-                                            newRestSet.copy(id = java.util.UUID.randomUUID())
+                            var isSaving by remember { mutableStateOf(false) }
+
+                            if (afterSetIndex >= 0) {
+                                RestSetForm(
+                                    onRestSetUpsert = { newRestSet ->
+                                        if (isSaving) return@RestSetForm
+                                        isSaving = true
+                                        val newSets = parentExercise.sets.toMutableList().apply {
+                                            add(
+                                                afterSetIndex + 1,
+                                                newRestSet.copy(id = java.util.UUID.randomUUID())
+                                            )
+                                        }
+
+                                        val adjustedComponents = ensureRestSeparatedBySets(newSets)
+                                        val updatedExercise = parentExercise.copy(
+                                            sets = adjustedComponents,
+                                            requiredAccessoryEquipmentIds = parentExercise.requiredAccessoryEquipmentIds
+                                                ?: emptyList()
                                         )
-                                    }
 
-                                    val adjustedComponents = ensureRestSeparatedBySets(newSets)
-                                    val updatedExercise = parentExercise.copy(
-                                        sets = adjustedComponents,
-                                        requiredAccessoryEquipmentIds = parentExercise.requiredAccessoryEquipmentIds
-                                            ?: emptyList()
-                                    )
-
-                                    scope.launch {
-                                        try {
-                                            val hasHistory = withContext(Dispatchers.IO) {
-                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                    selectedWorkout.id
+                                        scope.launch {
+                                            try {
+                                                val hasHistory = withContext(Dispatchers.IO) {
+                                                    workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                        selectedWorkout.id
+                                                    )
+                                                }
+                                                appViewModel.updateWorkoutComponentVersioned(
+                                                    selectedWorkout,
+                                                    parentExercise,
+                                                    updatedExercise,
+                                                    hasHistory
                                                 )
+                                                appViewModel.scheduleWorkoutSave(
+                                                    context,
+                                                    workoutStoreRepository,
+                                                    db
+                                                )
+                                                appViewModel.flushWorkoutSave(
+                                                    context,
+                                                    workoutStoreRepository,
+                                                    db
+                                                )
+                                                appViewModel.goBack()
+                                            } finally {
+                                                isSaving = false
                                             }
-                                            appViewModel.updateWorkoutComponentVersioned(
-                                                selectedWorkout,
-                                                parentExercise,
-                                                updatedExercise,
-                                                hasHistory
-                                            )
-                                            appViewModel.scheduleWorkoutSave(
-                                                context,
-                                                workoutStoreRepository,
-                                                db
-                                            )
+                                        }
+                                    },
+                                    onCancel = {
+                                        scope.launch {
                                             appViewModel.flushWorkoutSave(
                                                 context,
                                                 workoutStoreRepository,
                                                 db
                                             )
                                             appViewModel.goBack()
-                                        } finally {
-                                            isSaving = false
                                         }
-                                    }
-                                },
-                                onCancel = {
-                                    scope.launch {
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    }
-                                },
-                                isSaving = isSaving
-                            )
+                                    },
+                                    isSaving = isSaving
+                                )
+                            }
                         }
                     }
 
@@ -2501,51 +2576,60 @@ fun MyWorkoutAssistantNavHost(
                         val parentExercise = findWorkoutComponentByIdInWorkout(
                             selectedWorkout,
                             screenData.parentExerciseId
-                        )
-                        var isSaving by remember { mutableStateOf(false) }
-                        SetForm(
-                            onSetUpsert = { updatedSet ->
-                                if (isSaving) return@SetForm
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        val hasHistory = withContext(Dispatchers.IO) {
-                                            workoutHistoryDao.workoutHistoryExistsByWorkoutId(
-                                                selectedWorkout.id
-                                            )
-                                        }
-                                        appViewModel.updateSetInExerciseVersioned(
-                                            selectedWorkout,
-                                            parentExercise,
-                                            screenData.selectedSet,
-                                            updatedSet,
-                                            hasHistory
-                                        )
-                                        appViewModel.scheduleWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.flushWorkoutSave(
-                                            context,
-                                            workoutStoreRepository,
-                                            db
-                                        )
-                                        appViewModel.goBack()
-                                    } finally {
-                                        isSaving = false
-                                    }
-                                }
-                            },
-                            onCancel = {
+                        ) as? Exercise
+                        if (parentExercise == null) {
+                            LaunchedEffect(
+                                screenData.workoutId,
+                                screenData.parentExerciseId
+                            ) {
                                 appViewModel.goBack()
-                            },
-                            set = screenData.selectedSet,
-                            exerciseType = parentExercise.exerciseType,
-                            viewModel = appViewModel,
-                            exercise = parentExercise,
-                            isSaving = isSaving
-                        )
+                            }
+                        } else {
+                            var isSaving by remember { mutableStateOf(false) }
+                            SetForm(
+                                onSetUpsert = { updatedSet ->
+                                    if (isSaving) return@SetForm
+                                    isSaving = true
+                                    scope.launch {
+                                        try {
+                                            val hasHistory = withContext(Dispatchers.IO) {
+                                                workoutHistoryDao.workoutHistoryExistsByWorkoutId(
+                                                    selectedWorkout.id
+                                                )
+                                            }
+                                            appViewModel.updateSetInExerciseVersioned(
+                                                selectedWorkout,
+                                                parentExercise,
+                                                screenData.selectedSet,
+                                                updatedSet,
+                                                hasHistory
+                                            )
+                                            appViewModel.scheduleWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.flushWorkoutSave(
+                                                context,
+                                                workoutStoreRepository,
+                                                db
+                                            )
+                                            appViewModel.goBack()
+                                        } finally {
+                                            isSaving = false
+                                        }
+                                    }
+                                },
+                                onCancel = {
+                                    appViewModel.goBack()
+                                },
+                                set = screenData.selectedSet,
+                                exerciseType = parentExercise.exerciseType,
+                                viewModel = appViewModel,
+                                exercise = parentExercise,
+                                isSaving = isSaving
+                            )
+                        }
                     }
 
                     is ScreenData.NewEquipment -> {
