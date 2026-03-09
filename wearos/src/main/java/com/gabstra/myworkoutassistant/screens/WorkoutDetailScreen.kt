@@ -41,6 +41,8 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
@@ -157,7 +159,18 @@ fun WorkoutDetailScreen(
 
     if(viewModel.executeStartWorkout.value == null){
         val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
-        val spec = rememberTransformationSpec()
+        val spec = rememberTransformationSpec(
+            ResponsiveTransformationSpec.smallScreen(
+                containerAlpha = TransformationVariableSpec(1f),
+                contentAlpha = TransformationVariableSpec(1f),
+                scale = TransformationVariableSpec(0.7f)
+            ),
+            ResponsiveTransformationSpec.largeScreen(
+                containerAlpha = TransformationVariableSpec(1f),
+                contentAlpha = TransformationVariableSpec(1f),
+                scale = TransformationVariableSpec(0.6f)
+            )
+        )
 
         Box(
             modifier = Modifier.semantics {
