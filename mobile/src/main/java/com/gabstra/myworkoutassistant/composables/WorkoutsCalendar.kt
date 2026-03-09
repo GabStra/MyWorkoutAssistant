@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -195,7 +194,6 @@ private fun Day(
                     .then(
                         if (shouldHighlight && shape != null) {
                             Modifier
-                                .background(highlightBorderColor.copy(alpha = 0.25f))
                                 .border(width = 1.dp, color = highlightBorderColor, shape = shape)
                         } else {
                             Modifier
