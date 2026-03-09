@@ -20,8 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.MaterialTheme
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -119,7 +121,7 @@ fun PageExercises(
                 viewModel.exercisesBySupersetId[selectedExerciseOrSupersetId]!!
             } else null
         }
-        val titleStyle = workoutPagerTitleTextStyle()
+        val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
         val displayName = remember(isSuperset, supersetExercises, selectedExercise, titleStyle) {
             if (isSuperset && supersetExercises != null && supersetExercises.size > 1) {
                 buildAnnotatedString {
