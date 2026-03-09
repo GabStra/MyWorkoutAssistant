@@ -209,13 +209,23 @@ internal fun buildUnilateralSideBadge(
     sideIndex: UInt?,
     intraSetTotal: UInt?,
 ): String? {
+    return buildUnilateralSideLabel(sideIndex, intraSetTotal)
+}
+
+internal fun buildUnilateralSideLabel(
+    sideIndex: UInt?,
+    intraSetTotal: UInt?,
+): String? {
     val resolvedSideIndex = sideIndex?.toInt() ?: return null
     val resolvedTotal = intraSetTotal?.toInt() ?: return null
+    if (resolvedTotal != 2) return null
 
-    return when (resolvedSideIndex.coerceIn(1, resolvedTotal)) {
-        1 -> "①"
-        2 -> "②"
-        else -> "(${resolvedSideIndex.coerceIn(1, resolvedTotal)}/$resolvedTotal)"
+    val normalizedSideIndex = resolvedSideIndex.coerceIn(1, resolvedTotal)
+
+    return when (normalizedSideIndex) {
+        1 -> "-L"
+        2 -> "-R"
+        else -> null
     }
 }
 
@@ -444,7 +454,7 @@ fun SetTableRow(
                         text = FormatTime(enduranceSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
 
@@ -517,11 +527,10 @@ fun ExerciseSetsViewer(
                 row is ExerciseSetDisplayRow.SetRow && row.state.set.id == setRow.state.set.id
             }
             .coerceIn(1, intraSetTotal)
-        val sideBadge = when (sideIndex) {
-            1 -> "①"
-            2 -> "②"
-            else -> "($sideIndex/$intraSetTotal)"
-        }
+        val sideBadge = buildUnilateralSideLabel(
+            sideIndex = sideIndex.toUInt(),
+            intraSetTotal = intraSetTotal.toUInt()
+        ) ?: return@mapIndexedNotNull null
         rowIndex to sideBadge
     }.toMap()
 

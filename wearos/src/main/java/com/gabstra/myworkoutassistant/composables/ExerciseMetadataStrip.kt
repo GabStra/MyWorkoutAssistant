@@ -99,7 +99,7 @@ fun ExerciseMetadataStrip(
 
                 repRange?.let {
                     sep()
-                    append("Rep Range: ")
+                    append("Reps: ")
                     append(it)
                 }
 
@@ -108,11 +108,11 @@ fun ExerciseMetadataStrip(
                     val side1Color = if (currentSideIndex == 1u) primaryColor else surfaceContainerHigh
                     val side2Color = if (currentSideIndex == 2u) primaryColor else surfaceContainerHigh
                     withStyle(SpanStyle(color = side1Color, fontWeight = FontWeight.Bold)) {
-                        append("①")
+                        append("L")
                     }
                     separator()
                     withStyle(SpanStyle(color = side2Color, fontWeight = FontWeight.Bold)) {
-                        append("②")
+                        append("R")
                     }
                 }
 

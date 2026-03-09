@@ -1028,7 +1028,7 @@ private fun ExerciseDetailContent(
                         setLabel = viewModel.getSetCounterForExercise(state.exerciseId, state)
                             ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
                         repRange = repRange,
-                        sideIndicator = if (state.intraSetTotal != null) "① ↔ ②" else null,
+                        sideIndicator = if (state.intraSetTotal != null) "L ↔ R" else null,
                         currentSideIndex = viewModel.getUnilateralSideIndex(state),
                         isUnilateral = state.isUnilateral
                     )
