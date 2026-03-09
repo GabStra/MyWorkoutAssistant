@@ -9,7 +9,7 @@ import androidx.wear.compose.material3.MaterialTheme
 
 object WorkoutPagerLayoutTokens {
     val WorkoutHeaderTopPadding = 5.dp
-    val WorkoutHeaderHeight = 27.5.dp
+    val WorkoutHeaderHeight = 30.dp
     val HorizontalPagerBottomContentPadding = 30.dp
     val ExerciseTitleHorizontalPadding = 37.5.dp
     val OverlayContentHorizontalPadding = 10.dp
