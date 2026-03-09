@@ -219,7 +219,7 @@ fun PageExercises(
                         } else {
                             "Exercise: ${selectedExerciseOrSupersetIndex + 1}/${exerciseOrSupersetIds.size}"
                         },
-                        supersetExerciseLabel = if (isSuperset && supersetIndex != null) {
+                        supersetExerciseLabel = if (isSuperset && supersetIndex != null && supersetExercises != null) {
                             "Exercise: ${supersetIndex + 1}/${supersetExercises.size}"
                         } else null,
                         supersetExerciseIndex = if (isSuperset && supersetIndex != null) supersetIndex else null,
@@ -227,7 +227,7 @@ fun PageExercises(
                         setLabel = null, // Not showing set info in PageExercises
                         sideIndicator = sideIndicator,
                         currentSideIndex = if (currentExercise == selectedExercise && setBelongsToSelected) {
-                            setState.intraSetCounter?.takeIf { setState.intraSetTotal != null }
+                            setState.intraSetCounter.takeIf { setState.intraSetTotal != null }
                         } else null,
                         isUnilateral = currentExercise == selectedExercise && setBelongsToSelected && setState.isUnilateral,
                         equipmentName = selectedExerciseEquipment?.name,
@@ -331,4 +331,3 @@ fun PageExercises(
         }
     }
 }
-

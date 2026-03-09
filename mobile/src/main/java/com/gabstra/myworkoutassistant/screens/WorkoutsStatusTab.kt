@@ -51,6 +51,7 @@ fun WorkoutsStatusTab(
     selectedDate: CalendarDay,
     selectedWeekStart: LocalDate,
     selectedWeekEnd: LocalDate,
+    completedWeekStarts: Set<LocalDate>,
     selectedWeekWorkoutsByDate: Map<LocalDate, List<Pair<WorkoutHistory, Workout>>>?,
     weeklyWorkoutsByActualTarget: Map<Workout, Pair<Int, Int>>?,
     objectiveProgress: Double,
@@ -79,6 +80,7 @@ fun WorkoutsStatusTab(
                 selectedDate = selectedDate,
                 selectedWeekStart = selectedWeekStart,
                 selectedWeekEnd = selectedWeekEnd,
+                completedWeekStarts = completedWeekStarts,
                 onDayClicked = { calendarState, day ->
                     onDayClicked(calendarState, day)
                 },

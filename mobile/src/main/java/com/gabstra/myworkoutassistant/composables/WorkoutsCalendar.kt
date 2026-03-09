@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -91,6 +93,9 @@ private fun Day(
     isInSelectedWeek: Boolean = false,
     isSelectedWeekStart: Boolean = false,
     isSelectedWeekEnd: Boolean = false,
+    isInCompletedWeek: Boolean = false,
+    isCompletedWeekStart: Boolean = false,
+    isCompletedWeekEnd: Boolean = false,
     shouldHighlight: Boolean = false,
     onClick: (CalendarDay) -> Unit = {},
 ) {
@@ -115,11 +120,21 @@ private fun Day(
                 vertical = 1.dp
             )
             .drawBehind {
-                if (isInSelectedWeek) {
+                if (isInSelectedWeek || isInCompletedWeek) {
                     val strokeWidth = 2f
                     val half = strokeWidth / 2f
-                    val borderColor = primaryColor
-                    val backgroundColor = primaryColor.copy(alpha = 0.25f)
+                    val isCompletedSelectedWeek = isInSelectedWeek && isInCompletedWeek
+                    val borderColor = when {
+                        isCompletedSelectedWeek -> Color.Yellow
+                        isInCompletedWeek -> Color.Yellow.copy(alpha = 0.25f)
+                        else -> primaryColor
+                    }
+                    val backgroundColor = when {
+                        isCompletedSelectedWeek -> Color.Yellow
+                        isInCompletedWeek -> Color.Yellow.copy(alpha = 0.25f)
+                        isInSelectedWeek -> primaryColor.copy(alpha = 0.25f)
+                        else -> Color.Transparent
+                    }
 
                     drawRect(color = backgroundColor)
                     // Horizontal lines: inset by half stroke so full stroke is drawn (pixel-perfect)
@@ -136,7 +151,7 @@ private fun Day(
                         strokeWidth = strokeWidth
                     )
                     // Vertical lines: inset by half stroke so full stroke is drawn (same thickness as horizontal)
-                    if (isSelectedWeekStart) {
+                    if (isSelectedWeekStart || isCompletedWeekStart) {
                         drawLine(
                             color = borderColor,
                             start = Offset(half, 0f),
@@ -144,7 +159,7 @@ private fun Day(
                             strokeWidth = strokeWidth
                         )
                     }
-                    if (isSelectedWeekEnd) {
+                    if (isSelectedWeekEnd || isCompletedWeekEnd) {
                         drawLine(
                             color = borderColor,
                             start = Offset(size.width - half, 0f),
@@ -179,7 +194,6 @@ private fun Day(
             val textColor = when {
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
-                shouldHighlight -> highlightBorderColor
                 else -> MaterialTheme.colorScheme.onBackground
             }
 
@@ -190,6 +204,16 @@ private fun Day(
                     .align(Alignment.Center)
                     .optionalClip(shape)
                     .size(30.dp)
+                    .then(
+                        if (shouldHighlight && shape != null) {
+                            Modifier.background(
+                                color = MaterialTheme.colorScheme.background,
+                                shape = shape
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
 
                     .then(
                         if (shouldHighlight && shape != null) {
@@ -321,6 +345,7 @@ fun WorkoutsCalendar(
     selectedDate: CalendarDay,
     selectedWeekStart: LocalDate,
     selectedWeekEnd: LocalDate,
+    completedWeekStarts: Set<LocalDate> = emptySet(),
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
     shouldHighlight: (CalendarDay) -> Boolean,
     groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
@@ -367,12 +392,18 @@ fun WorkoutsCalendar(
             calendarScrollPaged = false,
             userScrollEnabled = false,
             dayContent = { day ->
+                val dayWeekStart = day.date.minusDays(day.date.dayOfWeek.value.toLong() - 1L)
+                val dayWeekEnd = dayWeekStart.plusDays(6)
+                val isCompletedWeek = completedWeekStarts.contains(dayWeekStart)
                 Day(
                     day = day,
                     currentDate = currentDate,
                     isInSelectedWeek = !day.date.isBefore(selectedWeekStart) && !day.date.isAfter(selectedWeekEnd),
                     isSelectedWeekStart = day.date == selectedWeekStart,
                     isSelectedWeekEnd = day.date == selectedWeekEnd,
+                    isInCompletedWeek = isCompletedWeek,
+                    isCompletedWeekStart = isCompletedWeek && day.date == dayWeekStart,
+                    isCompletedWeekEnd = isCompletedWeek && day.date == dayWeekEnd,
                     shouldHighlight = shouldHighlight(day),
                 ) { selectedCalendarDay ->
                     onDayClicked(calendarState,selectedCalendarDay)

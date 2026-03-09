@@ -283,15 +283,19 @@ fun WorkoutsScreen(
         )
     }
 
-    fun calculateObjectiveProgress(currentDate: LocalDate) {
-        weeklyWorkoutsByActualTarget = null
-        objectiveProgress = 0.0
-        if (allEnabledWorkouts.isEmpty()) return
+    data class WeekObjectiveSnapshot(
+        val weeklyWorkoutsByActualTarget: Map<Workout, Pair<Int, Int>>,
+        val objectiveProgress: Double
+    )
+
+    fun computeWeekObjectiveSnapshot(currentDate: LocalDate): WeekObjectiveSnapshot {
+        if (allEnabledWorkouts.isEmpty()) {
+            return WeekObjectiveSnapshot(emptyMap(), 0.0)
+        }
 
         val startOfWeek = getStartOfWeek(currentDate)
         val endOfWeek = getEndOfWeek(currentDate)
 
-        // Inclusive date iteration without Int/Long range pitfalls
         val workoutHistoriesInAWeek =
             generateSequence(startOfWeek) { it.plusDays(1) }
                 .takeWhile { !it.isAfter(endOfWeek) }
@@ -313,9 +317,9 @@ fun WorkoutsScreen(
         val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.toSet()
 
         val totalWeeklyWorkouts = weeklyWorkouts +
-                allActiveAndEnabledWorkouts.filter {
-                    it.globalId !in uniqueGlobalIds && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
-                }
+            allActiveAndEnabledWorkouts.filter {
+                it.globalId !in uniqueGlobalIds && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
+            }
 
         val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
         val actualCountsByWorkoutId = workoutHistoriesInAWeek
@@ -331,7 +335,7 @@ fun WorkoutsScreen(
         )
 
         val families: List<Fam> = workoutsByGlobalId.map { (_, wsRaw) ->
-            val ws = wsRaw.distinctBy { it.id } // <<< Safety de-dupe
+            val ws = wsRaw.distinctBy { it.id }
             val targets = ws.associate { w -> w.id to (timesCompletedInAWeekObjective[w.id] ?: 0) }
             val actuals = ws.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
 
@@ -351,12 +355,42 @@ fun WorkoutsScreen(
             Fam(activeWorkout, countedActual, totalTarget, progress)
         }
 
-        weeklyWorkoutsByActualTarget = families
-            .associate { it.active to (it.countedActual to it.totalTarget) }
-            .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id })
+        return WeekObjectiveSnapshot(
+            weeklyWorkoutsByActualTarget = families
+                .associate { it.active to (it.countedActual to it.totalTarget) }
+                .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id }),
+            objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
+        )
+    }
 
-        objectiveProgress =
-            if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
+    fun calculateObjectiveProgress(currentDate: LocalDate) {
+        weeklyWorkoutsByActualTarget = null
+        objectiveProgress = 0.0
+        val snapshot = computeWeekObjectiveSnapshot(currentDate)
+        weeklyWorkoutsByActualTarget = snapshot.weeklyWorkoutsByActualTarget
+        objectiveProgress = snapshot.objectiveProgress
+    }
+
+    val completedWeekStarts = remember(
+        groupedWorkoutsHistories,
+        allEnabledWorkouts,
+        allActiveAndEnabledWorkouts,
+        timesCompletedInAWeekObjective,
+        selectedWeekStart
+    ) {
+        if (!hasObjectives) {
+            emptySet()
+        } else {
+            val candidateWeekStarts = buildSet {
+                groupedWorkoutsHistories?.keys?.forEach { add(getStartOfWeek(it)) }
+                add(getStartOfWeek(LocalDate.now()))
+                add(selectedWeekStart)
+            }
+
+            candidateWeekStarts.filterTo(mutableSetOf()) { weekStart ->
+                computeWeekObjectiveSnapshot(weekStart).objectiveProgress >= 1.0
+            }
+        }
     }
 
     LaunchedEffect(allEnabledWorkouts.map { it.id }.toSet()) {
@@ -645,6 +679,7 @@ fun WorkoutsScreen(
                                             selectedDate = selectedDate,
                                             selectedWeekStart = selectedWeekStart,
                                             selectedWeekEnd = selectedWeekEnd,
+                                            completedWeekStarts = completedWeekStarts,
                                             selectedWeekWorkoutsByDate = selectedWeekWorkoutsByDate,
                                             weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
                                             objectiveProgress = objectiveProgress,
