@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,11 +37,14 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.Yellow
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -234,6 +236,20 @@ private fun buildRestLabel(restState: WorkoutState.Rest): String {
     return "REST ${FormatTime(seconds)}"
 }
 
+private data class SetTrendIndicator(
+    val glyph: String,
+    val color: Color,
+)
+
+private fun buildSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndicator? {
+    return when (compareSets(setState.previousSetData, setState.currentSetData)) {
+        SetComparison.BETTER -> SetTrendIndicator(glyph = "↑", color = Green)
+        SetComparison.WORSE -> SetTrendIndicator(glyph = "↓", color = Red)
+        SetComparison.MIXED -> SetTrendIndicator(glyph = "~", color = Yellow)
+        SetComparison.EQUAL -> null
+    }
+}
+
 @Composable
 internal fun ExerciseSetsTableHeader(
     modifier: Modifier = Modifier,
@@ -307,6 +323,8 @@ fun SetTableRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val isWorkSet = (setState.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
+    val trendIndicator = if (setState.hasBeenExecuted && isWorkSet) buildSetTrendIndicator(setState) else null
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState = setState,
@@ -325,11 +343,16 @@ fun SetTableRow(
                 .padding(2.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val setDisplayText = when {
+            val baseSetDisplayText = when {
                 !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
-                !setIdentifier.isNullOrBlank() -> setIdentifier!!
+                !setIdentifier.isNullOrBlank() -> setIdentifier
                 !sideBadge.isNullOrBlank() -> sideBadge
                 else -> ""
+            }
+            val setDisplayText = if (trendIndicator != null && baseSetDisplayText.isNotBlank()) {
+                "$baseSetDisplayText${trendIndicator.glyph}"
+            } else {
+                baseSetDisplayText
             }
             ScalableFadingText(
                 modifier = Modifier
@@ -350,19 +373,6 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
-                    val previousWeightSetData = (setState.previousSetData as WeightSetData)
-
-                    val weightTextColor = when {
-                        weightSetData.actualWeight == previousWeightSetData.actualWeight -> textColor
-                        weightSetData.actualWeight < previousWeightSetData.actualWeight  -> Red
-                        else -> Green
-                    }
-
-                    val repsTextColor = when {
-                        weightSetData.actualReps == previousWeightSetData.actualReps -> textColor
-                        weightSetData.actualReps < previousWeightSetData.actualReps  -> Red
-                        else -> Green
-                    }
 
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
@@ -371,27 +381,25 @@ fun SetTableRow(
                         isPendingCalibration -> "TBD"
                         else -> weightText
                     }
-                    val weightColor = weightTextColor
 
                     ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = weightColor,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                     ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${weightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = repsTextColor,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                 }
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                    val previousBodyWeightSetData = (setState.previousSetData as BodyWeightSetData)
 
                     val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
@@ -405,32 +413,19 @@ fun SetTableRow(
                         else -> baseWeightText
                     }
 
-                    val weightTextColor = when {
-                        bodyWeightSetData.additionalWeight == previousBodyWeightSetData.additionalWeight -> textColor
-                        bodyWeightSetData.additionalWeight < previousBodyWeightSetData.additionalWeight  -> Red
-                        else -> Green
-                    }
-                    val weightColor = weightTextColor
-
-                    val repsTextColor = when {
-                        bodyWeightSetData.actualReps == previousBodyWeightSetData.actualReps -> textColor
-                        bodyWeightSetData.actualReps < previousBodyWeightSetData.actualReps  -> Red
-                        else -> Green
-                    }
-
                     ScalableFadingText(
                         modifier = Modifier.weight(2f),
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = weightColor
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                     ScalableFadingText(
                         modifier = Modifier.weight(1f),
                         text = "${bodyWeightSetData.actualReps}",
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = repsTextColor
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
 
@@ -442,7 +437,7 @@ fun SetTableRow(
                         text = FormatTime(timedDurationSetData.startTimer / 1000),
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = textColor
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
 
@@ -557,10 +552,6 @@ fun ExerciseSetsViewer(
         rowIndex: Int,
     ) {
         val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-        val isWarmupSetRow = when (displayRow) {
-            is ExerciseSetDisplayRow.SetRow -> CalibrationHelper.isWarmupSet(displayRow.state.set)
-            else -> false
-        }
         val borderColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
