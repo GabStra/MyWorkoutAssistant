@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -19,9 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -48,10 +47,14 @@ internal fun resolvePageExercisesActiveState(
     if (workoutState !is WorkoutState.Rest) return workoutState
 
     return when (val nextExecutableState = workoutState.nextState ?: fallbackSetState) {
-        is WorkoutState.Set,
-        is WorkoutState.CalibrationLoadSelection,
-        is WorkoutState.CalibrationRIRSelection,
-        is WorkoutState.AutoRegulationRIRSelection -> nextExecutableState
+        is WorkoutState.Set ->
+            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
+        is WorkoutState.CalibrationLoadSelection ->
+            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
+        is WorkoutState.CalibrationRIRSelection ->
+            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
+        is WorkoutState.AutoRegulationRIRSelection ->
+            if (nextExecutableState.exerciseId == workoutState.exerciseId) workoutState else nextExecutableState
         else -> workoutState
     }
 }
@@ -126,13 +129,13 @@ fun PageExercises(
                 buildAnnotatedString {
                     supersetExercises.forEachIndexed { i, exercise ->
                         if (i > 0) {
-                            append(" ")
-                            withStyle(titleStyle.toSpanStyle().copy(baselineShift = BaselineShift(0.25f))) {
-                                append("↔")
-                            }
-                            append(" ")
+                            append(" ↔ ")
                         }
                         append(exercise.name)
+                        append(" ")
+                        append("(")
+                        append(('A' + i).toString())
+                        append(")")
                     }
                 }
             } else {
@@ -145,14 +148,21 @@ fun PageExercises(
             verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            ExerciseNameText(
-                text = displayName,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.5.dp),
-                style = titleStyle,
-                textAlign = TextAlign.Center
-            )
+                    .height(WorkoutPagerLayoutTokens.WorkoutHeaderHeight),
+                contentAlignment = Alignment.Center
+            ) {
+                ExerciseNameText(
+                    text = displayName,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.5.dp),
+                    style = titleStyle,
+                    textAlign = TextAlign.Center
+                )
+            }
 
             val selectedExerciseEquipment = remember(selectedExercise) {
                 selectedExercise.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -171,8 +181,7 @@ fun PageExercises(
                 // Metadata strip: superset-specific when viewing superset, else exercise metadata
                 if (isSuperset && supersetExercises != null) {
                     SupersetMetadataStrip(
-                        containerLabel = if (containerCount > 1) "${containerIndex.value + 1}/${containerCount}" else null,
-                        exerciseCount = supersetExercises.size
+                        containerLabel = if (containerCount > 1) "${containerIndex.value + 1}/${containerCount}" else null
                     )
                 } else {
                     ExerciseMetadataStrip(
