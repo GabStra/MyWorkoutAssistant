@@ -471,7 +471,6 @@ fun WearApp(
                     onSwipe = {
                         val swipeRoute = navController.currentBackStackEntry?.destination?.route
                         if (swipeRoute == Screen.WorkoutSelection.route) {
-                            Toast.makeText(localContext, "Returning to watch face", Toast.LENGTH_SHORT).show()
                             activity?.finish()
                         } else {
                             navController.popBackStack()
