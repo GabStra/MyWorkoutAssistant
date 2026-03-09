@@ -57,7 +57,6 @@ import com.gabstra.myworkoutassistant.composables.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -82,10 +81,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 import java.lang.reflect.Field
 import java.time.LocalDateTime
 import java.util.UUID
@@ -101,7 +97,6 @@ private enum class ExerciseHorizontalPage {
     EXERCISES
 }
 
-private const val EXERCISE_PAGER_AUTO_RETURN_DELAY_MS = 15000L
 private val PREVIEW_FIXED_NOW: LocalDateTime = LocalDateTime.of(2026, 1, 1, 12, 0)
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
@@ -197,20 +192,7 @@ fun ExerciseScreen(
         }
     }
 
-    val scope = rememberWearCoroutineScope()
-    var goBackJob by remember { mutableStateOf<Job?>(null) }
     var shouldResumeTimerAfterDialog by remember(state.set.id) { mutableStateOf(false) }
-
-    fun restartGoBack() {
-        goBackJob?.cancel()
-        goBackJob = scope.launch {
-            delay(EXERCISE_PAGER_AUTO_RETURN_DELAY_MS)
-            val isOnExerciseDetailPage = horizontalPagerState.currentPage == exerciseDetailPageIndex
-            if (!isOnExerciseDetailPage && !horizontalPagerState.isScrollInProgress) {
-                horizontalPagerState.scrollToPage(exerciseDetailPageIndex)
-            }
-        }
-    }
 
     val exerciseOrSupersetId = remember(state.exerciseId) {
         viewModel.supersetIdByExerciseId[state.exerciseId] ?: state.exerciseId
@@ -220,21 +202,6 @@ fun ExerciseScreen(
     }
     var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
     val context = LocalContext.current
-
-    LaunchedEffect(horizontalPagerState.currentPage) {
-        if (horizontalPagerState.currentPage == exerciseDetailPageIndex) {
-            goBackJob?.cancel()
-        } else {
-            restartGoBack()
-        }
-    }
-
-    LaunchedEffect(selectedExercise.id, horizontalPagerState.currentPage) {
-        val isViewingExercisesPage = horizontalPagerState.currentPage == exercisesPageIndex
-        if (isViewingExercisesPage) {
-            restartGoBack()
-        }
-    }
 
     LaunchedEffect(horizontalPagerState.currentPage) {
         val isOnPlatesPage = platesPageIndex >= 0 && horizontalPagerState.currentPage == platesPageIndex
@@ -455,10 +422,6 @@ fun ExerciseScreen(
                 }
             }
         )
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { goBackJob?.cancel() }
     }
 }
 

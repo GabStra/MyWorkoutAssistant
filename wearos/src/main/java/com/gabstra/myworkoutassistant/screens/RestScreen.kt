@@ -320,7 +320,7 @@ private fun UpcomingSetPreview(
 ) {
     val useWeightHeader = exercise.exerciseType == ExerciseType.WEIGHT ||
         exercise.exerciseType == ExerciseType.BODY_WEIGHT
-    val borderColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh
+    val borderColor: Color = MaterialTheme.colorScheme.primary
     val textColor = borderColor
 
     val rowShape = RoundedCornerShape(25)
@@ -389,16 +389,10 @@ fun RestScreen(
     val restartTimerAction = remember { mutableStateOf<(() -> Unit)?>(null) }
     val isEditModeState = remember { mutableStateOf(false) }
 
-    val nextExerciseId = when (val next = state.nextState) {
-        is WorkoutState.Set -> next.exerciseId
-        is WorkoutState.CalibrationLoadSelection -> next.exerciseId
-        is WorkoutState.CalibrationRIRSelection -> next.exerciseId
-        is WorkoutState.AutoRegulationRIRSelection -> next.exerciseId
-        is WorkoutState.Rest -> next.exerciseId
-        null -> null
-        is WorkoutState.Preparing, is WorkoutState.Completed -> null
+    val resolvedNextSetState = remember(state.set.id, state.nextState) {
+        (state.nextState as? WorkoutState.Set) ?: viewModel.getFirstSetStateAfterCurrent()
     }
-    val exerciseIdFromNext = nextExerciseId ?: state.exerciseId
+    val exerciseIdFromNext = resolvedNextSetState?.exerciseId ?: state.exerciseId
     val nextExercise = remember(exerciseIdFromNext) {
         val exerciseId = exerciseIdFromNext
         if (exerciseId != null) {
@@ -409,12 +403,7 @@ fun RestScreen(
         }
     }
 
-    val exerciseIdForPages = when (val next = state.nextState) {
-        is WorkoutState.Set -> next.exerciseId
-        is WorkoutState.CalibrationLoadSelection -> next.exerciseId
-        is WorkoutState.CalibrationRIRSelection -> next.exerciseId
-        else -> state.exerciseId
-    }
+    val exerciseIdForPages = resolvedNextSetState?.exerciseId ?: state.exerciseId
     val exerciseForPages = remember(exerciseIdForPages) {
         val exerciseId = exerciseIdForPages
         if (exerciseId != null) {
@@ -471,12 +460,14 @@ fun RestScreen(
         pageCount = { horizontalPageTypes.size }
     )
     var selectedExercise by remember(exerciseForPages.id) { mutableStateOf(exerciseForPages) }
-    val setStateForPages = remember(state.nextState) {
-        (state.nextState as? WorkoutState.Set) ?: viewModel.getFirstSetStateAfterCurrent()
-    }
+    val setStateForPages = resolvedNextSetState
     val nextState = state.nextState
-    val indicatorStateOverride = remember(state, nextState) {
-        if (state.exerciseId == null && nextState != null) nextState else state
+    val indicatorStateOverride = remember(state, nextState, resolvedNextSetState) {
+        if (state.exerciseId == null) {
+            resolvedNextSetState ?: nextState ?: state
+        } else {
+            state
+        }
     }
 
     LaunchedEffect(set.id) {

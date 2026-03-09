@@ -482,7 +482,6 @@ fun WorkoutScreen(
                                                 steps = listOf(
                                                     TutorialStep("Navigate pages", "Swipe left or right to move between views."),
                                                     TutorialStep("Scroll long text", "Tap the exercise title or header to scroll."),
-                                                    TutorialStep("Auto-return", "You'll return to workout details after 10 seconds of inactivity."),
                                                     TutorialStep("Complete the set", "Tap 'Complete Set' or press the back button when done.")
                                                 ),
                                                 onDismiss = onDismissSetScreenTutorial,

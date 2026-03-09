@@ -842,6 +842,7 @@ open class AppViewModel : WorkoutViewModel() {
     override fun goToNextState() {
         stopActiveTimerForCurrentState()
         super.goToNextState()
+        restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
     }
 
@@ -852,6 +853,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun goToPreviousSetWear() {
         stopActiveTimerForCurrentState()
         goToPreviousSet()
+        restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
     }
 
@@ -862,6 +864,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun goToPreviousNonRestStateWear() {
         stopActiveTimerForCurrentState()
         goToPreviousNonRestState()
+        restartCurrentRestStateForManualNavigation()
         reEvaluateDimmingForCurrentState()
     }
 
@@ -881,6 +884,16 @@ open class AppViewModel : WorkoutViewModel() {
 
             else -> Unit
         }
+    }
+
+    private fun restartCurrentRestStateForManualNavigation() {
+        val currentState = workoutState.value as? WorkoutState.Rest ?: return
+        val setData = currentState.currentSetData as? RestSetData ?: return
+        if (setData.endTimer == setData.startTimer && currentState.startTime == null) return
+
+        workoutTimerService.unregisterTimer(currentState.set.id)
+        currentState.currentSetData = setData.copy(endTimer = setData.startTimer)
+        currentState.startTime = null
     }
 
     /**
