@@ -2,12 +2,14 @@ package com.gabstra.myworkoutassistant
 
 import androidx.compose.runtime.mutableStateOf
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesActiveState
+import com.gabstra.myworkoutassistant.composables.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 import java.util.UUID
@@ -38,6 +40,29 @@ class PageExercisesStateResolutionTest {
     }
 
     @Test
+    fun `rest state resolves to same exercise next set for exercises page`() {
+        val exerciseId = UUID.randomUUID()
+        val upcomingSetState = createSetState(exerciseId = exerciseId)
+        val restState = createRestState(
+            exerciseId = exerciseId,
+            nextState = upcomingSetState
+        )
+
+        val resolvedState = resolvePageExercisesActiveState(workoutState = restState)
+
+        assertSame(upcomingSetState, resolvedState)
+    }
+
+    @Test
+    fun `rest states are omitted from exercise display rows`() {
+        val restState = createRestState(nextState = null)
+
+        val displayRow = toExerciseSetDisplayRowOrNull(restState)
+
+        assertNull(displayRow)
+    }
+
+    @Test
     fun `non rest state remains unchanged`() {
         val setState = createSetState()
 
@@ -46,14 +71,14 @@ class PageExercisesStateResolutionTest {
         assertSame(setState, resolvedState)
     }
 
-    private fun createSetState(): WorkoutState.Set {
+    private fun createSetState(exerciseId: UUID = UUID.randomUUID()): WorkoutState.Set {
         val setData = WeightSetData(
             actualReps = 8,
             actualWeight = 60.0,
             volume = 480.0
         )
         return WorkoutState.Set(
-            exerciseId = UUID.randomUUID(),
+            exerciseId = exerciseId,
             set = WeightSet(
                 id = UUID.randomUUID(),
                 reps = 8,
@@ -73,7 +98,10 @@ class PageExercisesStateResolutionTest {
         )
     }
 
-    private fun createRestState(nextState: WorkoutState?): WorkoutState.Rest {
+    private fun createRestState(
+        nextState: WorkoutState?,
+        exerciseId: UUID = UUID.randomUUID(),
+    ): WorkoutState.Rest {
         return WorkoutState.Rest(
             set = RestSet(
                 id = UUID.randomUUID(),
@@ -87,7 +115,7 @@ class PageExercisesStateResolutionTest {
                     endTimer = 90
                 )
             ),
-            exerciseId = UUID.randomUUID(),
+            exerciseId = exerciseId,
             nextState = nextState
         )
     }
