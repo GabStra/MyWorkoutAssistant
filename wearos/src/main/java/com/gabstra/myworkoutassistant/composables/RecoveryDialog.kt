@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoic
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.Duration
 import java.time.format.DateTimeFormatter
+import java.util.Locale.getDefault
 
 @Composable
 internal fun RecoveryDialog(
@@ -331,7 +332,7 @@ private fun RecoveryInfoBlock(
         ) {
             if (label.isNotEmpty()) {
                 Text(
-                    text = label,
+                    text = label.uppercase(getDefault()),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyExtraSmall,
                     color =  MaterialTheme.colorScheme.onBackground,
