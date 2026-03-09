@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -58,11 +57,9 @@ import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
 import com.gabstra.myworkoutassistant.composables.buildSetIdentifier
 import com.gabstra.myworkoutassistant.composables.buildUnilateralSideBadge
-import com.gabstra.myworkoutassistant.composables.dashedBorder
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -293,7 +290,7 @@ private fun RestTimerBlock(
                     style = timerHeaderStyle,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(2.5.dp))
                 ExerciseNameText(
                     text = nextExercise.name,
                     modifier = Modifier.fillMaxWidth(),
@@ -323,9 +320,8 @@ private fun UpcomingSetPreview(
 ) {
     val useWeightHeader = exercise.exerciseType == ExerciseType.WEIGHT ||
         exercise.exerciseType == ExerciseType.BODY_WEIGHT
-    val borderColor: Color = Orange
-
-    val backgroundColor = borderColor.copy(alpha = 0.25f)
+    val borderColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh
+    val textColor = borderColor
 
     val rowShape = RoundedCornerShape(25)
     val sideBadge = if (setState.isUnilateral) {
@@ -351,20 +347,7 @@ private fun UpcomingSetPreview(
         ) {
             val rowModifier = Modifier
                 .height(25.dp)
-                .then(
-                    if (CalibrationHelper.isWarmupSet(setState.set)) {
-                        Modifier.dashedBorder(
-                            strokeWidth = 1.dp,
-                            color = borderColor,
-                            shape = rowShape,
-                            onInterval = 4.dp,
-                            offInterval = 4.dp
-                        )
-                    } else {
-                        Modifier.border(BorderStroke(1.dp, borderColor), rowShape)
-                    }
-                )
-                .background(backgroundColor, rowShape)
+                .border(BorderStroke(1.dp, borderColor), rowShape)
 
             SetTableRow(
                 modifier = rowModifier,
@@ -379,7 +362,7 @@ private fun UpcomingSetPreview(
                 sideBadge = sideBadge,
                 index = 0,
                 isCurrentSet = true,
-                textColor = borderColor,
+                textColor = textColor,
                 hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
                     allWorkoutStates = viewModel.allWorkoutStates,
                     exerciseId = setState.exerciseId

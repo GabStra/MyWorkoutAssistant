@@ -601,20 +601,8 @@ fun ExerciseSetsViewer(
             val rowModifier = Modifier
                 .height(25.dp)
                 .padding(bottom = 2.5.dp)
-                .then(
-                    if (isWarmupSetRow) {
-                        Modifier.dashedBorder(
-                            strokeWidth = 1.dp,
-                            color = borderColor,
-                            shape = shape,
-                            onInterval = 4.dp,
-                            offInterval = 4.dp
-                        )
-                    } else {
-                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
-                    }
-                )
-                .background(backgroundColor, shape)
+                .border(BorderStroke(1.dp, borderColor), shape)
+                //.background(backgroundColor, shape)
 
             when (displayRow) {
                 is ExerciseSetDisplayRow.SetRow -> SetTableRow(

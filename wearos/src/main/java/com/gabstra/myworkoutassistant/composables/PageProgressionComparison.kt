@@ -529,31 +529,11 @@ fun PageProgressionComparison(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val isPreviousWarmupSet = if (currentSetIndex < previousSetStates.value.size) {
-                when(val set = previousSetStates.value[currentSetIndex].set) {
-                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    else -> false
-                }
-            } else false
-
             val previousRowModifier = Modifier
                 .fillMaxSize()
                 .height(25.dp)
                 .padding(bottom = 2.5.dp)
-                .then(
-                    if (isPreviousWarmupSet) {
-                        Modifier.dashedBorder(
-                            strokeWidth = 1.dp,
-                            color = borderColor,
-                            shape = shape,
-                            onInterval = 4.dp,
-                            offInterval = 4.dp
-                        )
-                    } else {
-                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
-                    }
-                )
+                .border(BorderStroke(1.dp, borderColor), shape)
                 .background(backgroundColor, shape)
                 .clip(shape)
 
@@ -661,31 +641,11 @@ fun PageProgressionComparison(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val isCurrentWarmupSet = if (currentSetIndex < progressionSetStates.size) {
-                when(val set = progressionSetStates[currentSetIndex].set) {
-                    is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-                    else -> false
-                }
-            } else false
-
             val currentRowModifier = Modifier
                 .fillMaxSize()
                 .height(25.dp)
                 .padding(bottom = 2.5.dp)
-                .then(
-                    if (isCurrentWarmupSet) {
-                        Modifier.dashedBorder(
-                            strokeWidth = 1.dp,
-                            color = borderColor,
-                            shape = shape,
-                            onInterval = 4.dp,
-                            offInterval = 4.dp
-                        )
-                    } else {
-                        Modifier.border(BorderStroke(1.dp, borderColor), shape)
-                    }
-                )
+                .border(BorderStroke(1.dp, borderColor), shape)
                 .background(backgroundColor, shape)
                 .clip(shape)
 
