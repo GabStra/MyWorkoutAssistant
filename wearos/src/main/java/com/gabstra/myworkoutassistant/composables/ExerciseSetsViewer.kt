@@ -410,7 +410,7 @@ fun SetTableRow(
                         text = displayWeightText,
                         style = itemStyle,
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = textColor
                     )
                     ScalableFadingText(
                         modifier = Modifier.weight(1f),
