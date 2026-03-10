@@ -7,7 +7,8 @@ import java.time.LocalDateTime
  * Platform-agnostic data; platforms use it to render their recovery dialog.
  */
 data class RecoveryPromptUiState(
-    val displayName: String = "",
+    val workoutName: String = "",
+    val exerciseName: String = "",
     val workoutStartTime: LocalDateTime? = null,
     val showTimerOptions: Boolean = false,
     val showCalibrationOptions: Boolean = false
