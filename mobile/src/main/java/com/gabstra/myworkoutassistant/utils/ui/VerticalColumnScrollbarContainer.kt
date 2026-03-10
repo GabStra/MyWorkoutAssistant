@@ -8,8 +8,9 @@ import androidx.compose.ui.Modifier
 
 @Composable
 fun Modifier.verticalColumnScrollbarContainer(
-    scrollState: ScrollState
+    scrollState: ScrollState,
+    enabled: Boolean = true,
 ): Modifier = this
     .verticalColumnScrollbar(scrollState)
-    .verticalScroll(scrollState)
-    .padding(horizontal = Spacing.lg)
+    .verticalScroll(scrollState, enabled = enabled)
+    .padding(horizontal = Spacing.md)

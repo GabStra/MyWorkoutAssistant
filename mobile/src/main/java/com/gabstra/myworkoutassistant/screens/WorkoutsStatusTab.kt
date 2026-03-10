@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +36,7 @@ import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
@@ -149,7 +149,8 @@ fun WorkoutsStatusTab(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     ObjectiveProgressBar(
                                         Modifier.weight(1f),
-                                        progress = objectiveProgress.toFloat()
+                                        progress = objectiveProgress.toFloat(),
+                                        color = if(objectiveProgress >= 1f) Yellow else MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }, content = {

@@ -37,8 +37,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.verticalScroll
 
 @Composable
 fun WorkoutsGearTab(
@@ -69,7 +67,7 @@ fun WorkoutsGearTab(
             textAlign = TextAlign.Start,
             color = MaterialTheme.colorScheme.primary
         )
-
+        Spacer(Modifier.height(Spacing.md))
         if (equipments.isEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(5.dp),
@@ -96,7 +94,6 @@ fun WorkoutsGearTab(
             }
         } else {
             GenericSelectableList(
-                it = PaddingValues(0.dp, 10.dp),
                 items = equipments,
                 selectedItems = selectedEquipments,
                 isSelectionModeActive = isEquipmentSelectionModeActive,
@@ -139,6 +136,7 @@ fun WorkoutsGearTab(
                 isDragDisabled = true,
                 keySelector = { equipment -> equipment.id }
             )
+            Spacer(Modifier.height(Spacing.md))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
@@ -194,7 +192,6 @@ fun WorkoutsGearTab(
             }
         } else {
             GenericSelectableList(
-                it = PaddingValues(0.dp, 10.dp),
                 items = accessories,
                 selectedItems = selectedAccessories,
                 isSelectionModeActive = isAccessorySelectionModeActive,
@@ -237,6 +234,7 @@ fun WorkoutsGearTab(
                 isDragDisabled = true,
                 keySelector = { accessory -> accessory.id }
             )
+            Spacer(Modifier.height(Spacing.md))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,

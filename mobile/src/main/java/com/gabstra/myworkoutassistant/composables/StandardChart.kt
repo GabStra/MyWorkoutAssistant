@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.view.MotionEvent
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
@@ -11,12 +12,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Velocity
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -145,10 +153,27 @@ fun StandardChart(
     maxVisibleXLabels: Int = 16,
     markerTextFormatter: ((Double) -> String)? = ({ it.toString() }),
     startAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
-    bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() }
+    bottomAxisValueFormatter: CartesianValueFormatter = remember { CartesianValueFormatter.decimal() },
+    onInteractionChange: ((Boolean) -> Unit)? = null,
 ) {
     val onBackgroundColor = MaterialTheme.colorScheme.onBackground
     val onBackgroundColorArgb = onBackgroundColor.toArgb()
+    val parentView = LocalView.current.parent
+    val chartNestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                return available
+            }
+        }
+    }
     val shapeComponent = rememberShapeComponent(Fill(onBackgroundColor), RoundedCornerShape(percent = 50))
 
     val marker = rememberDefaultCartesianMarker(
@@ -201,7 +226,26 @@ fun StandardChart(
             },
             content = {
                 CartesianChartHost(
-                    modifier = Modifier.padding(horizontal = 10.dp).padding(bottom = 10.dp),
+                    modifier = Modifier
+                        .padding(horizontal = 10.dp)
+                        .padding(bottom = 10.dp)
+                        .nestedScroll(chartNestedScrollConnection)
+                        .pointerInteropFilter { motionEvent ->
+                            when (motionEvent.actionMasked) {
+                                MotionEvent.ACTION_DOWN,
+                                MotionEvent.ACTION_MOVE -> {
+                                    parentView?.requestDisallowInterceptTouchEvent(true)
+                                    onInteractionChange?.invoke(true)
+                                }
+
+                                MotionEvent.ACTION_UP,
+                                MotionEvent.ACTION_CANCEL -> {
+                                    parentView?.requestDisallowInterceptTouchEvent(false)
+                                    onInteractionChange?.invoke(false)
+                                }
+                            }
+                            false
+                        },
                     zoomState = rememberVicoZoomState(
                         initialZoom = Zoom.Content,
                         zoomEnabled = isZoomEnabled

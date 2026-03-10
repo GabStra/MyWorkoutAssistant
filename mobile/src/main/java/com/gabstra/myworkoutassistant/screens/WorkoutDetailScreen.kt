@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -64,6 +65,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -121,6 +123,7 @@ import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -221,6 +224,7 @@ fun WorkoutComponentRenderer(
 }
 
 private const val TAG = "WorkoutDetailScreen"
+private const val MIN_WORKOUT_RECORD_LOADING_MS = 500L
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -279,8 +283,8 @@ fun WorkoutDetailScreen(
         }
     }
 
-    // Update hasWorkoutRecord only when check completes and workout ID matches
-    // This prevents UI from updating during the async check, eliminating the blink
+    // Update hasWorkoutRecord only when check completes and workout ID matches.
+    // This prevents UI from updating during the async check, eliminating stale state.
     LaunchedEffect(
         hasWorkoutRecordFlow,
         isCheckingWorkoutRecord,
@@ -301,6 +305,30 @@ fun WorkoutDetailScreen(
             val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
             if (isWorkoutInProgress) {
                 prefs.edit { putBoolean("isWorkoutInProgress", false) }
+            }
+        }
+    }
+
+    var workoutRecordLoadingStartedAtMs by remember(workout.id) {
+        mutableLongStateOf(SystemClock.elapsedRealtime())
+    }
+    var isWorkoutRecordUiLoading by remember(workout.id) { mutableStateOf(true) }
+
+    LaunchedEffect(workout.id, currentSelectedWorkoutId, isCheckingWorkoutRecord) {
+        val isUnderlyingCheckActive = currentSelectedWorkoutId != workout.id || isCheckingWorkoutRecord
+        if (isUnderlyingCheckActive) {
+            if (!isWorkoutRecordUiLoading) {
+                workoutRecordLoadingStartedAtMs = SystemClock.elapsedRealtime()
+            }
+            isWorkoutRecordUiLoading = true
+        } else {
+            val elapsed = SystemClock.elapsedRealtime() - workoutRecordLoadingStartedAtMs
+            val remaining = MIN_WORKOUT_RECORD_LOADING_MS - elapsed
+            if (remaining > 0) {
+                delay(remaining)
+            }
+            if (currentSelectedWorkoutId == workout.id && !isCheckingWorkoutRecord) {
+                isWorkoutRecordUiLoading = false
             }
         }
     }
@@ -994,23 +1022,23 @@ fun WorkoutDetailScreen(
                 verticalArrangement = Arrangement.Top,
             ) {
                 var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
-                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 1))
+                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
                 }
                 SwipeableTabs(
-                    tabTitles = listOf("Overview", "History"),
+                    tabTitles = listOf("Overview", "Graph History", "Set History"),
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
                     },
                     modifier = Modifier.fillMaxSize(),
-                    pagerModifier = Modifier.fillMaxSize()
+                    pagerModifier = Modifier.fillMaxSize(),
                 ) { pageIndex ->
                     when (pageIndex) {
                         0 -> WorkoutOverviewTab(
                             appViewModel = appViewModel,
                             workout = workout,
                             hasWorkoutRecord = hasWorkoutRecord,
-                            isCheckingWorkoutRecord = isCheckingWorkoutRecord,
+                            isCheckingWorkoutRecord = isWorkoutRecordUiLoading,
                             workoutResumeInfo = workoutResumeInfo,
                             currentSelectedWorkoutId = currentSelectedWorkoutId,
                             showRest = showRest,
@@ -1039,7 +1067,7 @@ fun WorkoutDetailScreen(
                             },
                             workoutScheduleDao = workoutScheduleDao
                         )
-                        1 -> WorkoutHistoryTab(
+                        1, 2 -> WorkoutHistoryTab(
                             appViewModel = appViewModel,
                             healthConnectClient = healthConnectClient,
                             workoutHistoryDao = workoutHistoryDao,
@@ -1047,6 +1075,7 @@ fun WorkoutDetailScreen(
                             workoutHistoryId = initialWorkoutHistoryId,
                             setHistoryDao = setHistoryDao,
                             workout = workout,
+                            selectedHistoryMode = pageIndex - 1,
                             onGoBack = onGoBack
                         )
                     }

@@ -1,11 +1,11 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -25,7 +25,7 @@ fun <T, K> SelectableList(
     itemContent: @Composable (T) -> Unit,
     onItemSelectionToggle: ((T) -> Unit)? = null,
 ) {
-    Column(modifier = modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
         for (item in items) {
             SelectableListRow(
                 item = item,
@@ -48,8 +48,7 @@ private fun <T> SelectableListRow(
 ) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(Spacing.sm),
+            .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (selectionMode) {

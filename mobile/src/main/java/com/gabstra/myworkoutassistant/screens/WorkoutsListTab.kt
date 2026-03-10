@@ -5,13 +5,13 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -60,7 +61,7 @@ fun WorkoutsListTab(
             textAlign = TextAlign.Start,
             color = MaterialTheme.colorScheme.primary
         )
-
+        Spacer(Modifier.height(Spacing.md))
         if (workouts.isEmpty()) {
             Row(
                 modifier = Modifier
@@ -77,7 +78,6 @@ fun WorkoutsListTab(
             }
         } else {
             GenericSelectableList(
-                it = PaddingValues(0.dp, 10.dp),
                 items = workouts,
                 selectedItems = selectedWorkouts,
                 isSelectionModeActive = isSelectionModeActive,
@@ -137,7 +137,7 @@ fun WorkoutsListTab(
                 keySelector = { workout -> workout.id }
             )
         }
-        
+        Spacer(Modifier.height(Spacing.md))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,

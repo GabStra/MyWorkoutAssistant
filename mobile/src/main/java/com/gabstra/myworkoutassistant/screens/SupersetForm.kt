@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,19 +40,19 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
-import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
-import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
-import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.TimeConverter
+import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
-import com.gabstra.myworkoutassistant.Spacing
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -144,11 +146,10 @@ fun SupersetForm(
                 .padding(paddingValues)
                 .padding(vertical = Spacing.sm)
                 .verticalColumnScrollbarContainer(scrollState),
-            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             FormSectionTitle(text = "Essentials")
             StyledCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(Spacing.md)) {
+                Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -164,7 +165,6 @@ fun SupersetForm(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(Spacing.sm))
 
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -173,34 +173,63 @@ fun SupersetForm(
                         exercisesToShow.forEach { exercise ->
                             val isSelected = selectedExercises.any { it.id == exercise.id }
 
-                            StyledCard(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = Spacing.sm)
-                                    .clickable {
-                                        selectedExercises = if (isSelected) {
-                                            selectedExercises
-                                                .filter { it.id != exercise.id }
-                                                .also { restsByExerciseHms.remove(exercise.id) }
-                                        } else {
-                                            selectedExercises + exercise
-                                        }
-                                    },
-                                borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(Spacing.md),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        text = exercise.name,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
+                            val onClick = {
+                                selectedExercises = if (isSelected) {
+                                    selectedExercises
+                                        .filter { it.id != exercise.id }
+                                        .also { restsByExerciseHms.remove(exercise.id) }
+                                } else {
+                                    selectedExercises + exercise
                                 }
                             }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier.width(Spacing.xl),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = { onClick() },
+                                        colors = CheckboxDefaults.colors().copy(
+                                            checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                                            uncheckedBorderColor = MaterialTheme.colorScheme.primary
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(Spacing.sm))
+
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    StyledCard(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                onClick()
+                                            },
+                                        borderColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(Spacing.md),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                text = exercise.name,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+
                         }
                     }
                 }
@@ -226,28 +255,33 @@ fun SupersetForm(
                     expanded = expandedRestTimes,
                     onToggle = { expandedRestTimes = !expandedRestTimes }
                 ) {
-                    selectedExercises.forEach { exercise ->
-                        val hms = restsByExerciseHms.getOrPut(exercise.id) { Triple(0, 0, 0) }
-                        val (h, m, s) = hms
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        selectedExercises.forEach { exercise ->
+                            val hms = restsByExerciseHms.getOrPut(exercise.id) { Triple(0, 0, 0) }
+                            val (h, m, s) = hms
 
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-                        ) {
-                            Text(
+                            Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                text = exercise.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.Start
-                            )
-                            CustomTimePicker(
-                                initialHour = h,
-                                initialMinute = m,
-                                initialSecond = s,
-                                onTimeChange = { newHour, newMinute, newSecond ->
-                                    restsByExerciseHms[exercise.id] = Triple(newHour, newMinute, newSecond)
-                                }
-                            )
+                                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                            ) {
+                                Text(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    text = exercise.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Start
+                                )
+                                CustomTimePicker(
+                                    initialHour = h,
+                                    initialMinute = m,
+                                    initialSecond = s,
+                                    onTimeChange = { newHour, newMinute, newSecond ->
+                                        restsByExerciseHms[exercise.id] =
+                                            Triple(newHour, newMinute, newSecond)
+                                    }
+                                )
+                            }
                         }
                     }
                 }

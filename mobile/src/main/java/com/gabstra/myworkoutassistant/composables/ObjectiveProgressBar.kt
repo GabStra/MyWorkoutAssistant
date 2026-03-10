@@ -9,22 +9,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 
 @Composable
-fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
+fun CheckboxWithGreenCircle(
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary
+) {
     Box(
         modifier = modifier
             .size(40.dp) // Circle size
             .clip(CircleShape) // Clip the box to a circle shape
-            .background(MaterialTheme.colorScheme.primary),
+            .background(color),
 
     ) {
         Icon(
@@ -37,7 +40,11 @@ fun CheckboxWithGreenCircle(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Modifier){
+fun LinearProgressBarWithRounderBorders(
+    modifier: Modifier = Modifier,
+    progress: Float,
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary
+){
     val progressShape = MaterialTheme.shapes.large
 
     Box(
@@ -48,7 +55,7 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
         SimpleProgressIndicator(
             progress = progress,
             trackColor = MediumDarkGray,
-            progressBarColor =  MaterialTheme.colorScheme.primary,
+            progressBarColor = color,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(16.dp)
@@ -58,7 +65,10 @@ fun LinearProgressBarWithRounderBorders(progress: Float, modifier: Modifier = Mo
 }
 
 @Composable
-fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
+fun ObjectiveProgressBar(
+    modifier: Modifier=Modifier,progress: Float,
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary
+){
     Box(
         modifier = modifier // Padding around the Box
     ) {
@@ -66,11 +76,12 @@ fun ObjectiveProgressBar(modifier: Modifier=Modifier,progress: Float){
             progress = progress,
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.CenterStart)
+                .align(Alignment.CenterStart),
+            color = color
         )
         val isFilled = progress >= 1f
         if(isFilled){
-            CheckboxWithGreenCircle(modifier = Modifier.align(Alignment.CenterEnd))
+            CheckboxWithGreenCircle(modifier = Modifier.align(Alignment.CenterEnd), color = color)
         }
     }
 }

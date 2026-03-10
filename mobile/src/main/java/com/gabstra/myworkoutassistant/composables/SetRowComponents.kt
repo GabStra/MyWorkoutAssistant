@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 sealed interface SetTableRowUiModel {
     data class Data(
@@ -223,12 +224,12 @@ fun SetRestRowCard(
     enabled: Boolean = true,
 ) {
     val textColor = if (enabled) {
-        MaterialTheme.colorScheme.onSurface
+        MaterialTheme.colorScheme.onBackground
     } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        DisabledContentGray
     }
 
-    SecondarySurface(
+    StyledCard(
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
     ) {
@@ -237,7 +238,7 @@ fun SetRestRowCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 9.dp),
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            style = MaterialTheme.typography.bodyLarge,
             color = textColor,
             textAlign = TextAlign.Center
         )

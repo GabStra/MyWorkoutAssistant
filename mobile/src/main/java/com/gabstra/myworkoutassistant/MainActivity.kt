@@ -15,10 +15,10 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
@@ -27,10 +27,10 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -46,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -60,18 +61,17 @@ import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
-import com.gabstra.myworkoutassistant.screens.ExerciseHistoryScreen
 import com.gabstra.myworkoutassistant.screens.RestForm
 import com.gabstra.myworkoutassistant.screens.RestSetForm
 import com.gabstra.myworkoutassistant.screens.SetForm
@@ -79,7 +79,6 @@ import com.gabstra.myworkoutassistant.screens.SettingsScreen
 import com.gabstra.myworkoutassistant.screens.SupersetForm
 import com.gabstra.myworkoutassistant.screens.WorkoutDetailScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutForm
-import com.gabstra.myworkoutassistant.screens.WorkoutHistoryScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutScreen
 import com.gabstra.myworkoutassistant.screens.WorkoutsScreen
 import com.gabstra.myworkoutassistant.screens.equipments.AccessoryForm
@@ -89,9 +88,9 @@ import com.gabstra.myworkoutassistant.screens.equipments.DumbbellsForm
 import com.gabstra.myworkoutassistant.screens.equipments.MachineForm
 import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
-import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -101,6 +100,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
+import com.gabstra.myworkoutassistant.shared.determineBackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -112,8 +112,6 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
-import com.gabstra.myworkoutassistant.shared.determineBackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -122,6 +120,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
@@ -134,10 +133,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -149,15 +146,20 @@ private fun PermissionRequirementRow(
     label: String,
     granted: Boolean
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Checkbox(
             checked = granted,
             onCheckedChange = null,
-            enabled = false
+            colors = CheckboxDefaults.colors().copy(
+                checkedCheckmarkColor = MaterialTheme.colorScheme.onPrimary,
+                uncheckedBorderColor = MaterialTheme.colorScheme.primary
+            )
         )
         Text(
-            text = label,
-            modifier = Modifier.padding(top = 12.dp)
+            text = label
         )
     }
 }
@@ -284,6 +286,7 @@ class MainActivity : ComponentActivity() {
             this,
             HapticsViewModelFactory(applicationContext)
         )[HapticsViewModel::class.java]
+        MainActivityIntentRouter.route(intent, appViewModel)
 
         myReceiver = MobileDataLayerReceiver(
             appViewModel = appViewModel,
@@ -1600,7 +1603,7 @@ fun MyWorkoutAssistantNavHost(
                             exerciseInfoDao = exerciseInfoDao,
                             workoutScheduleDao = workoutScheduleDao,
                             workout = selectedWorkout,
-                            initialSelectedTabIndex = 1,
+                            initialSelectedTabIndex = 2,
                             initialWorkoutHistoryId = screenData.workoutHistoryId
                         ) {
                             appViewModel.goBack()
@@ -1700,8 +1703,7 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao = workoutHistoryDao,
                                     setHistoryDao = setHistoryDao,
                                     exercise = selectedExercise,
-                                    initialSelectedTabIndex = 1,
-                                    initialHistoryMode = screenData.selectedTabIndex
+                                    initialSelectedTabIndex = screenData.selectedTabIndex + 1
                                 ) {
                                     appViewModel.goBack()
                                 }

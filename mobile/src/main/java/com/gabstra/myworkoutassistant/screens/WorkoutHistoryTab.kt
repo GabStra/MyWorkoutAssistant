@@ -18,6 +18,7 @@ fun WorkoutHistoryTab(
     workoutHistoryId: UUID?,
     setHistoryDao: SetHistoryDao,
     workout: Workout,
+    selectedHistoryMode: Int,
     onGoBack: () -> Unit,
 ) {
     WorkoutHistoryScreen(
@@ -28,6 +29,7 @@ fun WorkoutHistoryTab(
         workoutHistoryId = workoutHistoryId,
         setHistoryDao = setHistoryDao,
         workout = workout,
+        selectedHistoryMode = selectedHistoryMode,
         onGoBack = onGoBack,
     )
 }

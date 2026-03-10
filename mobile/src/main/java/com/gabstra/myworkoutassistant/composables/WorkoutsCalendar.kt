@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -28,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.Yellow
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
 import com.kizitonwose.calendar.compose.rememberCalendarState
@@ -120,23 +119,19 @@ private fun Day(
                 vertical = 1.dp
             )
             .drawBehind {
-                if (isInSelectedWeek || isInCompletedWeek) {
+                if (isInSelectedWeek) {
                     val strokeWidth = 2f
                     val half = strokeWidth / 2f
-                    val isCompletedSelectedWeek = isInSelectedWeek && isInCompletedWeek
                     val borderColor = when {
-                        isCompletedSelectedWeek -> Color.Yellow
-                        isInCompletedWeek -> Color.Yellow.copy(alpha = 0.25f)
+                        isInCompletedWeek -> Yellow
                         else -> primaryColor
                     }
                     val backgroundColor = when {
-                        isCompletedSelectedWeek -> Color.Yellow
-                        isInCompletedWeek -> Color.Yellow.copy(alpha = 0.25f)
-                        isInSelectedWeek -> primaryColor.copy(alpha = 0.25f)
-                        else -> Color.Transparent
+                        isInCompletedWeek -> Yellow.copy(alpha = 0.25f)
+                        else -> primaryColor.copy(alpha = 0.25f)
                     }
 
-                    drawRect(color = backgroundColor)
+                    //drawRect(color = backgroundColor)
                     // Horizontal lines: inset by half stroke so full stroke is drawn (pixel-perfect)
                     drawLine(
                         color = borderColor,
@@ -183,15 +178,19 @@ private fun Day(
                 .padding(5.dp)
         ) {
 
-            val highlightBorderColor = if (isOutOfBounds || isAfterToday) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else if(isToday){
-                secondaryColor
-            }else{
-                MaterialTheme.colorScheme.primary
+            val highlightBackgroundColor = when {
+                isOutOfBounds && isInCompletedWeek -> Yellow.copy(0.5f)
+                isOutOfBounds -> MaterialTheme.colorScheme.primary.copy(0.5f)
+                isInCompletedWeek -> Yellow
+                else ->  MaterialTheme.colorScheme.primary
             }
 
             val textColor = when {
+//                shouldHighlight && isOutOfBounds && isInCompletedWeek -> Yellow.copy(0.25f)
+//                shouldHighlight && isOutOfBounds -> MaterialTheme.colorScheme.primary.copy(0.25f)
+//                shouldHighlight && isInCompletedWeek -> Yellow.copy(0.5f)
+//                shouldHighlight -> MaterialTheme.colorScheme.primary.copy(0.5f)
+                shouldHighlight -> MaterialTheme.colorScheme.background
                 isOutOfBounds -> DisabledContentGray
                 isAfterToday -> DisabledContentGray
                 else -> MaterialTheme.colorScheme.onBackground
@@ -207,18 +206,9 @@ private fun Day(
                     .then(
                         if (shouldHighlight && shape != null) {
                             Modifier.background(
-                                color = MaterialTheme.colorScheme.background,
+                                color = highlightBackgroundColor,
                                 shape = shape
                             )
-                        } else {
-                            Modifier
-                        }
-                    )
-
-                    .then(
-                        if (shouldHighlight && shape != null) {
-                            Modifier
-                                .border(width = 1.dp, color = highlightBorderColor, shape = shape)
                         } else {
                             Modifier
                         }

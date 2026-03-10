@@ -1,11 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -27,11 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -45,7 +37,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -112,10 +103,11 @@ fun ExerciseHistoryScreen(
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
-    initialSelectedTabIndex: Int = 0,
+    selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
 ) {
     var isLoading by remember { mutableStateOf(true) }
+    var isChartInteractionActive by remember { mutableStateOf(false) }
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
@@ -130,10 +122,6 @@ fun ExerciseHistoryScreen(
     var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
-    }
-
-    var selectedMode by remember(initialSelectedTabIndex) {
-        mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 1))
     }
 
     val userAge by appViewModel.userAge
@@ -447,69 +435,6 @@ fun ExerciseHistoryScreen(
         }
     }
 
-    val customBottomBar = @Composable {
-        Column {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-            ) {
-            Box(
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.medium)
-                    .then(
-                        if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                    ) // Apply background color only if enabled
-                    .clickable { selectedMode = 0 }
-                    .padding(8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ShowChart,
-                        contentDescription = "Graphs",
-                        tint = if (selectedMode == 0) {
-                            MaterialTheme.colorScheme.background
-                        } else {
-                            MaterialTheme.colorScheme.onBackground
-                        }
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text("Graphs", color =  if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.medium)
-                    .then(
-                        if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                    ) // Apply background color only if enabled
-                    .clickable { selectedMode = 1 }
-                    .padding(8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.List,
-                        contentDescription = "Sets",
-                        tint = if (selectedMode == 1) {
-                            MaterialTheme.colorScheme.background
-                        } else {
-                            MaterialTheme.colorScheme.onBackground
-                        }
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text("Sets", color =  if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium,)
-                }
-            }
-            }
-        }
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -518,11 +443,7 @@ fun ExerciseHistoryScreen(
     ) {
         Spacer(modifier = Modifier.height(10.dp))
         RangeDropdown(selectedRange) { selectedRange = it }
-        if (!(historiesToShow.isEmpty() || selectedWorkoutHistory == null)) {
-            Spacer(modifier = Modifier.height(12.dp))
-            customBottomBar()
-        }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         when {
             isLoading -> {
@@ -553,30 +474,19 @@ fun ExerciseHistoryScreen(
                 }
             }
             else -> {
-                AnimatedContent(
-                    modifier = Modifier.weight(1f),
-                    targetState = selectedMode,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                    },
-                    label = "",
-                ) { updatedSelectedMode ->
-                    val scrollState = rememberScrollState()
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalColumnScrollbarContainer(scrollState),
-                        verticalArrangement = Arrangement.spacedBy(15.dp),
-                    ) {
-                            when (updatedSelectedMode) {
-                                0 -> {
-                                    val selectedHistoryMarkerPosition = selectedWorkoutHistory
-                                        ?.let { workoutHistory ->
-                                            chartWorkoutHistories.indexOfFirst { it.id == workoutHistory.id }
-                                        }
-                                        ?.takeIf { it >= 0 }
-                                        ?.toDouble()
-
+                val scrollState = rememberScrollState()
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .verticalColumnScrollbarContainer(
+                            scrollState = scrollState,
+                            enabled = !isChartInteractionActive,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                ) {
+                    when (selectedHistoryMode.coerceIn(0, 1)) {
+                        0 -> {
                                     if (setHistoriesByWorkoutHistoryId.isEmpty()) {
                                         PrimarySurface(
                                             modifier = Modifier.fillMaxWidth()
@@ -599,8 +509,7 @@ fun ExerciseHistoryScreen(
                                             startAxisValueFormatter = volumeAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = volumes.map { it.first.toDouble() },
-                                            markerPosition = selectedHistoryMarkerPosition
-                                                ?: volumeMarkerTarget?.first?.toDouble()
+                                            onInteractionChange = { isChartInteractionActive = it },
                                         )
                                     }
 
@@ -613,8 +522,7 @@ fun ExerciseHistoryScreen(
                                             },
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
-                                            markerPosition = selectedHistoryMarkerPosition
-                                                ?: oneRepMaxMarkerTarget?.first?.toDouble()
+                                            onInteractionChange = { isChartInteractionActive = it },
                                         )
                                     }
 
@@ -626,12 +534,11 @@ fun ExerciseHistoryScreen(
                                             startAxisValueFormatter = durationAxisValueFormatter,
                                             bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                             xAxisTickValues = durations.map { it.first.toDouble() },
-                                            markerPosition = selectedHistoryMarkerPosition
-                                                ?: durationMarkerTarget?.first?.toDouble()
+                                            onInteractionChange = { isChartInteractionActive = it },
                                         )
                                     }
                                 }
-                                1 -> {
+                        1 -> {
                                     if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
                                         PrimarySurface(
                                             modifier = Modifier.fillMaxWidth()
@@ -645,7 +552,7 @@ fun ExerciseHistoryScreen(
                                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                                             )
                                         }
-                                        return@AnimatedContent
+                                        return@Column
                                     }
                                     workoutSelector()
                                     val setHistories =
@@ -809,11 +716,9 @@ fun ExerciseHistoryScreen(
                                         }
                                     }
                                 }
-                            }
-                        }
                     }
-
                 }
             }
+        }
     }
 }

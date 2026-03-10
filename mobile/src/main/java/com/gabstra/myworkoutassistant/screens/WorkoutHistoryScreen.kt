@@ -1,11 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,13 +20,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -42,7 +34,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -310,10 +301,12 @@ fun WorkoutHistoryScreen(
     workoutHistoryId: UUID? = null,
     setHistoryDao: SetHistoryDao,
     workout: Workout,
+    selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
 ) {
 
     val context = LocalContext.current
+    var isChartInteractionActive by remember { mutableStateOf(false) }
 
     val currentLocale = Locale.getDefault()
     val scope = rememberCoroutineScope()
@@ -374,8 +367,6 @@ fun WorkoutHistoryScreen(
     }
 
     var isLoading by remember { mutableStateOf(true) }
-
-    var selectedMode by remember { mutableIntStateOf(0) } // 0 for Graphs, 1 for Sets
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val selectedWorkout = workouts.find { it.id == workout.id }!!
@@ -543,10 +534,6 @@ fun WorkoutHistoryScreen(
             selectedWorkoutHistory =
                 if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
 
-            if (workoutHistoryId != null && selectedWorkoutHistory != null) {
-                selectedMode = 1
-            }
-
             delay(500)
             if (selectedWorkoutHistory == null) {
                 isLoading = false
@@ -674,11 +661,6 @@ fun WorkoutHistoryScreen(
     }
 
     val graphsTabContent = @Composable {
-        val selectedHistoryMarkerPosition = selectedWorkoutHistory
-            ?.let { workoutHistory -> historiesToShow.indexOfFirst { it.id == workoutHistory.id } }
-            ?.takeIf { it >= 0 }
-            ?.toDouble()
-
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -708,8 +690,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = volumes.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: volumeMarkerTarget?.first?.toDouble()
+                    onInteractionChange = { isChartInteractionActive = it },
                 )
             }
             if (durationEntryModel != null) {
@@ -721,8 +702,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = durations.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: durationMarkerTarget?.first?.toDouble()
+                    onInteractionChange = { isChartInteractionActive = it },
                 )
             }
             if (workoutDurationEntryModel != null) {
@@ -735,8 +715,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = workoutDurations.map { it.first.toDouble() },
-                    markerPosition = selectedHistoryMarkerPosition
-                        ?: workoutDurationMarkerTarget?.first?.toDouble()
+                    onInteractionChange = { isChartInteractionActive = it },
                 )
             }
         }
@@ -1274,77 +1253,6 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    val customBottomBar = @Composable {
-        Column {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceAround, // Space items evenly, including space at the edges
-                verticalAlignment = Alignment.CenterVertically // Center items vertically within the Row
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(MaterialTheme.shapes.medium)
-                        .then(
-                            if (selectedMode == 0) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                        ) // Apply background color only if enabled
-                        .clickable { selectedMode = 0 }
-                        .padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ShowChart,
-                            contentDescription = "Graphs",
-                            tint = if (selectedMode == 0) {
-                                MaterialTheme.colorScheme.background
-                            } else {
-                                MaterialTheme.colorScheme.onBackground
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            "Graphs",
-                            color = if (selectedMode == 0) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(MaterialTheme.shapes.medium)
-                        .then(
-                            if (selectedMode == 1) Modifier.background(MaterialTheme.colorScheme.primary) else Modifier
-                        ) // Apply background color only if enabled
-                        .clickable { selectedMode = 1 }
-                        .padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.List,
-                            contentDescription = "Sets",
-                            tint = if (selectedMode == 1) {
-                                MaterialTheme.colorScheme.background
-                            } else {
-                                MaterialTheme.colorScheme.onBackground
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            "Sets",
-                            color = if (selectedMode == 1) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     val scrollState = rememberScrollState()
 
     Column(
@@ -1353,19 +1261,18 @@ fun WorkoutHistoryScreen(
     ) {
         Spacer(modifier = Modifier.height(10.dp))
         RangeDropdown(selectedRange) { selectedRange = it }
-        if (historiesToShow.isNotEmpty() && selectedWorkoutHistory != null) {
-            Spacer(modifier = Modifier.height(12.dp))
-            customBottomBar()
-        }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         when {
             isLoading -> {
-                if (selectedMode == 1 && selectedWorkoutHistory != null) {
+                if (selectedHistoryMode == 1 && selectedWorkoutHistory != null) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalColumnScrollbarContainer(scrollState),
+                            .verticalColumnScrollbarContainer(
+                                scrollState = scrollState,
+                                enabled = !isChartInteractionActive,
+                            ),
                         verticalArrangement = Arrangement.spacedBy(15.dp),
                     ) {
                         workoutSelector()
@@ -1409,25 +1316,19 @@ fun WorkoutHistoryScreen(
                 }
             }
             else -> {
-                AnimatedContent(
-                    modifier = Modifier.weight(1f),
-                    targetState = selectedMode,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
-                    },
-                    label = "",
-                ) { updatedSelectedMode ->
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalColumnScrollbarContainer(scrollState),
-                        verticalArrangement = Arrangement.spacedBy(15.dp),
-                    ) {
-                        when (updatedSelectedMode) {
-                            0 -> graphsTabContent()
-                            1 -> setsTabContent()
-                        }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .verticalColumnScrollbarContainer(
+                            scrollState = scrollState,
+                            enabled = !isChartInteractionActive,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                ) {
+                    when (selectedHistoryMode.coerceIn(0, 1)) {
+                        0 -> graphsTabContent()
+                        1 -> setsTabContent()
                     }
                 }
             }

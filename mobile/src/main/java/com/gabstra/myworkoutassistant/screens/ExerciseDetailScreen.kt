@@ -315,7 +315,6 @@ fun ExerciseDetailScreen(
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
     initialSelectedTabIndex: Int = 0,
-    initialHistoryMode: Int = 0,
     onGoBack: () -> Unit
 ) {
     val sets = remember(exercise.sets) { ensureRestSeparatedBySets(exercise.sets) }
@@ -726,16 +725,26 @@ fun ExerciseDetailScreen(
                 verticalArrangement = Arrangement.Top,
             ) {
                 val isHistoryEnabled = !exercise.doNotStoreHistory
-                val tabTitles = remember { listOf("Overview", "History") }
+                val tabTitles = remember(isHistoryEnabled) {
+                    if (isHistoryEnabled) {
+                        listOf("Overview", "Graph History", "Set History")
+                    } else {
+                        listOf("Overview")
+                    }
+                }
 
                 var selectedTopTab by remember(exercise.id, initialSelectedTabIndex, isHistoryEnabled) {
                     mutableIntStateOf(
-                        if (isHistoryEnabled) initialSelectedTabIndex.coerceIn(0, 1) else 0
+                        if (isHistoryEnabled) {
+                            initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex)
+                        } else {
+                            0
+                        }
                     )
                 }
 
                 LaunchedEffect(isHistoryEnabled, selectedTopTab) {
-                    if (!isHistoryEnabled && selectedTopTab == 1) {
+                    if (!isHistoryEnabled && selectedTopTab > 0) {
                         selectedTopTab = 0
                     }
                 }
@@ -744,17 +753,17 @@ fun ExerciseDetailScreen(
                     tabTitles = tabTitles,
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
-                        if (index == 1 && exercise.doNotStoreHistory) return@SwipeableTabs
+                        if (index > 0 && exercise.doNotStoreHistory) return@SwipeableTabs
                         selectedTopTab = index
                     },
-                    tabEnabled = { index -> index == 0 || !exercise.doNotStoreHistory },
+                    tabEnabled = { index -> index == 0 || isHistoryEnabled },
                     unselectedContentColor = if (isHistoryEnabled) {
                         MaterialTheme.colorScheme.onBackground
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     modifier = Modifier.fillMaxSize(),
-                    pagerModifier = Modifier.fillMaxSize()
+                    pagerModifier = Modifier.fillMaxSize(),
                 ) { pageIndex ->
                     when (pageIndex) {
                         0 -> ExerciseOverviewTab(
@@ -785,13 +794,13 @@ fun ExerciseDetailScreen(
                             }
                         )
 
-                        1 -> ExerciseHistoryTab(
+                        1, 2 -> ExerciseHistoryTab(
                             appViewModel = appViewModel,
                             workout = workout,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
                             exercise = exercise,
-                            initialHistoryMode = initialHistoryMode,
+                            selectedHistoryMode = pageIndex - 1,
                             onGoBack = onGoBack
                         )
                     }
