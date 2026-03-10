@@ -223,7 +223,7 @@ fun ExerciseScreen(
                     text = exercise.name,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 27.5.dp)
+                        .padding(horizontal = 45.dp)
                         .combinedClickable(
                             onClick = {  },
                             onLongClick = { providedOnLongClick.invoke() }
@@ -1046,28 +1046,28 @@ private fun ExerciseDetailContent(
                                     )
                                 }
                             }
-                            if (isAutoRegulationWorkSet) {
-                                Box(
-                                    modifier = Modifier
-                                        .background(
-                                            MaterialTheme.colorScheme.background,
-                                            RoundedCornerShape(25)
-                                        )
-                                        .border(
-                                            BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
-                                            RoundedCornerShape(25)
-                                        )
-                                        .padding(5.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Auto-regulation",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
+//                            if (isAutoRegulationWorkSet) {
+//                                Box(
+//                                    modifier = Modifier
+//                                        .background(
+//                                            MaterialTheme.colorScheme.background,
+//                                            RoundedCornerShape(25)
+//                                        )
+//                                        .border(
+//                                            BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary),
+//                                            RoundedCornerShape(25)
+//                                        )
+//                                        .padding(5.dp),
+//                                    contentAlignment = Alignment.Center
+//                                ) {
+//                                    Text(
+//                                        text = "Auto-regulation",
+//                                        style = MaterialTheme.typography.bodySmall,
+//                                        color = MaterialTheme.colorScheme.tertiary,
+//                                        textAlign = TextAlign.Center
+//                                    )
+//                                }
+//                            }
                         }
                     }
                 }

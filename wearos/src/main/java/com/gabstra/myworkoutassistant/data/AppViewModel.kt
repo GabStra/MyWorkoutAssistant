@@ -173,10 +173,11 @@ open class AppViewModel : WorkoutViewModel() {
             checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR ||
             checkpoint?.stateType == RecoveryStateType.AUTO_REGULATION_RIR
         val showTimerOptions = !showCalibrationOptions && shouldShowTimerOptions(checkpoint, interruptedWorkout.workoutId)
-        val displayName = resolveRecoveryDisplayName(interruptedWorkout, checkpoint)
+        val exerciseName = resolveRecoveryExerciseName(interruptedWorkout, checkpoint)
 
         _recoveryPromptUiState.value = RecoveryPromptUiState(
-            displayName = displayName,
+            workoutName = interruptedWorkout.workoutName,
+            exerciseName = exerciseName.orEmpty(),
             workoutStartTime = interruptedWorkout.workoutHistory.startTime,
             showTimerOptions = showTimerOptions,
             showCalibrationOptions = showCalibrationOptions
@@ -242,14 +243,13 @@ open class AppViewModel : WorkoutViewModel() {
         return targetSet is TimedDurationSet || targetSet is EnduranceSet || targetSet is RestSet
     }
 
-    private fun resolveRecoveryDisplayName(
+    private fun resolveRecoveryExerciseName(
         interruptedWorkout: InterruptedWorkout,
         checkpoint: WorkoutRecoveryCheckpoint?
-    ): String {
-        val resolvedExerciseName = checkpoint
+    ): String? {
+        return checkpoint
             ?.takeIf { it.workoutId == interruptedWorkout.workoutId }
             ?.let { findExerciseForCheckpoint(it, interruptedWorkout.workoutId)?.name }
-        return resolvedExerciseName ?: interruptedWorkout.workoutName
     }
 
     private fun findExerciseForCheckpoint(

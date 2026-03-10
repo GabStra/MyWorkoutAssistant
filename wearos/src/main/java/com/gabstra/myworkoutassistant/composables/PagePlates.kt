@@ -35,6 +35,9 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +46,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
@@ -393,42 +397,6 @@ private fun PagePlatesContent(
                 }
             }
 
-            // Build lists of plates to remove and to add (with instance index). Plates that
-            // appear in both are "shuffled" (removed then re-added). Track step indices for each.
-            val (shuffledPlates, removeStepIndex, addStepIndex) = remember(steps, plateChangeResult.previousPlates) {
-                val toRemove = mutableSetOf<Pair<Double, Int>>()
-                val toAdd = mutableSetOf<Pair<Double, Int>>()
-                val removeStep = mutableMapOf<Pair<Double, Int>, Int>()
-                val addStep = mutableMapOf<Pair<Double, Int>, Int>()
-                val working = plateChangeResult.previousPlates.toMutableList()
-
-                steps.forEachIndexed { stepIdx, step ->
-                    val platesBefore = working.sortedDescending()
-                    val countBefore = platesBefore.count { it == step.weight }
-
-                    when (step.action) {
-                        PlateCalculator.Companion.Action.REMOVE -> {
-                            val instanceIdx = countBefore - 1
-                            val key = Pair(step.weight, instanceIdx)
-                            toRemove.add(key)
-                            removeStep[key] = stepIdx
-                        }
-                        PlateCalculator.Companion.Action.ADD -> {
-                            val instanceIdx = countBefore
-                            val key = Pair(step.weight, instanceIdx)
-                            toAdd.add(key)
-                            addStep[key] = stepIdx
-                        }
-                    }
-                    when (step.action) {
-                        PlateCalculator.Companion.Action.ADD -> working.add(step.weight)
-                        PlateCalculator.Companion.Action.REMOVE -> working.remove(step.weight)
-                    }
-                }
-                val shuffled = toRemove.intersect(toAdd)
-                Triple(shuffled, removeStep, addStep)
-            }
-
             // Track which specific plate instance is currently being added or removed
             // We need to identify which instance among multiple plates of the same weight
             val activePlateInfo = remember(currentStepIndex, steps, animatedPlates) {
@@ -627,6 +595,24 @@ private fun PagePlatesContent(
                 val labelOverflowPx = (widestLabelBounds.right + labelRightPaddingPx - viewportWidthPx)
                     .coerceAtLeast(0f)
                 val canPanHorizontally = labelOverflowPx > 0f
+                val horizontalPanNestedScrollConnection = remember {
+                    object : NestedScrollConnection {
+                        override fun onPostScroll(
+                            consumed: Offset,
+                            available: Offset,
+                            source: NestedScrollSource
+                        ): Offset {
+                            return available
+                        }
+
+                        override suspend fun onPostFling(
+                            consumed: Velocity,
+                            available: Velocity
+                        ): Velocity {
+                            return available
+                        }
+                    }
+                }
                 val initialScrollTargetPx = remember(widestLabelBounds, viewportWidthPx, maxScrollPx) {
                     (widestLabelBounds.center - (viewportWidthPx / 2f))
                         .coerceIn(0f, maxScrollPx)
@@ -638,6 +624,7 @@ private fun PagePlatesContent(
                 }
                 Box(
                     modifier = Modifier
+                        .nestedScroll(horizontalPanNestedScrollConnection)
                         .horizontalScroll(
                             state = scrollState,
                             enabled = canPanHorizontally
@@ -654,8 +641,6 @@ private fun PagePlatesContent(
                             plates = animatedPlates,
                             barbell = equipment,
                             activePlateInfo = activePlateInfo,
-                            shuffledPlates = shuffledPlates,
-                            addStepIndex = addStepIndex,
                             maxLogicalThickness = maxLogicalThickness,
                             platesBeforeCurrentStep = platesBeforeCurrentStep,
                             previousPlates = plateChangeResult.previousPlates.sortedDescending(),
@@ -676,11 +661,9 @@ private fun BarbellVisualization(
     plates: List<Double>,
     barbell: Barbell,
     activePlateInfo: Triple<Double, PlateCalculator.Companion.Action, Int>? = null, // weight, action, instanceIndex
-    shuffledPlates: Set<Pair<Double, Int>> = emptySet(), // Plates that appear in both remove and add lists
-    addStepIndex: Map<Pair<Double, Int>, Int> = emptyMap(), // Step index when each shuffled plate is re-added
     maxLogicalThickness: Float? = null,
     platesBeforeCurrentStep: List<Double>? = null, // Plates state before current step (for REMOVE highlighting)
-    previousPlates: List<Double>? = null, // Initial previous plate configuration (for unchanged plate coloring)
+    previousPlates: List<Double>? = null, // Initial previous plate configuration used as the color baseline
     currentStepIndex: Int = -1, // Current step index (-1 idle, steps.size for final state)
     totalSteps: Int = 0, // Total number of steps
     viewportWidth: Dp? = null, // When set, bar and plates use this width; labels use full canvas (content) width
@@ -761,24 +744,14 @@ private fun BarbellVisualization(
         }
     }
 
-    // Shuffled plates (in both remove and add lists): green once re-added (currentStepIndex >= addStepIndex).
-    // Red while being removed is handled by activePlateInfo / highlightedPlateIndices.
-    // Calculate instance indices based on platesForDrawing to match how they were calculated when building
-    // the shuffled set. platesForDrawing already has the correct state (includes plate being removed during
-    // REMOVE actions, includes plate being added during ADD actions).
-    val shuffledReAddedPlateIndices = remember(platesForDrawing, shuffledPlates, addStepIndex, currentStepIndex, isFinalState) {
+    // Green should mean "this position now has a different plate than the initial configuration",
+    // not "this plate happened to be removed and re-added during the sequence".
+    val newlyAddedPlateIndices = remember(platesForDrawing, previousPlates, isFinalState) {
         if (isFinalState) {
             emptySet<Int>()
         } else {
             platesForDrawing.mapIndexedNotNull { index, plateWeight ->
-                // Calculate instance index the same way as when building shuffled plates
-                // For ADD actions, instanceIdx = countBefore (number of plates of this weight before adding)
-                // This equals the count of plates of this weight up to and including this plate minus 1 (0-indexed)
-                val instanceIdx = platesForDrawing.subList(0, index + 1).count { it == plateWeight } - 1
-                val key = Pair(plateWeight, instanceIdx)
-                
-                // Check if this plate is shuffled and has been re-added
-                if (shuffledPlates.contains(key) && currentStepIndex >= (addStepIndex[key] ?: -1)) {
+                if (previousPlates?.getOrNull(index) != plateWeight) {
                     index
                 } else {
                     null
@@ -943,17 +916,15 @@ private fun BarbellVisualization(
 
             // Get color and alpha for this specific plate instance
             val isHighlighted = highlightedPlateIndices.contains(plateIndex)
-            val isShuffledReAdded = shuffledReAddedPlateIndices.contains(plateIndex)
+            val isNewAtThisPosition = newlyAddedPlateIndices.contains(plateIndex)
 
             val plateColor = when {
                 // Final state: all plates use primary color (this should be the only case in final state)
                 isFinalState -> finalStatePlateColor
-                // Currently active plate being added - green with animation
-                isHighlighted && activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.ADD -> Green
                 // Currently active plate being removed - red with animation
                 isHighlighted && activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE -> Red
-                // Shuffled plate that has been re-added (in both remove and add lists) - green
-                isShuffledReAdded -> Green
+                // Green marks positions that now contain a new plate relative to the starting configuration.
+                isNewAtThisPosition -> Green
                 // Default color for other plates (onBackground)
                 else -> defaultPlateColor
             }

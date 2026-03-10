@@ -149,7 +149,7 @@ fun PageExercises(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(WorkoutPagerLayoutTokens.WorkoutHeaderHeight),
+                    .height(25.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ExerciseNameText(

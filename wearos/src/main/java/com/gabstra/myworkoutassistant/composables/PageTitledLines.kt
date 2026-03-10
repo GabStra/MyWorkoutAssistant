@@ -1,26 +1,27 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import java.util.Locale.getDefault
 
@@ -32,7 +33,9 @@ private fun TitledLinesSectionItem(
     section: TitledLinesSection,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+    ) {
         Text(
             text = section.title.uppercase(getDefault()),
             modifier = Modifier.fillMaxWidth(),
@@ -62,38 +65,44 @@ fun PageTitledLines(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {
-    val state = rememberLazyListState()
-    val showScrollIndicator by remember(state) {
-        derivedStateOf { state.canScrollBackward || state.canScrollForward }
-    }
+    val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec(
+        ResponsiveTransformationSpec.smallScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.7f)
+        ),
+        ResponsiveTransformationSpec.largeScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.6f)
+        )
+    )
 
     ScreenScaffold(
         modifier = modifier,
         scrollState = state,
         scrollIndicator = {
-            if (showScrollIndicator) {
-                ScrollIndicator(
-                    state = state,
-                    colors = ScrollIndicatorDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.onBackground,
-                        trackColor = MediumDarkGray
-                    )
+            ScrollIndicator(
+                state = state,
+                colors = ScrollIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.onBackground,
+                    trackColor = MediumDarkGray
                 )
-            }
+            )
         }
     ) { _ ->
-        LazyColumn(
+        TransformingLazyColumn(
             modifier = Modifier.padding(horizontal = 10.dp),
             state = state,
-            verticalArrangement = Arrangement.spacedBy(
-                space = 10.dp,
-                alignment = Alignment.Top
-            ),
         ) {
-            items(items = sections) { section ->
+            items(sections.size) { index ->
                 TitledLinesSectionItem(
-                    section = section,
-                    modifier = Modifier.fillMaxWidth()
+                    section = sections[index],
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec)
+                        .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
                 )
             }
         }

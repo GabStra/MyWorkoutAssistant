@@ -7,7 +7,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTimeFilled
@@ -92,10 +93,10 @@ fun WorkoutStateHeader(
 
     Row(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clickable(
-                //interactionSource = interactionSource,
-                //indication = null
+                interactionSource = interactionSource,
+                indication = null
             ) {
                 if(workoutState is WorkoutState.Preparing || showRestTimerInHeader) return@clickable
                 viewModel.switchHeaderDisplayMode()
@@ -120,7 +121,10 @@ fun WorkoutStateHeader(
                 )
             }
         } else if(displayMode == 0){
-            Row(verticalAlignment = Alignment.CenterVertically){
+            Row(
+                modifier = Modifier.padding(top = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ){
                 CurrentBattery()
                 Text(
                     modifier = Modifier.alignByBaseline(),
@@ -150,6 +154,7 @@ fun WorkoutStateHeader(
             }
 
             Row(
+                modifier = Modifier.padding(top = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

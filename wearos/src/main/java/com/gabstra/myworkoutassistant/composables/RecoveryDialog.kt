@@ -61,7 +61,8 @@ internal fun RecoveryDialog(
     val showTimerChoice = uiState.showTimerOptions
     val showCalibrationChoice = uiState.showCalibrationOptions
     val showResumeButton = uiState.showResumeButton
-    val resolvedWorkoutName = uiState.displayName.ifBlank { workout.workoutName }
+    val resolvedWorkoutName = uiState.workoutName.ifBlank { workout.workoutName }
+    val resolvedExerciseName = uiState.exerciseName
     val startedText = uiState.workoutStartTime?.format(
         DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm")
     ).orEmpty()
@@ -156,6 +157,19 @@ internal fun RecoveryDialog(
                                 .transformedHeight(this, spec)
                                 .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
                         )
+                    }
+
+                    if (resolvedExerciseName.isNotBlank()) {
+                        item {
+                            RecoveryInfoBlock(
+                                label = "Exercise",
+                                value = resolvedExerciseName,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec)
+                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                            )
+                        }
                     }
 
                     if (startedText.isNotEmpty()) {
