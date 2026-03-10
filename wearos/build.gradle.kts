@@ -57,10 +57,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
-            isShrinkResources = true
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
+                "proguard-release-fast.pro"
             )
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
