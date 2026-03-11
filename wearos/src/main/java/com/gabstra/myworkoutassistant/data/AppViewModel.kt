@@ -57,6 +57,20 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoic
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoveryCheckpoint
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoverySnapshotCodec
 
+internal enum class WorkoutHistorySyncRequestMode {
+    Debounced,
+    Immediate
+}
+
+internal fun resolveWorkoutHistorySyncRequestMode(
+    currentState: WorkoutState,
+    isDone: Boolean
+): WorkoutHistorySyncRequestMode? = when {
+    isDone -> WorkoutHistorySyncRequestMode.Immediate
+    currentState is WorkoutState.Set -> WorkoutHistorySyncRequestMode.Debounced
+    else -> null
+}
+
 open class AppViewModel : WorkoutViewModel() {
 
     companion object {
@@ -1120,19 +1134,21 @@ open class AppViewModel : WorkoutViewModel() {
                     "SYNC_TRACE event=push_store side=wear isDone=$isDone forceNotSend=$forceNotSend state=$currentState"
                 )
                 Log.d("WorkoutSync", "pushAndStoreWorkoutData: currentState=$currentState")
-                // We want to send workout history whenever we finish storing a set
-                // (including the last set), so that incomplete workouts can be resumed
-                // on mobile. The completion screen will call this again with
-                // isDone=true but forceNotSend=true so we won't resend.
-                // When isDone=true, we must sync the final workout state even if the
-                // state has already transitioned to Completed.
-                val shouldSendData = currentState is WorkoutState.Set || isDone
+                val syncRequestMode = resolveWorkoutHistorySyncRequestMode(
+                    currentState = currentState,
+                    isDone = isDone
+                )
 
-                if (shouldSendData) {
-                    Log.d("WorkoutSync", "pushAndStoreWorkoutData: shouldSendData=true, calling requestWorkoutHistorySync")
-                    requestWorkoutHistorySync(context)
-                } else {
-                    Log.d("WorkoutSync", "pushAndStoreWorkoutData: shouldSendData=false, skipping sync")
+                when (syncRequestMode) {
+                    WorkoutHistorySyncRequestMode.Immediate -> {
+                        requestImmediateWorkoutHistorySync(context)
+                    }
+                    WorkoutHistorySyncRequestMode.Debounced -> {
+                        requestWorkoutHistorySync(context)
+                    }
+                    null -> {
+                        Log.d("WorkoutSync", "pushAndStoreWorkoutData: no sync requested for state=$currentState")
+                    }
                 }
             }
             onEnd()
@@ -1209,15 +1225,31 @@ open class AppViewModel : WorkoutViewModel() {
             Log.d("WorkoutSync", "requestWorkoutHistorySync: Scheduling debounced sync")
             syncDebouncer.schedule {
                 Log.d("WorkoutSync", "requestWorkoutHistorySync: Debounced enqueue to worker")
-                if (syncContext != null) {
-                    WorkoutHistorySyncWorker.enqueue(syncContext)
-                    clearPendingSync()
-                    _syncStatus.value = SyncStatus.Idle
-                    cancelSyncTimeouts()
-                } else {
-                    markPendingReconnect(null)
-                }
+                enqueueWorkoutHistorySync(syncContext, fromCompletion = false)
             }
+        }
+    }
+
+    private fun requestImmediateWorkoutHistorySync(context: Context?) {
+        Log.d("WorkoutSync", "requestImmediateWorkoutHistorySync called")
+        markScheduledSync(context)
+        _syncStatus.value = SyncStatus.Syncing
+        startSyncStatusTimeout()
+        val syncContext = resolveSyncContext(context)
+        launchMain {
+            syncDebouncer.cancel()
+            enqueueWorkoutHistorySync(syncContext, fromCompletion = true)
+        }
+    }
+
+    private fun enqueueWorkoutHistorySync(syncContext: Context?, fromCompletion: Boolean) {
+        if (syncContext != null) {
+            WorkoutHistorySyncWorker.enqueue(syncContext)
+            clearPendingSync()
+            _syncStatus.value = SyncStatus.Idle
+            cancelSyncTimeouts()
+        } else {
+            markPendingReconnect(null)
         }
     }
     
