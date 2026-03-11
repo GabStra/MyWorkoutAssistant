@@ -124,7 +124,45 @@ class PolarViewModel : ViewModel() {
 
     val hasBeenInitialized = _hasBeenInitialized.asStateFlow()
 
+    private fun clearHrStreamingState() {
+        hrStreamDisposable?.let {
+            if (!it.isDisposed) {
+                it.dispose()
+                disposables.remove(it)
+            }
+        }
+        hrStreamDisposable = null
+        isHrStreamingActive.set(false)
+    }
+
+    private fun releasePolarApi() {
+        clearHrStreamingState()
+        disposables.clear()
+
+        if (!::api.isInitialized) {
+            return
+        }
+
+        try {
+            if (::deviceId.isInitialized) {
+                api.disconnectFromDevice(deviceId)
+            }
+        } catch (e: Exception) {
+            Log.w("PolarViewModel", "Error disconnecting from device during release", e)
+        }
+
+        try {
+            api.shutDown()
+        } catch (e: Exception) {
+            Log.w("PolarViewModel", "Error shutting down Polar API", e)
+        }
+    }
+
     fun initialize(applicationContext: Context, deviceId: String){
+        if (_hasBeenInitialized.value) {
+            releasePolarApi()
+        }
+
         _hasBeenInitialized.value = true
 
         this.applicationContext = applicationContext
@@ -186,15 +224,7 @@ class PolarViewModel : ViewModel() {
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
-                // Dispose HR stream subscription and reset state
-                hrStreamDisposable?.let {
-                    if (!it.isDisposed) {
-                        it.dispose()
-                        disposables.remove(it)
-                    }
-                }
-                hrStreamDisposable = null
-                isHrStreamingActive.set(false)
+                clearHrStreamingState()
                 
                 // Reset HR state to indicate no valid data
                 viewModelScope.launch(appCeh) {
@@ -265,9 +295,7 @@ class PolarViewModel : ViewModel() {
     fun disconnectFromDevice() {
         viewModelScope.launch(appCeh) {
             try {
-                disposables.clear()
-                api.disconnectFromDevice(deviceId)
-                api.shutDown()
+                releasePolarApi()
             } catch (e: Exception) {
                 Log.e("PolarViewModel", "Error disconnecting from device ${deviceId}: $e", e)
             }
@@ -345,8 +373,7 @@ class PolarViewModel : ViewModel() {
     }
 
     override fun onCleared() {
+        releasePolarApi()
         super.onCleared()
-
-        disposables.dispose()
     }
 }
