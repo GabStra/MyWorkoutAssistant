@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,15 +21,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.SectionDivider
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -60,12 +60,9 @@ fun WorkoutsGearTab(
             .padding(vertical = 10.dp)
             .verticalColumnScrollbarContainer(scrollState)
     ) {
-        Text(
+        ContentTitle(
+            text = "Equipment",
             modifier = Modifier.fillMaxWidth(),
-            text = "Equipment:",
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Start,
-            color = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.height(Spacing.md))
         if (equipments.isEmpty()) {
@@ -162,16 +159,11 @@ fun WorkoutsGearTab(
         }
 
         // Accessories Section
-        Spacer(Modifier.height(Spacing.xl))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(Spacing.lg))
+        SectionDivider()
 
-        Text(
+        ContentTitle(
+            text = "Accessories",
             modifier = Modifier.fillMaxWidth(),
-            text = "Accessories:",
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Start,
-            color = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.height(Spacing.md))
 

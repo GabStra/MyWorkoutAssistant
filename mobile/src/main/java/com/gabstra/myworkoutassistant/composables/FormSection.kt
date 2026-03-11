@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,12 +20,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import com.gabstra.myworkoutassistant.Spacing
 
 /**
- * Shared in-content title: start-aligned, primary color, titleMedium.
+ * Shared in-content title: start-aligned, primary color, emphasized title.
  * Use for section/card/screen headings across the app.
  */
 @Composable
@@ -34,7 +36,7 @@ fun ContentTitle(
 ) {
     Text(
         text = text,
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
         color = MaterialTheme.colorScheme.primary,
         textAlign = TextAlign.Start,
         modifier = modifier
@@ -67,12 +69,23 @@ fun FormSectionTitle(
     text: String,
     modifier: Modifier = Modifier
 ) {
-    Text(
+    ContentTitle(
         text = text,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.primary,
-        textAlign = TextAlign.Start,
-        modifier = modifier.padding(bottom = Spacing.sm)
+        modifier = modifier.padding(bottom = Spacing.md)
+    )
+}
+
+/**
+ * Shared page/card section separator with consistent spacing around the divider.
+ */
+@Composable
+fun SectionDivider(
+    modifier: Modifier = Modifier,
+    spacing: Dp = Spacing.lg
+) {
+    HorizontalDivider(
+        modifier = modifier.padding(vertical = spacing),
+        color = MaterialTheme.colorScheme.outlineVariant
     )
 }
 

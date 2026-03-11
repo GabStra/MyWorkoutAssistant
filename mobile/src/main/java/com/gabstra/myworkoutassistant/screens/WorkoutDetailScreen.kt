@@ -1024,6 +1024,7 @@ fun WorkoutDetailScreen(
                 var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
                     mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
                 }
+                val isWorkoutGraphHistoryTabSelected = selectedTopTab == 1
                 SwipeableTabs(
                     tabTitles = listOf("Overview", "Graph History", "Set History"),
                     selectedTabIndex = selectedTopTab,

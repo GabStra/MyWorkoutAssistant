@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -54,12 +55,9 @@ fun WorkoutsListTab(
             .padding(vertical = 10.dp)
             .verticalColumnScrollbarContainer(scrollState)
     ) {
-        Text(
+        ContentTitle(
+            text = "Workouts",
             modifier = Modifier.fillMaxWidth(),
-            text = "Workouts:",
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Start,
-            color = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.height(Spacing.md))
         if (workouts.isEmpty()) {
@@ -159,4 +157,3 @@ fun WorkoutsListTab(
         }
     }
 }
-

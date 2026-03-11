@@ -740,7 +740,6 @@ fun BatchScheduleDialog(
                     contentColor = MaterialTheme.colorScheme.onBackground,
                     selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onBackground,
-                    tabTextStyle = MaterialTheme.typography.bodyMedium,
                     renderPager = false
                 )
 
