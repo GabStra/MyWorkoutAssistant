@@ -2219,10 +2219,14 @@ open class WorkoutViewModel(
 
         launchIO {
             val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
-            val workWeight = extractWorkWeight(currentState.currentSetData)
+            val programmedWorkWeight = when (val set = currentState.set) {
+                is WeightSet -> set.weight
+                is BodyWeightSet -> set.additionalWeight
+                else -> extractWorkWeight(currentState.currentSetData)
+            }
             val adjustedWeight = adjustmentMultiplier?.let { multiplier ->
-                workWeight * multiplier
-            } ?: CalibrationHelper.applyCalibrationAdjustment(workWeight, rir, formBreaks = false)
+                programmedWorkWeight * multiplier
+            } ?: CalibrationHelper.applyCalibrationAdjustment(programmedWorkWeight, rir, formBreaks = false)
             val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
             val availableWeights = getWeightByEquipment(equipment).ifEmpty {
                 equipment?.getWeightsCombinations() ?: emptySet()
