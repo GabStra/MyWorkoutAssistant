@@ -162,7 +162,10 @@ private suspend fun WorkoutViewModel.generateWarmupStates(
         }
         var warmupSetData = initializeSetData(warmupSet)
         if (warmupSetData is BodyWeightSetData) {
-            warmupSetData = warmupSetData.copy(relativeBodyWeightInKg = relativeBodyWeight)
+            warmupSetData = warmupSetData.copy(
+                relativeBodyWeightInKg = relativeBodyWeight,
+                bodyWeightPercentageSnapshot = exercise.bodyWeightPercentage!!
+            )
             warmupSetData = warmupSetData.copy(volume = warmupSetData.calculateVolume())
         } else if (warmupSetData is WeightSetData) {
             warmupSetData = warmupSetData.copy(volume = warmupSetData.calculateVolume())
@@ -224,10 +227,14 @@ private suspend fun WorkoutViewModel.createCalibrationSetExecutionState(
     val progressionState = progressionData?.second
     var calibrationSetData = initializeSetData(updatedSet)
     calibrationSetData = when (calibrationSetData) {
-        is BodyWeightSetData -> calibrationSetData.copy(
-            relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100),
-            volume = calibrationSetData.calculateVolume()
-        )
+        is BodyWeightSetData -> {
+            val percentage = exercise.bodyWeightPercentage!!
+            calibrationSetData.copy(
+                relativeBodyWeightInKg = bodyWeight.value * (percentage / 100),
+                bodyWeightPercentageSnapshot = percentage,
+                volume = calibrationSetData.calculateVolume()
+            )
+        }
         is WeightSetData -> calibrationSetData.copy(volume = calibrationSetData.calculateVolume())
         else -> calibrationSetData
     }

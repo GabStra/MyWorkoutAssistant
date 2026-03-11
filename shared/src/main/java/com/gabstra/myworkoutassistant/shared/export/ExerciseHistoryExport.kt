@@ -85,7 +85,12 @@ suspend fun buildExerciseHistoryMarkdown(
     val userAge = Calendar.getInstance().get(Calendar.YEAR) - workoutStore.birthDateYear
     val markdown = StringBuilder()
 
-    val equipment = exercise.equipmentId?.let { equipmentId ->
+    // Prefer historical equipment snapshot if present on any of the recorded sets.
+    val firstSessionWithSets = sessionsWithRecordedSets.firstOrNull { it.activeSetHistories.isNotEmpty() }
+    val firstHistory = firstSessionWithSets?.activeSetHistories?.firstOrNull()
+
+    val historicalEquipmentId = firstHistory?.equipmentIdSnapshot ?: exercise.equipmentId
+    val equipment = historicalEquipmentId?.let { equipmentId ->
         workoutStore.equipments.find { it.id == equipmentId }
     }
     val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
@@ -93,7 +98,7 @@ suspend fun buildExerciseHistoryMarkdown(
     markdown.append("# ${exercise.name}\n")
     markdown.append("Type: ${exercise.exerciseType}")
 
-    if (exercise.equipmentId != null) {
+    if (historicalEquipmentId != null) {
         if (equipment != null) {
             markdown.append(" | Equipment: ${equipment.name}")
             if (exercise.exerciseType == ExerciseType.WEIGHT && !achievableWeights.isNullOrEmpty()) {
@@ -107,7 +112,7 @@ suspend fun buildExerciseHistoryMarkdown(
     }
 
     if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
-        markdown.append(" | BW: ${formatNumber(workoutStore.weightKg)} kg")
+        markdown.append(" | BW: ${formatNumber(workoutStore.weightKg)} kg (current profile; historical sets use stored effective load)")
     }
 
     if (exercise.notes.isNotEmpty()) {
@@ -132,9 +137,19 @@ suspend fun buildExerciseHistoryMarkdown(
             exercise.id
         )
 
+        val sessionBwFromSnapshot = if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            val firstBw = session.activeSetHistories.mapNotNull { it.setData as? BodyWeightSetData }.firstOrNull()
+            val pct = firstBw?.bodyWeightPercentageSnapshot
+            val eff = firstBw?.relativeBodyWeightInKg
+            if (pct != null && pct > 0 && eff != null) eff / (pct / 100) else null
+        } else null
+
         markdown.append(
             "## S${sessionIndex + 1}: ${workoutHistory.date} ${workoutHistory.time} | $workoutName | Dur: ${formatDuration(workoutHistory.duration)}"
         )
+        if (sessionBwFromSnapshot != null) {
+            markdown.append(" | Session BW: ${formatNumber(sessionBwFromSnapshot)} kg")
+        }
 
         if (workoutHistory.heartBeatRecords.isNotEmpty() && workoutHistory.heartBeatRecords.any { it > 0 }) {
             val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }

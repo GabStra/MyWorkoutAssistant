@@ -76,11 +76,11 @@ fun BodyWeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
-    val historicalPreviousSetData = remember(state.exerciseId, state.set.id) {
+    val historicalPreviousSetHistory = remember(state.exerciseId, state.set.id) {
         viewModel.getAllSetHistoriesByExerciseId(state.exerciseId)
             .firstOrNull { it.setId == state.set.id }
-            ?.setData as? BodyWeightSetData
     }
+    val historicalPreviousSetData = historicalPreviousSetHistory?.setData as? BodyWeightSetData
 
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
@@ -113,6 +113,9 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val equipmentForDelta = remember(historicalPreviousSetHistory?.equipmentIdSnapshot, equipment) {
+        historicalPreviousSetHistory?.equipmentIdSnapshot?.let { viewModel.getEquipmentById(it) } ?: equipment
+    }
     val isWorkSet = remember(state.set.id) {
         (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.WorkSet
     }
@@ -498,7 +501,7 @@ fun BodyWeightSetScreen(
                             modifier = Modifier.fillMaxWidth(),
                             previousSetData = historicalPreviousSetData,
                             currentSetData = currentSetData,
-                            equipment = equipment
+                            equipment = equipmentForDelta
                         )
                     }
                     if (isPlateauDetected) {

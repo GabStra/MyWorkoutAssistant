@@ -274,13 +274,17 @@ suspend fun backfillExerciseSessionProgressions(
                 // Get or reconstruct ExerciseInfo state as it would have been BEFORE this workout
                 val exerciseInfoBefore = exerciseInfoStateMap[exercise.id]
 
+                // Use equipment from historical snapshot when present so backfill uses the same weight system as past sessions.
+                val equipmentIdForSession = currentSession.firstOrNull()?.equipmentIdSnapshot ?: exercise.equipmentId
+
                 // Calculate expected sets and progression state
                 val (expectedSets, progressionState) = calculateExpectedSetsAndProgressionState(
                     exercise = exercise,
                     exerciseInfoBefore = exerciseInfoBefore,
                     workoutStore = workoutStore,
                     equipmentMap = equipmentMap,
-                    workoutHistoryDate = workoutHistory.date
+                    workoutHistoryDate = workoutHistory.date,
+                    equipmentIdOverride = equipmentIdForSession
                 )
 
                 // Handle first sessions (when expectedSets is null because there's no previous session)
@@ -374,18 +378,20 @@ private suspend fun calculateExpectedSetsAndProgressionState(
     exerciseInfoBefore: ExerciseInfo?,
     workoutStore: WorkoutStore,
     equipmentMap: Map<UUID, WeightLoadedEquipment>,
-    workoutHistoryDate: LocalDate?
+    workoutHistoryDate: LocalDate?,
+    equipmentIdOverride: UUID? = null
 ): Pair<List<SimpleSet>?, ProgressionState?> {
     try {
-        // Get available weights
+        val equipmentId = equipmentIdOverride ?: exercise.equipmentId
+        // Get available weights (using snapshot equipment when provided for historically consistent backfill)
         val availableWeights = when (exercise.exerciseType) {
             ExerciseType.WEIGHT -> {
-                exercise.equipmentId?.let { equipmentMap[it]?.getWeightsCombinations() } ?: emptySet()
+                equipmentId?.let { equipmentMap[it]?.getWeightsCombinations() } ?: emptySet()
             }
             ExerciseType.BODY_WEIGHT -> {
                 val relativeBodyWeight = workoutStore.weightKg * (exercise.bodyWeightPercentage!! / 100)
-                (exercise.equipmentId?.let {
-                    equipmentMap[it]?.getWeightsCombinations()?.map { value -> relativeBodyWeight + value }!!.toSet()
+                (equipmentId?.let {
+                    equipmentMap[it]?.getWeightsCombinations()?.map { value -> relativeBodyWeight + value }?.toSet()
                 } ?: emptySet()) + setOf(relativeBodyWeight)
             }
             else -> return Pair(null, null)

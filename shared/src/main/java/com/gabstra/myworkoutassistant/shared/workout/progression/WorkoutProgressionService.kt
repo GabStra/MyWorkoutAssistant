@@ -233,7 +233,10 @@ class WorkoutProgressionService(
         val progressionStatesByWorkoutHistoryId = exerciseProgressions
             .filter { it.workoutHistoryId in workoutHistoryIds }
             .associate { it.workoutHistoryId to it.progressionState }
-        val equipment = exercise.equipmentId?.let(getEquipmentById)
+        // Prefer equipment from historical snapshot so plateau detection uses the same weight system as past sessions.
+        val equipmentIdForPlateau = setHistories.maxByOrNull { it.executionSequence?.toLong() ?: 0L }?.equipmentIdSnapshot
+            ?: exercise.equipmentId
+        val equipment = equipmentIdForPlateau?.let(getEquipmentById)
         val (isPlateau, _, reason) = PlateauDetectionHelper.detectPlateauFromHistories(
             setHistories = setHistories,
             workoutHistories = workoutHistories,

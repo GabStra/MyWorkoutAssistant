@@ -11,10 +11,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -31,7 +34,8 @@ fun ExerciseRenderer(
     showRest: Boolean,
     appViewModel: AppViewModel,
     titleModifier: Modifier = Modifier,
-    customTitle: (@Composable (Modifier) -> Unit)? = null
+    customTitle: (@Composable (Modifier) -> Unit)? = null,
+    setHistories: List<SetHistory>? = null
 ) {
     var sets = exercise.sets
 
@@ -93,11 +97,20 @@ fun ExerciseRenderer(
                     }
 
                     ExerciseMetadataStrip(
-                        equipmentName = equipment?.name,
-                        accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
+                        equipmentName = null,
+                        accessoryNames = null,
                         textColor = textColor,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (equipment != null || accessoryEquipments.isNotEmpty()) {
+                        ExerciseEquipmentAccessoryBlock(
+                            equipmentName = equipment?.name,
+                            accessoryNames = accessoryEquipments.map { it.name },
+                            textColor = textColor,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
                     val rows = mutableListOf<SetTableRowUiModel>()
                     var index = 0
@@ -135,9 +148,20 @@ fun ExerciseRenderer(
                                 )
                                 val weightText = when {
                                     isCalibrationManagedWorkSet -> CalibrationUiLabels.Tbd
+                                    setHistories != null -> {
+                                        val historyData = setHistories
+                                            .firstOrNull { it.setId == set.id }
+                                            ?.setData as? BodyWeightSetData
+                                        if (historyData != null) {
+                                            val total = historyData.getWeight()
+                                            if (total > 0) equipment?.formatWeight(total) ?: "$total kg" else "-"
+                                        } else {
+                                            if (set.additionalWeight > 0) equipment?.formatWeight(set.additionalWeight)
+                                                ?: "${set.additionalWeight} kg" else "-"
+                                        }
+                                    }
                                     set.additionalWeight > 0 -> equipment?.formatWeight(set.additionalWeight)
                                         ?: "${set.additionalWeight} kg"
-
                                     else -> "-"
                                 }
                                 rows += SetTableRowUiModel.Data(
@@ -176,5 +200,56 @@ fun ExerciseRenderer(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun ExerciseEquipmentAccessoryBlock(
+    equipmentName: String?,
+    accessoryNames: List<String>,
+    textColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val hasEquipment = !equipmentName.isNullOrBlank()
+    val hasAccessories = accessoryNames.isNotEmpty()
+    if (!hasEquipment && !hasAccessories) return
+
+    SecondarySurface(
+        modifier = modifier,
+        enabled = true
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (hasEquipment) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Equipment",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = equipmentName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor
+                    )
+                }
+            }
+            if (hasAccessories) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Accessories",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = accessoryNames.joinToString(", "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor
+                    )
+                }
+            }
+        }
     }
 }

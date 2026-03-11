@@ -134,10 +134,12 @@ internal object WorkoutStateEditor {
                 newData.copy(volume = newData.calculateVolume())
             }
             is BodyWeightSetData -> {
-                val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
+                val percentage = exercise.bodyWeightPercentage!!
+                val relativeBodyWeight = bodyWeightKg * (percentage / 100)
                 val newData = existingSetData.copy(
                     additionalWeight = selectedWeight,
-                    relativeBodyWeightInKg = relativeBodyWeight
+                    relativeBodyWeightInKg = relativeBodyWeight,
+                    bodyWeightPercentageSnapshot = percentage
                 )
                 newData.copy(volume = newData.calculateVolume())
             }

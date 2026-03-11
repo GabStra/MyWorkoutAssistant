@@ -108,8 +108,21 @@ internal class WorkoutPersistenceCoordinator(
         val nextExecutionSequence = (
             executedSetStore.executedSets.value.maxOfOrNull { it.executionSequence?.toLong() ?: 0L } ?: 0L
         ) + 1L
+
+        // Resolve equipment snapshot at record time so later equipment edits do not
+        // change how this historical set is labeled or interpreted.
+        val exercise = historyIdentity.exerciseId?.let { exercisesById[it] }
+        val equipmentIdFromState = (currentState as? WorkoutState.Set)?.equipmentId ?: exercise?.equipmentId
+        val workoutStore = workoutStoreRepository().getWorkoutStore()
+        val equipmentSnapshot = equipmentIdFromState?.let { equipmentId ->
+            workoutStore.equipments.find { it.id == equipmentId }
+        }
+
         val newSetHistory = SetHistory(
             id = UUID.randomUUID(),
+            equipmentIdSnapshot = equipmentIdFromState,
+            equipmentNameSnapshot = equipmentSnapshot?.name,
+            equipmentTypeSnapshot = equipmentSnapshot?.type?.name,
             setId = historyIdentity.setId,
             setData = setDataSnapshot,
             order = historyIdentity.order,

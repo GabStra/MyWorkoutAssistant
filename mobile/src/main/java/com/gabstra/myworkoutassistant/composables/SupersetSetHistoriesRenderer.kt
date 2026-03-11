@@ -12,18 +12,21 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import java.util.UUID
 
 @Composable
 fun SupersetSetHistoriesRenderer(
     modifier: Modifier = Modifier,
     setHistories: List<SetHistory>,
-    workout: Workout
+    workout: Workout,
+    getEquipmentById: (UUID) -> WeightLoadedEquipment? = { null }
 ) {
     if (setHistories.isEmpty()) return
 
@@ -49,7 +52,8 @@ fun SupersetSetHistoriesRenderer(
         orderedHistories.forEach { history ->
             val round = (history.supersetRound?.toInt() ?: history.order.toInt()) + 1
             val exerciseName = history.exerciseId?.let { exerciseNameById[it] } ?: "Exercise"
-            val value = formatSetValue(history)
+            val equipment = history.equipmentIdSnapshot?.let(getEquipmentById)
+            val value = formatSetValue(history, equipment)
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 text = "R$round • $exerciseName: $value",
@@ -60,12 +64,17 @@ fun SupersetSetHistoriesRenderer(
     }
 }
 
-private fun formatSetValue(history: SetHistory): String {
+private fun formatSetValue(history: SetHistory, equipment: WeightLoadedEquipment?): String {
     return when (val setData = history.setData) {
-        is WeightSetData -> "${setData.actualWeight} kg x ${setData.actualReps}"
+        is WeightSetData -> {
+            val weightStr = equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg"
+            "$weightStr x ${setData.actualReps}"
+        }
         is BodyWeightSetData -> {
-            val extra = if (setData.additionalWeight > 0) " (+${setData.additionalWeight} kg)" else ""
-            "${setData.actualReps} reps$extra"
+            val totalKg = setData.getWeight()
+            val weightStr = if (totalKg > 0) equipment?.formatWeight(totalKg) ?: "$totalKg kg" else "-"
+            val extra = if (setData.additionalWeight > 0) " (+${setData.additionalWeight} kg added)" else ""
+            "$weightStr x ${setData.actualReps}$extra"
         }
         is TimedDurationSetData -> {
             val elapsedSec = (setData.startTimer - setData.endTimer).coerceAtLeast(0) / 1000

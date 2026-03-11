@@ -53,4 +53,34 @@ class SetHistorySanitizerTest {
             setData = RestSetData(startTimer = 90, endTimer = 90),
             skipped = false
         )
+
+    @Test
+    fun setHistory_preservesEquipmentSnapshotFields() {
+        val equipmentId = UUID.randomUUID()
+        val history = SetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = UUID.randomUUID(),
+            exerciseId = UUID.randomUUID(),
+            equipmentIdSnapshot = equipmentId,
+            equipmentNameSnapshot = "Barbell",
+            equipmentTypeSnapshot = "BARBELL",
+            setId = UUID.randomUUID(),
+            order = 1u,
+            startTime = LocalDateTime.now(),
+            endTime = LocalDateTime.now(),
+            setData = WeightSetData(actualReps = 5, actualWeight = 80.0, volume = 400.0),
+            skipped = false
+        )
+        assertEquals(equipmentId, history.equipmentIdSnapshot)
+        assertEquals("Barbell", history.equipmentNameSnapshot)
+        assertEquals("BARBELL", history.equipmentTypeSnapshot)
+    }
+
+    @Test
+    fun setHistory_withoutEquipmentSnapshot_hasNullSnapshotFields() {
+        val history = workHistory(UUID.randomUUID(), UUID.randomUUID(), 0u)
+        assertEquals(null, history.equipmentIdSnapshot)
+        assertEquals(null, history.equipmentNameSnapshot)
+        assertEquals(null, history.equipmentTypeSnapshot)
+    }
 }

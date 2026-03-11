@@ -687,7 +687,8 @@ fun ExerciseHistoryScreen(
                                                     SupersetSetHistoriesRenderer(
                                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
                                                         setHistories = setHistories.renderSetHistories,
-                                                        workout = workout
+                                                        workout = workout,
+                                                        getEquipmentById = { appViewModel.getEquipmentById(it) }
                                                     )
                                                 } else {
                                                     SetHistoriesRenderer(
@@ -703,7 +704,8 @@ fun ExerciseHistoryScreen(
                                                 SupersetSetHistoriesRenderer(
                                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
                                                     setHistories = setHistories.renderSetHistories,
-                                                    workout = workout
+                                                    workout = workout,
+                                                    getEquipmentById = { appViewModel.getEquipmentById(it) }
                                                 )
                                             } else {
                                                 SetHistoriesRenderer(

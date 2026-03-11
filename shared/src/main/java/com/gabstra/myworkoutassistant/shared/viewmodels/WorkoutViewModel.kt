@@ -1961,8 +1961,12 @@ open class WorkoutViewModel(
                 var currentSetData = initializeSetData(set)
 
                 if (currentSetData is BodyWeightSetData) {
+                    val percentage = exercise.bodyWeightPercentage!!
                     currentSetData =
-                        currentSetData.copy(relativeBodyWeightInKg = bodyWeight.value * (exercise.bodyWeightPercentage!! / 100))
+                        currentSetData.copy(
+                            relativeBodyWeightInKg = bodyWeight.value * (percentage / 100),
+                            bodyWeightPercentageSnapshot = percentage
+                        )
                     currentSetData =
                         currentSetData.copy(volume = currentSetData.calculateVolume())
                 } else if (currentSetData is WeightSetData) {

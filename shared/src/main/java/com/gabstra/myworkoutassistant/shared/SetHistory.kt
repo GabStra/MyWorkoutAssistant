@@ -1,10 +1,9 @@
 package com.gabstra.myworkoutassistant.shared
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
-
 import androidx.room.ForeignKey
+import androidx.room.Entity
 import androidx.room.Index
+import androidx.room.PrimaryKey
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import java.time.LocalDateTime
 import java.util.UUID
@@ -32,6 +31,17 @@ data class SetHistory(
     val id: UUID,
     val workoutHistoryId: UUID? = null,
     val exerciseId : UUID? = null,
+    /**
+     * Snapshot of the equipment context at the time this set was recorded.
+     * These fields are nullable so older rows (before this feature) remain valid.
+     */
+    val equipmentIdSnapshot: UUID? = null,
+    val equipmentNameSnapshot: String? = null,
+    /**
+     * Simple string representation of the equipment type (e.g. \"BARBELL\", \"DUMBBELLS\").
+     * Stored as String to avoid additional Room type converters.
+     */
+    val equipmentTypeSnapshot: String? = null,
     val setId: UUID,
     val order: UInt,
     val startTime: LocalDateTime?,

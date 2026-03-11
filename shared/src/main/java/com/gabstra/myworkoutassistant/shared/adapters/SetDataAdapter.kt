@@ -36,12 +36,13 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                 jsonObject.addProperty("volume", src.volume)
                 jsonObject.addProperty("subCategory", src.subCategory.name)
             }
-            is BodyWeightSetData ->{
+            is BodyWeightSetData -> {
                 jsonObject.addProperty("actualReps", src.actualReps)
                 jsonObject.addProperty("additionalWeight", src.additionalWeight)
                 jsonObject.addProperty("relativeBodyWeightInKg", src.relativeBodyWeightInKg)
                 jsonObject.addProperty("volume", src.volume)
                 jsonObject.addProperty("subCategory", src.subCategory.name)
+                src.bodyWeightPercentageSnapshot?.let { jsonObject.addProperty("bodyWeightPercentageSnapshot", it) }
             }
             is TimedDurationSetData ->{
                 jsonObject.addProperty("startTimer", src.startTimer)
@@ -90,10 +91,10 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
             }
             "BodyWeightSetData" -> {
                 val actualReps = jsonObject.get("actualReps").asInt
-                val additionalWeight = if(jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
-                val relativeBodyWeightInKg = if(jsonObject.has("relativeBodyWeightInKg")) jsonObject.get("relativeBodyWeightInKg").asDouble else 0.0
-                val volume =  if(jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
-                val subCategory = if(jsonObject.has("subCategory")) {
+                val additionalWeight = if (jsonObject.has("additionalWeight")) jsonObject.get("additionalWeight").asDouble else 0.0
+                val relativeBodyWeightInKg = if (jsonObject.has("relativeBodyWeightInKg")) jsonObject.get("relativeBodyWeightInKg").asDouble else 0.0
+                val volume = if (jsonObject.has("volume")) jsonObject.get("volume").asDouble else 0.0
+                val subCategory = if (jsonObject.has("subCategory")) {
                     try {
                         SetSubCategory.valueOf(jsonObject.get("subCategory").asString)
                     } catch (e: IllegalArgumentException) {
@@ -101,10 +102,20 @@ class SetDataAdapter: JsonSerializer<SetData>, JsonDeserializer<SetData> {
                     }
                 } else {
                     // Legacy migration: convert isRestPause to subCategory
-                    val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
+                    val isRestPause = if (jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
                     if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
                 }
-                BodyWeightSetData(actualReps,additionalWeight,relativeBodyWeightInKg,volume,subCategory)
+                val bodyWeightPercentageSnapshot = if (jsonObject.has("bodyWeightPercentageSnapshot")) {
+                    jsonObject.get("bodyWeightPercentageSnapshot").asDouble
+                } else null
+                BodyWeightSetData(
+                    actualReps = actualReps,
+                    additionalWeight = additionalWeight,
+                    relativeBodyWeightInKg = relativeBodyWeightInKg,
+                    volume = volume,
+                    subCategory = subCategory,
+                    bodyWeightPercentageSnapshot = bodyWeightPercentageSnapshot
+                )
             }
             "TimedDurationSetData" -> {
                 val startTimer = jsonObject.get("startTimer").asInt

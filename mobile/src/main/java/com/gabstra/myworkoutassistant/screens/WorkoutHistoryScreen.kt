@@ -51,6 +51,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.FilterRange
@@ -626,11 +627,18 @@ fun WorkoutHistoryScreen(
 
             val currentYear = Calendar.getInstance().get(Calendar.YEAR)
             val age = currentYear - appViewModel.workoutStore.birthDateYear
-            val weight = appViewModel.workoutStore.weightKg
+            val weightForKcal = setHistories
+                .mapNotNull { it.setData as? BodyWeightSetData }
+                .firstOrNull()
+                ?.let { bw ->
+                    val pct = bw.bodyWeightPercentageSnapshot
+                    if (pct != null && pct > 0) bw.relativeBodyWeightInKg / (pct / 100) else null
+                }
+                ?: appViewModel.workoutStore.weightKg
             val durationMinutes = selectedWorkoutHistory!!.duration.toDouble() / 60
             kiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
-                weightKg = weight,
+                weightKg = weightForKcal,
                 averageHeartRate = avgHeartRate,
                 durationMinutes = durationMinutes,
                 isMale = true
@@ -843,6 +851,7 @@ fun WorkoutHistoryScreen(
                                     measuredMaxHeartRate = measuredMaxHeartRate,
                                     restingHeartRate = restingHeartRate,
                                 ),
+                                onInteractionChange = { isChartInteractionActive = it },
                             )
 
                             Spacer(modifier = Modifier.height(15.dp))
@@ -984,14 +993,11 @@ fun WorkoutHistoryScreen(
                 }
             }
             Column {
-                Text(
+                ContentTitle(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 10.dp),
                     text = "Exercise & Superset Histories",
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Start,
-                    color = MaterialTheme.colorScheme.primary,
                 )
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1021,7 +1027,8 @@ fun WorkoutHistoryScreen(
                                         )
                                         SupersetSetHistoriesRenderer(
                                             setHistories = setHistories,
-                                            workout = selectedWorkout
+                                            workout = selectedWorkout,
+                                            getEquipmentById = { appViewModel.getEquipmentById(it) }
                                         )
                                     }
                                 }
@@ -1169,6 +1176,7 @@ fun WorkoutHistoryScreen(
                                             exercise = exerciseWithHistorySets,
                                             showRest = true,
                                             appViewModel = appViewModel,
+                                            setHistories = setHistories,
                                             customTitle = { m ->
                                                 Row(
                                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1210,6 +1218,7 @@ fun WorkoutHistoryScreen(
                                         exercise = exerciseWithHistorySets,
                                         showRest = true,
                                         appViewModel = appViewModel,
+                                        setHistories = setHistories,
                                         customTitle = { m ->
                                             Row(
                                                 horizontalArrangement = Arrangement.SpaceBetween,

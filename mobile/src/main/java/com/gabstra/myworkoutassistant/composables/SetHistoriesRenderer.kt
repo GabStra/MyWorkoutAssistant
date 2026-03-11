@@ -32,19 +32,35 @@ fun SetHistoriesRenderer(
         return
     }
 
-    val exerciseId = setHistories[0].exerciseId ?: return
+    val firstHistory = setHistories[0]
+    val exerciseId = firstHistory.exerciseId ?: return
     val exercise = appViewModel.getExerciseById(workout, exerciseId) ?: return
-    val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+
+    // Prefer historical equipment snapshot when available so later equipment edits
+    // do not change how past sessions are labeled or formatted.
+    val historicalEquipmentName = firstHistory.equipmentNameSnapshot
+    val historicalEquipmentId = firstHistory.equipmentIdSnapshot
+
+    val equipment = when {
+        historicalEquipmentId != null -> appViewModel.getEquipmentById(historicalEquipmentId)
+        else -> exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+    }
 
     Column(
         modifier = modifier.padding(5.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (equipment != null) {
+        val headerText = when {
+            !historicalEquipmentName.isNullOrBlank() -> "Equipment: $historicalEquipmentName"
+            equipment != null -> "Equipment: ${equipment.name}"
+            else -> null
+        }
+
+        if (headerText != null) {
             Text(
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
-                text = "Equipment: ${equipment.name}",
+                text = headerText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -72,8 +88,9 @@ fun SetHistoriesRenderer(
                 }
 
                 is BodyWeightSetData -> {
-                    val weightText = if (setData.additionalWeight > 0) {
-                        equipment?.formatWeight(setData.additionalWeight) ?: "${setData.additionalWeight} kg"
+                    val totalWeight = setData.getWeight()
+                    val weightText = if (totalWeight > 0) {
+                        equipment?.formatWeight(totalWeight) ?: "$totalWeight kg"
                     } else {
                         "-"
                     }

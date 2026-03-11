@@ -96,7 +96,7 @@ class WorkoutSetStateFactory {
             streak = exerciseInfo?.successfulSessionCounter?.toInt() ?: 0,
             progressionState = progressionState,
             isWarmupSet = isWarmupSet,
-            equipmentId = exercise.equipmentId,
+            equipmentId = historySet?.equipmentIdSnapshot ?: exercise.equipmentId,
             isUnilateral = isUnilateral,
             isCalibrationSet = isCalibrationSet,
             isCalibrationManagedWorkSet = isCalibrationManagedWorkSet,
