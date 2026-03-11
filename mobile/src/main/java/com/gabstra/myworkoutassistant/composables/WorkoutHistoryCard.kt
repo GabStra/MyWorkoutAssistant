@@ -1,9 +1,13 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -30,7 +34,8 @@ fun WorkoutHistoryCard(
     workoutHistory: WorkoutHistory,
     workout: Workout,
     appViewModel: AppViewModel,
-    timeFormatter: DateTimeFormatter
+    timeFormatter: DateTimeFormatter,
+    statusBadgeText: String? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -54,14 +59,30 @@ fun WorkoutHistoryCard(
             )
         }
 
-        Text(
-            modifier = Modifier
-                .weight(1f)
-                .basicMarquee(iterations = Int.MAX_VALUE),
-            text = if (workoutHistory.isDone) workout.name else "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}",
-            color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                text = if (workoutHistory.isDone) workout.name else "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}",
+                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (statusBadgeText != null) {
+                Text(
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(999.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    text = statusBadgeText,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
 
         if (workoutHistory.isDone) {
             Text(

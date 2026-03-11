@@ -65,6 +65,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
+import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.kizitonwose.calendar.compose.CalendarState
@@ -77,8 +79,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import android.util.Log
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import java.util.UUID
 
 private const val TAG = "WorkoutHistDebug"
@@ -118,6 +118,7 @@ fun WorkoutsScreen(
 
     // Group workouts by plan - keep reactive to workoutStore updates
     val allPlans by appViewModel.workoutPlansFlow.collectAsState()
+    val weeklyProgressOverrides by appViewModel.weeklyProgressOverridesFlow.collectAsState()
 
     // Filter state - use ViewModel state to persist across navigation
     val selectedPlanFilter by appViewModel.effectiveSelectedWorkoutPlanIdFlow.collectAsState()
@@ -213,8 +214,6 @@ fun WorkoutsScreen(
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     var showCreateNewPlanDialog by remember { mutableStateOf(false) }
 
-    var objectiveProgress by remember { mutableStateOf(0.0) }
-
     var selectedWeekAnchorDate by remember {
         mutableStateOf<LocalDate>(LocalDate.now())
     }
@@ -222,17 +221,48 @@ fun WorkoutsScreen(
     val groupedWorkoutsHistories by appViewModel.groupedWorkoutHistories.collectAsState(initial = null)
     val workoutById by appViewModel.workoutByIdForHistories.collectAsState(initial = null)
 
-    var weeklyWorkoutsByActualTarget by remember {
-        mutableStateOf<Map<Workout, Pair<Int, Int>>?>(
-            null
-        )
-    }
-
     val selectedWeekStart = remember(selectedWeekAnchorDate) { getStartOfWeek(selectedWeekAnchorDate) }
     val selectedWeekEnd = remember(selectedWeekAnchorDate) { getEndOfWeek(selectedWeekAnchorDate) }
 
+    fun computeWeekObjectiveSnapshot(weekStart: LocalDate): WeeklyProgressSnapshot {
+        if (allEnabledWorkouts.isEmpty()) {
+            return WeeklyProgressSnapshot()
+        }
+
+        val endOfWeek = getEndOfWeek(weekStart)
+        val workoutHistoriesInWeek = generateSequence(weekStart) { current ->
+            current.plusDays(1).takeIf { !it.isAfter(endOfWeek) }
+        }
+            .flatMap { date ->
+                groupedWorkoutsHistories?.get(date)?.asSequence() ?: emptySequence()
+            }
+            .toList()
+
+        return WeeklyProgressResolver.resolveForWeek(
+            workouts = workouts,
+            workoutHistoriesInWeek = workoutHistoriesInWeek,
+            weekEnd = endOfWeek,
+            weeklyProgressOverride = weeklyProgressOverrides.firstOrNull { it.weekStart == weekStart }
+        )
+    }
+
+    val selectedWeekSnapshot = remember(
+        groupedWorkoutsHistories,
+        workouts,
+        weeklyProgressOverrides,
+        selectedWeekStart
+    ) {
+        computeWeekObjectiveSnapshot(selectedWeekStart)
+    }
+
     val selectedWeekWorkoutsByDate =
-        remember(groupedWorkoutsHistories, selectedWeekStart, selectedWeekEnd, workoutById) {
+        remember(
+            groupedWorkoutsHistories,
+            selectedWeekStart,
+            selectedWeekEnd,
+            workoutById,
+            selectedWeekSnapshot.excludedWorkoutGlobalIds
+        ) {
             val byId = workoutById ?: return@remember null
             try {
                 generateSequence(selectedWeekStart) { current ->
@@ -241,7 +271,12 @@ fun WorkoutsScreen(
                     val dayWorkouts = groupedWorkoutsHistories?.get(date)
                         ?.mapNotNull { history ->
                             byId[history.workoutId]?.let { workout ->
-                                Pair(history, workout)
+                                WeeklyStatusWorkoutHistory(
+                                    workoutHistory = history,
+                                    workout = workout,
+                                    isExcludedFromWeeklyProgress =
+                                        history.globalId in selectedWeekSnapshot.excludedWorkoutGlobalIds
+                                )
                             }
                         }
                         .orEmpty()
@@ -251,16 +286,6 @@ fun WorkoutsScreen(
                 emptyMap()
             }
         }
-
-    var isCardExpanded by remember {
-        mutableStateOf(false)
-    }
-
-    val currentLocale = Locale.getDefault()
-
-    val formatter = remember(currentLocale) {
-        DateTimeFormatter.ofPattern("dd/MM/yy", currentLocale)
-    }
 
     val scope = rememberCoroutineScope()
 
@@ -283,100 +308,12 @@ fun WorkoutsScreen(
         )
     }
 
-    data class WeekObjectiveSnapshot(
-        val weeklyWorkoutsByActualTarget: Map<Workout, Pair<Int, Int>>,
-        val objectiveProgress: Double
-    )
-
-    fun computeWeekObjectiveSnapshot(currentDate: LocalDate): WeekObjectiveSnapshot {
-        if (allEnabledWorkouts.isEmpty()) {
-            return WeekObjectiveSnapshot(emptyMap(), 0.0)
-        }
-
-        val startOfWeek = getStartOfWeek(currentDate)
-        val endOfWeek = getEndOfWeek(currentDate)
-
-        val workoutHistoriesInAWeek =
-            generateSequence(startOfWeek) { it.plusDays(1) }
-                .takeWhile { !it.isAfter(endOfWeek) }
-                .flatMap { d -> groupedWorkoutsHistories?.get(d)?.asSequence() ?: emptySequence() }
-                .filter { it.isDone }
-                .toList()
-
-        val objectiveEligibleByGlobalId = allEnabledWorkouts
-            .filter { it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0 }
-            .groupBy { it.globalId }
-            .mapValues { (_, workoutsForGlobalId) ->
-                workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
-            }
-
-        val weeklyWorkouts = workoutHistoriesInAWeek
-            .mapNotNull { history -> objectiveEligibleByGlobalId[history.globalId] }
-            .distinctBy { it.id }
-
-        val uniqueGlobalIds = weeklyWorkouts.map { it.globalId }.toSet()
-
-        val totalWeeklyWorkouts = weeklyWorkouts +
-            allActiveAndEnabledWorkouts.filter {
-                it.globalId !in uniqueGlobalIds && it.timesCompletedInAWeek != null && it.timesCompletedInAWeek != 0
-            }
-
-        val workoutsByGlobalId = totalWeeklyWorkouts.groupBy { it.globalId }
-        val actualCountsByWorkoutId = workoutHistoriesInAWeek
-            .mapNotNull { history -> objectiveEligibleByGlobalId[history.globalId] }
-            .groupingBy { it.id }
-            .eachCount()
-
-        data class Fam(
-            val active: Workout,
-            val countedActual: Int,
-            val totalTarget: Int,
-            val progress: Double
-        )
-
-        val families: List<Fam> = workoutsByGlobalId.map { (_, wsRaw) ->
-            val ws = wsRaw.distinctBy { it.id }
-            val targets = ws.associate { w -> w.id to (timesCompletedInAWeekObjective[w.id] ?: 0) }
-            val actuals = ws.associate { w -> w.id to (actualCountsByWorkoutId[w.id] ?: 0) }
-
-            val totalTarget = targets.values.sum()
-            val allReached = ws.all { w ->
-                (targets[w.id] ?: 0) <= 0 || (actuals[w.id] ?: 0) >= (targets[w.id] ?: 0)
-            }
-
-            val countedActual = if (allReached) {
-                actuals.values.sum()
-            } else {
-                ws.sumOf { w -> minOf(actuals[w.id] ?: 0, targets[w.id] ?: 0) }
-            }
-
-            val activeWorkout = ws.firstOrNull { it.isActive } ?: ws.first()
-            val progress = if (totalTarget > 0) countedActual.toDouble() / totalTarget else 0.0
-            Fam(activeWorkout, countedActual, totalTarget, progress)
-        }
-
-        return WeekObjectiveSnapshot(
-            weeklyWorkoutsByActualTarget = families
-                .associate { it.active to (it.countedActual to it.totalTarget) }
-                .toSortedMap(compareBy<Workout> { it.order }.thenBy { it.id }),
-            objectiveProgress = if (families.isNotEmpty()) families.map { it.progress }.average() else 0.0
-        )
-    }
-
-    fun calculateObjectiveProgress(currentDate: LocalDate) {
-        weeklyWorkoutsByActualTarget = null
-        objectiveProgress = 0.0
-        val snapshot = computeWeekObjectiveSnapshot(currentDate)
-        weeklyWorkoutsByActualTarget = snapshot.weeklyWorkoutsByActualTarget
-        objectiveProgress = snapshot.objectiveProgress
-    }
-
     val completedWeekStarts = remember(
         groupedWorkoutsHistories,
         allEnabledWorkouts,
-        allActiveAndEnabledWorkouts,
-        timesCompletedInAWeekObjective,
-        selectedWeekStart
+        workouts,
+        selectedWeekStart,
+        weeklyProgressOverrides
     ) {
         if (!hasObjectives) {
             emptySet()
@@ -414,13 +351,11 @@ fun WorkoutsScreen(
         // #endregion
         if (groupedWorkoutsHistories != null) {
             isLoading = false
-            calculateObjectiveProgress(LocalDate.now())
         }
     }
 
     LaunchedEffect(selectedDate) {
         isLoading = true
-        calculateObjectiveProgress(selectedDate.date)
         delay(500)
         isLoading = false
     }
@@ -645,7 +580,6 @@ fun WorkoutsScreen(
                         tabTitles = tabTitles,
                         selectedTabIndex = selectedTabIndex,
                         onTabSelected = { appViewModel.setHomeTab(it) },
-                        tabTextStyle = MaterialTheme.typography.bodySmall,
                         containerColor = MaterialTheme.colorScheme.background,
                         contentColor = MaterialTheme.colorScheme.onBackground,
                         selectedContentColor = MaterialTheme.colorScheme.primary,
@@ -681,8 +615,7 @@ fun WorkoutsScreen(
                                             selectedWeekEnd = selectedWeekEnd,
                                             completedWeekStarts = completedWeekStarts,
                                             selectedWeekWorkoutsByDate = selectedWeekWorkoutsByDate,
-                                            weeklyWorkoutsByActualTarget = weeklyWorkoutsByActualTarget,
-                                            objectiveProgress = objectiveProgress,
+                                            weeklyProgressSnapshot = selectedWeekSnapshot,
                                             appViewModel = appViewModel,
                                             onDayClicked = { calendarState, day ->
                                                 onDayClicked(
@@ -691,6 +624,17 @@ fun WorkoutsScreen(
                                                 )
                                             },
                                             highlightDay = { day -> highlightDay(day) },
+                                            onSaveWeeklyProgressSelection = { includedWorkoutGlobalIds ->
+                                                appViewModel.setWeeklyProgressOverride(
+                                                    weekStart = selectedWeekStart,
+                                                    includedWorkoutGlobalIds = includedWorkoutGlobalIds
+                                                )
+                                                appViewModel.scheduleWorkoutSave(context)
+                                            },
+                                            onClearWeeklyProgressSelection = {
+                                                appViewModel.clearWeeklyProgressOverride(selectedWeekStart)
+                                                appViewModel.scheduleWorkoutSave(context)
+                                            },
                                             groupedWorkoutsHistories = groupedWorkoutsHistories
                                         )
                                     }

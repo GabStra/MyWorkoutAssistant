@@ -18,6 +18,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.WorkoutObjectiveVersionResolver
+import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
@@ -349,6 +351,14 @@ class AppViewModel(
         initialValue = _state.value.selectedWorkoutPlanId
     )
 
+    val weeklyProgressOverridesFlow: StateFlow<List<WeeklyProgressOverride>> = workoutStoreFlow
+        .map { it.weeklyProgressOverrides }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = _state.value.workoutStore.weeklyProgressOverrides
+        )
+
     private val _groupedWorkoutHistories = MutableStateFlow<Map<LocalDate, List<WorkoutHistory>>?>(null)
     val groupedWorkoutHistories: StateFlow<Map<LocalDate, List<WorkoutHistory>>?> = _groupedWorkoutHistories.asStateFlow()
 
@@ -604,9 +614,27 @@ class AppViewModel(
             isUnassignedPlan(plan) || plan.workoutIds.isNotEmpty()
         }
 
+        val validWorkoutGlobalIds = normalizedWorkouts.map { it.globalId }.toSet()
+        val normalizedWeeklyProgressOverrides = newWorkoutStore.weeklyProgressOverrides
+            .groupBy { it.weekStart }
+            .values
+            .map { overridesForWeek ->
+                val latestOverride = overridesForWeek.last()
+                latestOverride.copy(
+                    includedWorkoutGlobalIds = latestOverride.includedWorkoutGlobalIds
+                        .asSequence()
+                        .filter { it in validWorkoutGlobalIds }
+                        .distinct()
+                        .sortedBy { it.toString() }
+                        .toList()
+                )
+            }
+            .sortedBy { it.weekStart }
+
         return newWorkoutStore.copy(
             workouts = normalizedWorkouts,
-            workoutPlans = cleanedPlans
+            workoutPlans = cleanedPlans,
+            weeklyProgressOverrides = normalizedWeeklyProgressOverrides
         )
     }
 
@@ -654,6 +682,77 @@ class AppViewModel(
     fun updateWorkoutStore(newWorkoutStore: WorkoutStore, triggerSend: Boolean = true) {
         val cleanedWorkoutStore = fixExercisesWithInvalidEquipmentIds(newWorkoutStore)
         setWorkoutStoreState(cleanedWorkoutStore, triggerSend)
+    }
+
+    fun getWeeklyProgressOverride(weekStart: LocalDate): WeeklyProgressOverride? {
+        val canonicalWeekStart = getStartOfWeek(weekStart)
+        return workoutStore.weeklyProgressOverrides.firstOrNull { it.weekStart == canonicalWeekStart }
+    }
+
+    fun setWeeklyProgressOverride(
+        weekStart: LocalDate,
+        includedWorkoutGlobalIds: kotlin.collections.Set<UUID>
+    ) {
+        val canonicalWeekStart = getStartOfWeek(weekStart)
+        val eligibleWorkoutGlobalIds = WorkoutObjectiveVersionResolver
+            .effectiveObjectiveVersionsForWeek(
+                workouts = workouts,
+                weekEnd = getEndOfWeek(canonicalWeekStart)
+            )
+            .keys
+
+        val cleanedOverrides = workoutStore.weeklyProgressOverrides
+            .filterNot { it.weekStart == canonicalWeekStart }
+
+        if (eligibleWorkoutGlobalIds.isEmpty()) {
+            if (cleanedOverrides != workoutStore.weeklyProgressOverrides) {
+                setWorkoutStoreState(
+                    workoutStore.copy(weeklyProgressOverrides = cleanedOverrides)
+                )
+            }
+            return
+        }
+
+        val normalizedIncludedWorkoutGlobalIds = includedWorkoutGlobalIds
+            .asSequence()
+            .filter { it in eligibleWorkoutGlobalIds }
+            .distinct()
+            .sortedBy { it.toString() }
+            .toList()
+
+        if (normalizedIncludedWorkoutGlobalIds.toSet() == eligibleWorkoutGlobalIds) {
+            if (cleanedOverrides != workoutStore.weeklyProgressOverrides) {
+                setWorkoutStoreState(
+                    workoutStore.copy(weeklyProgressOverrides = cleanedOverrides)
+                )
+            }
+            return
+        }
+
+        val updatedOverrides = (cleanedOverrides + WeeklyProgressOverride(
+            weekStart = canonicalWeekStart,
+            includedWorkoutGlobalIds = normalizedIncludedWorkoutGlobalIds
+        )).sortedBy { it.weekStart }
+
+        if (updatedOverrides != workoutStore.weeklyProgressOverrides) {
+            setWorkoutStoreState(
+                workoutStore.copy(weeklyProgressOverrides = updatedOverrides)
+            )
+        }
+    }
+
+    fun clearWeeklyProgressOverride(weekStart: LocalDate) {
+        val canonicalWeekStart = getStartOfWeek(weekStart)
+        val updatedOverrides = workoutStore.weeklyProgressOverrides
+            .filterNot { it.weekStart == canonicalWeekStart }
+
+        if (updatedOverrides.size == workoutStore.weeklyProgressOverrides.size) {
+            return
+        }
+
+        setWorkoutStoreState(
+            workoutStore.copy(weeklyProgressOverrides = updatedOverrides)
+        )
     }
     
     /**

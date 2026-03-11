@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.adapters
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.google.gson.*
@@ -27,6 +28,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val equipmentsType = object : TypeToken<List<WeightLoadedEquipment>>() {}.type
         val accessoryEquipmentsType = object : TypeToken<List<AccessoryEquipment>>() {}.type
         val workoutPlansType = object : TypeToken<List<WorkoutPlan>>() {}.type
+        val weeklyProgressOverridesType = object : TypeToken<List<WeeklyProgressOverride>>() {}.type
         
         // Safely get list fields, defaulting to empty lists if null or missing
         val workouts = jsonObject.get("workouts")?.let {
@@ -43,6 +45,14 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         
         val workoutPlans = jsonObject.get("workoutPlans")?.let {
             if (it.isJsonNull) emptyList<WorkoutPlan>() else context.deserialize(it, workoutPlansType)
+        } ?: emptyList()
+
+        val weeklyProgressOverrides = jsonObject.get("weeklyProgressOverrides")?.let {
+            if (it.isJsonNull) {
+                emptyList<WeeklyProgressOverride>()
+            } else {
+                context.deserialize(it, weeklyProgressOverridesType)
+            }
         } ?: emptyList()
         
         val polarDeviceId = jsonObject.get("polarDeviceId")?.let {
@@ -64,6 +74,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             equipments = equipments,
             accessoryEquipments = accessoryEquipments,
             workoutPlans = workoutPlans,
+            weeklyProgressOverrides = weeklyProgressOverrides,
             polarDeviceId = polarDeviceId,
             birthDateYear = birthDateYear,
             weightKg = weightKg,
