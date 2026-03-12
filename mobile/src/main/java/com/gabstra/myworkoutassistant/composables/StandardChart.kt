@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import android.view.MotionEvent
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
@@ -15,11 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -158,7 +155,6 @@ fun StandardChart(
 ) {
     val onBackgroundColor = MaterialTheme.colorScheme.onBackground
     val onBackgroundColorArgb = onBackgroundColor.toArgb()
-    val parentView = LocalView.current.parent
     val chartNestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPostScroll(
@@ -230,22 +226,7 @@ fun StandardChart(
                         .padding(horizontal = 10.dp)
                         .padding(bottom = 10.dp)
                         .nestedScroll(chartNestedScrollConnection)
-                        .pointerInteropFilter { motionEvent ->
-                            when (motionEvent.actionMasked) {
-                                MotionEvent.ACTION_DOWN,
-                                MotionEvent.ACTION_MOVE -> {
-                                    parentView?.requestDisallowInterceptTouchEvent(true)
-                                    onInteractionChange?.invoke(true)
-                                }
-
-                                MotionEvent.ACTION_UP,
-                                MotionEvent.ACTION_CANCEL -> {
-                                    parentView?.requestDisallowInterceptTouchEvent(false)
-                                    onInteractionChange?.invoke(false)
-                                }
-                            }
-                            false
-                        },
+                        .chartTouchInterop(onInteractionChange = onInteractionChange),
                     zoomState = rememberVicoZoomState(
                         initialZoom = Zoom.Content,
                         zoomEnabled = isZoomEnabled
