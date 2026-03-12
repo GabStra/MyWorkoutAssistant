@@ -19,7 +19,7 @@ val WorkoutPagerHeaderReservedHeight =
     WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding + WorkoutPagerLayoutTokens.WorkoutHeaderHeight
 
 val WorkoutPagerPageSafeAreaPadding = PaddingValues(
-    top = WorkoutPagerHeaderReservedHeight + 2.5.dp,
+    top = WorkoutPagerHeaderReservedHeight,
     bottom = WorkoutPagerLayoutTokens.HorizontalPagerBottomContentPadding
 )
 
