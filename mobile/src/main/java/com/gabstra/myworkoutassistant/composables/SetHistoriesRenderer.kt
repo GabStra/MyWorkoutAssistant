@@ -88,15 +88,12 @@ fun SetHistoriesRenderer(
                 }
 
                 is BodyWeightSetData -> {
-                    val totalWeight = setData.getWeight()
-                    val weightText = if (totalWeight > 0) {
-                        equipment?.formatWeight(totalWeight) ?: "$totalWeight kg"
-                    } else {
-                        "-"
-                    }
                     rows += SetTableRowUiModel.Data(
                         identifier = index.toString(),
-                        primaryValue = weightText,
+                        primaryValue = formatHistoricalBodyWeightSetValue(
+                            setData = setData,
+                            equipment = equipment
+                        ),
                         secondaryValue = "${setData.actualReps}",
                     )
                 }

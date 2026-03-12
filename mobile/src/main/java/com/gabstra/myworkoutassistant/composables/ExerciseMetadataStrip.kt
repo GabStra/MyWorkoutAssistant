@@ -57,7 +57,7 @@ fun ExerciseMetadataStrip(
             sideIndicator?.takeIf { it.isNotBlank() }?.let { add(it) }
             if (isUnilateral) add("Unilateral")
             equipmentName?.takeIf { it.isNotBlank() }?.let { add("Equipment: $it") }
-            accessoryNames?.takeIf { it.isNotBlank() }?.let { add("Accessory: $it") }
+            accessoryNames?.takeIf { it.isNotBlank() }?.let { add("Accessories: $it") }
         }
     }
 

@@ -71,10 +71,7 @@ private fun formatSetValue(history: SetHistory, equipment: WeightLoadedEquipment
             "$weightStr x ${setData.actualReps}"
         }
         is BodyWeightSetData -> {
-            val totalKg = setData.getWeight()
-            val weightStr = if (totalKg > 0) equipment?.formatWeight(totalKg) ?: "$totalKg kg" else "-"
-            val extra = if (setData.additionalWeight > 0) " (+${setData.additionalWeight} kg added)" else ""
-            "$weightStr x ${setData.actualReps}$extra"
+            "${formatHistoricalBodyWeightSetValue(setData, equipment)} x ${setData.actualReps}"
         }
         is TimedDurationSetData -> {
             val elapsedSec = (setData.startTimer - setData.endTimer).coerceAtLeast(0) / 1000
