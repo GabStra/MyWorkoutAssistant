@@ -818,7 +818,7 @@ private fun HeartRateView(
                     contentDescription = "Disconnected",
                     modifier = Modifier
                         .size(15.dp)
-                        .offset(y = (-15).dp)
+                        .offset(y = (-5).dp)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
                 )
@@ -827,7 +827,7 @@ private fun HeartRateView(
                     modifier = Modifier
                         .width(120.dp)
                         .height(25.dp)
-                        .offset(y = (-15).dp)
+                        .offset(y = (-5).dp)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
                     bpm = hr,
