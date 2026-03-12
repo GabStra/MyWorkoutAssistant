@@ -105,22 +105,22 @@ fun WorkoutsStatusTab(
         val dialogScrollState = rememberScrollState()
         StandardDialog(
             onDismissRequest = { showWeeklyProgressDialog = false },
-            title = "Weekly progress selection",
+            title = "Weekly progress rule",
             body = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Only the selected workouts will count toward weekly progress for $selectedWeekLabel.",
+                        text = "The selected workouts will count toward weekly progress starting from $selectedWeekLabel until you save another rule later.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
 
-                    if (weeklyProgressSnapshot.hasOverride) {
+                    if (weeklyProgressSnapshot.isOverrideBoundary) {
                         AppSecondaryButton(
                             modifier = Modifier.fillMaxWidth(),
-                            text = "Clear custom selection",
+                            text = "Remove saved starting point",
                             onClick = {
                                 showWeeklyProgressDialog = false
                                 onClearWeeklyProgressSelection()
@@ -213,6 +213,11 @@ fun WorkoutsStatusTab(
             .verticalColumnScrollbarContainer(scrollState),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        val overrideStartLabel = remember(weeklyProgressSnapshot.effectiveOverrideWeekStart, currentLocale) {
+            weeklyProgressSnapshot.effectiveOverrideWeekStart?.format(
+                DateTimeFormatter.ofPattern("d MMM yyyy", currentLocale)
+            )
+        }
         StyledCard {
             WorkoutsCalendar(
                 selectedDate = selectedDate,
@@ -270,9 +275,9 @@ fun WorkoutsStatusTab(
                                 minHeight = 36.dp,
                             )
                         }
-                        if (weeklyProgressSnapshot.hasOverride) {
+                        if (weeklyProgressSnapshot.hasOverride && !weeklyProgressSnapshot.isOverrideBoundary) {
                             Text(
-                                text = "Custom selection active",
+                                text = "Saved rule active since ${overrideStartLabel ?: selectedWeekLabel}",
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.bodySmall,
                             )

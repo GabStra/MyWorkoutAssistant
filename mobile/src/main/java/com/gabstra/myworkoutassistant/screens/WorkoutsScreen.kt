@@ -241,8 +241,9 @@ fun WorkoutsScreen(
         return WeeklyProgressResolver.resolveForWeek(
             workouts = workouts,
             workoutHistoriesInWeek = workoutHistoriesInWeek,
+            weekStart = weekStart,
             weekEnd = endOfWeek,
-            weeklyProgressOverride = weeklyProgressOverrides.firstOrNull { it.weekStart == weekStart }
+            weeklyProgressOverrides = weeklyProgressOverrides
         )
     }
 

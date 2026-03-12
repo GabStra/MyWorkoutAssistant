@@ -686,7 +686,10 @@ class AppViewModel(
 
     fun getWeeklyProgressOverride(weekStart: LocalDate): WeeklyProgressOverride? {
         val canonicalWeekStart = getStartOfWeek(weekStart)
-        return workoutStore.weeklyProgressOverrides.firstOrNull { it.weekStart == canonicalWeekStart }
+        return workoutStore.weeklyProgressOverrides
+            .asSequence()
+            .filter { !it.weekStart.isAfter(canonicalWeekStart) }
+            .maxByOrNull { it.weekStart }
     }
 
     fun setWeeklyProgressOverride(
@@ -700,12 +703,12 @@ class AppViewModel(
                 weekEnd = getEndOfWeek(canonicalWeekStart)
             )
             .keys
-
-        val cleanedOverrides = workoutStore.weeklyProgressOverrides
+        val existingOverrides = workoutStore.weeklyProgressOverrides
+        val cleanedOverrides = existingOverrides
             .filterNot { it.weekStart == canonicalWeekStart }
 
         if (eligibleWorkoutGlobalIds.isEmpty()) {
-            if (cleanedOverrides != workoutStore.weeklyProgressOverrides) {
+            if (cleanedOverrides != existingOverrides) {
                 setWorkoutStoreState(
                     workoutStore.copy(weeklyProgressOverrides = cleanedOverrides)
                 )
@@ -720,8 +723,19 @@ class AppViewModel(
             .sortedBy { it.toString() }
             .toList()
 
-        if (normalizedIncludedWorkoutGlobalIds.toSet() == eligibleWorkoutGlobalIds) {
-            if (cleanedOverrides != workoutStore.weeklyProgressOverrides) {
+        val previousEffectiveIncludedWorkoutGlobalIds = cleanedOverrides
+            .asSequence()
+            .filter { !it.weekStart.isAfter(canonicalWeekStart) }
+            .maxByOrNull { it.weekStart }
+            ?.includedWorkoutGlobalIds
+            ?.asSequence()
+            ?.filter { it in eligibleWorkoutGlobalIds }
+            ?.distinct()
+            ?.toSet()
+            ?: eligibleWorkoutGlobalIds
+
+        if (normalizedIncludedWorkoutGlobalIds.toSet() == previousEffectiveIncludedWorkoutGlobalIds) {
+            if (cleanedOverrides != existingOverrides) {
                 setWorkoutStoreState(
                     workoutStore.copy(weeklyProgressOverrides = cleanedOverrides)
                 )
@@ -734,7 +748,7 @@ class AppViewModel(
             includedWorkoutGlobalIds = normalizedIncludedWorkoutGlobalIds
         )).sortedBy { it.weekStart }
 
-        if (updatedOverrides != workoutStore.weeklyProgressOverrides) {
+        if (updatedOverrides != existingOverrides) {
             setWorkoutStoreState(
                 workoutStore.copy(weeklyProgressOverrides = updatedOverrides)
             )
