@@ -9,6 +9,8 @@ data class WeeklyProgressSnapshot(
     val eligibleWorkouts: List<Workout> = emptyList(),
     val includedWorkoutGlobalIds: Set<UUID> = emptySet(),
     val hasOverride: Boolean = false,
+    val effectiveOverrideWeekStart: LocalDate? = null,
+    val isOverrideBoundary: Boolean = false,
 ) {
     val excludedWorkoutGlobalIds: Set<UUID>
         get() = if (!hasOverride) {
@@ -24,9 +26,14 @@ object WeeklyProgressResolver {
     fun resolveForWeek(
         workouts: List<Workout>,
         workoutHistoriesInWeek: List<WorkoutHistory>,
+        weekStart: LocalDate,
         weekEnd: LocalDate,
-        weeklyProgressOverride: WeeklyProgressOverride?,
+        weeklyProgressOverrides: List<WeeklyProgressOverride>,
     ): WeeklyProgressSnapshot {
+        val effectiveOverride = weeklyProgressOverrides
+            .asSequence()
+            .filter { !it.weekStart.isAfter(weekStart) }
+            .maxByOrNull { it.weekStart }
         val effectiveObjectiveWorkoutsByGlobalId =
             WorkoutObjectiveVersionResolver.effectiveObjectiveVersionsForWeek(
                 workouts = workouts,
@@ -34,14 +41,18 @@ object WeeklyProgressResolver {
             )
 
         if (effectiveObjectiveWorkoutsByGlobalId.isEmpty()) {
-            return WeeklyProgressSnapshot(hasOverride = weeklyProgressOverride != null)
+            return WeeklyProgressSnapshot(
+                hasOverride = effectiveOverride != null,
+                effectiveOverrideWeekStart = effectiveOverride?.weekStart,
+                isOverrideBoundary = effectiveOverride?.weekStart == weekStart,
+            )
         }
 
         val eligibleWorkouts = effectiveObjectiveWorkoutsByGlobalId.values
             .sortedWith(compareBy<Workout> { it.order }.thenBy { it.id })
         val eligibleWorkoutGlobalIds = effectiveObjectiveWorkoutsByGlobalId.keys
-        val includedWorkoutGlobalIds = if (weeklyProgressOverride != null) {
-            weeklyProgressOverride.includedWorkoutGlobalIds
+        val includedWorkoutGlobalIds = if (effectiveOverride != null) {
+            effectiveOverride.includedWorkoutGlobalIds
                 .asSequence()
                 .filter { it in eligibleWorkoutGlobalIds }
                 .toSet()
@@ -85,7 +96,9 @@ object WeeklyProgressResolver {
             objectiveProgress = objectiveProgress,
             eligibleWorkouts = eligibleWorkouts,
             includedWorkoutGlobalIds = includedWorkoutGlobalIds,
-            hasOverride = weeklyProgressOverride != null,
+            hasOverride = effectiveOverride != null,
+            effectiveOverrideWeekStart = effectiveOverride?.weekStart,
+            isOverrideBoundary = effectiveOverride?.weekStart == weekStart,
         )
     }
 }

@@ -81,8 +81,9 @@ class WeeklyProgressResolverTest {
                 history(workoutA.id, workoutA.globalId, LocalDate.of(2025, 3, 5)),
                 history(workoutB.id, workoutB.globalId, LocalDate.of(2025, 3, 7)),
             ),
+            weekStart = LocalDate.of(2025, 3, 3),
             weekEnd = weekEnd,
-            weeklyProgressOverride = null
+            weeklyProgressOverrides = emptyList()
         )
 
         assertEquals(2, snapshot.weeklyWorkoutsByActualTarget.size)
@@ -91,6 +92,7 @@ class WeeklyProgressResolverTest {
         assertEquals(1.0, snapshot.objectiveProgress, 0.0)
         assertEquals(setOf(workoutA.globalId, workoutB.globalId), snapshot.includedWorkoutGlobalIds)
         assertTrue(snapshot.excludedWorkoutGlobalIds.isEmpty())
+        assertTrue(!snapshot.hasOverride)
     }
 
     @Test
@@ -117,10 +119,13 @@ class WeeklyProgressResolverTest {
                 history(workoutA.id, workoutA.globalId, LocalDate.of(2025, 3, 3)),
                 history(workoutB.id, workoutB.globalId, LocalDate.of(2025, 3, 7)),
             ),
+            weekStart = LocalDate.of(2025, 3, 3),
             weekEnd = weekEnd,
-            weeklyProgressOverride = WeeklyProgressOverride(
-                weekStart = LocalDate.of(2025, 3, 3),
-                includedWorkoutGlobalIds = listOf(workoutA.globalId)
+            weeklyProgressOverrides = listOf(
+                WeeklyProgressOverride(
+                    weekStart = LocalDate.of(2025, 3, 3),
+                    includedWorkoutGlobalIds = listOf(workoutA.globalId)
+                )
             )
         )
 
@@ -129,6 +134,8 @@ class WeeklyProgressResolverTest {
         assertEquals(0.5, snapshot.objectiveProgress, 0.0)
         assertEquals(setOf(workoutA.globalId), snapshot.includedWorkoutGlobalIds)
         assertEquals(setOf(workoutB.globalId), snapshot.excludedWorkoutGlobalIds)
+        assertTrue(snapshot.hasOverride)
+        assertTrue(snapshot.isOverrideBoundary)
     }
 
     @Test
@@ -155,10 +162,13 @@ class WeeklyProgressResolverTest {
             workoutHistoriesInWeek = listOf(
                 history(versionA.id, globalId, LocalDate.of(2025, 3, 11))
             ),
+            weekStart = LocalDate.of(2025, 3, 10),
             weekEnd = weekEnd,
-            weeklyProgressOverride = WeeklyProgressOverride(
-                weekStart = LocalDate.of(2025, 3, 10),
-                includedWorkoutGlobalIds = listOf(globalId)
+            weeklyProgressOverrides = listOf(
+                WeeklyProgressOverride(
+                    weekStart = LocalDate.of(2025, 3, 10),
+                    includedWorkoutGlobalIds = listOf(globalId)
+                )
             )
         )
 
@@ -188,10 +198,13 @@ class WeeklyProgressResolverTest {
                 history(workoutA.id, workoutA.globalId, LocalDate.of(2025, 3, 3)),
                 history(workoutB.id, workoutB.globalId, LocalDate.of(2025, 3, 7)),
             ),
+            weekStart = LocalDate.of(2025, 3, 3),
             weekEnd = weekEnd,
-            weeklyProgressOverride = WeeklyProgressOverride(
-                weekStart = LocalDate.of(2025, 3, 3),
-                includedWorkoutGlobalIds = emptyList()
+            weeklyProgressOverrides = listOf(
+                WeeklyProgressOverride(
+                    weekStart = LocalDate.of(2025, 3, 3),
+                    includedWorkoutGlobalIds = emptyList()
+                )
             )
         )
 
@@ -199,5 +212,49 @@ class WeeklyProgressResolverTest {
         assertEquals(0.0, snapshot.objectiveProgress, 0.0)
         assertEquals(setOf(workoutA.globalId, workoutB.globalId), snapshot.excludedWorkoutGlobalIds)
         assertTrue(snapshot.includedWorkoutGlobalIds.isEmpty())
+    }
+
+    @Test
+    fun latestPriorOverride_appliesUntilReplaced() {
+        val weekStart = LocalDate.of(2025, 3, 10)
+        val weekEnd = LocalDate.of(2025, 3, 16)
+        val workoutA = workout(
+            globalId = UUID.randomUUID(),
+            creationDate = LocalDate.of(2025, 3, 3),
+            target = 2,
+            order = 0,
+            name = "A"
+        )
+        val workoutB = workout(
+            globalId = UUID.randomUUID(),
+            creationDate = LocalDate.of(2025, 3, 3),
+            target = 1,
+            order = 1,
+            name = "B"
+        )
+
+        val snapshot = WeeklyProgressResolver.resolveForWeek(
+            workouts = listOf(workoutA, workoutB),
+            workoutHistoriesInWeek = listOf(
+                history(workoutA.id, workoutA.globalId, LocalDate.of(2025, 3, 10)),
+                history(workoutB.id, workoutB.globalId, LocalDate.of(2025, 3, 11)),
+            ),
+            weekStart = weekStart,
+            weekEnd = weekEnd,
+            weeklyProgressOverrides = listOf(
+                WeeklyProgressOverride(
+                    weekStart = LocalDate.of(2025, 3, 3),
+                    includedWorkoutGlobalIds = listOf(workoutA.globalId)
+                ),
+                WeeklyProgressOverride(
+                    weekStart = LocalDate.of(2025, 3, 17),
+                    includedWorkoutGlobalIds = listOf(workoutB.globalId)
+                )
+            )
+        )
+
+        assertEquals(setOf(workoutA.globalId), snapshot.includedWorkoutGlobalIds)
+        assertEquals(LocalDate.of(2025, 3, 3), snapshot.effectiveOverrideWeekStart)
+        assertTrue(!snapshot.isOverrideBoundary)
     }
 }
