@@ -41,6 +41,11 @@ private val DefaultSetTableHeader = SetTableHeaderUiModel(
     secondaryLabel = "DETAIL",
 )
 
+private const val SetColumnWeight = 1f
+private const val WeightColumnWeight = 2f
+private const val RepsColumnWeight = 1f
+private const val TimeColumnWeight = 3f
+
 fun inferSetTableHeader(rows: List<SetTableRowUiModel>): SetTableHeaderUiModel {
     val dataRows = rows.filterIsInstance<SetTableRowUiModel.Data>()
     if (dataRows.isEmpty()) return DefaultSetTableHeader
@@ -49,8 +54,14 @@ fun inferSetTableHeader(rows: List<SetTableRowUiModel>): SetTableHeaderUiModel {
     val hasPrimaryOnly = dataRows.any { it.secondaryValue.isNullOrBlank() }
 
     return when {
-        hasSecondary && !hasPrimaryOnly -> SetTableHeaderUiModel(primaryLabel = "WEIGHT", secondaryLabel = "REPS")
-        !hasSecondary -> SetTableHeaderUiModel(primaryLabel = "TIME", secondaryLabel = null)
+        hasSecondary && !hasPrimaryOnly -> SetTableHeaderUiModel(
+            primaryLabel = "WEIGHT (KG)",
+            secondaryLabel = "REPS"
+        )
+        !hasSecondary -> SetTableHeaderUiModel(
+            primaryLabel = "TIME (HH:MM:SS)",
+            secondaryLabel = null
+        )
         else -> DefaultSetTableHeader
     }
 }
@@ -115,6 +126,9 @@ private fun SetTableHeaderRow(
     header: SetTableHeaderUiModel,
     headerColor: androidx.compose.ui.graphics.Color,
 ) {
+    val hasSecondaryColumn = header.secondaryLabel != null
+    val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -122,21 +136,21 @@ private fun SetTableHeaderRow(
     ) {
         Text(
             text = header.setLabel,
-            modifier = Modifier.weight(0.8f),
+            modifier = Modifier.weight(SetColumnWeight),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = headerColor,
             textAlign = TextAlign.Center,
         )
         Text(
             text = header.primaryLabel,
-            modifier = Modifier.weight(1.2f),
+            modifier = Modifier.weight(primaryColumnWeight),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = headerColor,
             textAlign = TextAlign.Center,
         )
         Text(
             text = header.secondaryLabel ?: "",
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(RepsColumnWeight),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = headerColor,
             textAlign = TextAlign.Center,
@@ -149,6 +163,9 @@ private fun SetTableDataRow(
     row: SetTableRowUiModel.Data,
     textColor: androidx.compose.ui.graphics.Color,
 ) {
+    val hasSecondaryColumn = !row.secondaryValue.isNullOrBlank()
+    val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
+
     val rowModifier = if (row.onClick != null) {
         Modifier
             .fillMaxWidth()
@@ -164,14 +181,14 @@ private fun SetTableDataRow(
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = row.identifier,
-                modifier = Modifier.weight(0.8f),
+                modifier = Modifier.weight(SetColumnWeight),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = row.primaryValue,
-                modifier = Modifier.weight(1.2f),
+                modifier = Modifier.weight(primaryColumnWeight),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = if (row.monospacePrimary) FontFamily.Monospace else null,
@@ -181,7 +198,7 @@ private fun SetTableDataRow(
             )
             Text(
                 text = row.secondaryValue.orEmpty(),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(RepsColumnWeight),
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = textColor,
                 textAlign = TextAlign.Center,
