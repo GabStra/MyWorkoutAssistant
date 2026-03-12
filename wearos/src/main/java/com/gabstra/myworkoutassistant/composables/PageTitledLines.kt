@@ -1,27 +1,22 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
-import androidx.wear.compose.material3.lazy.TransformationVariableSpec
-import androidx.wear.compose.material3.lazy.rememberTransformationSpec
-import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import java.util.Locale.getDefault
 
@@ -65,19 +60,7 @@ fun PageTitledLines(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {
-    val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
-    val spec = rememberTransformationSpec(
-        ResponsiveTransformationSpec.smallScreen(
-            containerAlpha = TransformationVariableSpec(1f),
-            contentAlpha = TransformationVariableSpec(1f),
-            scale = TransformationVariableSpec(0.7f)
-        ),
-        ResponsiveTransformationSpec.largeScreen(
-            containerAlpha = TransformationVariableSpec(1f),
-            contentAlpha = TransformationVariableSpec(1f),
-            scale = TransformationVariableSpec(0.6f)
-        )
-    )
+    val state = rememberLazyListState()
 
     ScreenScaffold(
         modifier = modifier,
@@ -92,17 +75,15 @@ fun PageTitledLines(
             )
         }
     ) { _ ->
-        TransformingLazyColumn(
+        LazyColumn(
             modifier = Modifier.padding(horizontal = 10.dp),
             state = state,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(sections.size) { index ->
+            items(sections) { section ->
                 TitledLinesSectionItem(
-                    section = sections[index],
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .transformedHeight(this, spec)
-                        .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                    section = section,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
