@@ -29,22 +29,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.ControlButtonsVertical
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
 import com.gabstra.myworkoutassistant.composables.ExerciseSetsTableHeader
+import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
 import com.gabstra.myworkoutassistant.composables.PageNotes
@@ -58,18 +62,26 @@ import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPaddin
 import com.gabstra.myworkoutassistant.composables.buildSetIdentifier
 import com.gabstra.myworkoutassistant.composables.buildUnilateralSideBadge
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
+import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
+import java.util.UUID
 
 private enum class RestHorizontalPage {
     BUTTONS,
@@ -79,6 +91,8 @@ private enum class RestHorizontalPage {
     NOTES,
     EXERCISES
 }
+
+private val REST_PREVIEW_FIXED_NOW: LocalDateTime = LocalDateTime.of(2026, 1, 1, 12, 0)
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalHorologistApi::class)
 @Composable
@@ -619,4 +633,152 @@ fun RestScreen(
             else viewModel.reEvaluateDimmingForCurrentState()
         }
     )
+}
+
+private data class RestPreviewFixture(
+    val viewModel: AppViewModel,
+    val state: WorkoutState.Rest,
+)
+
+private fun buildRestPreviewFixture(): RestPreviewFixture {
+    val viewModel = AppViewModel()
+    val exerciseId = UUID.fromString("30000000-0000-0000-0000-000000000001")
+    val nextExerciseId = UUID.fromString("30000000-0000-0000-0000-000000000002")
+    val restSet = RestSet(
+        id = UUID.fromString("40000000-0000-0000-0000-000000000001"),
+        timeInSeconds = 90
+    )
+    val nextSet = WeightSet(
+        id = UUID.fromString("40000000-0000-0000-0000-000000000002"),
+        reps = 8,
+        weight = 80.0
+    )
+
+    val nextExercise = Exercise(
+        id = nextExerciseId,
+        enabled = true,
+        name = "Bench Press",
+        doNotStoreHistory = false,
+        notes = "",
+        sets = listOf(nextSet),
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 0.0,
+        minReps = 6,
+        maxReps = 10,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        keepScreenOn = false,
+        showCountDownTimer = false,
+        requiresLoadCalibration = false
+    )
+    val currentExercise = Exercise(
+        id = exerciseId,
+        enabled = true,
+        name = "Incline Dumbbell Press",
+        doNotStoreHistory = false,
+        notes = "",
+        sets = listOf(restSet),
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 0.0,
+        minReps = 8,
+        maxReps = 12,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        keepScreenOn = false,
+        showCountDownTimer = false,
+        requiresLoadCalibration = false
+    )
+
+    val nextState = WorkoutState.Set(
+        exerciseId = nextExerciseId,
+        set = nextSet,
+        setIndex = 0u,
+        previousSetData = WeightSetData(8, 77.5, 620.0),
+        currentSetDataState = mutableStateOf(WeightSetData(8, 80.0, 640.0)),
+        hasNoHistory = false,
+        startTime = null,
+        skipped = false,
+        currentBodyWeight = 75.0,
+        streak = 1,
+        progressionState = ProgressionState.PROGRESS,
+        isWarmupSet = false,
+        equipmentId = null
+    )
+    val restState = WorkoutState.Rest(
+        set = restSet,
+        order = 1u,
+        currentSetDataState = mutableStateOf(RestSetData(startTimer = 90, endTimer = 45)),
+        exerciseId = exerciseId,
+        nextState = nextState,
+        startTime = REST_PREVIEW_FIXED_NOW.minusSeconds(45)
+    )
+
+    viewModel.exercisesById = mapOf(
+        currentExercise.id to currentExercise,
+        nextExercise.id to nextExercise
+    )
+    viewModel.supersetIdByExerciseId = emptyMap()
+    viewModel.exercisesBySupersetId = emptyMap()
+
+    val stateMachine = WorkoutStateMachine.fromStates(
+        listOf(restState, nextState),
+        { REST_PREVIEW_FIXED_NOW },
+        startIndex = 0
+    )
+    setFieldValue(viewModel, "stateMachine", stateMachine)
+    setCurrentWorkoutState(viewModel, restState)
+    viewModel.pauseWorkout()
+
+    return RestPreviewFixture(viewModel = viewModel, state = restState)
+}
+
+@Preview(
+    name = "Rest Timer",
+    group = "RestScreen",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun RestScreenPreview() {
+    val fixture = remember { buildRestPreviewFixture() }
+    val context = LocalContext.current
+    val navController = remember(context) { NavController(context) }
+    val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
+    val heartRateChangeViewModel = remember { HeartRateChangeViewModel() }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            fixture.viewModel.workoutTimerService.unregisterAll()
+        }
+    }
+
+    MyWorkoutAssistantTheme {
+        RestScreen(
+            viewModel = fixture.viewModel,
+            hapticsViewModel = hapticsViewModel,
+            state = fixture.state,
+            hearthRateChart = { modifier ->
+                HeartRateCircularChart(
+                    modifier = modifier,
+                    appViewModel = fixture.viewModel,
+                    hapticsViewModel = hapticsViewModel,
+                    heartRateChangeViewModel = heartRateChangeViewModel,
+                    hr = 128,
+                    age = 30,
+                    measuredMaxHeartRate = null,
+                    restingHeartRate = null,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null
+                )
+            },
+            onTimerEnd = {},
+            navController = navController
+        )
+    }
 }
