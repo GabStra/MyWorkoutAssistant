@@ -2219,14 +2219,10 @@ open class WorkoutViewModel(
 
         launchIO {
             val exercise = exercisesById[currentState.exerciseId] ?: return@launchIO
-            val programmedWorkWeight = when (val set = currentState.set) {
-                is WeightSet -> set.weight
-                is BodyWeightSet -> set.additionalWeight
-                else -> extractWorkWeight(currentState.currentSetData)
-            }
+            val selectedWorkWeight = extractWorkWeight(currentState.currentSetData)
             val adjustedWeight = adjustmentMultiplier?.let { multiplier ->
-                programmedWorkWeight * multiplier
-            } ?: CalibrationHelper.applyCalibrationAdjustment(programmedWorkWeight, rir, formBreaks = false)
+                selectedWorkWeight * multiplier
+            } ?: CalibrationHelper.applyCalibrationAdjustment(selectedWorkWeight, rir, formBreaks = false)
             val equipment = currentState.equipmentId?.let { getEquipmentById(it) }
             val availableWeights = getWeightByEquipment(equipment).ifEmpty {
                 equipment?.getWeightsCombinations() ?: emptySet()
@@ -2239,12 +2235,16 @@ open class WorkoutViewModel(
                 }.toSet()
             }
 
-            val (updatedSets, setUpdates) = updateWorkSetsInExercise(
-                exercise,
-                adjustedWeight,
-                availableWeights,
-                indicesToUpdate = subsequentIndices
-            )
+            val (updatedSets, setUpdates) = if (adjustmentMultiplier != null && adjustmentMultiplier != 1.0) {
+                updateWorkSetsInExercise(
+                    exercise,
+                    adjustedWeight,
+                    availableWeights,
+                    indicesToUpdate = subsequentIndices
+                )
+            } else {
+                exercise.sets to emptyMap()
+            }
             updateWorkout(exercise, exercise.copy(sets = updatedSets))
 
             withContext(dispatchers.main) {
