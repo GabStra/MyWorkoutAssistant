@@ -20,6 +20,8 @@ class PhoneSyncResetStateTest {
             db.workoutHistoryDao().deleteAll()
             db.setHistoryDao().deleteAll()
             db.workoutRecordDao().deleteAll()
+            db.exerciseInfoDao().deleteAll()
+            db.exerciseSessionProgressionDao().deleteAll()
 
             WorkManager.getInstance(context).cancelUniqueWork("mobile_sync_to_watch")
         }

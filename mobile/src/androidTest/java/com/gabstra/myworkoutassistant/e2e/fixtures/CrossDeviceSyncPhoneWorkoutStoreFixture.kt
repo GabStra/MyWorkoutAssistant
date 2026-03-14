@@ -15,23 +15,45 @@ import java.util.UUID
 object CrossDeviceSyncPhoneWorkoutStoreFixture {
     const val WORKOUT_NAME = "Cross Device Sync Workout"
     const val CALIBRATION_WORKOUT_NAME = "Cross Device Calibration Workout"
-    const val SET_A1_EXPECTED_REPS = 8  // modified during workout
-    const val SET_A2_EXPECTED_REPS = 6
-    const val SET_B1_EXPECTED_REPS = 12
-    const val SET_C1_EXPECTED_REPS = 10
-    const val SET_D1_EXPECTED_REPS = 9  // modified during workout
-    const val SET_D2_EXPECTED_REPS = 6
+    /**
+     * Template values written into the phone workout_store before cross-device sync begins.
+     * Wear applies workout progression before the session starts, so these are not the same
+     * as the final executed values asserted after the producer run.
+     */
+    const val SET_A1_TEMPLATE_REPS = 7
+    const val SET_A2_TEMPLATE_REPS = 6
+    const val SET_B1_TEMPLATE_REPS = 12
+    const val SET_C1_TEMPLATE_REPS = 10
+    const val SET_D1_TEMPLATE_REPS = 8
+    const val SET_D2_TEMPLATE_REPS = 6
+    const val SET_A1_TEMPLATE_WEIGHT = 40.0
+    const val SET_A2_TEMPLATE_WEIGHT = 50.0
+    const val SET_B1_TEMPLATE_WEIGHT = 30.0
+    const val SET_C1_TEMPLATE_WEIGHT = 20.0
+    const val SET_D1_TEMPLATE_WEIGHT = 60.0
+    const val SET_D2_TEMPLATE_WEIGHT = 70.0
+
+    /**
+     * Expected final values after the watch executes the progressed workout plan and applies
+     * deterministic +1 rep edits on A1 and D1.
+     */
+    const val SET_A1_EXPECTED_REPS = 7
+    const val SET_A2_EXPECTED_REPS = 4
+    const val SET_B1_EXPECTED_REPS = 13
+    const val SET_C1_EXPECTED_REPS = 11
+    const val SET_D1_EXPECTED_REPS = 7
+    const val SET_D2_EXPECTED_REPS = 4
     const val WEIGHT_TOLERANCE = 0.01
     const val PHONE_TO_WEAR_HISTORY_A1_REPS = 11
     const val PHONE_TO_WEAR_HISTORY_A1_WEIGHT = 42.5
     const val PHONE_TO_WEAR_HISTORY_A2_REPS = 9
     const val PHONE_TO_WEAR_HISTORY_A2_WEIGHT = 52.5
 
-    const val SET_A1_EXPECTED_WEIGHT = 40.0
+    const val SET_A1_EXPECTED_WEIGHT = 50.0
     const val SET_A2_EXPECTED_WEIGHT = 50.0
     const val SET_B1_EXPECTED_WEIGHT = 30.0
     const val SET_C1_EXPECTED_WEIGHT = 20.0
-    const val SET_D1_EXPECTED_WEIGHT = 60.0
+    const val SET_D1_EXPECTED_WEIGHT = 70.0
     const val SET_D2_EXPECTED_WEIGHT = 70.0
     const val CALIBRATION_SET_EXPECTED_REPS = 8
 
@@ -65,8 +87,8 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             doNotStoreHistory = false,
             notes = "",
             sets = listOf(
-                WeightSet(id = SET_A1_ID, reps = 7, weight = SET_A1_EXPECTED_WEIGHT),
-                WeightSet(id = SET_A2_ID, reps = SET_A2_EXPECTED_REPS, weight = SET_A2_EXPECTED_WEIGHT)
+                WeightSet(id = SET_A1_ID, reps = SET_A1_TEMPLATE_REPS, weight = SET_A1_TEMPLATE_WEIGHT),
+                WeightSet(id = SET_A2_ID, reps = SET_A2_TEMPLATE_REPS, weight = SET_A2_TEMPLATE_WEIGHT)
             ),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
@@ -93,7 +115,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             name = "Complex B",
             doNotStoreHistory = false,
             notes = "",
-            sets = listOf(WeightSet(id = SET_B1_ID, reps = SET_B1_EXPECTED_REPS, weight = SET_B1_EXPECTED_WEIGHT)),
+            sets = listOf(WeightSet(id = SET_B1_ID, reps = SET_B1_TEMPLATE_REPS, weight = SET_B1_TEMPLATE_WEIGHT)),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
             maxLoadPercent = 100.0,
@@ -119,7 +141,7 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             name = "Complex C",
             doNotStoreHistory = false,
             notes = "",
-            sets = listOf(WeightSet(id = SET_C1_ID, reps = SET_C1_EXPECTED_REPS, weight = SET_C1_EXPECTED_WEIGHT)),
+            sets = listOf(WeightSet(id = SET_C1_ID, reps = SET_C1_TEMPLATE_REPS, weight = SET_C1_TEMPLATE_WEIGHT)),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,
             maxLoadPercent = 100.0,
@@ -146,8 +168,8 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             doNotStoreHistory = false,
             notes = "",
             sets = listOf(
-                WeightSet(id = SET_D1_ID, reps = 8, weight = SET_D1_EXPECTED_WEIGHT),
-                WeightSet(id = SET_D2_ID, reps = SET_D2_EXPECTED_REPS, weight = SET_D2_EXPECTED_WEIGHT)
+                WeightSet(id = SET_D1_ID, reps = SET_D1_TEMPLATE_REPS, weight = SET_D1_TEMPLATE_WEIGHT),
+                WeightSet(id = SET_D2_ID, reps = SET_D2_TEMPLATE_REPS, weight = SET_D2_TEMPLATE_WEIGHT)
             ),
             exerciseType = ExerciseType.WEIGHT,
             minLoadPercent = 0.0,

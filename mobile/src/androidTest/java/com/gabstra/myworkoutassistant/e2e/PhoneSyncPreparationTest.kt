@@ -42,6 +42,8 @@ class PhoneSyncPreparationTest {
         db.workoutHistoryDao().deleteAll()
         db.setHistoryDao().deleteAll()
         db.workoutRecordDao().deleteAll()
+        db.exerciseInfoDao().deleteAll()
+        db.exerciseSessionProgressionDao().deleteAll()
 
         val store = CrossDeviceSyncPhoneWorkoutStoreFixture.createWorkoutStore()
         WorkoutStoreRepository(context.filesDir).saveWorkoutStore(store)
