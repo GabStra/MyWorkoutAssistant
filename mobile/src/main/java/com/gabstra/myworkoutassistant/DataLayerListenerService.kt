@@ -27,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
+import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
@@ -932,7 +933,7 @@ class DataLayerListenerService : WearableListenerService() {
                                             val workoutStore =
                                                 workoutStoreRepository.getWorkoutStore()
                                             val workout =
-                                                workoutStore.workouts.find { it.id == workoutHistoryStore.WorkoutHistory.workoutId }
+                                                workoutStore.findWorkoutForHistory(workoutHistoryStore.WorkoutHistory)
 
                                             if (workout == null) {
                                                 throw IllegalStateException("Workout not found for workout history: ${workoutHistoryStore.WorkoutHistory.workoutId}")
