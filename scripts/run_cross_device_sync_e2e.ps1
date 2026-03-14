@@ -4,6 +4,7 @@ Param(
     [string]$WearVsLastComparisonTestClass = "PhoneToWearVsLastComparisonE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncPreparationTest",
     [string]$MobileResetTestClass = "com.gabstra.myworkoutassistant.e2e.PhoneSyncResetStateTest",
+    [string]$MobileObserverTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
     [string]$AppPackage = "com.gabstra.myworkoutassistant.debug",
@@ -219,24 +220,67 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
 }
 
 function Run-MobileInstrumentationClass([string]$phoneSerial, [string]$className, [string]$appPackage, [switch]$fastTimeoutProfile) {
+    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile.IsPresent
     Write-Host "Running mobile instrumentation class: $className" -ForegroundColor Cyan
+    Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
+    $instrumentOutput = & adb $instrumentArgs 2>&1
+    Assert-MobileInstrumentationResult -className $className -instrumentOutput $instrumentOutput -exitCode $LASTEXITCODE
+}
+
+function Get-MobileInstrumentationArguments(
+    [string]$phoneSerial,
+    [string]$className,
+    [string]$appPackage,
+    [bool]$fastTimeoutProfile
+) {
     $runner = "$appPackage.test/androidx.test.runner.AndroidJUnitRunner"
     $instrumentArgs = @("-s", $phoneSerial, "shell", "am", "instrument", "-w", "-r", "-e", "class", $className)
     if ($fastTimeoutProfile) {
         $instrumentArgs += @("-e", "e2e_profile", "fast")
     }
     $instrumentArgs += $runner
-    Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
-    $instrumentOutput = & adb $instrumentArgs 2>&1
-    $instrumentOutput | Out-Host
+    return $instrumentArgs
+}
 
-    $exitCode = $LASTEXITCODE
+function Assert-MobileInstrumentationResult {
+    param(
+        [string]$className,
+        [string[]]$instrumentOutput,
+        [int]$exitCode
+    )
+
+    $instrumentOutput | Out-Host
     $outputText = $instrumentOutput -join "`n"
     $hasOkSummary = $outputText -match "(?m)^OK \("
     $hasFailureMarker = $outputText -match "FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed"
     if ($exitCode -ne 0 -or $hasFailureMarker -or -not $hasOkSummary) {
         throw "Mobile instrumentation failed for class '$className'."
     }
+}
+
+function Start-MobileInstrumentationClass(
+    [string]$phoneSerial,
+    [string]$className,
+    [string]$appPackage,
+    [bool]$fastTimeoutProfile,
+    [string]$stdoutPath,
+    [string]$stderrPath
+) {
+    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile
+    Write-Host "Starting mobile instrumentation class: $className" -ForegroundColor Cyan
+    Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
+    return Start-Process -FilePath "adb" -ArgumentList $instrumentArgs -NoNewWindow -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+}
+
+function Read-InstrumentationOutput([string]$stdoutPath, [string]$stderrPath) {
+    $lines = @()
+    if (Test-Path $stdoutPath) {
+        $lines += Get-Content $stdoutPath
+    }
+    if (Test-Path $stderrPath) {
+        $lines += Get-Content $stderrPath
+    }
+    return $lines
 }
 
 function Test-DeviceOnline([string]$serial) {
@@ -426,6 +470,24 @@ try {
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 
+    $observerPhase = $null
+    $observerProcess = $null
+    $observerStdoutPath = $null
+    $observerStderrPath = $null
+    if (-not [string]::IsNullOrWhiteSpace($MobileObserverTestClass)) {
+        $observerStdoutPath = Join-Path $logsDir "mobile_observer_$timestamp.stdout.txt"
+        $observerStderrPath = Join-Path $logsDir "mobile_observer_$timestamp.stderr.txt"
+        $observerPhase = [System.Diagnostics.Stopwatch]::StartNew()
+        $observerProcess = Start-MobileInstrumentationClass `
+            -phoneSerial $phoneSerial `
+            -className $MobileObserverTestClass `
+            -appPackage $AppPackage `
+            -fastTimeoutProfile $FastTimeoutProfile.IsPresent `
+            -stdoutPath $observerStdoutPath `
+            -stderrPath $observerStderrPath
+        Start-Sleep -Seconds 3
+    }
+
     Write-Host "Running Wear producer E2E test..." -ForegroundColor Cyan
     $producerPhase = [System.Diagnostics.Stopwatch]::StartNew()
     $wearArgs = @(
@@ -446,7 +508,7 @@ try {
 
     $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru
     $lastParityCheck = Get-Date
-    while (-not $wearProcess.HasExited) {
+    while ((-not $wearProcess.HasExited) -or ($observerProcess -and -not $observerProcess.HasExited)) {
         if (((Get-Date) - $lastParityCheck).TotalSeconds -ge 15) {
             Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
             $lastParityCheck = Get-Date
@@ -458,6 +520,13 @@ try {
     }
     $producerPhase.Stop()
     $wearClassTimings["producerSeconds"] = [math]::Round($producerPhase.Elapsed.TotalSeconds, 3)
+
+    if ($observerProcess) {
+        $observerOutput = Read-InstrumentationOutput -stdoutPath $observerStdoutPath -stderrPath $observerStderrPath
+        Assert-MobileInstrumentationResult -className $MobileObserverTestClass -instrumentOutput $observerOutput -exitCode $observerProcess.ExitCode
+        $observerPhase.Stop()
+        $timings["mobileObserverInstrumentationSeconds"] = [math]::Round($observerPhase.Elapsed.TotalSeconds, 3)
+    }
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 

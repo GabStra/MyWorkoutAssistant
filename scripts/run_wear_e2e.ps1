@@ -278,6 +278,7 @@ if ($TestMethod) {
     $classArgument = "com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
 } elseif (-not $IncludeCrossDeviceTests) {
     $excludedCrossDeviceClasses = @(
+        "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearWorkoutHistorySyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearVsLastComparisonE2ETest"
     )
