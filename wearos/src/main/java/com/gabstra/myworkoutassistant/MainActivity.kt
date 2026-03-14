@@ -13,6 +13,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -34,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -64,6 +66,7 @@ import com.gabstra.myworkoutassistant.data.TutorialState
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
+import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.repository.SensorDataRepository
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
@@ -428,7 +431,11 @@ fun WearApp(
         // Sync unsynced workout histories at start when initialized and phone connected (additive)
         LaunchedEffect(initialized, nodes) {
             if (initialized && nodes.firstOrNull() != null) {
-                appViewModel.sendUnsyncedHistories(localContext)
+                if (E2eRuntimePreferences.isStartupUnsyncedHistorySyncDisabled(localContext)) {
+                    Log.d("MainActivity", "Skipping startup unsynced history sync for E2E")
+                } else {
+                    appViewModel.sendUnsyncedHistories(localContext)
+                }
             }
         }
 
@@ -607,23 +614,34 @@ fun WearApp(
                 android.Manifest.permission.POST_NOTIFICATIONS
             )
 
+            val resumeRecoveredWorkout = {
+                val workoutId = appViewModel.selectedWorkoutId.value
+                if (workoutId != null) {
+                    appViewModel.resumeWorkoutFromRecord()
+                    val prefs = localContext.getSharedPreferences(
+                        "workout_state",
+                        Context.MODE_PRIVATE
+                    )
+                    prefs.edit()
+                        .putBoolean("isWorkoutInProgress", true)
+                        .apply()
+                    navController.navigate(Screen.Workout.route)
+                }
+            }
+
+            val hasAllRecoveryPermissions = {
+                basePermissions.all { permission ->
+                    ContextCompat.checkSelfPermission(localContext, permission) ==
+                        PackageManager.PERMISSION_GRANTED
+                }
+            }
+
             val permissionLauncherResume =
                 androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
                 ) { result ->
                     if (result.all { it.value }) {
-                        val workoutId = appViewModel.selectedWorkoutId.value
-                        if (workoutId != null) {
-                            appViewModel.resumeWorkoutFromRecord()
-                            val prefs = localContext.getSharedPreferences(
-                                "workout_state",
-                                Context.MODE_PRIVATE
-                            )
-                            prefs.edit()
-                                .putBoolean("isWorkoutInProgress", true)
-                                .apply()
-                            navController.navigate(Screen.Workout.route)
-                        }
+                        resumeRecoveredWorkout()
                     }
                 }
 
@@ -646,7 +664,11 @@ fun WearApp(
                     appViewModel.hideRecoveryPrompt()
                     appViewModel.setPendingRecoveryResumeOptions(recoveryOptions)
                     appViewModel.prepareResumeWorkout(interruptedWorkout)
-                    permissionLauncherResume.launch(basePermissions.toTypedArray())
+                    if (hasAllRecoveryPermissions()) {
+                        resumeRecoveredWorkout()
+                    } else {
+                        permissionLauncherResume.launch(basePermissions.toTypedArray())
+                    }
                 },
                 onDiscard = { interruptedWorkout ->
                     hapticsViewModel.doGentleVibration()
