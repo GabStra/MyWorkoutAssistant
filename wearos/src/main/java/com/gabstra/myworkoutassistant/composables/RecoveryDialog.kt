@@ -311,7 +311,7 @@ internal fun RecoveryDialog(
                         )
                     }
 
-/*                    item {
+                    item {
                         RecoveryChoiceButton(
                             modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
                             transformation = SurfaceTransformation(spec),
@@ -319,7 +319,7 @@ internal fun RecoveryDialog(
                             text = "Dismiss",
                             onClick = onDismiss
                         )
-                    }*/
+                    }
                 }
             }
         }

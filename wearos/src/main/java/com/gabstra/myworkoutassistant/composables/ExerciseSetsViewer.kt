@@ -330,17 +330,25 @@ fun SetTableRow(
     Box(
         modifier = modifier,
     ){
+        val rowSetContentDescription = when {
+            !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
+            !setIdentifier.isNullOrBlank() -> setIdentifier
+            !sideBadge.isNullOrBlank() -> sideBadge
+            else -> null
+        }
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(2.5.dp),
+                .padding(2.5.dp)
+                .then(
+                    rowSetContentDescription?.let { contentDescription ->
+                        Modifier.semantics(mergeDescendants = false) {
+                            this.contentDescription = contentDescription
+                        }
+                    } ?: Modifier
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val baseSetDisplayText = when {
-                !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
-                !setIdentifier.isNullOrBlank() -> setIdentifier
-                !sideBadge.isNullOrBlank() -> sideBadge
-                else -> ""
-            }
+            val baseSetDisplayText = rowSetContentDescription ?: ""
             val setDisplayText = if (trendIndicator != null && baseSetDisplayText.isNotBlank()) {
                 "$baseSetDisplayText${trendIndicator.glyph}"
             } else {

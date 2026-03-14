@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
+import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -713,7 +714,7 @@ open class AppViewModel : WorkoutViewModel() {
                     unsynced.forEachIndexed { index, workoutHistory ->
                         try {
                             Log.d("DataLayerSync", "Sending unsynced history id=${workoutHistory.id} (${index + 1} of ${unsynced.size})")
-                            val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
+                            val workout = workoutStore.findWorkoutForHistory(workoutHistory)
                                 ?: return@forEachIndexed
                             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
                             val exercises = workout.workoutComponents.filterIsInstance<Exercise>() +
@@ -810,6 +811,11 @@ open class AppViewModel : WorkoutViewModel() {
 
                 // Note: Error logs will be included in pushAndStoreWorkoutData instead
                 // since we don't have context here
+                val transactionId = if (workoutHistory.isDone) {
+                    UUID.randomUUID().toString().also { registerPendingSyncTransaction(it, workoutHistory.id) }
+                } else {
+                    null
+                }
                 val (success, _) = dataClient?.let {
                     syncMutex.withLock {
                         sendWorkoutHistoryStore(
@@ -820,7 +826,8 @@ open class AppViewModel : WorkoutViewModel() {
                                 WorkoutRecord = workoutRecord,
                                 ExerciseSessionProgressions = exerciseSessionProgressions
                             ),
-                            context
+                            context,
+                            transactionId
                         )
                     }
                 } ?: Pair(false, "")
@@ -1224,8 +1231,8 @@ open class AppViewModel : WorkoutViewModel() {
         launchMain {
             Log.d("WorkoutSync", "requestWorkoutHistorySync: Scheduling debounced sync")
             syncDebouncer.schedule {
-                Log.d("WorkoutSync", "requestWorkoutHistorySync: Debounced enqueue to worker")
-                enqueueWorkoutHistorySync(syncContext, fromCompletion = false)
+                Log.d("WorkoutSync", "requestWorkoutHistorySync: Debounced direct send")
+                triggerImmediateWorkoutHistorySync(syncContext)
             }
         }
     }
@@ -1238,18 +1245,25 @@ open class AppViewModel : WorkoutViewModel() {
         val syncContext = resolveSyncContext(context)
         launchMain {
             syncDebouncer.cancel()
-            enqueueWorkoutHistorySync(syncContext, fromCompletion = true)
+            triggerImmediateWorkoutHistorySync(syncContext)
         }
     }
 
-    private fun enqueueWorkoutHistorySync(syncContext: Context?, fromCompletion: Boolean) {
-        if (syncContext != null) {
-            WorkoutHistorySyncWorker.enqueue(syncContext)
+    private fun triggerImmediateWorkoutHistorySync(syncContext: Context?) {
+        if (syncContext == null) {
+            markPendingReconnect(null)
+            return
+        }
+
+        // Direct Data Layer sends are reliable enough for E2E-observable intermediate checkpoints
+        // and completion, while WorkManager remains the fallback if the send fails.
+        sendWorkoutHistoryToPhone(syncContext) { success ->
+            if (!success) {
+                WorkoutHistorySyncWorker.enqueue(syncContext)
+            }
             clearPendingSync()
             _syncStatus.value = SyncStatus.Idle
             cancelSyncTimeouts()
-        } else {
-            markPendingReconnect(null)
         }
     }
     
