@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.e2e.helpers
 
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -7,7 +8,6 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -21,8 +21,17 @@ class CrossDeviceWorkoutFlowHelper(
     private val device: UiDevice,
     private val workoutDriver: WearWorkoutDriver
 ) {
+    fun waitForIntermediateSyncObservationWindow(
+        durationMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS
+    ) {
+        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
+        SystemClock.sleep(durationMs)
+        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
+    }
+
     fun completeComplexWorkoutWithDeterministicModifications(
-        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS
+        timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_WORKOUT_TIMEOUT_MS,
+        perSettleMs: Long = E2ETestTimings.CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS
     ) {
         val modifiedSetIds = mutableSetOf<UUID>()
         val targetModifiedSetIds = setOf(
@@ -40,7 +49,10 @@ class CrossDeviceWorkoutFlowHelper(
             }
 
             if (isRestScreenVisible()) {
-                val skipped = runCatching {
+                val skipped = WearWorkoutStateMutationHelper.skipCurrentRest(
+                    device = device,
+                    timeoutMs = 5_000
+                ) || runCatching {
                     workoutDriver.skipRest(timeoutMs = 4_000)
                     true
                 }.getOrElse { false }
@@ -75,7 +87,16 @@ class CrossDeviceWorkoutFlowHelper(
                     require(modified) { "Failed to modify reps for target set $currentSetId" }
                     modifiedSetIds.add(currentSetId)
                 }
-                workoutDriver.completeCurrentSet(timeoutMs = 5_000)
+                val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+                    device = device,
+                    context = InstrumentationRegistry.getInstrumentation().targetContext,
+                    timeoutMs = 20_000
+                )
+                require(completed) { "Failed to advance past set $currentSetId" }
+                if (waitForCompletionState(timeoutMs = 8_000)) {
+                    break
+                }
+                waitForIntermediateSyncObservationWindow(durationMs = perSettleMs)
                 continue
             }
 
@@ -215,6 +236,17 @@ class CrossDeviceWorkoutFlowHelper(
         return isCompleted
     }
 
+    private fun waitForCompletionState(timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (isCompletionVisible() || isCompletionStateFromViewModel()) {
+                return true
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
+    }
+
     private fun isWorkoutSelectionVisible(): Boolean {
         return device.wait(Until.hasObject(By.text("My Workout Assistant")), 500)
     }
@@ -238,51 +270,10 @@ class CrossDeviceWorkoutFlowHelper(
     }
 
     private fun modifyRepsByPlusOne(): Boolean {
-        val repsTarget = device.wait(
-            Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),
-            5_000
-        ) ?: return false
-
-        val before = parseIntFromValueTarget(repsTarget) ?: return false
-        repsTarget.longClick()
-        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
-
-        val addButton = device.wait(Until.findObject(By.desc("Add")), 2_000) ?: return false
-        addButton.click()
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
-
-        device.wait(Until.findObject(By.desc("Close")), 1_500)?.click()
-        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
-
-        val afterTarget = device.wait(
-            Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),
-            2_000
-        ) ?: return false
-        val after = parseIntFromValueTarget(afterTarget) ?: return false
-        return after == before + 1
-    }
-
-    private fun parseIntFromValueTarget(target: UiObject2): Int? {
-        val textValue = target.text?.trim()?.toIntOrNull()
-        if (textValue != null) return textValue
-        val desc = target.contentDescription?.toString() ?: return null
-        val match = Regex("""(\d+)""").find(desc) ?: return null
-        return match.value.toIntOrNull()
+        return WearWorkoutStateMutationHelper.incrementCurrentSetRepsByOne(device)
     }
 
     private fun getCurrentSetIdFromViewModel(): UUID? {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        var setId: UUID? = null
-        instrumentation.runOnMainSync {
-            val activity = ActivityLifecycleMonitorRegistry.getInstance()
-                .getActivitiesInStage(Stage.RESUMED)
-                .firstOrNull() as? ComponentActivity
-                ?: return@runOnMainSync
-
-            val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
-            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@runOnMainSync
-            setId = currentState.set.id
-        }
-        return setId
+        return WearWorkoutStateMutationHelper.getCurrentSetId()
     }
 }

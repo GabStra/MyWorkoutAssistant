@@ -131,20 +131,16 @@ class WearWorkoutDriver(
      */
     fun navigateToExercisesPage(maxSwipes: Int = 4): Boolean {
         val exercisesPageSelector = By.desc("Exercise sets viewer")
-        val setHeaderSelector = By.text("SET")
         var swipeCount = 0
         while (swipeCount < maxSwipes) {
-            if (device.wait(Until.hasObject(exercisesPageSelector), 1_000) ||
-                device.wait(Until.hasObject(setHeaderSelector), 500)
-            ) {
+            if (device.wait(Until.hasObject(exercisesPageSelector), 1_000)) {
                 return true
             }
             navigateToPagerPage(Direction.LEFT)
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
             swipeCount++
         }
-        return device.wait(Until.hasObject(exercisesPageSelector), 2_000) ||
-            device.wait(Until.hasObject(setHeaderSelector), 2_000)
+        return device.wait(Until.hasObject(exercisesPageSelector), 2_000)
     }
 
     /**
@@ -259,13 +255,46 @@ class WearWorkoutDriver(
      * Clicks the Dismiss action in the recovery dialog. Fails if not found within [timeoutMs].
      */
     fun clickRecoveryDismiss(timeoutMs: Long = 5_000) {
-        val dismiss = device.wait(Until.findObject(By.desc("Recovery dismiss action")), timeoutMs)
-            ?: device.wait(Until.findObject(By.text("Dismiss")), timeoutMs)
-        require(dismiss != null) {
-            "Timed out waiting for recovery dismiss action (desc or text 'Dismiss') to appear"
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (!isRecoveryDialogVisible()) return
+
+            val dismiss = scrollUntilFound(
+                selector = By.desc("Recovery dismiss action"),
+                direction = Direction.DOWN,
+                initialWaitMs = 400
+            )
+                ?: scrollUntilFound(
+                    selector = By.desc("Recovery dismiss action"),
+                    direction = Direction.UP,
+                    initialWaitMs = 200
+                )
+                ?: device.wait(Until.findObject(By.desc("Recovery dismiss action")), 500)
+                ?: device.wait(Until.findObject(By.text("Dismiss")), 500)
+                ?: device.findObject(By.textContains("Dismiss"))
+
+            if (dismiss != null) {
+                clickObjectOrAncestorInternal(dismiss)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                if (device.wait(Until.gone(By.desc("Recovery dismiss action")), 1_500) ||
+                    !isRecoveryDialogVisible()
+                ) {
+                    return
+                }
+
+                clickBestEffortOnObjectOrAncestor(dismiss)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                if (device.wait(Until.gone(By.desc("Recovery dismiss action")), 1_500) ||
+                    !isRecoveryDialogVisible()
+                ) {
+                    return
+                }
+            }
+
+            scrollRecoveryDialogDown()
         }
-        clickObjectOrAncestorInternal(dismiss)
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+        error("Timed out waiting for recovery dismiss action (desc or text 'Dismiss') to appear")
     }
 
     fun openWorkoutDetailAndStartOrResume(
@@ -593,8 +622,10 @@ class WearWorkoutDriver(
         var enteredWorkoutAtMs: Long? = null
         val deadline = System.currentTimeMillis() + timeoutMs
         var workoutEntryOpened = false
-        var timerChoiceSelected = !useRestartTimer
-        var calibrationChoiceSelected = !useRestartCalibration
+        var timerChoiceSelected = false
+        var calibrationChoiceSelected = false
+        var optionalChoiceSearchPasses = 0
+        val maxOptionalChoiceSearchPasses = 3
 
         while (System.currentTimeMillis() < deadline) {
             if (isLikelyInActiveWorkout(inWorkoutSelector)) {
@@ -602,15 +633,26 @@ class WearWorkoutDriver(
                 break
             }
 
-            if (useRestartTimer) {
-                timerChoiceSelected = clickRestartTimerIfVisible() || timerChoiceSelected
+            val timerChoiceClicked = if (useRestartTimer) {
+                clickRestartTimerIfVisible()
             } else {
-                timerChoiceSelected = clickContinueTimerIfVisible() || timerChoiceSelected
+                clickContinueTimerIfVisible()
             }
-            if (useRestartCalibration) {
-                calibrationChoiceSelected = clickRestartCalibrationIfVisible() || calibrationChoiceSelected
+            timerChoiceSelected = timerChoiceClicked || timerChoiceSelected
+
+            val calibrationChoiceClicked = if (useRestartCalibration) {
+                clickRestartCalibrationIfVisible()
             } else {
-                calibrationChoiceSelected = clickContinueCalibrationIfVisible() || calibrationChoiceSelected
+                clickContinueCalibrationIfVisible()
+            }
+            calibrationChoiceSelected = calibrationChoiceClicked || calibrationChoiceSelected
+
+            if (timerChoiceClicked || calibrationChoiceClicked) {
+                resumeActionAtMs = resumeActionAtMs ?: System.currentTimeMillis()
+                if (waitForActiveWorkoutEntry(inWorkoutSelector, 4_000)) {
+                    enteredWorkoutAtMs = System.currentTimeMillis()
+                    break
+                }
             }
 
             if (useRestartTimer && hasRestartTimerSelectedVisible()) {
@@ -620,12 +662,19 @@ class WearWorkoutDriver(
                 calibrationChoiceSelected = true
             }
 
+            val shouldSearchForOptionalChoices = isRecoveryDialogVisible() &&
+                optionalChoiceSearchPasses < maxOptionalChoiceSearchPasses &&
+                ((!useRestartTimer && !timerChoiceSelected) ||
+                    (!useRestartCalibration && !calibrationChoiceSelected))
+
             // When restart options are requested, never fall through to generic Resume
             // until the explicit restart selection has been made.
             if ((useRestartTimer && !timerChoiceSelected) ||
-                (useRestartCalibration && !calibrationChoiceSelected)
+                (useRestartCalibration && !calibrationChoiceSelected) ||
+                shouldSearchForOptionalChoices
             ) {
                 scrollRecoveryDialogDown()
+                optionalChoiceSearchPasses += 1
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
                 continue
             }
@@ -687,30 +736,29 @@ class WearWorkoutDriver(
     }
 
     private fun findResumeButton(): UiObject2? {
-        val directMatch = device.findObject(By.desc("Recovery resume action"))
-            ?: device.findObject(By.text("Resume"))
-            ?: device.findObject(By.textContains("Resume"))
-            ?: device.findObject(By.desc("Resume workout"))
-            ?: device.findObject(By.descContains("Resume"))
+        val directMatch = findRecoveryActionButton(
+            contentDescription = "Recovery resume action",
+            text = "Resume"
+        ) ?: findRecoveryActionButton(
+            contentDescription = "Resume workout",
+            text = "Resume"
+        )
         if (directMatch != null) return directMatch
 
         return device.findObjects(By.clickable(true)).firstOrNull { obj ->
             val text = runCatching { obj.text }.getOrNull().orEmpty()
             val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
-            text.contains("resume", ignoreCase = true) ||
-                desc.contains("resume", ignoreCase = true)
+            text.equals("Resume", ignoreCase = true) ||
+                desc.equals("Recovery resume action", ignoreCase = true) ||
+                desc.equals("Resume workout", ignoreCase = true)
         }
     }
 
     private fun clickContinueTimerIfVisible(): Boolean {
-        val continueTimerButton = device.findObject(By.desc("Recovery timer continue option"))
-            ?: device.findObject(By.textContains("Continue timer"))
-            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
-                val text = runCatching { obj.text }.getOrNull().orEmpty()
-                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
-                text.contains("continue timer", ignoreCase = true) ||
-                    desc.contains("continue timer", ignoreCase = true)
-            }
+        val continueTimerButton = findRecoveryActionButton(
+            contentDescription = "Recovery timer continue option",
+            text = "Continue timer"
+        )
 
         if (continueTimerButton != null) {
             clickObjectOrAncestorInternal(continueTimerButton)
@@ -721,14 +769,10 @@ class WearWorkoutDriver(
     }
 
     private fun clickContinueCalibrationIfVisible(): Boolean {
-        val continueCalibrationButton = device.findObject(By.desc("Recovery calibration continue option"))
-            ?: device.findObject(By.textContains("Continue calibration"))
-            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
-                val text = runCatching { obj.text }.getOrNull().orEmpty()
-                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
-                text.contains("continue calibration", ignoreCase = true) ||
-                    desc.contains("continue calibration", ignoreCase = true)
-            }
+        val continueCalibrationButton = findRecoveryActionButton(
+            contentDescription = "Recovery calibration continue option",
+            text = "Continue calibration"
+        )
 
         if (continueCalibrationButton != null) {
             clickObjectOrAncestorInternal(continueCalibrationButton)
@@ -739,14 +783,10 @@ class WearWorkoutDriver(
     }
 
     private fun clickRestartTimerIfVisible(): Boolean {
-        val restartTimerButton = device.findObject(By.desc("Recovery timer restart option"))
-            ?: device.findObject(By.textContains("Restart timer"))
-            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
-                val text = runCatching { obj.text }.getOrNull().orEmpty()
-                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
-                text.contains("restart timer", ignoreCase = true) ||
-                    desc.contains("restart timer", ignoreCase = true)
-            }
+        val restartTimerButton = findRecoveryActionButton(
+            contentDescription = "Recovery timer restart option",
+            text = "Restart timer"
+        )
 
         if (restartTimerButton != null) {
             clickObjectOrAncestorInternal(restartTimerButton)
@@ -757,14 +797,10 @@ class WearWorkoutDriver(
     }
 
     private fun clickRestartCalibrationIfVisible(): Boolean {
-        val restartCalibrationButton = device.findObject(By.desc("Recovery calibration restart option"))
-            ?: device.findObject(By.textContains("Restart calibration"))
-            ?: device.findObjects(By.clickable(true)).firstOrNull { obj ->
-                val text = runCatching { obj.text }.getOrNull().orEmpty()
-                val desc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
-                text.contains("restart calibration", ignoreCase = true) ||
-                    desc.contains("restart calibration", ignoreCase = true)
-            }
+        val restartCalibrationButton = findRecoveryActionButton(
+            contentDescription = "Recovery calibration restart option",
+            text = "Restart calibration"
+        )
 
         if (restartCalibrationButton != null) {
             clickObjectOrAncestorInternal(restartCalibrationButton)
@@ -774,13 +810,37 @@ class WearWorkoutDriver(
         return false
     }
 
-    private fun scrollRecoveryDialogDown() {
-        val scrollable = device.findObject(By.scrollable(true))
-        if (scrollable != null) {
-            runCatching { scrollable.scroll(Direction.DOWN, 0.75f) }
-        } else {
-            verticalSwipe(Direction.DOWN)
+    private fun findRecoveryActionButton(
+        contentDescription: String,
+        text: String
+    ): UiObject2? {
+        val directMatch = device.findObject(By.desc(contentDescription))
+            ?: device.findObject(By.text(text))
+        if (directMatch != null && isClickableRecoveryAction(directMatch, contentDescription, text)) {
+            return directMatch
         }
+
+        return device.findObjects(By.clickable(true)).firstOrNull { obj ->
+            isClickableRecoveryAction(obj, contentDescription, text)
+        }
+    }
+
+    private fun isClickableRecoveryAction(
+        obj: UiObject2,
+        contentDescription: String,
+        text: String
+    ): Boolean {
+        val objText = runCatching { obj.text }.getOrNull().orEmpty()
+        val objDesc = runCatching { obj.contentDescription }.getOrNull().orEmpty()
+        return objText.equals(text, ignoreCase = true) ||
+            objDesc.equals(contentDescription, ignoreCase = true)
+    }
+
+    private fun scrollRecoveryDialogDown() {
+        // Recovery dialogs on the Wear emulator frequently miss UiAutomator scroll-finished
+        // events under load, which turns a simple search pass into a 1s timeout. A raw swipe is
+        // cheaper and has been more reliable for revealing the optional restart/continue choices.
+        verticalSwipe(Direction.DOWN)
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
     }
 
@@ -803,9 +863,20 @@ class WearWorkoutDriver(
      */
     private fun isLikelyInActiveWorkout(inWorkoutSelector: BySelector): Boolean {
         if (isRecoveryDialogVisible()) return false
-        return device.hasObject(inWorkoutSelector) ||
+        val anySetScreenVisible =
+            device.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.TimedDurationSetTypeDescription)) ||
+                device.hasObject(By.descContains(SetValueSemantics.EnduranceSetTypeDescription))
+        val anyCalibrationScreenVisible =
             device.hasObject(By.textContains("Set load")) ||
-            device.hasObject(By.text("0 = Form Breaks")) ||
+                device.hasObject(By.text("0 = Form Breaks"))
+        val anyRestScreenVisible =
+            device.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription))
+        return device.hasObject(inWorkoutSelector) ||
+            anySetScreenVisible ||
+            anyCalibrationScreenVisible ||
+            anyRestScreenVisible ||
             device.hasObject(By.descContains(SetValueSemantics.TimedDurationValueDescription)) ||
             device.hasObject(By.text("Stop")) ||
             device.hasObject(By.desc("Stop"))

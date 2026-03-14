@@ -4,14 +4,19 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
+import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Before
 
 abstract class WearBaseE2ETest {
@@ -28,6 +33,9 @@ abstract class WearBaseE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         device = UiDevice.getInstance(instrumentation)
         context = ApplicationProvider.getApplicationContext()
+        closeOpenActivities()
+        waitForTargetAppToLeaveForeground(context.packageName)
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
 
         // Grant all required runtime permissions before launching the app.
         // This prevents permission dialogs from appearing during tests.
@@ -44,8 +52,43 @@ abstract class WearBaseE2ETest {
 
         clearPersistedE2eState()
         markTutorialsAsSeenForE2E()
-        seedWorkoutStore()
+        configureE2eRuntimePreferences()
+        prepareAppStateBeforeLaunch()
         launchAppFromHome()
+    }
+
+    @After
+    open fun baseTearDown() {
+        closeOpenActivities()
+        runCatching {
+            if (::device.isInitialized) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            }
+        }
+        E2eRuntimePreferences.clear(context)
+    }
+
+    private fun closeOpenActivities() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val lifecycleMonitor = ActivityLifecycleMonitorRegistry.getInstance()
+            val stagesToClose = listOf(
+                Stage.RESUMED,
+                Stage.STARTED,
+                Stage.PAUSED,
+                Stage.STOPPED,
+                Stage.CREATED
+            )
+            stagesToClose
+                .flatMap { stage -> lifecycleMonitor.getActivitiesInStage(stage).toList() }
+                .distinct()
+                .forEach { activity ->
+                    if (!activity.isFinishing && !activity.isDestroyed) {
+                        activity.finish()
+                    }
+                }
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
     }
 
     /**
@@ -62,13 +105,30 @@ abstract class WearBaseE2ETest {
         }
     }
 
-    protected fun seedWorkoutStore() {
+    protected open fun prepareAppStateBeforeLaunch() {
+        seedWorkoutStore()
+    }
+
+    protected open fun shouldDisableStartupUnsyncedHistorySync(): Boolean = true
+
+    protected open fun seedWorkoutStore() {
         TestWorkoutStoreSeeder.seedWorkoutStore(context)
     }
 
     private fun clearPersistedE2eState() {
         context.getSharedPreferences("workout_state", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("workout_recovery_checkpoint", Context.MODE_PRIVATE).edit().clear().commit()
+
+        runBlocking {
+            val db = AppDatabase.getDatabase(context)
+            val unfinishedHistories = db.workoutHistoryDao().getAllUnfinishedWorkoutHistories()
+            unfinishedHistories.forEach { workoutHistory ->
+                db.setHistoryDao().deleteByWorkoutHistoryId(workoutHistory.id)
+                db.workoutRecordDao().deleteByWorkoutHistoryId(workoutHistory.id)
+                db.exerciseSessionProgressionDao().deleteByWorkoutHistoryId(workoutHistory.id)
+                db.workoutHistoryDao().deleteById(workoutHistory.id)
+            }
+        }
     }
 
     private fun markTutorialsAsSeenForE2E() {
@@ -80,6 +140,13 @@ abstract class WearBaseE2ETest {
             .commit()
     }
 
+    private fun configureE2eRuntimePreferences() {
+        E2eRuntimePreferences.setStartupUnsyncedHistorySyncDisabled(
+            context = context,
+            disabled = shouldDisableStartupUnsyncedHistorySync()
+        )
+    }
+
     /**
      * Launches the app from home and waits until the main screen is ready.
      * Uses (1) retry if the window doesn't appear, and (2) a readiness condition (selection screen
@@ -89,45 +156,83 @@ abstract class WearBaseE2ETest {
         val pkg = context.packageName
         val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
             ?: error("Launch intent for package $pkg not found")
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
         val launchComponent = launchIntent.component
 
         val windowSelector = By.pkg(pkg).depth(0)
-        var windowAppeared = false
-        repeat(4) {
+        ensureDeviceAwakeAndUnlocked()
+        if (isTargetAppResumed(pkg)) {
+            closeOpenActivities()
+            waitForTargetAppToLeaveForeground(pkg)
+        }
+        repeat(2) { attempt ->
+            launchAppDirect(launchIntent = launchIntent, launchComponent = launchComponent)
+
+            val windowAppeared = device.wait(
+                Until.hasObject(windowSelector),
+                E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS * 2
+            )
+            val appForeground = windowAppeared || isTargetAppResumed(pkg)
+            if (!appForeground) {
+                if (attempt == 1) {
+                    error("Timed out waiting for app window for package $pkg after launch")
+                }
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return@repeat
+            }
+
+            val ready = waitForAppLaunchReadiness(
+                timeoutMs = E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS * 2
+            )
+            if (ready || attempt == 1) {
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return
+            }
+
             device.pressHome()
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
-            runCatching { context.startActivity(launchIntent) }
-            windowAppeared = device.wait(
-                Until.hasObject(windowSelector),
-                E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS
-            )
-            if (windowAppeared) return@repeat
+        }
+    }
 
-            if (launchComponent != null) {
-                runCatching {
-                    device.executeShellCommand(
-                        "am start -W -n ${launchComponent.packageName}/${launchComponent.className}"
-                    )
-                }
-                windowAppeared = device.wait(
-                    Until.hasObject(windowSelector),
-                    E2ETestTimings.APP_LAUNCH_WINDOW_TIMEOUT_MS
-                )
-                if (windowAppeared) return@repeat
+    private fun waitForTargetAppToLeaveForeground(packageName: String, timeoutMs: Long = 5_000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (!isTargetAppResumed(packageName)) {
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                return
             }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        require(windowAppeared) {
-            "Timed out waiting for app ($pkg) to appear on screen after 4 launch attempts"
-        }
+    }
 
-        // Wait for app to settle and optionally show tutorial
+    private fun ensureDeviceAwakeAndUnlocked() {
+        runCatching {
+            if (!device.isScreenOn) {
+                device.wakeUp()
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            }
+            device.executeShellCommand("wm dismiss-keyguard")
+        }
+    }
+
+    private fun launchAppDirect(launchIntent: Intent, launchComponent: android.content.ComponentName?) {
+        val launchedViaShell = launchComponent != null && runCatching {
+            device.executeShellCommand(
+                "am start -W -f 0x10008000 -n ${launchComponent.packageName}/${launchComponent.className}"
+            )
+            true
+        }.getOrDefault(false)
+
+        if (!launchedViaShell) {
+            runCatching { context.startActivity(launchIntent) }
+        }
+    }
+
+    private fun waitForAppLaunchReadiness(timeoutMs: Long = E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS): Boolean {
         device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION)
 
-        // Readiness: proceed when either selection screen or recovery dialog is visible (relaunch may show recovery first)
-        val deadline = System.currentTimeMillis() + E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS
-        var ready = false
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             dismissAnyTutorialOverlayIfPresent()
             if (device.hasObject(By.text("My Workout Assistant")) ||
@@ -136,17 +241,28 @@ abstract class WearBaseE2ETest {
                 device.hasObject(By.textContains("Reloading workout")) ||
                 isActiveWorkoutVisible()
             ) {
-                ready = true
-                break
+                return true
             }
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        if (!ready) {
-            // Process-death/resume scenarios can transiently show intermediate frames where
-            // selectors are not yet stable. Allow callers to continue with their own recovery waits.
-            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
-        }
+
+        // Process-death/resume scenarios can transiently show intermediate frames where
+        // selectors are not yet stable. Allow callers to continue with their own recovery waits.
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        return false
+    }
+
+    private fun isTargetAppResumed(packageName: String): Boolean {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var resumed = false
+        instrumentation.runOnMainSync {
+            val resumedActivity = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+                .getInstance()
+                .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                .firstOrNull()
+            resumed = resumedActivity?.packageName == packageName
+        }
+        return resumed
     }
 
     private fun dismissAnyTutorialOverlayIfPresent() {
@@ -317,11 +433,12 @@ abstract class WearBaseE2ETest {
         // Dismiss workout selection tutorial if present (we're still on WorkoutSelectionScreen)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
 
-        val headerAppeared = interactionDriver.waitForText("My Workout Assistant", defaultTimeoutMs)
-        require(headerAppeared) { "Selection header not visible" }
-
-        val workoutAppeared = device.wait(Until.hasObject(By.text(workoutName)), defaultTimeoutMs)
-        require(workoutAppeared) { "Workout '$workoutName' not visible to tap" }
+        var selectionReady = ensureWorkoutSelectionVisible(workoutName)
+        if (!selectionReady) {
+            launchAppFromHome()
+            selectionReady = ensureWorkoutSelectionVisible(workoutName)
+        }
+        require(selectionReady) { "Workout selection for '$workoutName' did not become visible" }
 
         interactionDriver.openWorkoutDetailAndStartOrResume(
             workoutName = workoutName,
@@ -365,6 +482,51 @@ abstract class WearBaseE2ETest {
         if (isActiveWorkoutVisible()) {
             dismissTutorialIfPresent(TutorialContext.SET_SCREEN, 2_000)
         }
+    }
+
+    private fun ensureWorkoutSelectionVisible(workoutName: String): Boolean {
+        if (waitForWorkoutSelectionVisible(workoutName, E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS * 2)) {
+            return true
+        }
+        return waitForWorkoutSelectionVisible(workoutName, E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS)
+    }
+
+    private fun waitForWorkoutSelectionVisible(workoutName: String, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val workoutSelector = By.desc("Open workout: $workoutName")
+        while (System.currentTimeMillis() < deadline) {
+            dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 500)
+            dismissAnyTutorialOverlayIfPresent()
+
+            if (device.hasObject(workoutSelector) || device.hasObject(By.text(workoutName))) {
+                return true
+            }
+
+            if (device.hasObject(By.text("My Workout Assistant"))) {
+                interactionDriver.findWithScrollFallback(
+                    selector = workoutSelector,
+                    initialWaitMs = E2ETestTimings.SHORT_IDLE_MS,
+                    directions = listOf(Direction.DOWN, Direction.UP)
+                )?.let { return true }
+
+                interactionDriver.findWithScrollFallback(
+                    selector = By.text(workoutName),
+                    initialWaitMs = E2ETestTimings.SHORT_IDLE_MS,
+                    directions = listOf(Direction.DOWN, Direction.UP)
+                )?.let { return true }
+
+                val workoutAppeared = device.wait(
+                    Until.hasObject(By.text(workoutName)),
+                    E2ETestTimings.SHORT_IDLE_MS
+                )
+                if (workoutAppeared) {
+                    return true
+                }
+            }
+
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
     }
 
     private fun waitForPostStartWorkoutState(timeoutMs: Long): Boolean {

@@ -37,4 +37,12 @@ object E2ETestTimings {
 
     val CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS: Long
         get() = if (fastProfile) 25_000 else 75_000
+
+    /**
+     * Intermediate cross-device sync is debounced on Wear for 5 seconds in AppViewModel.
+     * The producer must pause longer than that debounce so the phone can observe each
+     * cumulative checkpoint before the next set is completed.
+     */
+    val CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS: Long
+        get() = if (fastProfile) 6_000 else 7_000
 }

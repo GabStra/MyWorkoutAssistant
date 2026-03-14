@@ -13,6 +13,8 @@ object CrossDeviceWearSyncStateHelper {
         db.workoutHistoryDao().deleteAll()
         db.setHistoryDao().deleteAll()
         db.workoutRecordDao().deleteAll()
+        db.exerciseSessionProgressionDao().deleteAll()
+        db.exerciseInfoDao().deleteAll()
         context.getSharedPreferences("synced_workout_history_ids", Context.MODE_PRIVATE)
             .edit()
             .remove("ids")
