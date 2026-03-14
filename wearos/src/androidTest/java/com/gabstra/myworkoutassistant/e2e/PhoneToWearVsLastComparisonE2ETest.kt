@@ -31,12 +31,14 @@ class PhoneToWearVsLastComparisonE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
     private lateinit var flowHelper: CrossDeviceWorkoutFlowHelper
 
+    override fun prepareAppStateBeforeLaunch() {
+        runBlocking { retainOnlyPhoneSyncedHistoryOnWear() }
+        CrossDeviceSyncWorkoutStoreFixture.setupWorkoutStore(context)
+    }
+
     @Before
     override fun baseSetUp() {
         super.baseSetUp()
-        runBlocking { retainOnlyPhoneSyncedHistoryOnWear() }
-        CrossDeviceSyncWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
         workoutDriver = createWorkoutDriver()
         flowHelper = CrossDeviceWorkoutFlowHelper(device, workoutDriver)
     }

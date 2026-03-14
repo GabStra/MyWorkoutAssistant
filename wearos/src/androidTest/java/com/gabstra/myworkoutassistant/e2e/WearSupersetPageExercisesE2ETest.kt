@@ -43,17 +43,17 @@ class WearSupersetPageExercisesE2ETest : WearBaseE2ETest() {
             "Exercises page not visible after swiping - 'Exercise sets viewer' or 'SET' header not found"
         }
 
-        // Unified superset view shows both exercises' sets: A1 (60 kg), B1 (40 kg), REST, A2, B2.
-        // Without unified view we'd only see one exercise's sets. Assert on weights 60 and 40
-        // (fixture values for Superset A and B) - their presence proves both exercises are in the list.
-        val weight60Found = workoutDriver.findWithScrollFallback(By.text("60")) != null
-        require(weight60Found) {
-            "Weight 60 (Superset A) not visible - PageExercises should show unified superset sets"
+        // Unified superset view shows both exercises' set identifiers: A1, B1, REST, A2, B2.
+        // These identifiers are published as semantics by ExerciseSetsViewer and are more stable
+        // than asserting raw weight text rendering.
+        val supersetA1Found = workoutDriver.findWithScrollFallback(By.desc("A1")) != null
+        require(supersetA1Found) {
+            "Set identifier A1 not visible - PageExercises should show unified superset sets"
         }
 
-        val weight40Found = workoutDriver.findWithScrollFallback(By.text("40")) != null
-        require(weight40Found) {
-            "Weight 40 (Superset B) not visible - PageExercises should show unified superset sets (A1, B1, ...)"
+        val supersetB1Found = workoutDriver.findWithScrollFallback(By.desc("B1")) != null
+        require(supersetB1Found) {
+            "Set identifier B1 not visible - PageExercises should show unified superset sets (A1, B1, ...)"
         }
     }
 }

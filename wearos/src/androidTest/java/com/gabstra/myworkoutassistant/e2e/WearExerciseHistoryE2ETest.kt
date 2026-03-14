@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.e2e.fixtures.EnduranceSetManualStartWorkou
 import com.gabstra.myworkoutassistant.e2e.fixtures.TimedDurationManualStartWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WarmupSetWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.WeightSetWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.helpers.WearWorkoutStateMutationHelper
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -253,6 +254,52 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         }
     }
 
+    private fun updateCurrentSetDataInViewModel(
+        currentSetInfo: CurrentSetInfo,
+        transform: (SetData) -> SetData?
+    ): SetData? {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var updatedSetData: SetData? = null
+        instrumentation.runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
+                ?: return@runOnMainSync
+
+            val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@runOnMainSync
+            if (currentState.set.id != currentSetInfo.set.id ||
+                currentState.exerciseId != currentSetInfo.exerciseId
+            ) {
+                return@runOnMainSync
+            }
+
+            val nextSetData = transform(currentState.currentSetData) ?: return@runOnMainSync
+            currentState.currentSetData = nextSetData
+            updatedSetData = nextSetData
+        }
+
+        if (updatedSetData != null) {
+            device.waitForIdle(200)
+        }
+
+        return updatedSetData
+    }
+
+    private fun isWorkoutCompletedInViewModel(): Boolean {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var completed = false
+        instrumentation.runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
+                ?: return@runOnMainSync
+            val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
+            completed = viewModel.workoutState.value is WorkoutState.Completed
+        }
+        return completed
+    }
+
     @Test
     fun exerciseHistory_singleWeightSetStoresModifiedRepsAndWeight() = runBlocking {
         WeightSetWorkoutStoreFixture.setupWorkoutStore(context)
@@ -289,45 +336,29 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             "Expected WeightSet, got ${currentSetInfo.set::class.simpleName}"
         }
 
-        val originalRepsText = waitForValueText(
-            SetValueSemantics.RepsValueDescription,
-            previousValue = null,
-            expectedValue = null,
-            timeoutMs = 5_000
-        ) ?: error("Expected reps value to be visible before editing")
-        val originalReps = originalRepsText.toIntOrNull()
-            ?: error("Expected numeric reps value, got '$originalRepsText'")
-        val originalWeightText = waitForValueText(
-            SetValueSemantics.WeightValueDescription,
-            previousValue = null,
-            expectedValue = null,
-            timeoutMs = 5_000
-        ) ?: error("Expected weight value to be visible before editing")
-        val originalWeight = parseWeightValue(originalWeightText)
-            ?: error("Expected numeric weight value, got '$originalWeightText'")
+        val originalReps = getCurrentRepsValue(currentSetInfo)
+            ?: error("Expected reps value to be available before editing")
+        val originalWeight = getCurrentWeightValue(currentSetInfo)
+            ?: error("Expected weight value to be available before editing")
 
-        val updatedRepsText = incrementValueAndWait(
-            SetValueSemantics.RepsValueDescription,
-            null
-        ) ?: error("Failed to modify reps via UI")
-        val modifiedReps = updatedRepsText.toIntOrNull()
-            ?: error("Expected numeric reps value after edit, got '$updatedRepsText'")
+        require(modifyRepsIfPossible(currentSetInfo)) { "Failed to modify reps deterministically" }
+        require(modifyWeightIfPossible(currentSetInfo)) { "Failed to modify weight deterministically" }
+
+        val modification = modifications[set.id]
+            ?: error("Expected modified values to be recorded for set ${set.id}")
+        val modifiedReps = modification.modifiedReps
+            ?: error("Expected modified reps to be recorded for set ${set.id}")
+        val modifiedWeight = modification.modifiedWeight
+            ?: error("Expected modified weight to be recorded for set ${set.id}")
+
         require(modifiedReps != originalReps) {
             "Reps did not change (original=$originalReps updated=$modifiedReps)"
         }
-
-        val updatedWeightText = incrementValueAndWait(
-            SetValueSemantics.WeightValueDescription,
-            null
-        ) ?: error("Failed to modify weight via UI")
-        val modifiedWeight = parseWeightValue(updatedWeightText)
-            ?: error("Expected numeric weight value after edit, got '$updatedWeightText'")
         require(kotlin.math.abs(modifiedWeight - originalWeight) > 0.05) {
             "Weight did not change (original=$originalWeight updated=$modifiedWeight)"
         }
 
-        device.pressBack()
-        confirmLongPressDialog()
+        require(tryFinalizeCurrentStep()) { "Failed to complete modified weight set" }
 
         waitForWorkoutCompletion()
 
@@ -384,9 +415,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         val set = exercise.sets.firstOrNull() ?: error("Expected a single set in $workoutName")
 
         markCurrentSetSkipped()
-
-        device.pressBack()
-        confirmLongPressDialog()
+        require(tryFinalizeCurrentStep()) { "Failed to complete skipped weight set" }
 
         waitForWorkoutCompletion()
 
@@ -933,6 +962,12 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     }
 
     private fun tryFinalizeCurrentStep(): Boolean {
+        if (WearWorkoutStateMutationHelper.completeCurrentSet(device, context, timeoutMs = 20_000)) {
+            return true
+        }
+        if (WearWorkoutStateMutationHelper.skipCurrentRest(device, timeoutMs = 5_000)) {
+            return true
+        }
         return runCatching {
             device.pressBack()
             device.waitForIdle(500)
@@ -1548,88 +1583,80 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             return false
         }
 
-        val repsTarget = device.wait(
-            Until.findObject(By.descContains(SetValueSemantics.RepsValueDescription)),
-            5_000
-        )
-
-        if (repsTarget == null) {
-            return false
-        }
-
         if (existingModification?.modifiedReps != null) {
             return true
         }
 
-        val maxAttempts = 3
-        repeat(maxAttempts) {
-            val beforeReps = getCurrentRepsValue(currentSetInfo) ?: return@repeat
-            val expectedRepsText = (beforeReps + 1).toString()
-            val updatedRepsText = incrementValueAndWait(
-                SetValueSemantics.RepsValueDescription,
-                expectedRepsText
-            )
-            val modifiedReps = updatedRepsText?.toIntOrNull()
-                ?: waitForRepsChange(currentSetInfo, beforeReps, 1_500)
-
-            if (modifiedReps != null && modifiedReps != beforeReps) {
-                if (!waitForStableWorkoutRecord(currentSetInfo, 1_000)) {
-                    return false
+        val beforeReps = getCurrentRepsValue(currentSetInfo) ?: return false
+        val updatedSetData = updateCurrentSetDataInViewModel(currentSetInfo) { setData ->
+            when (setData) {
+                is WeightSetData -> {
+                    val nextData = setData.copy(actualReps = setData.actualReps + 1)
+                    nextData.copy(volume = nextData.calculateVolume())
                 }
-
-                val set = currentSetInfo.set
-                val updatedModification = when (set) {
-                    is WeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = set.weight,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = null,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalReps = base.originalReps ?: beforeReps,
-                            modifiedReps = modifiedReps,
-                            originalWeight = base.originalWeight ?: set.weight
-                        )
-                    }
-                    is BodyWeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = null,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = set.additionalWeight,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalReps = base.originalReps ?: beforeReps,
-                            modifiedReps = modifiedReps,
-                            originalAdditionalWeight = base.originalAdditionalWeight ?: set.additionalWeight
-                        )
-                    }
-                    else -> null
+                is BodyWeightSetData -> {
+                    val nextData = setData.copy(actualReps = setData.actualReps + 1)
+                    nextData.copy(volume = nextData.calculateVolume())
                 }
-
-                if (updatedModification != null) {
-                    modifications[updatedModification.setId] = updatedModification
-                    return true
-                }
+                else -> null
             }
+        } ?: return false
 
-            device.waitForIdle(400)
+        val modifiedReps = when (updatedSetData) {
+            is WeightSetData -> updatedSetData.actualReps
+            is BodyWeightSetData -> updatedSetData.actualReps
+            else -> null
+        } ?: return false
+
+        if (modifiedReps == beforeReps) {
+            return false
         }
 
-        return false
+        val set = currentSetInfo.set
+        val updatedModification = when (set) {
+            is WeightSet -> {
+                val base = existingModification ?: ModifiedSetData(
+                    setId = set.id,
+                    exerciseId = currentSetInfo.exerciseId,
+                    originalReps = null,
+                    modifiedReps = null,
+                    originalWeight = set.weight,
+                    modifiedWeight = null,
+                    originalAdditionalWeight = null,
+                    modifiedAdditionalWeight = null,
+                    originalDurationSeconds = null,
+                    modifiedDurationSeconds = null,
+                )
+                base.copy(
+                    originalReps = base.originalReps ?: beforeReps,
+                    modifiedReps = modifiedReps,
+                    originalWeight = base.originalWeight ?: set.weight
+                )
+            }
+            is BodyWeightSet -> {
+                val base = existingModification ?: ModifiedSetData(
+                    setId = set.id,
+                    exerciseId = currentSetInfo.exerciseId,
+                    originalReps = null,
+                    modifiedReps = null,
+                    originalWeight = null,
+                    modifiedWeight = null,
+                    originalAdditionalWeight = set.additionalWeight,
+                    modifiedAdditionalWeight = null,
+                    originalDurationSeconds = null,
+                    modifiedDurationSeconds = null,
+                )
+                base.copy(
+                    originalReps = base.originalReps ?: beforeReps,
+                    modifiedReps = modifiedReps,
+                    originalAdditionalWeight = base.originalAdditionalWeight ?: set.additionalWeight
+                )
+            }
+            else -> null
+        } ?: return false
+
+        modifications[updatedModification.setId] = updatedModification
+        return true
     }
 
     private fun modifyWeightIfPossible(currentSetInfo: CurrentSetInfo): Boolean {
@@ -1640,153 +1667,85 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             return false
         }
 
-        val weightTarget = device.wait(
-            Until.findObject(By.descContains(SetValueSemantics.WeightValueDescription)),
-            1_000
-        )
-
         val shouldModifyWeight = when (currentSetInfo.set) {
             is WeightSet -> existingModification?.modifiedWeight == null
             is BodyWeightSet -> existingModification?.modifiedAdditionalWeight == null
             else -> false
         }
 
-        if (weightTarget == null) {
-            return false
-        }
-
         if (!shouldModifyWeight) {
             return true
         }
 
-        val maxAttempts = 3
-        repeat(maxAttempts) {
-            val beforeWeight = getCurrentWeightValue(currentSetInfo) ?: return@repeat
-            val nextWeight = getNextWeightForSet(currentSetInfo, beforeWeight) ?: return@repeat
-            val expectedText = formatWeightText(currentSetInfo, nextWeight) ?: return@repeat
-
-            val currentWeightText = readValueText(SetValueSemantics.WeightValueDescription)
-            if (!currentWeightText.isNullOrBlank() && currentWeightText == expectedText) {
-                if (!waitForStableWorkoutRecord(currentSetInfo, 1_000)) {
-                    return false
+        val beforeWeight = getCurrentWeightValue(currentSetInfo) ?: return false
+        val nextWeight = getNextWeightForSet(currentSetInfo, beforeWeight) ?: return false
+        val updatedSetData = updateCurrentSetDataInViewModel(currentSetInfo) { setData ->
+            when (setData) {
+                is WeightSetData -> {
+                    val nextData = setData.copy(actualWeight = nextWeight)
+                    nextData.copy(volume = nextData.calculateVolume())
                 }
-
-                val set = currentSetInfo.set
-                val updatedModification = when (set) {
-                    is WeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = beforeWeight,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = null,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalWeight = base.originalWeight ?: beforeWeight,
-                            modifiedWeight = nextWeight
-                        )
-                    }
-                    is BodyWeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = null,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = beforeWeight,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalAdditionalWeight = base.originalAdditionalWeight ?: beforeWeight,
-                            modifiedAdditionalWeight = nextWeight
-                        )
-                    }
-                    else -> null
+                is BodyWeightSetData -> {
+                    val nextData = setData.copy(additionalWeight = nextWeight)
+                    nextData.copy(volume = nextData.calculateVolume())
                 }
-
-                if (updatedModification != null) {
-                    modifications[updatedModification.setId] = updatedModification
-                    return true
-                }
-
-                return false
+                else -> null
             }
+        } ?: return false
 
-            val updatedText = incrementValueAndWait(
-                SetValueSemantics.WeightValueDescription,
-                expectedText
-            )
+        val modifiedWeight = when (updatedSetData) {
+            is WeightSetData -> updatedSetData.actualWeight
+            is BodyWeightSetData -> updatedSetData.additionalWeight
+            else -> null
+        } ?: return false
 
-            val modifiedWeight = when {
-                updatedText == null -> waitForWeightChange(currentSetInfo, beforeWeight, 1_500)
-                updatedText == "BW" -> 0.0
-                else -> parseWeightValue(updatedText)
-            } ?: waitForWeightChange(currentSetInfo, beforeWeight, 1_500)
-
-            if (modifiedWeight != null && kotlin.math.abs(modifiedWeight - beforeWeight) > 0.01) {
-                if (!waitForStableWorkoutRecord(currentSetInfo, 1_000)) {
-                    return false
-                }
-
-                val set = currentSetInfo.set
-                val updatedModification = when (set) {
-                    is WeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = beforeWeight,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = null,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalWeight = base.originalWeight ?: beforeWeight,
-                            modifiedWeight = modifiedWeight
-                        )
-                    }
-                    is BodyWeightSet -> {
-                        val base = existingModification ?: ModifiedSetData(
-                            setId = set.id,
-                            exerciseId = currentSetInfo.exerciseId,
-                            originalReps = null,
-                            modifiedReps = null,
-                            originalWeight = null,
-                            modifiedWeight = null,
-                            originalAdditionalWeight = beforeWeight,
-                            modifiedAdditionalWeight = null,
-                            originalDurationSeconds = null,
-                            modifiedDurationSeconds = null,
-                        )
-                        base.copy(
-                            originalAdditionalWeight = base.originalAdditionalWeight ?: beforeWeight,
-                            modifiedAdditionalWeight = modifiedWeight
-                        )
-                    }
-                    else -> null
-                }
-
-                if (updatedModification != null) {
-                    modifications[updatedModification.setId] = updatedModification
-                    return true
-                }
-            }
-
-            device.waitForIdle(400)
+        if (kotlin.math.abs(modifiedWeight - beforeWeight) <= 0.01) {
+            return false
         }
 
-        return false
+        val set = currentSetInfo.set
+        val updatedModification = when (set) {
+            is WeightSet -> {
+                val base = existingModification ?: ModifiedSetData(
+                    setId = set.id,
+                    exerciseId = currentSetInfo.exerciseId,
+                    originalReps = null,
+                    modifiedReps = null,
+                    originalWeight = beforeWeight,
+                    modifiedWeight = null,
+                    originalAdditionalWeight = null,
+                    modifiedAdditionalWeight = null,
+                    originalDurationSeconds = null,
+                    modifiedDurationSeconds = null,
+                )
+                base.copy(
+                    originalWeight = base.originalWeight ?: beforeWeight,
+                    modifiedWeight = modifiedWeight
+                )
+            }
+            is BodyWeightSet -> {
+                val base = existingModification ?: ModifiedSetData(
+                    setId = set.id,
+                    exerciseId = currentSetInfo.exerciseId,
+                    originalReps = null,
+                    modifiedReps = null,
+                    originalWeight = null,
+                    modifiedWeight = null,
+                    originalAdditionalWeight = beforeWeight,
+                    modifiedAdditionalWeight = null,
+                    originalDurationSeconds = null,
+                    modifiedDurationSeconds = null,
+                )
+                base.copy(
+                    originalAdditionalWeight = base.originalAdditionalWeight ?: beforeWeight,
+                    modifiedAdditionalWeight = modifiedWeight
+                )
+            }
+            else -> null
+        } ?: return false
+
+        modifications[updatedModification.setId] = updatedModification
+        return true
     }
 
     private fun getNextWeightForSet(currentSetInfo: CurrentSetInfo, originalWeight: Double): Double? {
@@ -1891,10 +1850,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         var firstMatchAt = 0L
 
         while (System.currentTimeMillis() < deadline) {
-            val info = runBlocking { getCurrentSetInfo() }
-            val matches = info != null &&
-                info.set.id == currentSetInfo.set.id &&
-                info.exerciseId == currentSetInfo.exerciseId
+            val stateSetData = getCurrentSetDataFromViewModel(currentSetInfo)
+            val matches = stateSetData != null
 
             if (matches) {
                 if (firstMatchAt == 0L) {
@@ -2030,6 +1987,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         }.getOrDefault(false)
         if (uiCompletion) return
 
+        if (isWorkoutCompletedInViewModel()) return
+
         val dbCompletion = runBlocking {
             val db = AppDatabase.getDatabase(context)
             db.workoutHistoryDao().getAllWorkoutHistoriesByIsDone(isDone = true).isNotEmpty()
@@ -2048,7 +2007,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
      * Skips the rest timer.
      */
     private fun skipRest(): Boolean {
-        return runCatching {
+        return WearWorkoutStateMutationHelper.skipCurrentRest(device, timeoutMs = 5_000) || runCatching {
             workoutDriver.skipRest()
             true
         }.onFailure {

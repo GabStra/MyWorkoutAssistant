@@ -14,12 +14,14 @@ class WearCrossDeviceSyncProducerE2ETest : WearBaseE2ETest() {
     private lateinit var workoutDriver: WearWorkoutDriver
     private lateinit var flowHelper: CrossDeviceWorkoutFlowHelper
 
+    override fun prepareAppStateBeforeLaunch() {
+        CrossDeviceWearSyncStateHelper.clearWearHistoryState(context)
+        CrossDeviceSyncWorkoutStoreFixture.setupWorkoutStore(context)
+    }
+
     @Before
     override fun baseSetUp() {
         super.baseSetUp()
-        CrossDeviceWearSyncStateHelper.clearWearHistoryState(context)
-        CrossDeviceSyncWorkoutStoreFixture.setupWorkoutStore(context)
-        launchAppFromHome()
         workoutDriver = createWorkoutDriver()
         flowHelper = CrossDeviceWorkoutFlowHelper(device, workoutDriver)
     }
@@ -27,6 +29,7 @@ class WearCrossDeviceSyncProducerE2ETest : WearBaseE2ETest() {
     @Test
     fun completeWorkout_syncsHistoryToPhone() {
         startWorkout(CrossDeviceSyncWorkoutStoreFixture.getWorkoutName())
+        flowHelper.waitForIntermediateSyncObservationWindow()
         flowHelper.completeComplexWorkoutWithDeterministicModifications()
         workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
         CrossDeviceWearSyncStateHelper.waitForCompletedHistoryAndEnqueueSync(context)

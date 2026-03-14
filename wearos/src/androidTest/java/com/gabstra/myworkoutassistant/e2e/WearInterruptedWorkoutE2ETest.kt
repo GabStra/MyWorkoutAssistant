@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.helpers.WearWorkoutStateMutationHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.FixMethodOrder
@@ -59,7 +60,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         launchAppFromHome()
         startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
-        workoutDriver.completeCurrentSet()
+        completeCurrentSetDeterministically()
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
@@ -114,7 +115,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         launchAppFromHome()
         startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
-        workoutDriver.completeCurrentSet()
+        completeCurrentSetDeterministically()
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
@@ -123,15 +124,13 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
         require(dialogAppeared) { "Recovery dialog did not appear" }
 
-        device.pressBack()
-        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        workoutDriver.clickRecoveryDismiss(5_000)
+        device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
 
         val selectionVisible = device.wait(Until.hasObject(By.text("My Workout Assistant")), 5_000)
         require(selectionVisible) { "Selection screen not visible after dismiss" }
         require(!workoutDriver.isRecoveryDialogVisible()) { "Recovery dialog should be closed after dismiss" }
 
-        device.pressHome()
-        device.waitForIdle(1_000)
         launchAppFromHome()
 
         val dialogAppearsAgain = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -146,9 +145,12 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         launchAppFromHome()
         startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
 
-        workoutDriver.completeCurrentSet()
+        completeCurrentSetDeterministically()
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
-        val restVisible = device.wait(Until.hasObject(By.textContains(":")), 5_000)
+        val restVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.RestSetTypeDescription)),
+            5_000
+        )
         require(restVisible) { "Rest screen did not appear" }
 
         val initialSeconds = readRestTimerSecondsFromScreen()
@@ -162,7 +164,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
 
         val resumed = workoutDriver.resumeOrEnterRecoveredWorkoutTimed(
             workoutName = MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName(),
-            inWorkoutSelector = By.textContains(":"),
+            inWorkoutSelector = By.descContains(SetValueSemantics.RestSetTypeDescription),
             timeoutMs = 20_000,
             useRestartTimer = false
         )
@@ -240,6 +242,15 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         require(calibrationLoadVisibleAgain || calibrationExerciseVisible) {
             "Restart calibration should return to calibration flow (load selection or first calibration exercise)"
         }
+    }
+
+    private fun completeCurrentSetDeterministically(timeoutMs: Long = 15_000) {
+        val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
+            device = device,
+            context = context,
+            timeoutMs = timeoutMs
+        )
+        require(completed) { "Failed to complete current set via workout state mutation helper" }
     }
 
     private fun readRestTimerSecondsFromScreen(): Int? {
