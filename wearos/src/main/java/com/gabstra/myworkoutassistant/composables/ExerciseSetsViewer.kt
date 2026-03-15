@@ -228,18 +228,29 @@ private fun buildRestLabel(restState: WorkoutState.Rest): String {
     return "REST ${FormatTime(seconds)}"
 }
 
-private data class SetTrendIndicator(
+internal data class SetTrendIndicator(
     val glyph: String,
     val color: Color,
 )
 
-private fun buildSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndicator? {
+internal fun buildSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndicator? {
     return when (compareSets(setState.previousSetData, setState.currentSetData)) {
         SetComparison.BETTER -> SetTrendIndicator(glyph = "↑", color = Green)
         SetComparison.WORSE -> SetTrendIndicator(glyph = "↓", color = Red)
         SetComparison.MIXED -> SetTrendIndicator(glyph = "~", color = Yellow)
         SetComparison.EQUAL -> null
     }
+}
+
+internal fun resolveSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndicator? {
+    val isWorkSet = when (val set = setState.set) {
+        is WeightSet -> set.subCategory == SetSubCategory.WorkSet
+        is com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet ->
+            set.subCategory == SetSubCategory.WorkSet
+        else -> false
+    }
+    if (!isWorkSet) return null
+    return buildSetTrendIndicator(setState)
 }
 
 @Composable
@@ -315,8 +326,7 @@ fun SetTableRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
-    val isWorkSet = (setState.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
-    val trendIndicator = if (setState.hasBeenExecuted && isWorkSet) buildSetTrendIndicator(setState) else null
+    val trendIndicator = resolveSetTrendIndicator(setState)
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState = setState,
