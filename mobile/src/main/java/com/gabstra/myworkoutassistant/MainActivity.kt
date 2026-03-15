@@ -1644,6 +1644,8 @@ fun MyWorkoutAssistantNavHost(
                                 exerciseInfoDao,
                                 workoutScheduleDao,
                                 selectedWorkout,
+                                initialSelectedTabIndex = screenData.selectedTabIndex,
+                                initialWorkoutHistoryId = screenData.workoutHistoryId
                             ) {
                                 appViewModel.goBack()
                             }
@@ -1666,7 +1668,7 @@ fun MyWorkoutAssistantNavHost(
                             exerciseInfoDao = exerciseInfoDao,
                             workoutScheduleDao = workoutScheduleDao,
                             workout = selectedWorkout,
-                            initialSelectedTabIndex = 2,
+                            initialSelectedTabIndex = screenData.selectedTabIndex,
                             initialWorkoutHistoryId = screenData.workoutHistoryId
                         ) {
                             appViewModel.goBack()
@@ -1701,6 +1703,7 @@ fun MyWorkoutAssistantNavHost(
                                     workoutHistoryDao,
                                     setHistoryDao,
                                     selectedExercise,
+                                    initialSelectedTabIndex = screenData.selectedTabIndex
                                 ) {
                                     appViewModel.goBack()
                                 }

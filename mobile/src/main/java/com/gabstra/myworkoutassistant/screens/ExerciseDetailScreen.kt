@@ -755,6 +755,14 @@ fun ExerciseDetailScreen(
                     onTabSelected = { index ->
                         if (index > 0 && exercise.doNotStoreHistory) return@SwipeableTabs
                         selectedTopTab = index
+                        val targetScreenData = ScreenData.ExerciseDetail(
+                            workoutId = workout.id,
+                            selectedExerciseId = exercise.id,
+                            selectedTabIndex = index
+                        )
+                        if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
+                            appViewModel.updateScreenData(targetScreenData)
+                        }
                     },
                     tabEnabled = { index -> index == 0 || isHistoryEnabled },
                     unselectedContentColor = if (isHistoryEnabled) {
@@ -803,6 +811,17 @@ fun ExerciseDetailScreen(
                             selectedHistoryMode = pageIndex - 1,
                             onGoBack = onGoBack
                         )
+                    }
+                }
+
+                LaunchedEffect(selectedTopTab, workout.id, exercise.id) {
+                    val targetScreenData = ScreenData.ExerciseDetail(
+                        workoutId = workout.id,
+                        selectedExerciseId = exercise.id,
+                        selectedTabIndex = selectedTopTab
+                    )
+                    if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
+                        appViewModel.updateScreenData(targetScreenData)
                     }
                 }
 

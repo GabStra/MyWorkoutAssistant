@@ -59,9 +59,21 @@ sealed class ScreenData() {
     class NewWorkout(val workoutPlanId: UUID? = null) : ScreenData()
     class Workout(val workoutId: UUID) : ScreenData()
     class EditWorkout(val workoutId: UUID) : ScreenData()
-    class WorkoutDetail(val workoutId: UUID) : ScreenData()
-    class WorkoutHistory(val workoutId: UUID,val workoutHistoryId: UUID? = null) : ScreenData()
-    class ExerciseDetail(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
+    class WorkoutDetail(
+        val workoutId: UUID,
+        val selectedTabIndex: Int = 0,
+        val workoutHistoryId: UUID? = null
+    ) : ScreenData()
+    class WorkoutHistory(
+        val workoutId: UUID,
+        val workoutHistoryId: UUID? = null,
+        val selectedTabIndex: Int = 2
+    ) : ScreenData()
+    class ExerciseDetail(
+        val workoutId: UUID,
+        val selectedExerciseId: UUID,
+        val selectedTabIndex: Int = 0
+    ) : ScreenData()
     class ExerciseHistory(
         val workoutId: UUID,
         val selectedExerciseId: UUID,
@@ -100,9 +112,9 @@ sealed class ScreenData() {
             is NewWorkout -> "NewWorkout_${workoutPlanId?.toString() ?: "null"}"
             is Workout -> "Workout_${workoutId}"
             is EditWorkout -> "EditWorkout_${workoutId}"
-            is WorkoutDetail -> "WorkoutDetail_${workoutId}"
-            is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}"
-            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
+            is WorkoutDetail -> "WorkoutDetail_${workoutId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
+            is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}_${selectedTabIndex}"
+            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}_${selectedTabIndex}"
             is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"

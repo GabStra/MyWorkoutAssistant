@@ -1030,6 +1030,14 @@ fun WorkoutDetailScreen(
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
+                        val targetScreenData = ScreenData.WorkoutDetail(
+                            workoutId = workout.id,
+                            selectedTabIndex = index,
+                            workoutHistoryId = initialWorkoutHistoryId
+                        )
+                        if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
+                            appViewModel.updateScreenData(targetScreenData)
+                        }
                     },
                     modifier = Modifier.fillMaxSize(),
                     pagerModifier = Modifier.fillMaxSize(),
@@ -1079,6 +1087,17 @@ fun WorkoutDetailScreen(
                             selectedHistoryMode = pageIndex - 1,
                             onGoBack = onGoBack
                         )
+                    }
+                }
+
+                LaunchedEffect(selectedTopTab, workout.id, initialWorkoutHistoryId) {
+                    val targetScreenData = ScreenData.WorkoutDetail(
+                        workoutId = workout.id,
+                        selectedTabIndex = selectedTopTab,
+                        workoutHistoryId = initialWorkoutHistoryId
+                    )
+                    if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
+                        appViewModel.updateScreenData(targetScreenData)
                     }
                 }
 
