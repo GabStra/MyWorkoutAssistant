@@ -23,7 +23,6 @@ fun ExerciseMetadataStrip(
     repRange: String? = null,
     sideIndicator: String? = null,
     currentSideIndex: UInt? = null,
-    isUnilateral: Boolean = false,
     onTap: (() -> Unit)? = null,
 ) {
     val baseStyle = MaterialTheme.typography.bodySmall
@@ -39,7 +38,6 @@ fun ExerciseMetadataStrip(
         repRange,
         sideIndicator,
         currentSideIndex,
-        isUnilateral,
         baseStyle,
         primaryColor,
         surfaceContainerHigh,
@@ -114,11 +112,6 @@ fun ExerciseMetadataStrip(
                     withStyle(SpanStyle(color = side2Color, fontWeight = FontWeight.Bold)) {
                         append("R")
                     }
-                }
-
-                if (isUnilateral) {
-                    sep()
-                    append("Unilateral")
                 }
             }
         }

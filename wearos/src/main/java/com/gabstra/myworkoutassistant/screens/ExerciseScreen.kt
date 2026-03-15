@@ -1,10 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -99,7 +97,7 @@ private enum class ExerciseHorizontalPage {
 
 private val PREVIEW_FIXED_NOW: LocalDateTime = LocalDateTime.of(2026, 1, 1, 12, 0)
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseScreen(
     viewModel: AppViewModel,
@@ -217,21 +215,16 @@ fun ExerciseScreen(
     }
 
     key(state.exerciseId to state.set.id) {
-        val exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit =
-            { providedOnLongClick ->
-                ExerciseNameText(
-                    text = exercise.name,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 45.dp)
-                        .combinedClickable(
-                            onClick = {  },
-                            onLongClick = { providedOnLongClick.invoke() }
-                        ),
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    textAlign = TextAlign.Center
-                )
-            }
+        val exerciseTitleComposable: @Composable () -> Unit = {
+            ExerciseNameText(
+                text = exercise.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 45.dp),
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center
+            )
+        }
 
         Box(modifier = Modifier.fillMaxSize()) {
             CustomHorizontalPager(
@@ -930,7 +923,7 @@ private fun ExerciseScreenPreviewTitledLinesPage() {
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExerciseDetailContent(
     state: WorkoutState.Set,
@@ -939,7 +932,7 @@ private fun ExerciseDetailContent(
     exercise: Exercise,
     exerciseOrSupersetId: UUID,
     isSuperset: Boolean,
-    exerciseTitleComposable: @Composable (onLongClick: () -> Unit) -> Unit,
+    exerciseTitleComposable: @Composable () -> Unit,
     onEditModeEnabled: () -> Unit,
     onEditModeDisabled: () -> Unit,
 ) {
@@ -981,7 +974,7 @@ private fun ExerciseDetailContent(
                 }
 
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
@@ -992,8 +985,7 @@ private fun ExerciseDetailContent(
                             ?.let { (current, total) -> if (total > 1) "$current/$total" else null },
                         repRange = repRange,
                         sideIndicator = if (state.intraSetTotal != null) "L ↔ R" else null,
-                        currentSideIndex = viewModel.getUnilateralSideIndex(state),
-                        isUnilateral = state.isUnilateral
+                        currentSideIndex = viewModel.getUnilateralSideIndex(state)
                     )
 
                     if (isWarmupSet || isCalibrationSet || isAutoRegulationWorkSet) {

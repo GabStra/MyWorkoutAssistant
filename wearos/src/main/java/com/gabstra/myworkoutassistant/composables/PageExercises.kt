@@ -187,8 +187,7 @@ fun PageExercises(
                         supersetExerciseIndex = null,
                         supersetExerciseTotal = null,
                         sideIndicator = null,
-                        currentSideIndex = null,
-                        isUnilateral = currentExercise == selectedExercise && (workoutState as? WorkoutState.Set)?.exerciseId == selectedExercise.id && workoutState.isUnilateral
+                        currentSideIndex = null
                     )
                 }
             }

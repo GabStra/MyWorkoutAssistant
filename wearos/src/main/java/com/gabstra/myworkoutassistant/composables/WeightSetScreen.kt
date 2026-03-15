@@ -51,9 +51,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDateTime
@@ -178,21 +176,6 @@ fun WeightSetScreen(
             // Flush any pending plate recalculation when exiting edit mode
             viewModel.flushPlateRecalculation()
             onEditModeDisabled()
-        }
-    }
-
-    var openDialogJob by remember { mutableStateOf<Job?>(null) }
-    val coroutineScope = rememberWearCoroutineScope()
-
-    var showWeightInfoDialog by remember { mutableStateOf(false) }
-
-    fun startOpenDialogJob() {
-        if( openDialogJob?.isActive == true) return
-        openDialogJob?.cancel()
-        openDialogJob = coroutineScope.launch {
-            showWeightInfoDialog = true
-            delay(5000L)
-            showWeightInfoDialog = false
         }
     }
 
