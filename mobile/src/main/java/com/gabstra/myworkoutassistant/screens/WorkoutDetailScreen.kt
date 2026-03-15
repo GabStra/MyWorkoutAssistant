@@ -1109,7 +1109,7 @@ fun WorkoutDetailScreen(
                                 isSelectionModeActive = false
                                 Toast.makeText(
                                     context,
-                                    "Selection moved to ${targetWorkout.name}",
+                                    "Moved the selected items to ${targetWorkout.name}.",
                                     Toast.LENGTH_SHORT
                                 ).show()
 
@@ -1162,7 +1162,7 @@ fun WorkoutDetailScreen(
                             workoutRecordDao.deleteByWorkoutId(workout.id)
                             Toast.makeText(
                                 context,
-                                "History deleted",
+                                "Workout history cleared.",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }

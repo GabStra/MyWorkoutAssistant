@@ -164,6 +164,14 @@ private fun PermissionRequirementRow(
     }
 }
 
+private fun Throwable.toMainActivityToastMessage(
+    intro: String,
+    fallbackDetail: String
+): String {
+    val detail = message?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackDetail
+    return "$intro $detail"
+}
+
 class MainActivity : ComponentActivity() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
@@ -198,7 +206,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 Toast.makeText(
                     this,
-                    "Storage access denied; backup cleanup skipped",
+                    "Backup cleanup was skipped because storage access was not allowed.",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -211,7 +219,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 Toast.makeText(
                     this,
-                    "All files access denied; backup cleanup skipped",
+                    "Backup cleanup was skipped because Downloads access was not allowed.",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -575,7 +583,10 @@ fun MyWorkoutAssistantNavHost(
                         } catch (e: Exception) {
                             Toast.makeText(
                                 context,
-                                "Failed to request Health Connect permissions: ${e.message}",
+                                e.toMainActivityToastMessage(
+                                    intro = "Couldn't open the Health Connect permission prompt.",
+                                    fallbackDetail = "Please try again."
+                                ),
                                 Toast.LENGTH_SHORT
                             ).show()
                             scope.launch {
@@ -621,7 +632,7 @@ fun MyWorkoutAssistantNavHost(
                         if (importedWorkoutStore.workouts.isEmpty()) {
                             Toast.makeText(
                                 context,
-                                "Cannot import workout plan: No workouts found in file",
+                                "That file doesn't contain any workouts to import.",
                                 Toast.LENGTH_SHORT
                             ).show()
                             return@let
@@ -633,7 +644,10 @@ fun MyWorkoutAssistantNavHost(
                 } catch (e: Exception) {
                     Toast.makeText(
                         context,
-                        "Failed to read file: ${e.message}",
+                        e.toMainActivityToastMessage(
+                            intro = "Couldn't read that file.",
+                            fallbackDetail = "Please choose another file or try again."
+                        ),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -708,7 +722,10 @@ fun MyWorkoutAssistantNavHost(
                 } catch (e: Exception) {
                     Toast.makeText(
                         context,
-                        "Failed to import workout plan: ${e.message}",
+                        e.toMainActivityToastMessage(
+                            intro = "Couldn't import that workout plan.",
+                            fallbackDetail = "Please try again."
+                        ),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -744,7 +761,7 @@ fun MyWorkoutAssistantNavHost(
         workoutScheduleDao: WorkoutScheduleDao,
         workoutRecordDao: WorkoutRecordDao,
         healthConnectClient: HealthConnectClient,
-        successToastMessage: String = "Data restored from backup"
+        successToastMessage: String = "Backup restored."
     ) {
         withContext(Dispatchers.IO + NonCancellable) {
             try {
@@ -772,7 +789,7 @@ fun MyWorkoutAssistantNavHost(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
-                                    "Failed to delete workout histories from HealthConnect",
+                                    "Couldn't remove existing workout history from Health Connect. The restore will continue in the app.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -911,7 +928,10 @@ fun MyWorkoutAssistantNavHost(
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             context,
-                            "Failed to restore workout history from backup: ${e.message ?: "Migration error"}",
+                            e.toMainActivityToastMessage(
+                                intro = "The backup was restored, but some history migration steps failed.",
+                                fallbackDetail = "Please review your data and try again if needed."
+                            ),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -920,7 +940,7 @@ fun MyWorkoutAssistantNavHost(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Failed to restore workout history from backup",
+                        "Couldn't restore workout history from that backup.",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -936,7 +956,10 @@ fun MyWorkoutAssistantNavHost(
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         context,
-                        "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
+                        e.toMainActivityToastMessage(
+                            intro = "Couldn't restore that backup.",
+                            fallbackDetail = "Please choose a valid backup file."
+                        ),
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -974,7 +997,7 @@ fun MyWorkoutAssistantNavHost(
             workoutScheduleDao = workoutScheduleDao,
             workoutRecordDao = workoutRecordDao,
             healthConnectClient = healthConnectClient,
-            successToastMessage = "Data restored from backup because local data was empty"
+            successToastMessage = "Backup restored because your local data was empty."
         )
     }
 
@@ -992,7 +1015,7 @@ fun MyWorkoutAssistantNavHost(
                             BackupFileType.WORKOUT_STORE -> {
                                 Toast.makeText(
                                     context,
-                                    "This is a workout plan file. Please use 'Import Workout Plan' instead.",
+                                    "That file is a workout plan export. Use Import Workout Plan instead.",
                                     Toast.LENGTH_LONG
                                 ).show()
                                 return@let
@@ -1001,7 +1024,7 @@ fun MyWorkoutAssistantNavHost(
                             BackupFileType.UNKNOWN -> {
                                 Toast.makeText(
                                     context,
-                                    "Invalid backup file format. Please select a valid backup file.",
+                                    "That file isn't a valid backup.",
                                     Toast.LENGTH_LONG
                                 ).show()
                                 return@let
@@ -1043,7 +1066,10 @@ fun MyWorkoutAssistantNavHost(
                     e.printStackTrace()
                     Toast.makeText(
                         context,
-                        "Failed to restore backup: ${e.message ?: "Invalid backup file format"}",
+                        e.toMainActivityToastMessage(
+                            intro = "Couldn't restore that backup.",
+                            fallbackDetail = "Please choose a valid backup file."
+                        ),
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -1061,7 +1087,7 @@ fun MyWorkoutAssistantNavHost(
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(
                                         context,
-                                        "No data to backup",
+                                        "There's nothing to back up yet.",
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
@@ -1075,14 +1101,17 @@ fun MyWorkoutAssistantNavHost(
                         }
                         Toast.makeText(
                             context,
-                            "Backup saved successfully",
+                            "Backup saved.",
                             Toast.LENGTH_SHORT
                         ).show()
                     } catch (e: Exception) {
                         e.printStackTrace()
                         Toast.makeText(
                             context,
-                            "Failed to save backup: ${e.message ?: "Unknown error"}",
+                            e.toMainActivityToastMessage(
+                                intro = "Couldn't save the backup.",
+                                fallbackDetail = "Please try again."
+                            ),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -1100,6 +1129,34 @@ fun MyWorkoutAssistantNavHost(
 
     // Collect workouts once at the parent level to avoid recomposition cascades inside AnimatedContent
     val workoutsForNavigation by appViewModel.workoutsFlow.collectAsState()
+    val resolveWorkoutForExerciseScreen = remember(workoutsForNavigation) {
+        { workoutId: java.util.UUID, exerciseId: java.util.UUID ->
+            val requestedWorkout = workoutsForNavigation.find { it.id == workoutId }
+            if (requestedWorkout == null) {
+                null
+            } else {
+                val workoutCandidates = buildList {
+                    addAll(
+                        workoutsForNavigation.filter {
+                            it.globalId == requestedWorkout.globalId && it.isActive
+                        }
+                    )
+                    add(requestedWorkout)
+                    addAll(
+                        workoutsForNavigation.filter {
+                            it.id != requestedWorkout.id &&
+                                it.globalId == requestedWorkout.globalId &&
+                                !it.isActive
+                        }
+                    )
+                }.distinctBy { it.id }
+
+                workoutCandidates.firstOrNull {
+                    findWorkoutComponentByIdInWorkout(it, exerciseId) is Exercise
+                } ?: requestedWorkout
+            }
+        }
+    }
     val saveableStateHolder = rememberSaveableStateHolder()
     val isInitialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState()
 
@@ -1153,7 +1210,7 @@ fun MyWorkoutAssistantNavHost(
                                 writeJsonToDownloadsFolder(context, filename, jsonString)
                                 Toast.makeText(
                                     context,
-                                    "Workouts saved to downloads folder",
+                                    "Workout export saved to Downloads.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             },
@@ -1169,7 +1226,10 @@ fun MyWorkoutAssistantNavHost(
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Export failed: ${e.message}",
+                                            e.toMainActivityToastMessage(
+                                                intro = "Couldn't export the workout plan.",
+                                                fallbackDetail = "Please try again."
+                                            ),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1186,13 +1246,16 @@ fun MyWorkoutAssistantNavHost(
                                         }
                                         Toast.makeText(
                                             context,
-                                            "Equipment exported to: $filename",
+                                            "Equipment export saved as $filename.",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Export failed: ${e.message}",
+                                            e.toMainActivityToastMessage(
+                                                intro = "Couldn't export your equipment list.",
+                                                fallbackDetail = "Please try again."
+                                            ),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1212,7 +1275,7 @@ fun MyWorkoutAssistantNavHost(
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Failed to delete workout histories from HealthConnect",
+                                            "Couldn't remove unfinished workout history from Health Connect.",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1237,7 +1300,7 @@ fun MyWorkoutAssistantNavHost(
                                         } catch (e: Exception) {
                                             Toast.makeText(
                                                 context,
-                                                "Failed to delete workout histories from HealthConnect",
+                                                "Couldn't remove workout history from Health Connect.",
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                         }
@@ -1245,7 +1308,7 @@ fun MyWorkoutAssistantNavHost(
                                         workoutHistoryDao.deleteAll()
                                         setHistoryDao.deleteAll()
                                     }
-                                    Toast.makeText(context, "Histories cleared", Toast.LENGTH_SHORT)
+                                    Toast.makeText(context, "All workout history was cleared.", Toast.LENGTH_SHORT)
                                         .show()
 
                                     appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
@@ -1273,13 +1336,13 @@ fun MyWorkoutAssistantNavHost(
                                         }
                                         Toast.makeText(
                                             context,
-                                            "Synced with HealthConnect",
+                                            "Synced with Health Connect.",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     } catch (e: Exception) {
                                         Toast.makeText(
                                             context,
-                                            "Error syncing with HealthConnect",
+                                            "Couldn't sync with Health Connect.",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -1292,7 +1355,7 @@ fun MyWorkoutAssistantNavHost(
                                     }
                                     Toast.makeText(
                                         context,
-                                        "All exercise info cleared",
+                                        "All exercise info was cleared.",
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 }
@@ -1324,7 +1387,7 @@ fun MyWorkoutAssistantNavHost(
                                             db
                                         )
                                         syncWithWatch()
-                                        Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT)
+                                        Toast.makeText(context, "Settings saved.", Toast.LENGTH_SHORT)
                                             .show()
                                         appViewModel.goBack()
                                     } finally {
@@ -1612,28 +1675,13 @@ fun MyWorkoutAssistantNavHost(
 
                     is ScreenData.ExerciseDetail -> {
                         val screenData = currentScreen
-                        val workouts by appViewModel.workoutsFlow.collectAsState()
-                        val requestedWorkout = workouts.find { it.id == screenData.workoutId }
-                        if (requestedWorkout == null) {
+                        val selectedWorkout = resolveWorkoutForExerciseScreen(
+                            screenData.workoutId,
+                            screenData.selectedExerciseId
+                        )
+                        if (selectedWorkout == null) {
                             LaunchedEffect(screenData.workoutId) { appViewModel.goBack() }
                         } else {
-                            val workoutCandidates = buildList {
-                                add(requestedWorkout)
-                                addAll(
-                                    workouts.filter {
-                                        it.id != requestedWorkout.id &&
-                                            it.globalId == requestedWorkout.globalId
-                                    }
-                                )
-                            }
-
-                            val selectedWorkout = workoutCandidates.firstOrNull {
-                                findWorkoutComponentByIdInWorkout(
-                                    it,
-                                    screenData.selectedExerciseId
-                                ) is Exercise
-                            } ?: requestedWorkout
-
                             val selectedExercise = findWorkoutComponentByIdInWorkout(
                                 selectedWorkout,
                                 screenData.selectedExerciseId
@@ -1662,28 +1710,13 @@ fun MyWorkoutAssistantNavHost(
 
                     is ScreenData.ExerciseHistory -> {
                         val screenData = currentScreen
-                        val workouts by appViewModel.workoutsFlow.collectAsState()
-                        val requestedWorkout = workouts.find { it.id == screenData.workoutId }
-                        if (requestedWorkout == null) {
+                        val selectedWorkout = resolveWorkoutForExerciseScreen(
+                            screenData.workoutId,
+                            screenData.selectedExerciseId
+                        )
+                        if (selectedWorkout == null) {
                             LaunchedEffect(screenData.workoutId) { appViewModel.goBack() }
                         } else {
-                            val workoutCandidates = buildList {
-                                add(requestedWorkout)
-                                addAll(
-                                    workouts.filter {
-                                        it.id != requestedWorkout.id &&
-                                            it.globalId == requestedWorkout.globalId
-                                    }
-                                )
-                            }
-
-                            val selectedWorkout = workoutCandidates.firstOrNull {
-                                findWorkoutComponentByIdInWorkout(
-                                    it,
-                                    screenData.selectedExerciseId
-                                ) is Exercise
-                            } ?: requestedWorkout
-
                             val selectedExercise = findWorkoutComponentByIdInWorkout(
                                 selectedWorkout,
                                 screenData.selectedExerciseId

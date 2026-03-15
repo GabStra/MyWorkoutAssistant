@@ -94,9 +94,9 @@ fun ErrorLogsScreen(
                                         
                                         dataClient.putDataItem(request)
                                     }
-                                    Toast.makeText(context, "Error logs cleared", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Error logs cleared.", Toast.LENGTH_SHORT).show()
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, "Failed to clear error logs: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Couldn't clear the error logs. Please try again.", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -160,7 +160,7 @@ fun ErrorLogCard(errorLog: ErrorLog) {
         }
         val clip = ClipData.newPlainText("Stack Trace", fullStackTrace)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(context, "Stack trace copied to clipboard", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Stack trace copied.", Toast.LENGTH_SHORT).show()
     }
     
     Card(

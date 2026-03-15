@@ -87,6 +87,7 @@ fun WeightPickerDialog(
                         ) { (weight, label) ->
                             val isSelected = selectedWeight != null && selectedWeight == weight
                             val weightText = String.format(Locale.US, "%.2f kg", weight)
+                            val showsDistinctWeightText = label.trim() != weightText
 
                             val borderColor = if (isSelected) {
                                 MaterialTheme.colorScheme.primary
@@ -127,11 +128,13 @@ fun WeightPickerDialog(
                                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Text(
-                                            text = weightText,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        if (showsDistinctWeightText) {
+                                            Text(
+                                                text = weightText,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
                                     if (isSelected) {
@@ -150,6 +153,8 @@ fun WeightPickerDialog(
             }
         },
         showConfirm = false,
-        showDismiss = false
+        showDismiss = true,
+        dismissText = "Close",
+        onDismissButton = onDismissRequest
     )
 }

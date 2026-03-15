@@ -439,7 +439,7 @@ class DataLayerListenerService : WearableListenerService() {
                             scope.launch(Dispatchers.Main) {
                                 Toast.makeText(
                                     this@DataLayerListenerService,
-                                    "Sync completed",
+                                    "Watch sync complete.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }

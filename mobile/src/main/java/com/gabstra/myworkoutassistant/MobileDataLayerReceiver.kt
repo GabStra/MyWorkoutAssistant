@@ -85,7 +85,7 @@ internal class MobileDataLayerReceiver(
         }
         Toast.makeText(
             context,
-            "Received $count error log(s) from watch",
+            "Imported $count error log(s) from your watch.",
             Toast.LENGTH_SHORT
         ).show()
     }

@@ -203,7 +203,7 @@ fun writeJsonToDownloadsFolder(context: Context, fileName: String, fileContent: 
         }
     } ?: run {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Couldn't save the file to Downloads.", Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -898,7 +898,7 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
             
             Log.d("Utils", "Cleanup complete: deleted $deletedCount duplicate backup file(s), kept: ${targetFile.name}")
             if (deletedCount > 0) {
-                showCleanupToast("Deleted $deletedCount duplicate backup file(s)")
+                showCleanupToast("Removed $deletedCount duplicate backup file(s).")
             }
         } catch (e: Exception) {
             Log.e("Utils", "Error cleaning up duplicate backup files", e)
@@ -1000,7 +1000,7 @@ suspend fun cleanupDuplicateBackupFilesByContent(context: Context) {
             Log.d("Utils", "Cleanup complete: $uniqueFiles unique content(s), $totalDuplicates duplicate(s) found, $deletedCount deleted, ${allBackupFiles.size - deletedCount} kept")
             
             if (deletedCount > 0) {
-                showCleanupToast("Deleted $deletedCount duplicate backup file(s), kept $uniqueFiles unique version(s)")
+                showCleanupToast("Removed $deletedCount duplicate backup file(s). Kept $uniqueFiles unique backup version(s).")
             } else if (totalDuplicates == 0) {
                 Log.d("Utils", "No duplicates found - all backup files have unique content")
             }
@@ -1419,11 +1419,11 @@ suspend fun writeMarkdownToDownloadsFolder(context: Context, fileName: String, f
             outputStream?.write(fileContent.toByteArray())
         }
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Export saved to downloads folder", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Export saved to Downloads.", Toast.LENGTH_SHORT).show()
         }
     } ?: run {
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Failed to write to downloads folder", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Couldn't save the file to Downloads.", Toast.LENGTH_SHORT).show()
         }
     }
 }

@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,8 +69,6 @@ fun BodyWeightSetForm(
                 }
                 isLoadingCombinations = false
             }
-            val showCombinationsLoading = rememberMinimumLoadingVisibility(isLoadingCombinations)
-
             val filterState = remember { mutableStateOf("") }
 
             val filteredCombinations = remember(filterState.value, possibleCombinations) {
@@ -85,6 +83,7 @@ fun BodyWeightSetForm(
 
             val expandedWeights = remember { mutableStateOf(false) }
             val selectedAdditionalWeight = additionalWeightState.value.toDoubleOrNull() ?: 0.0
+            val isAdditionalWeightSelectionReady = !isLoadingCombinations
             val additionalWeightLabel =
                 if (equipment is Barbell) "Total Additional Weight (KG)" else "Additional Weight (KG)"
 
@@ -97,82 +96,82 @@ fun BodyWeightSetForm(
                 Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
             }
 
-            if (!showCombinationsLoading) {
-                Box {
-                    Box {
-                        OutlinedTextField(
-                            value = if (selectedAdditionalWeight == 0.0) {
-                                "BW"
-                            } else {
-                                equipment.formatWeight(selectedAdditionalWeight)
-                            },
-                            readOnly = true,
-                            onValueChange = {},
-                            label = { Text(additionalWeightLabel) },
-                            enabled = !shouldLockAdditionalWeightSelection,
-                            keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                                .then(if (shouldLockAdditionalWeightSelection) Modifier.alpha(0.6f) else Modifier)
-                        )
-                        if (!shouldLockAdditionalWeightSelection) {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .clickable { expandedWeights.value = true }
-                            )
-                        }
-                    }
-
-                    if (shouldLockAdditionalWeightSelection) {
-                        Text(
-                            text = "This exercise is waiting to be calibrated.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    if (selectedAdditionalWeight > 0.0) {
-                        EquipmentWeightCalculationInfo(
-                            equipment = equipment,
-                            totalWeight = selectedAdditionalWeight
-                        )
-                    }
-
-                    if (expandedWeights.value) {
-                        val sortedFilteredCombinations = filteredCombinations
-                            .toList()
-                            .sortedWith(compareBy<Pair<Double, String>> { it.first != 0.0 }.thenBy { it.first })
-
-                        WeightPickerDialog(
-                            combinations = sortedFilteredCombinations,
-                            filter = filterState.value,
-                            selectedWeight = selectedAdditionalWeight,
-                            onFilterChange = { input -> filterState.value = input },
-                            onDismissRequest = { expandedWeights.value = false },
-                            onSelect = { selectedWeight ->
-                                additionalWeightState.value = selectedWeight.toString()
-                            }
-                        )
-                    }
-                }
-            } else {
-                Box(
+            Box {
+                OutlinedTextField(
+                    value = if (selectedAdditionalWeight == 0.0) {
+                        "BW"
+                    } else {
+                        equipment.formatWeight(selectedAdditionalWeight)
+                    },
+                    readOnly = true,
+                    onValueChange = {},
+                    label = { Text(additionalWeightLabel) },
+                    enabled = !shouldLockAdditionalWeightSelection && isAdditionalWeightSelectionReady,
+                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                        .padding(8.dp)
+                        .then(
+                            if (shouldLockAdditionalWeightSelection || !isAdditionalWeightSelectionReady) {
+                                Modifier.alpha(0.6f)
+                            } else {
+                                Modifier
+                            }
+                        )
+                )
+                if (!shouldLockAdditionalWeightSelection && isAdditionalWeightSelectionReady) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { expandedWeights.value = true }
+                    )
+                }
+
+                if (isLoadingCombinations) {
                     CircularProgressIndicator(
-                        modifier = Modifier.width(32.dp),
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 24.dp)
+                            .size(20.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MediumDarkGray
                     )
                 }
+            }
+
+            if (shouldLockAdditionalWeightSelection) {
+                Text(
+                    text = "This exercise is waiting to be calibrated.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            if (!shouldLockAdditionalWeightSelection && isAdditionalWeightSelectionReady && selectedAdditionalWeight > 0.0) {
+                EquipmentWeightCalculationInfo(
+                    equipment = equipment,
+                    totalWeight = selectedAdditionalWeight
+                )
+            }
+
+            if (expandedWeights.value) {
+                val sortedFilteredCombinations = filteredCombinations
+                    .toList()
+                    .sortedWith(compareBy<Pair<Double, String>> { it.first != 0.0 }.thenBy { it.first })
+
+                WeightPickerDialog(
+                    combinations = sortedFilteredCombinations,
+                    filter = filterState.value,
+                    selectedWeight = selectedAdditionalWeight,
+                    onFilterChange = { input -> filterState.value = input },
+                    onDismissRequest = { expandedWeights.value = false },
+                    onSelect = { selectedWeight ->
+                        additionalWeightState.value = selectedWeight.toString()
+                    }
+                )
             }
         }
 

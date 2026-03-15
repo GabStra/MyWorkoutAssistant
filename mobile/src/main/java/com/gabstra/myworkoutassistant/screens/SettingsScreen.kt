@@ -250,14 +250,14 @@ fun SettingsScreen(
                                 restingHeartRateState.value = historicalRestingHeartRate.toString()
                                 Toast.makeText(
                                     context,
-                                    "Resting HR loaded from Health Connect",
+                                    "Resting heart rate loaded from Health Connect.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } else {
                                 restingHeartRateState.value = defaultRestingHeartRate.toString()
                                 Toast.makeText(
                                     context,
-                                    "No resting HR found. Using default: $defaultRestingHeartRate bpm",
+                                    "No resting heart rate was found in Health Connect. Using $defaultRestingHeartRate bpm instead.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -265,7 +265,7 @@ fun SettingsScreen(
                             restingHeartRateState.value = defaultRestingHeartRate.toString()
                             Toast.makeText(
                                 context,
-                                "Unable to read resting HR. Using default: $defaultRestingHeartRate bpm",
+                                "Couldn't read your resting heart rate from Health Connect. Using $defaultRestingHeartRate bpm instead.",
                                 Toast.LENGTH_SHORT
                             ).show()
                         } finally {
@@ -297,13 +297,13 @@ fun SettingsScreen(
                         val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
                         if (birthDateYear == null || birthDateYear < 1900 || birthDateYear > currentYear) {
-                            Toast.makeText(context, "Invalid birth year", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Enter a valid birth year.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
                         val weight = weightState.value.toDoubleOrNull()
                         if (weight == null || weight <= 0) {
-                            Toast.makeText(context, "Invalid weight", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Enter a valid body weight.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
@@ -311,14 +311,14 @@ fun SettingsScreen(
                         if (measuredMaxHeartRateState.value.isNotBlank() &&
                             (measuredMaxHeartRate == null || measuredMaxHeartRate !in 120..260)
                         ) {
-                            Toast.makeText(context, "Invalid measured max HR", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Enter a valid measured max heart rate.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 
                         val restingHeartRate = restingHeartRateState.value.toIntOrNull()
                             ?: getEffectiveRestingHeartRate()
                         if (restingHeartRate !in 30..120) {
-                            Toast.makeText(context, "Invalid resting HR", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Enter a valid resting heart rate.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
 

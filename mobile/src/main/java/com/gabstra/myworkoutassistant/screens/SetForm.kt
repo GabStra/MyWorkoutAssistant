@@ -163,7 +163,7 @@ fun SetForm(
                             val context = LocalContext.current
                             Toast.makeText(
                                 context,
-                                "Equipment must be assigned to the exercise first",
+                                "Add equipment to this exercise before creating a weight-based set.",
                                 Toast.LENGTH_LONG,
                             ).show()
                             onCancel()
@@ -217,4 +217,3 @@ fun SetForm(
         )
     }
 }
-

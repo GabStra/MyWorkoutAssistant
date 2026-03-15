@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,8 +59,6 @@ fun WeightSetForm(
         }
         isLoadingCombinations = false
     }
-    val showCombinationsLoading = rememberMinimumLoadingVisibility(isLoadingCombinations)
-
     val filterState = remember { mutableStateOf("") }
 
     val filteredCombinations = remember(filterState.value, possibleCombinations) {
@@ -80,6 +78,7 @@ fun WeightSetForm(
         SetSubCategory.CalibrationPendingSet,
         SetSubCategory.CalibrationSet
     )) || (isCalibrationExercise && (weightSet == null || weightSet.subCategory == SetSubCategory.WorkSet))
+    val isWeightSelectionReady = !isLoadingCombinations
     val selectedWeight = weightState.value.toDoubleOrNull() ?: 0.0
     val weightLabel = if (equipment is Barbell) "Total Weight (KG)" else "Weight (KG)"
 
@@ -96,77 +95,79 @@ fun WeightSetForm(
             Text(text = "Equipment: ${equipment.name}", style = MaterialTheme.typography.bodyMedium)
         }
 
-        if (!showCombinationsLoading) {
+        Box {
             Box {
-                Box {
-                    OutlinedTextField(
-                        value = equipment.formatWeight(selectedWeight),
-                        readOnly = true,
-                        onValueChange = {},
-                        label = { Text(weightLabel) },
-                        enabled = !shouldLockWeightSelection,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp)
-                            .then(if (shouldLockWeightSelection) Modifier.alpha(0.6f) else Modifier)
-                    )
-                    if (!shouldLockWeightSelection) {
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .clickable { expandedWeights.value = true }
+                OutlinedTextField(
+                    value = equipment.formatWeight(selectedWeight),
+                    readOnly = true,
+                    onValueChange = {},
+                    label = { Text(weightLabel) },
+                    enabled = !shouldLockWeightSelection && isWeightSelectionReady,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                        .then(
+                            if (shouldLockWeightSelection || !isWeightSelectionReady) {
+                                Modifier.alpha(0.6f)
+                            } else {
+                                Modifier
+                            }
                         )
-                    }
+                )
+                if (!shouldLockWeightSelection && isWeightSelectionReady) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { expandedWeights.value = true }
+                    )
                 }
             }
 
-            if (shouldLockWeightSelection) {
-                Text(
-                    text = "This exercise is waiting to be calibrated.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-
-            if (!shouldLockWeightSelection) {
-                EquipmentWeightCalculationInfo(
-                    equipment = equipment,
-                    totalWeight = selectedWeight
-                )
-            }
-
-            if (expandedWeights.value) {
-                val sortedFilteredCombinations = filteredCombinations
-                    .toList()
-                    .sortedBy { it.first }
-
-                WeightPickerDialog(
-                    combinations = sortedFilteredCombinations,
-                    filter = filterState.value,
-                    selectedWeight = selectedWeight,
-                    onFilterChange = { input -> filterState.value = input },
-                    onDismissRequest = { expandedWeights.value = false },
-                    onSelect = { selectedWeight ->
-                        weightState.value = selectedWeight.toString()
-                    }
-                )
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                contentAlignment = Alignment.Center
-            ) {
+            if (isLoadingCombinations) {
                 CircularProgressIndicator(
-                    modifier = Modifier.width(32.dp),
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 24.dp)
+                        .size(20.dp),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = MediumDarkGray
                 )
             }
+        }
+
+        if (shouldLockWeightSelection) {
+            Text(
+                text = "This exercise is waiting to be calibrated.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+
+        if (!shouldLockWeightSelection && isWeightSelectionReady) {
+            EquipmentWeightCalculationInfo(
+                equipment = equipment,
+                totalWeight = selectedWeight
+            )
+        }
+
+        if (expandedWeights.value) {
+            val sortedFilteredCombinations = filteredCombinations
+                .toList()
+                .sortedBy { it.first }
+
+            WeightPickerDialog(
+                combinations = sortedFilteredCombinations,
+                filter = filterState.value,
+                selectedWeight = selectedWeight,
+                onFilterChange = { input -> filterState.value = input },
+                onDismissRequest = { expandedWeights.value = false },
+                onSelect = { selectedWeight ->
+                    weightState.value = selectedWeight.toString()
+                }
+            )
         }
 
         OutlinedTextField(

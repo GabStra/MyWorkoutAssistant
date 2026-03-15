@@ -119,13 +119,21 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.TemporalAdjusters
+import java.security.MessageDigest
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 import kotlin.math.roundToInt
-import java.security.MessageDigest
+
+private fun Throwable.toExportToastMessage(
+    intro: String,
+    fallbackDetail: String
+): String {
+    val detail = message?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackDetail
+    return "$intro $detail"
+}
 
 // Default height for the content fade gradient
 private val DEFAULT_CONTENT_FADE_HEIGHT = 10.dp
@@ -691,14 +699,25 @@ suspend fun exportExerciseHistoryToMarkdown(
             }
             is ExerciseHistoryMarkdownResult.Failure -> {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        "Couldn't export exercise history. ${result.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         }
     } catch (e: Exception) {
         Log.e("ExerciseExport", "Error exporting exercise history", e)
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                e.toExportToastMessage(
+                    intro = "Couldn't export exercise history.",
+                    fallbackDetail = "Please try again."
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 }
@@ -716,7 +735,14 @@ suspend fun exportWorkoutPlanToMarkdown(
     } catch (e: Exception) {
         Log.e("WorkoutPlanExport", "Error exporting workout plan", e)
         withContext(Dispatchers.Main) {
-            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                e.toExportToastMessage(
+                    intro = "Couldn't export the workout plan.",
+                    fallbackDetail = "Please try again."
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 }
@@ -739,9 +765,6 @@ suspend fun exportEquipmentToDownloads(
             filename
         } catch (e: Exception) {
             Log.e("EquipmentExport", "Error exporting equipment", e)
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
             throw e
         }
     }
