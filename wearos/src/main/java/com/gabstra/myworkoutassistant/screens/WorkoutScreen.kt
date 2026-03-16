@@ -30,7 +30,6 @@ import com.gabstra.myworkoutassistant.composables.HeartRateStatus
 import com.gabstra.myworkoutassistant.composables.HrStatusBadge
 import com.gabstra.myworkoutassistant.composables.HrTargetGlowEffect
 import com.gabstra.myworkoutassistant.composables.LifecycleObserver
-import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.LocalTopOverlayController
 import com.gabstra.myworkoutassistant.composables.TopOverlayHost
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
@@ -87,8 +86,6 @@ fun WorkoutScreen(
     val hasPolarApiBeenInitialized by polarViewModel.hasBeenInitialized.collectAsState()
     val isResuming = screenState.isResuming
     val isRefreshing = screenState.isRefreshing
-    val isSyncingToPhone by viewModel.isSyncingToPhone
-
     val onBeforeGoHome = remember(selectedWorkout) {
         {
             // Ensure no timer background loop remains active after leaving workout flow.
@@ -229,13 +226,13 @@ fun WorkoutScreen(
                     viewModel.lightScreenUp()
                 }
                 is WorkoutState.CalibrationLoadSelection -> {
-                    Toast.makeText(context, "Double press to confirm load", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Double-press to confirm the weight.", Toast.LENGTH_SHORT).show()
                 }
                 is WorkoutState.CalibrationRIRSelection -> {
-                    Toast.makeText(context, "Double press to confirm RIR", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Double-press to confirm RIR.", Toast.LENGTH_SHORT).show()
                 }
                 is WorkoutState.AutoRegulationRIRSelection -> {
-                    Toast.makeText(context, "Double press to confirm RIR", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Double-press to confirm RIR.", Toast.LENGTH_SHORT).show()
                 }
                 else -> {
                     // Keep existing behavior for other states
@@ -343,12 +340,12 @@ fun WorkoutScreen(
                 .fillMaxSize(),
         ) {
             if(isResuming){
-                LoadingScreen(viewModel,"Resuming workout")
+                LoadingScreen(viewModel,"Resuming your workout")
                 return@Box
             }
 
             if(isRefreshing){
-                LoadingScreen(viewModel,"Reloading workout")
+                LoadingScreen(viewModel,"Reloading your workout")
                 return@Box
             }
 
@@ -563,8 +560,8 @@ fun WorkoutScreen(
                                             if (!MyApplication.isAppInForeground()) {
                                                 showTimerCompletedNotification(
                                                     context = context,
-                                                    title = "Rest complete",
-                                                    message = "Time for the next set"
+                                                    title = "Rest finished",
+                                                    message = "Time for your next set"
                                                 )
                                             }
                                             viewModel.storeSetData()
@@ -598,9 +595,6 @@ fun WorkoutScreen(
                     }
                 }
             }
-
-            LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing")
-
             // Sync status badge (non-blocking)
             //SyncStatusBadge(viewModel = viewModel)
 

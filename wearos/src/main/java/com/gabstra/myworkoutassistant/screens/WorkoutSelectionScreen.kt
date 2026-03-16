@@ -312,7 +312,7 @@ fun WorkoutSelectionScreen(
                                         Toast
                                             .makeText(
                                                 context,
-                                                "Build version code: $versionName",
+                                                "App version: $versionName",
                                                 Toast.LENGTH_LONG
                                             )
                                             .show()
@@ -343,7 +343,7 @@ fun WorkoutSelectionScreen(
                                 .padding(vertical = 5.dp)
                                 .transformedHeight(this, spec)
                                 .animateItem(),
-                            text = "Enable Alarms for scheduled workouts",
+                            text = "Turn on reminders for scheduled workouts",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                             color = MediumLighterGray
@@ -369,7 +369,7 @@ fun WorkoutSelectionScreen(
                             }
                         ) {
                             Text(
-                                text = "Open Alarms Settings",
+                                text = "Open reminder settings",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onPrimary
@@ -392,7 +392,7 @@ fun WorkoutSelectionScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "Complete configuration on the companion app",
+                                    text = "Finish setup in the phone app",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                     color = MediumLighterGray
@@ -402,7 +402,7 @@ fun WorkoutSelectionScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "Open the companion app on your phone and sync to connect",
+                                    text = "Open the phone app and sync to connect",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                     color = MediumLighterGray
@@ -431,7 +431,7 @@ fun WorkoutSelectionScreen(
                                 }
                             ) {
                                 Text(
-                                    text = "Open Mobile App",
+                                    text = "Open phone app",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onPrimary
@@ -452,7 +452,7 @@ fun WorkoutSelectionScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .graphicsLayer { with(spec) { applyContentTransformation(scrollProgress) } },
-                                    text = "No Workouts Available",
+                                    text = "No workouts available",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
                                     color = MediumLighterGray
@@ -518,15 +518,15 @@ fun WorkoutSelectionScreen(
 
         CustomDialogYesOnLongPress(
             show = showClearData,
-            title = "Clear Data",
-            message = "Do you want to proceed?",
+            title = "Clear local data",
+            message = "This will remove local data from your watch. Continue?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()
                 viewModel.resetAll()
                 Toast
                     .makeText(
                         context,
-                        "Data reset",
+                        "All local data was reset.",
                         Toast.LENGTH_SHORT
                     )
                     .show()

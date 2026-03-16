@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -56,7 +57,9 @@ fun PageButtons(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     navController: NavController,
-    onBeforeGoHome: (() -> Unit)? = null
+    onBeforeGoHome: (() -> Unit)? = null,
+    canChangeEquipment: Boolean = false,
+    onChangeEquipmentClick: () -> Unit = {}
 ) {
     val isInspectionMode = LocalInspectionMode.current
     val isHistoryEmpty by viewModel.isHistoryEmpty.collectAsState()
@@ -180,7 +183,7 @@ fun PageButtons(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Keep Screen On",
+                            text = "Keep screen on",
                             modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Start
                         )
@@ -198,6 +201,27 @@ fun PageButtons(
                             modifier = Modifier
                         )
                     }
+                }
+            }
+
+            if (
+                isMovementSet &&
+                (exercise.exerciseType == ExerciseType.WEIGHT ||
+                    exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+            ) {
+                item {
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                        text = "Change equipment",
+                        enabled = canChangeEquipment,
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            onChangeEquipmentClick()
+                        }
+                    )
                 }
             }
 
@@ -244,7 +268,7 @@ fun PageButtons(
                         .fillMaxWidth()
                         .transformedHeight(this, spec),
                     transformation = SurfaceTransformation(spec),
-                    text = "Go to next exercise",
+                    text = "Next exercise",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         viewModel.goToNextExercise()
@@ -257,7 +281,7 @@ fun PageButtons(
                         .fillMaxWidth()
                         .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    text = "Go Home",
+                    text = "Return home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
@@ -283,8 +307,8 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go back one set",
-        message = "Do you want to proceed?",
+        title = "Go back one set?",
+        message = "Return to the previous set?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.goToPreviousSetWear()

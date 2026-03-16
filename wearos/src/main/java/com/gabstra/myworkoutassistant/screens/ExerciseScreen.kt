@@ -39,6 +39,8 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseDetail
+import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOption
+import com.gabstra.myworkoutassistant.composables.ExerciseEquipmentPickerOverlay
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseMetadataStrip
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
@@ -54,6 +56,7 @@ import com.gabstra.myworkoutassistant.composables.PageTitledLines
 import com.gabstra.myworkoutassistant.composables.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
@@ -80,6 +83,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import java.lang.reflect.Field
 import java.time.LocalDateTime
 import java.util.UUID
@@ -111,15 +115,54 @@ fun ExerciseScreen(
     val isPreviewInspection = LocalInspectionMode.current
     var isEditModeEnabled by remember { mutableStateOf(false) }
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isPaused by viewModel.isPaused
+    val coroutineScope = rememberWearCoroutineScope()
 
-    val exercise = remember(state.exerciseId) { viewModel.exercisesById[state.exerciseId]!! }
-    val equipment = remember(exercise) { exercise.equipmentId?.let { viewModel.getEquipmentById(it) } }
+    val exercise = viewModel.exercisesById[state.exerciseId]!!
+    val equipment = exercise.equipmentId?.let { viewModel.getEquipmentById(it) }
     val accessoryEquipments = remember(exercise) {
         (exercise.requiredAccessoryEquipmentIds ?: emptyList()).mapNotNull { id ->
             viewModel.getAccessoryEquipmentById(id)
         }
     }
+    val isEquipmentChangeSupported =
+        exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT
+    val equipmentPickerOptions = remember(exercise.exerciseType, exercise.equipmentId, viewModel.workoutStore.equipments) {
+        val equipmentOptions = viewModel.workoutStore.equipments
+            .sortedBy { it.name.lowercase() }
+            .map { equipmentOption ->
+                ExerciseEquipmentPickerOption(
+                    equipmentId = equipmentOption.id,
+                    label = equipmentOption.name,
+                    isCurrent = equipmentOption.id == exercise.equipmentId
+                )
+            }
+
+        if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
+            listOf(
+                ExerciseEquipmentPickerOption(
+                    equipmentId = null,
+                    label = "None",
+                    isCurrent = exercise.equipmentId == null
+                )
+            ) + equipmentOptions
+        } else {
+            equipmentOptions
+        }
+    }
+    var showEquipmentPicker by remember(state.set.id) { mutableStateOf(false) }
+    var pendingEquipmentId by remember(state.set.id) { mutableStateOf<UUID?>(null) }
+    var showEquipmentConfirmation by remember(state.set.id) { mutableStateOf(false) }
+    var shouldReturnToExerciseDetailPage by remember(state.set.id) { mutableStateOf(false) }
+    val canChangeEquipment =
+        isEquipmentChangeSupported &&
+            !isEditModeEnabled &&
+            !showNextDialog &&
+            !showEquipmentPicker &&
+            !showEquipmentConfirmation &&
+            !state.isCalibrationSet &&
+            !isRefreshing
 
     val showPlatesPage = remember(exercise, equipment) {
         equipment != null &&
@@ -185,8 +228,20 @@ fun ExerciseScreen(
             horizontalPagerState.scrollToPage(exerciseDetailPageIndex)
         }
         isEditModeEnabled = false
+        showEquipmentPicker = false
+        showEquipmentConfirmation = false
+        pendingEquipmentId = null
+        shouldReturnToExerciseDetailPage = false
         if (showNextDialog) {
             viewModel.closeCustomDialog()
+        }
+    }
+
+    LaunchedEffect(showEquipmentPicker, showEquipmentConfirmation) {
+        if (showEquipmentPicker || showEquipmentConfirmation) {
+            viewModel.setDimming(false)
+        } else if (!showNextDialog) {
+            viewModel.reEvaluateDimmingForCurrentState()
         }
     }
 
@@ -198,12 +253,24 @@ fun ExerciseScreen(
     val isSuperset = remember(exerciseOrSupersetId) {
         viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
-    var selectedExercise by remember(exercise.id) { mutableStateOf(exercise) }
+    var selectedExercise by remember(state.exerciseId) { mutableStateOf(exercise) }
     val context = LocalContext.current
+
+    LaunchedEffect(exercise) {
+        if (selectedExercise.id == exercise.id) {
+            selectedExercise = exercise
+        }
+    }
 
     LaunchedEffect(horizontalPagerState.currentPage) {
         val isOnPlatesPage = platesPageIndex >= 0 && horizontalPagerState.currentPage == platesPageIndex
-        if (isOnPlatesPage) viewModel.setDimming(false) else viewModel.reEvaluateDimmingForCurrentState()
+        if (showEquipmentPicker || showEquipmentConfirmation) {
+            viewModel.setDimming(false)
+        } else if (isOnPlatesPage) {
+            viewModel.setDimming(false)
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
 
         if (horizontalPagerState.currentPage != exercisesPageIndex) {
             selectedExercise = exercise
@@ -211,6 +278,13 @@ fun ExerciseScreen(
 
         if (horizontalPagerState.currentPage != exerciseDetailPageIndex) {
             isEditModeEnabled = false
+        }
+    }
+
+    LaunchedEffect(shouldReturnToExerciseDetailPage, exerciseDetailPageIndex) {
+        if (shouldReturnToExerciseDetailPage && exerciseDetailPageIndex >= 0) {
+            horizontalPagerState.scrollToPage(exerciseDetailPageIndex)
+            shouldReturnToExerciseDetailPage = false
         }
     }
 
@@ -253,7 +327,17 @@ fun ExerciseScreen(
                 when (pageTypes[pageIndex]) {
                     ExerciseHorizontalPage.BUTTONS -> {
                         Box(modifier = pageModifier) {
-                            PageButtons(state, viewModel, hapticsViewModel, navController, onBeforeGoHome)
+                            PageButtons(
+                                updatedState = state,
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel,
+                                navController = navController,
+                                onBeforeGoHome = onBeforeGoHome,
+                                canChangeEquipment = canChangeEquipment,
+                                onChangeEquipmentClick = {
+                                    showEquipmentPicker = true
+                                }
+                            )
                         }
                     }
 
@@ -344,7 +428,55 @@ fun ExerciseScreen(
                     }
                 }
             }
+
+            ExerciseEquipmentPickerOverlay(
+                show = showEquipmentPicker,
+                exerciseName = exercise.name,
+                options = equipmentPickerOptions,
+                onSelect = { selectedEquipmentId ->
+                    pendingEquipmentId = selectedEquipmentId
+                    showEquipmentPicker = false
+                    showEquipmentConfirmation = true
+                },
+                onDismiss = {
+                    showEquipmentPicker = false
+                    pendingEquipmentId = null
+                }
+            )
         }
+
+        CustomDialogYesOnLongPress(
+            show = showEquipmentConfirmation,
+            title = "Update Equipment",
+            message = "Update equipment for this exercise? Remaining sets will use the new equipment.",
+            handleYesClick = {
+                val selectedEquipmentId = pendingEquipmentId
+                showEquipmentConfirmation = false
+                pendingEquipmentId = null
+                hapticsViewModel.doGentleVibration()
+                coroutineScope.launch {
+                    val updated = viewModel.updateExerciseEquipmentForCurrentWorkout(
+                        exerciseId = state.exerciseId,
+                        equipmentId = selectedEquipmentId
+                    )
+                    if (updated) {
+                        shouldReturnToExerciseDetailPage = true
+                    }
+                }
+            },
+            handleNoClick = {
+                showEquipmentConfirmation = false
+                showEquipmentPicker = true
+                hapticsViewModel.doGentleVibration()
+            },
+            onVisibilityChange = { isVisible ->
+                if (isVisible) {
+                    viewModel.setDimming(false)
+                } else if (!showEquipmentPicker && !showNextDialog) {
+                    viewModel.reEvaluateDimmingForCurrentState()
+                }
+            }
+        )
 
         CustomDialogYesOnLongPress(
             show = showNextDialog,

@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
@@ -56,6 +57,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
+import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -783,6 +785,84 @@ suspend fun waitForSyncCompletion(transactionId: String): Boolean {
     }
 }
 
+suspend fun sendWorkoutStore(dataClient: DataClient, workoutStore: WorkoutStore) {
+    val transactionId = UUID.randomUUID().toString()
+    Log.d("DataLayerSync", "Starting workout store sync, transactionId=$transactionId")
+    try {
+        val handshakeSuccess = sendSyncRequest(dataClient, transactionId)
+        if (!handshakeSuccess) {
+            Log.e(
+                "DataLayerSync",
+                "Failed to establish connection for workout store sync (transaction: $transactionId)"
+            )
+            throw IllegalStateException("Workout store handshake failed for transaction: $transactionId")
+        }
+
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
+
+        val jsonString = fromWorkoutStoreToJSON(workoutStore)
+        val compressedData = compressString(jsonString)
+        val workoutStorePath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_STORE_PREFIX, transactionId)
+        val request = PutDataMapRequest.create(workoutStorePath).apply {
+            dataMap.putByteArray("compressedJson", compressedData)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+            dataMap.putString("transactionId", transactionId)
+        }.asPutDataRequest().setUrgent()
+
+        dataClient.putDataItem(request)
+        delay(100)
+
+        val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(1)
+        Log.d(
+            "DataLayerSync",
+            "Using completion timeout: ${completionTimeout}ms for workout store, transaction: $transactionId"
+        )
+
+        val result = withTimeoutOrNull(completionTimeout) {
+            select<Pair<Boolean, String?>> {
+                completionWaiter.onAwait.invoke {
+                    Pair(true, null)
+                }
+                errorWaiter.onAwait.invoke { errorMessage ->
+                    Pair(false, errorMessage)
+                }
+            }
+        }
+
+        when {
+            result == null -> {
+                Log.e(
+                    "DataLayerSync",
+                    "Completion timeout for workout store transaction: $transactionId (timeout: ${completionTimeout}ms)"
+                )
+                SyncHandshakeManager.cleanup(transactionId)
+                throw IllegalStateException(
+                    "Workout store sync timed out for transaction: $transactionId after ${completionTimeout}ms"
+                )
+            }
+            result.first -> {
+                Log.d("DataLayerSync", "Sync completed successfully for transaction: $transactionId")
+                SyncHandshakeManager.cleanup(transactionId)
+            }
+            else -> {
+                val errorMessage = result.second ?: "Unknown error"
+                Log.e(
+                    "DataLayerSync",
+                    "Sync error for workout store transaction: $transactionId, error: $errorMessage"
+                )
+                SyncHandshakeManager.cleanup(transactionId)
+                throw IllegalStateException(
+                    "Workout store sync failed for transaction: $transactionId, error: $errorMessage"
+                )
+            }
+        }
+    } catch (exception: Exception) {
+        SyncHandshakeManager.cleanup(transactionId)
+        throw exception
+    }
+}
+
 /**
  * Sends a WorkoutHistoryStore to the phone via the Data Layer.
  * @param transactionId Optional; if null, one is generated. Caller can pass one to register for SYNC_COMPLETE (markHistorySyncedForTransaction).
@@ -1098,7 +1178,7 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
         val result = appHelper.startRemoteOwnApp(phoneNode.id)
         if(result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS){
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Failed to open app in phone", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Couldn't open the app on your phone.", Toast.LENGTH_SHORT).show()
             }
             return false
         }

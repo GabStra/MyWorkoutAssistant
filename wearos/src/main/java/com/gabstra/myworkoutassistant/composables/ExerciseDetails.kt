@@ -86,8 +86,8 @@ fun ExerciseDetail(
                     if (!MyApplication.isAppInForeground()) {
                         showTimerCompletedNotification(
                             context = context,
-                            title = "Set timer complete",
-                            message = "Time for the next set"
+                            title = "Set timer finished",
+                            message = "Time for your next set"
                         )
                     }
                     viewModel.storeSetData()
@@ -113,8 +113,8 @@ fun ExerciseDetail(
                 if (!MyApplication.isAppInForeground()) {
                     showTimerCompletedNotification(
                         context = context,
-                        title = "Set timer complete",
-                        message = "Time for the next set"
+                        title = "Set timer finished",
+                        message = "Time for your next set"
                     )
                 }
                 viewModel.storeSetData()

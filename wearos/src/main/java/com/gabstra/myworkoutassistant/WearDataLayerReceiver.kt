@@ -62,7 +62,7 @@ internal class WearDataLayerReceiver(
         appViewModel.resetWorkoutStore()
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
         if (workoutStoreJson != null) {
-            Toast.makeText(activity, "Workouts updated", Toast.LENGTH_SHORT).show()
+            Toast.makeText(activity, "Workouts updated on your watch.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -99,7 +99,7 @@ internal class WearDataLayerReceiver(
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
         if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-            Toast.makeText(context, "Sync completed", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Sync finished successfully.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -122,7 +122,7 @@ internal class WearDataLayerReceiver(
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
         if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
-            Toast.makeText(context, "Sync failed", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Couldn't finish syncing. Try again.", Toast.LENGTH_SHORT).show()
         }
     }
 }

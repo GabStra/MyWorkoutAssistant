@@ -55,14 +55,14 @@ fun PageMuscles(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.5.dp),
-            text = "Muscles Groups",
+            text = "Muscle groups",
             style = workoutPagerTitleTextStyle(),
             textAlign = TextAlign.Center
         )
 
         if (muscleGroups.isEmpty() && secondaryMuscleGroups.isEmpty()) {
             Text(
-                text = "No muscle groups",
+                text = "No muscle groups available",
                 modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

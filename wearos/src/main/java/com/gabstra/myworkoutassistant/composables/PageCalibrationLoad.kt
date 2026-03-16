@@ -302,8 +302,8 @@ fun PageCalibrationLoad(
 
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
-        title = "Confirm Load",
-        message = "Do you want to proceed with this load?",
+        title = "Confirm weight",
+        message = "Use this weight for the set?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()

@@ -216,14 +216,14 @@ private fun PagePlatesContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 30.dp),
-            text = "Loading Guide",
+            text = "Loading guide",
             style =  MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center
         )
 
         if (equipment == null || equipment !is Barbell || updatedState.plateChangeResult == null) {
             Text(
-                text = "NOT AVAILABLE",
+                text = "Not available",
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center
             )

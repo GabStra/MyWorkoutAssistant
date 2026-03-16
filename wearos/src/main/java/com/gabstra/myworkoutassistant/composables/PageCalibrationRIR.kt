@@ -257,7 +257,7 @@ fun PageCalibrationRIR(
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
         title = "Confirm RIR",
-        message = "Do you want to proceed with this RIR?",
+        message = "Use this RIR for the set?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()
@@ -451,7 +451,7 @@ fun PageCalibrationRIR(
     CustomDialogYesOnLongPress(
         show = showConfirmDialog,
         title = "Confirm RIR",
-        message = "Do you want to proceed with this RIR?",
+        message = "Use this RIR for the set?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             onConfirmClick()

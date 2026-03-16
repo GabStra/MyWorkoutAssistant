@@ -47,7 +47,6 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -80,8 +79,6 @@ fun WorkoutDetailScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val hasExercises by viewModel.hasExercises.collectAsState()
     val isCheckingWorkoutRecord by viewModel.isCheckingWorkoutRecord.collectAsState()
-    val isSyncingToPhone by viewModel.isSyncingToPhone
-    
     // Track when checking started and ensure minimum display time to prevent flashing
     var showLoading by remember(selectedWorkoutId) { mutableStateOf(true) }
     var checkStartTime by remember(selectedWorkoutId) { mutableStateOf(System.currentTimeMillis()) }
@@ -230,7 +227,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Text(
                                 modifier = Modifier.fillMaxWidth(),
-                                text = "Start",
+                                text = "Start workout",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onPrimary
@@ -253,7 +250,7 @@ fun WorkoutDetailScreen(
                             ) {
                                 Text(
                                     modifier = Modifier.fillMaxWidth(),
-                                    text = "Resume",
+                                    text = "Resume workout",
                                     textAlign = TextAlign.Center,
                                     style =  MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onPrimary
@@ -289,8 +286,6 @@ fun WorkoutDetailScreen(
                     }
                 }
             }
-            
-            LoadingOverlay(isVisible = isSyncingToPhone, text = "Syncing...")
         }
     }
 
@@ -322,7 +317,7 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showStartConfirmationDialog,
-        title = "Start New Workout",
+        title = "Start a new workout",
         message = InterruptedWorkoutCopy.START_NEW_WORKOUT_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()

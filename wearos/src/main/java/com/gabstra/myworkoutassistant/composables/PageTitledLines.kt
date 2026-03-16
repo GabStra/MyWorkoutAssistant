@@ -8,10 +8,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.ScrollInfoProvider
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -61,10 +63,45 @@ fun PageTitledLines(
     modifier: Modifier = Modifier
 ) {
     val state = rememberLazyListState()
+    val scrollInfoProvider = remember(state) {
+        object : ScrollInfoProvider {
+            override val isScrollAwayValid: Boolean
+                get() = state.layoutInfo.totalItemsCount > 0
+
+            override val isScrollable: Boolean
+                get() = state.canScrollBackward || state.canScrollForward
+
+            override val isScrollInProgress: Boolean
+                get() = state.isScrollInProgress
+
+            override val anchorItemOffset: Float
+                get() = state.layoutInfo.visibleItemsInfo.firstOrNull()?.let {
+                    if (it.index != 0) {
+                        Float.NaN
+                    } else {
+                        -it.offset.toFloat()
+                    }
+                } ?: Float.NaN
+
+            override val lastItemOffset: Float
+                get() {
+                    val layoutInfo = state.layoutInfo
+                    val viewportHeight = layoutInfo.viewportSize.height
+                    return layoutInfo.visibleItemsInfo.lastOrNull()?.let { item ->
+                        if (item.index != layoutInfo.totalItemsCount - 1) {
+                            0f
+                        } else {
+                            val bottomEdge = item.offset + item.size - layoutInfo.viewportStartOffset
+                            (viewportHeight - bottomEdge).toFloat().coerceAtLeast(0f)
+                        }
+                    } ?: 0f
+                }
+        }
+    }
 
     ScreenScaffold(
         modifier = modifier,
-        scrollState = state,
+        scrollInfoProvider = scrollInfoProvider,
         scrollIndicator = {
             ScrollIndicator(
                 state = state,

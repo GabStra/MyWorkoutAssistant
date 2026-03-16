@@ -169,7 +169,7 @@ class WorkoutAlarmActivity : ComponentActivity() {
     private fun stopAlertAndFinish(showExitToast: Boolean = true) {
         stopAlert()
         if (showExitToast) {
-            Toast.makeText(this, "Reminder dismissed. Closing app.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Reminder dismissed.", Toast.LENGTH_SHORT).show()
         }
         finishAndRemoveTask()
         overridePendingTransition(0, 0)

@@ -56,8 +56,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
-    title: String = "Confirm Exit",
-    message: String = "Do you want to exit?",
+    title: String = "Exit workout?",
+    message: String = "Do you want to leave this workout?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
     closeTimerInMillis: Long = 0,
@@ -281,8 +281,8 @@ private fun CustomDialogYesOnLongPressHugeTextPreview() {
     ) {
         CustomDialogYesOnLongPress(
             show = true,
-            title = "Complete Calibration Set",
-            message = "Rate your RIR after completing this set.",
+            title = "Complete calibration set",
+            message = "Rate your RIR after you finish this set.",
             handleNoClick = {},
             handleYesClick = {},
             closeTimerInMillis = 0L,

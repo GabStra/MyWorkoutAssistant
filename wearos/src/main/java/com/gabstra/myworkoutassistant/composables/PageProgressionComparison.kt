@@ -149,7 +149,7 @@ fun calculateSetDifference(
     equipment: Equipment?
 ): String {
     if (beforeSetData == null || afterSetData == null) {
-        return "Equal"
+        return "No change"
     }
 
     return when {
@@ -167,7 +167,7 @@ fun calculateSetDifference(
                 parts.add("$sign$repsDiff reps")
             }
 
-            if (parts.isEmpty()) "Equal" else parts.joinToString(" ")
+            if (parts.isEmpty()) "No change" else parts.joinToString(" ")
         }
 
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
@@ -184,7 +184,7 @@ fun calculateSetDifference(
                 parts.add("$sign$repsDiff reps")
             }
 
-            if (parts.isEmpty()) "Equal" else parts.joinToString(" ")
+            if (parts.isEmpty()) "No change" else parts.joinToString(" ")
         }
 
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
@@ -193,7 +193,7 @@ fun calculateSetDifference(
             val durationDiff = afterDuration - beforeDuration
 
             if (durationDiff == 0) {
-                "Equal"
+                "No change"
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
                 "$sign${FormatTime(durationDiff)}"
@@ -206,14 +206,14 @@ fun calculateSetDifference(
             val durationDiff = afterDuration - beforeDuration
 
             if (durationDiff == 0) {
-                "Equal"
+                "No change"
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
                 "$sign${FormatTime(durationDiff)}"
             }
         }
 
-        else -> "Equal"
+        else -> "No change"
     }
 }
 

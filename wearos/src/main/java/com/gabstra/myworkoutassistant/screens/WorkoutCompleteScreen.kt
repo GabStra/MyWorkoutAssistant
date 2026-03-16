@@ -91,7 +91,7 @@ fun WorkoutCompleteScreen(
             }
 
             if (isActive) {
-                Toast.makeText(context, "Workout saved. Closing app.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Workout saved.", Toast.LENGTH_SHORT).show()
                 (context as? Activity)?.finishAndRemoveTask()
             }
         }
@@ -163,7 +163,7 @@ fun WorkoutCompleteScreen(
 
     CustomDialogYesOnLongPress(
         show = showNextDialog,
-        title =  "Workout completed",
+        title =  "Workout complete",
         message = "Return to the main menu?",
         handleYesClick = {
             closeJob?.cancel()
@@ -243,7 +243,7 @@ private fun WorkoutCompleteScreenContent(
         if(showCountdown){
             Text(
                 modifier = Modifier.padding(top = 2.5.dp),
-                text = "CLOSING IN: $countDownSeconds",
+                text = "Closing in $countDownSeconds",
                 style = headerStyle,
                 textAlign = TextAlign.Center,
             )
@@ -266,7 +266,7 @@ private fun WorkoutCompleteScreenPreview() {
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    text = "Progression summary",
+                    text = "Progress summary",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodySmall
                 )

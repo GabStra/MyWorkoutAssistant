@@ -90,7 +90,7 @@ class PolarReconnector(private val api: PolarBleApi, private val context: Contex
         
         // Show toast on main thread
         Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, "Reconnecting due to stale data...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Reconnecting to your Polar device...", Toast.LENGTH_SHORT).show()
         }
         return Completable.fromAction { api.foregroundEntered() }
             .andThen(Completable.fromAction { api.connectToDevice(deviceId) })
@@ -239,7 +239,7 @@ class PolarViewModel : ViewModel() {
                 try {
                     viewModelScope.launch(appCeh) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(applicationContext, "Polar device disconnected", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(applicationContext, "Polar device disconnected.", Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (e: Exception) {
@@ -265,7 +265,7 @@ class PolarViewModel : ViewModel() {
                 try {
                     viewModelScope.launch(appCeh) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(applicationContext, "Polar device connected\nBattery level: $level%", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(applicationContext, "Polar device connected.\nBattery: $level%", Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (e: Exception) {

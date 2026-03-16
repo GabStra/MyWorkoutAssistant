@@ -85,7 +85,7 @@ fun LockScreen(
                     indication = null
                 ) {
                     if(touchCounter>=5){
-                        Toast.makeText(context, "Unlock by swiping up", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Swipe up to unlock.", Toast.LENGTH_SHORT).show()
                         touchCounter=0
                     }else{
                         touchCounter++

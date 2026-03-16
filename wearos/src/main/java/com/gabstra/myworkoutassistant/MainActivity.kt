@@ -303,7 +303,7 @@ fun WearApp(
                 Log.e("MainActivity", "Failed to load workout repository", exception)
                 Toast.makeText(
                     localContext,
-                    "Failed to load workout repository",
+                    "Couldn't load your workouts.",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -454,7 +454,7 @@ fun WearApp(
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     localContext,
-                                    "Sent ${errorLogs.size} error log(s) to mobile",
+                                    "Sent ${errorLogs.size} error log(s) to your phone.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -647,7 +647,7 @@ fun WearApp(
 
             LaunchedEffect(showRecoveredNotice) {
                 if (!showRecoveredNotice) return@LaunchedEffect
-                Toast.makeText(localContext, "Recovered workout", Toast.LENGTH_SHORT).show()
+                Toast.makeText(localContext, "Recovered your workout.", Toast.LENGTH_SHORT).show()
                 appViewModel.consumeRecoveredWorkoutNotice()
             }
 

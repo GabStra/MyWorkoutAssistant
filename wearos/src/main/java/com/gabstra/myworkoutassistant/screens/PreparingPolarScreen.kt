@@ -68,7 +68,7 @@ fun PreparingPolarScreen(
 
     LaunchedEffect(Unit) {
         if (viewModel.polarDeviceId.isEmpty()) {
-            Toast.makeText(context, "No polar device id set", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Choose a Polar device first.", Toast.LENGTH_SHORT).show()
             navController.popBackStack()
             hapticsViewModel.doShortImpulse()
             return@LaunchedEffect
@@ -128,7 +128,7 @@ fun PreparingPolarScreen(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "Preparing Polar Sensor",
+                text = "Getting your Polar device ready",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center
             )
