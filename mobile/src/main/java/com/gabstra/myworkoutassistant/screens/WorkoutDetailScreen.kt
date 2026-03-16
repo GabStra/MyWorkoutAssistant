@@ -150,7 +150,7 @@ fun Menu(
             onDismissRequest = { expanded = false }
         ) {
             AppDropdownMenuItem(
-                text = { Text(text = "Edit Workout", fontWeight = FontWeight.Normal) },
+                text = { Text(text = "Edit workout", fontWeight = FontWeight.Normal) },
                 onClick = {
                     onEditWorkout()
                     expanded = false
@@ -160,7 +160,7 @@ fun Menu(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Clear History", fontWeight = FontWeight.Normal) },
+                text = { Text(text = "Clear history", fontWeight = FontWeight.Normal) },
                 onClick = {
                     onClearHistory()
                     expanded = false
@@ -197,7 +197,7 @@ fun WorkoutComponentRenderer(
             SetRestRowCard(
                 modifier = modifier.fillMaxWidth().then(titleModifier),
                 enabled = workoutComponent.enabled,
-                restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
+                restText = "Rest ${formatTime(workoutComponent.timeInSeconds)}"
             )
         }
 
@@ -1026,7 +1026,7 @@ fun WorkoutDetailScreen(
                 }
                 val isWorkoutGraphHistoryTabSelected = selectedTopTab == 1
                 SwipeableTabs(
-                    tabTitles = listOf("Overview", "Graph History", "Set History"),
+                    tabTitles = listOf("Overview", "Charts", "Set history"),
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
@@ -1156,9 +1156,9 @@ fun WorkoutDetailScreen(
 
             ConfirmationDialog(
                 show = showStartConfirmationDialog,
-                title = "Start Fresh Workout",
-                message = "This will delete the interrupted session and start from the beginning.",
-                confirmText = "Start Fresh",
+                title = "Start workout from the beginning",
+                message = "This will remove the interrupted session and start the workout from the beginning.",
+                confirmText = "Start over",
                 isDestructive = true,
                 onConfirm = {
                     showStartConfirmationDialog = false
@@ -1170,9 +1170,9 @@ fun WorkoutDetailScreen(
             )
             ConfirmationDialog(
                 show = showClearHistoryDialog,
-                title = "Clear Workout History",
-                message = "Delete all saved history for this workout? This action cannot be undone.",
-                confirmText = "Clear",
+                title = "Clear workout history",
+                message = "Delete all saved history for this workout? This can't be undone.",
+                confirmText = "Delete",
                 isDestructive = true,
                 onConfirm = {
                     scope.launch {
@@ -1192,7 +1192,7 @@ fun WorkoutDetailScreen(
                     showClearHistoryDialog = false
                 }
             )
-            LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+            LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving changes...")
         }
     }
 }

@@ -69,7 +69,7 @@ fun WorkoutsListTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "No workouts in this plan",
+                    text = "No workouts in this plan yet.",
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground,
                 )

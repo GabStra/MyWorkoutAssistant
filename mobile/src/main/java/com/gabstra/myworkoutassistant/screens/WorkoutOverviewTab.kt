@@ -134,7 +134,7 @@ fun WorkoutOverviewTab(
                     ),
                     content = {
                         Text(
-                            "Add Workout Component",
+                            "Add a workout item",
                             color = MaterialTheme.colorScheme.background,
                             maxLines = 1,
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
@@ -168,7 +168,7 @@ fun WorkoutOverviewTab(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Alarms",
+                            text = "Reminders",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -214,7 +214,7 @@ fun WorkoutOverviewTab(
                         )
                     )
                     Text(
-                        text = "Show Rests",
+                        text = "Show rests",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -279,7 +279,7 @@ fun WorkoutOverviewTab(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         AppPrimaryOutlinedButton(
-                                            text = "Add Rest",
+                                            text = "Add rest",
                                             onClick = {
                                                 appViewModel.setScreenData(
                                                     ScreenData.InsertRestAfter(workout.id, component.id)
@@ -305,7 +305,7 @@ fun WorkoutOverviewTab(
                         MenuItem("Add Exercise") {
                             appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
                         },
-                        MenuItem("Add Rests Between Exercises") {
+                        MenuItem("Add rests between exercises") {
                             appViewModel.setScreenData(ScreenData.NewRest(workout.id, null))
                         },
                         MenuItem("Add Superset") {
@@ -352,7 +352,7 @@ private fun WorkoutSessionActionCard(
                         strokeWidth = 2.dp
                     )
                     Text(
-                        text = "Checking interrupted session...",
+                        text = "Checking for an interrupted session...",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -383,7 +383,7 @@ private fun WorkoutSessionActionCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Text(
-                                text = "Interrupted session",
+                                text = "Interrupted workout",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -398,12 +398,12 @@ private fun WorkoutSessionActionCard(
 
                     AppPrimaryButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Resume Workout",
+                        text = "Resume workout",
                         onClick = onResumeWorkout
                     )
                     AppPrimaryOutlinedButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Start Fresh",
+                        text = "Start over",
                         onClick = onRequestStartWorkout
                     )
                     Box(
@@ -443,13 +443,13 @@ private fun WorkoutSessionActionCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Text(
-                                text = "Ready to train",
+                                text = "Ready to work out",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
-                                text = "Start this workout from the beginning when you're ready.",
+                                text = "Start this workout whenever you're ready.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -458,7 +458,7 @@ private fun WorkoutSessionActionCard(
 
                     AppPrimaryButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Start Workout",
+                        text = "Start workout",
                         onClick = onRequestStartWorkout
                     )
                 }
@@ -472,7 +472,7 @@ private fun buildResumeDescription(
     timeFormatter: DateTimeFormatter
 ): String {
     if (workoutResumeInfo == null) {
-        return "Resume your last in-progress session."
+        return "Resume your in-progress workout."
     }
 
     val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
@@ -480,7 +480,7 @@ private fun buildResumeDescription(
     return buildString {
         append("Resume at ")
         append(workoutResumeInfo.exerciseName)
-        append(" - set ")
+        append(", set ")
         append(workoutResumeInfo.setNumber)
         if (sessionTime != null) {
             append(". Started ")

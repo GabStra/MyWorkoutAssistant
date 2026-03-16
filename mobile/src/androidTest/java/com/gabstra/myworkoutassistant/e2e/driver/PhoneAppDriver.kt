@@ -7,6 +7,10 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * Reusable phone-side driver for cross-device E2E preparation.
@@ -56,6 +60,14 @@ class PhoneAppDriver(
     }
 
     fun syncWithWatchFromMenu(timeoutMs: Long = 12_000) {
+        val workManager = WorkManager.getInstance(context)
+        val existingWorkIds = runBlocking {
+            workManager.getWorkInfosForUniqueWorkFlow(MOBILE_SYNC_UNIQUE_WORK_NAME)
+                .first()
+                .map { it.id }
+                .toSet()
+        }
+
         val menuButton = device.wait(Until.findObject(By.desc("Menu")), timeoutMs)
             ?: error("Menu button not found on phone app")
         clickWithRetry { menuButton.click() }
@@ -67,16 +79,11 @@ class PhoneAppDriver(
         clickWithRetry { syncMenuItem.click() }
         device.waitForIdle(1_000)
 
-        val syncStarted = device.wait(Until.hasObject(By.text("Syncing...")), timeoutMs)
-        require(syncStarted) {
-            "Expected Syncing overlay after tapping 'Sync with Watch', but it did not appear."
-        }
-
-        val syncSettled = device.wait(Until.gone(By.text("Syncing...")), timeoutMs)
-        require(syncSettled) {
-            "Syncing overlay did not dismiss within timeout after tapping 'Sync with Watch'."
-        }
-
+        waitForMobileSyncWorkerCompletion(
+            workManager = workManager,
+            existingWorkIds = existingWorkIds,
+            timeoutMs = timeoutMs
+        )
         device.waitForIdle(1_000)
     }
 
@@ -126,5 +133,45 @@ class PhoneAppDriver(
                 device.waitForIdle(250)
             }
         }
+    }
+
+    private fun waitForMobileSyncWorkerCompletion(
+        workManager: WorkManager,
+        existingWorkIds: Set<java.util.UUID>,
+        timeoutMs: Long
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var trackedWorkInfo: WorkInfo? = null
+
+        while (System.currentTimeMillis() < deadline) {
+            val workInfos = runBlocking {
+                workManager.getWorkInfosForUniqueWorkFlow(MOBILE_SYNC_UNIQUE_WORK_NAME).first()
+            }
+            val candidate = trackedWorkInfo?.let { tracked ->
+                workInfos.firstOrNull { it.id == tracked.id }
+            } ?: workInfos.firstOrNull { it.id !in existingWorkIds }
+                ?: workInfos.firstOrNull { !it.state.isFinished }
+
+            if (candidate != null) {
+                trackedWorkInfo = candidate
+                when (candidate.state) {
+                    WorkInfo.State.SUCCEEDED -> return
+                    WorkInfo.State.FAILED -> error("Mobile sync worker failed after tapping 'Sync with Watch'.")
+                    WorkInfo.State.CANCELLED -> error("Mobile sync worker was cancelled after tapping 'Sync with Watch'.")
+                    else -> Unit
+                }
+            }
+
+            device.waitForIdle(250)
+        }
+
+        error(
+            "Timed out waiting for mobile sync worker completion after tapping 'Sync with Watch'. " +
+                "Last state=${trackedWorkInfo?.state ?: "not-started"}"
+        )
+    }
+
+    companion object {
+        private const val MOBILE_SYNC_UNIQUE_WORK_NAME = "mobile_sync_to_watch"
     }
 }

@@ -281,7 +281,7 @@ fun Menu(
             onDismissRequest = { expanded = false }
         ) {
             AppDropdownMenuItem(
-                text = { Text("Delete Selected History") },
+                text = { Text("Delete selected history") },
                 onClick = {
                     onDeleteHistory()
                     expanded = false
@@ -681,7 +681,7 @@ fun WorkoutHistoryScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(15.dp),
-                        text = "No history in selected range",
+                        text = "No history in this date range.",
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                     )
@@ -693,7 +693,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = volumeEntryModel!!,
-                    title = "Total volume (KG)",
+                    title = "Total volume (kg)",
                     markerTextFormatter = { formatNumber(it) },
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -718,7 +718,7 @@ fun WorkoutHistoryScreen(
                     isZoomEnabled = true,
                     modifier = Modifier,
                     cartesianChartModel = workoutDurationEntryModel!!,
-                    title = "Workout duration (hh:mm)",
+                    title = "Workout duration",
                     markerTextFormatter = { formatTimeHourMinutes(it.toInt()) },
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -832,7 +832,7 @@ fun WorkoutHistoryScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 10.dp),
-                                text = "Heart Rate during Workout",
+                                text = "Heart rate during workout",
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.titleMedium,
@@ -914,7 +914,7 @@ fun WorkoutHistoryScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(
-                                                text = "kcal:",
+                                                text = "Calories:",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onBackground,
                                             )
@@ -997,7 +997,7 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 10.dp),
-                    text = "Exercise & Superset Histories",
+                    text = "Exercise and superset history",
                 )
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1317,7 +1317,7 @@ fun WorkoutHistoryScreen(
                     PrimarySurface(modifier = Modifier.padding(15.dp)) {
                         Text(
                             modifier = Modifier.padding(15.dp),
-                            text = "No history found",
+                            text = "No workout history yet.",
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                         )
@@ -1344,6 +1344,5 @@ fun WorkoutHistoryScreen(
         }
     }
 }
-
 
 

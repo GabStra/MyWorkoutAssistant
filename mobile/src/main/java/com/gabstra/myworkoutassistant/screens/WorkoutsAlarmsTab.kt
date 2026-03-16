@@ -107,7 +107,7 @@ fun WorkoutsAlarmsTab(
                 Text(
                     modifier = Modifier
                         .padding(15.dp),
-                    text = "No alarms found",
+                    text = "No reminders yet.",
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
                 )
@@ -124,7 +124,7 @@ fun WorkoutsAlarmsTab(
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts
             AppPrimaryButton(
-                text = if (hasBulkDisabledSchedules) "Restore All Alarms" else "Disable All Alarms",
+                text = if (hasBulkDisabledSchedules) "Turn reminders back on" else "Turn off all reminders",
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     scope.launch(Dispatchers.IO) {

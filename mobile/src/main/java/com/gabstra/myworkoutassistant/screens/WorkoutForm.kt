@@ -139,7 +139,7 @@ fun WorkoutForm(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .basicMarquee(iterations = Int.MAX_VALUE),
-                            text = if (workout == null) "Insert Workout" else "Edit Workout",
+                            text = if (workout == null) "Add workout" else "Edit workout",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.titleLarge
                         )
@@ -238,20 +238,20 @@ fun WorkoutForm(
 
                 Spacer(Modifier.height(Spacing.md))
 
-                FormSectionTitle(text = "Schedule setup")
+                FormSectionTitle(text = "Schedule")
                 val scheduleSummary = remember(schedules.value.size) {
-                    if (schedules.value.isEmpty()) "No alarms set"
-                    else "${schedules.value.size} alarm${if (schedules.value.size == 1) "" else "s"}"
+                    if (schedules.value.isEmpty()) "No reminders yet"
+                    else "${schedules.value.size} reminder${if (schedules.value.size == 1) "" else "s"}"
                 }
                 CollapsibleSection(
-                    title = "Alarms",
+                    title = "Reminders",
                     summary = scheduleSummary,
                     expanded = expandedSchedule,
                     onToggle = { expandedSchedule = !expandedSchedule }
                 ) {
                     if (schedules.value.isEmpty()) {
                         Text(
-                            text = "No alarms set",
+                            text = "No reminders yet.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     } else {
@@ -281,7 +281,7 @@ fun WorkoutForm(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.md)
                     ) {
                         AppPrimaryOutlinedButton(
-                            text = "Add Single",
+                            text = "Add one",
                             onClick = {
                                 currentEditingSchedule.value = null
                                 showScheduleDialog.value = true
@@ -290,7 +290,7 @@ fun WorkoutForm(
                         )
 
                         AppPrimaryOutlinedButton(
-                            text = "Add Multiple",
+                            text = "Add multiple",
                             onClick = { showBatchScheduleDialog.value = true },
                             modifier = Modifier.weight(1f)
                         )
@@ -356,7 +356,7 @@ fun WorkoutForm(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(Spacing.md))
-                    Text(text = "Saving...", style = MaterialTheme.typography.bodyLarge)
+                    Text(text = "Saving changes...", style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
@@ -429,7 +429,7 @@ fun ScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = if (isEditing) "Edit schedule" else "Add schedule",
+        title = if (isEditing) "Edit reminder" else "Add reminder",
         body = {
             Column(
                 modifier = Modifier
@@ -619,7 +619,7 @@ fun TimePickerDialog(
 ) {
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Select time",
+        title = "Choose a time",
         body = { TimePicker(state = timePickerState) },
         confirmText = "OK",
         onConfirm = onConfirm,
@@ -674,7 +674,7 @@ fun ScheduleListItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (schedule.label.isNotEmpty()) schedule.label else "Schedule ${index + 1}",
+                text = if (schedule.label.isNotEmpty()) schedule.label else "Reminder ${index + 1}",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -682,7 +682,7 @@ fun ScheduleListItem(
                     "On ${schedule.specificDate} at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
                 } else {
                     val days = getDaysOfWeekString(schedule.daysOfWeek)
-                    "Every $days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
+                    "$days at ${schedule.hour}:${schedule.minute.toString().padStart(2, '0')}"
                 },
                 style = MaterialTheme.typography.bodySmall
             )
@@ -726,7 +726,7 @@ fun BatchScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Add multiple schedules",
+        title = "Add multiple reminders",
         body = {
             Column(
                 modifier = Modifier
