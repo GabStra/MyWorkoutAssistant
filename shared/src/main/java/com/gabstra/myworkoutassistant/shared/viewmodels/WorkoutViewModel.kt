@@ -71,6 +71,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateEditor
+import com.gabstra.myworkoutassistant.shared.workout.state.exerciseIdOrNull
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
@@ -716,9 +717,9 @@ open class WorkoutViewModel(
 
     var startWorkoutTime by mutableStateOf<LocalDateTime?>(null)
 
-    var exercisesById: Map<UUID, Exercise> = emptyMap()
-    var supersetIdByExerciseId: Map<UUID, UUID> = emptyMap()
-    var exercisesBySupersetId: Map<UUID, List<Exercise>> = emptyMap()
+    var exercisesById by mutableStateOf<Map<UUID, Exercise>>(emptyMap())
+    var supersetIdByExerciseId by mutableStateOf<Map<UUID, UUID>>(emptyMap())
+    var exercisesBySupersetId by mutableStateOf<Map<UUID, List<Exercise>>>(emptyMap())
 
     fun initializeExercisesMaps(selectedWorkout: Workout?) {
         if (selectedWorkout == null) return
@@ -1541,6 +1542,129 @@ open class WorkoutViewModel(
         )
         _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
         rebuildScreenState()
+    }
+
+    protected open suspend fun onWorkoutDefinitionChanged(updatedWorkoutStore: WorkoutStore) = Unit
+
+    suspend fun updateExerciseEquipmentForCurrentWorkout(
+        exerciseId: UUID,
+        equipmentId: UUID?
+    ): Boolean {
+        val currentState = _workoutState.value as? WorkoutState.Set ?: return false
+        if (_isRefreshing.value || currentState.exerciseId != exerciseId || currentState.isCalibrationSet) {
+            return false
+        }
+        if (currentState.set !is WeightSet && currentState.set !is BodyWeightSet) return false
+
+        val currentExercise = exercisesById[exerciseId] ?: return false
+        if (currentExercise.exerciseType != ExerciseType.WEIGHT &&
+            currentExercise.exerciseType != ExerciseType.BODY_WEIGHT
+        ) {
+            return false
+        }
+        if (currentExercise.exerciseType == ExerciseType.WEIGHT && equipmentId == null) return false
+        if (equipmentId != null && getEquipmentById(equipmentId) == null) return false
+        if (currentExercise.equipmentId == equipmentId) return true
+
+        val oldMachine = stateMachine ?: return false
+        val refreshRequest = workoutRefreshService.createRefreshRequest(
+            isRefreshing = false,
+            currentState = currentState,
+            oldHistory = oldMachine.history
+        ) ?: return false
+
+        val preservedSetData = copySetData(currentState.currentSetData).let { setData ->
+            when {
+                setData is BodyWeightSetData && equipmentId == null -> {
+                    setData.copy(
+                        additionalWeight = 0.0,
+                        volume = setData.copy(additionalWeight = 0.0).calculateVolume()
+                    )
+                }
+                else -> setData
+            }
+        }
+        val preservedStartTime = currentState.startTime
+        val preservedSkipped = currentState.skipped
+
+        _isRefreshing.value = true
+        try {
+            val updatedExercise = currentExercise.copy(equipmentId = equipmentId)
+            val updatedWorkoutComponents = updateWorkoutComponentsRecursively(
+                _selectedWorkout.value.workoutComponents,
+                currentExercise,
+                updatedExercise
+            )
+            val updatedWorkout = _selectedWorkout.value.copy(workoutComponents = updatedWorkoutComponents)
+            val updatedWorkoutStore = workoutStore.copy(
+                workouts = workoutStore.workouts.map { workout ->
+                    if (workout.id == updatedWorkout.id) updatedWorkout else workout
+                }
+            )
+
+            _selectedWorkout.value = updatedWorkout
+            updateWorkoutStore(updatedWorkoutStore)
+            _selectedWorkout.value = updatedWorkout
+            initializeExercisesMaps(updatedWorkout)
+            workoutStoreRepository.saveWorkoutStore(updatedWorkoutStore)
+
+            val workoutSequence = generateWorkoutStates()
+            val initialMachine = initializeStateMachine(workoutSequence, 0)
+            populateNextStateForRest(initialMachine)
+
+            val targetIndex = workoutRefreshService.findTargetIndex(
+                allStates = initialMachine.allStates,
+                request = refreshRequest
+            )
+            val repositionIndex = if (targetIndex >= 0) {
+                targetIndex
+            } else {
+                oldMachine.currentIndex.coerceIn(0, initialMachine.allStates.lastIndex)
+            }
+
+            val adjustedWorkoutSequence = WorkoutStateSequenceOps.mapSequenceStatesIndexed(workoutSequence) { index, state ->
+                if (index < repositionIndex || state.exerciseIdOrNull() != exerciseId) {
+                    return@mapSequenceStatesIndexed state
+                }
+
+                when (state) {
+                    is WorkoutState.Set -> state.copy(
+                        equipmentId = equipmentId,
+                        plateChangeResult = null
+                    )
+                    is WorkoutState.CalibrationLoadSelection -> state.copy(equipmentId = equipmentId)
+                    else -> state
+                }
+            }
+
+            var rebuiltMachine = initializeStateMachine(adjustedWorkoutSequence, repositionIndex)
+            populateNextStateForRest(rebuiltMachine)
+
+            val rebuiltCurrentState = rebuiltMachine.currentState as? WorkoutState.Set
+            if (rebuiltCurrentState != null &&
+                rebuiltCurrentState.exerciseId == exerciseId &&
+                rebuiltCurrentState.set.id == currentState.set.id
+            ) {
+                val adjustedCurrentState = rebuiltCurrentState.copy(
+                    equipmentId = equipmentId,
+                    plateChangeResult = null
+                )
+                adjustedCurrentState.currentSetData = preservedSetData
+                adjustedCurrentState.startTime = preservedStartTime
+                adjustedCurrentState.skipped = preservedSkipped
+                rebuiltMachine = rebuiltMachine.updateCurrentState(adjustedCurrentState)
+            }
+
+            stateMachine = rebuiltMachine
+            populateNextStateSets()
+            updateStateFlowsFromMachine()
+            rebuildScreenState()
+            recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
+            onWorkoutDefinitionChanged(updatedWorkoutStore)
+            return true
+        } finally {
+            _isRefreshing.value = false
+        }
     }
 
     fun addNewSetStandard() {
