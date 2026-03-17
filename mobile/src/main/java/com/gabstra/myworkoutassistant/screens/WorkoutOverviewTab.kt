@@ -1,8 +1,8 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.basicMarquee
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,9 +15,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
@@ -54,12 +54,12 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -252,10 +252,14 @@ fun WorkoutOverviewTab(
                         }
                     }
                     Box(
-                        modifier = Modifier.bringIntoViewRequester(bringIntoViewRequester)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .bringIntoViewRequester(bringIntoViewRequester)
                     ) {
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             WorkoutComponentRenderer(
                                 workout = workout,
