@@ -196,7 +196,7 @@ fun PageButtons(
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,
                                 uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
                                 uncheckedTrackColor = MediumLightGray,
-                                uncheckedBorderColor = MediumLightGray
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground
                             ),
                             modifier = Modifier
                         )
