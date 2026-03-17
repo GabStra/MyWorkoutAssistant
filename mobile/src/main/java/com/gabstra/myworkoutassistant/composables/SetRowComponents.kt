@@ -238,6 +238,7 @@ data class SetRowUiModel(
 fun SetRestRowCard(
     restText: String,
     modifier: Modifier = Modifier,
+    textModifier : Modifier = Modifier,
     enabled: Boolean = true,
 ) {
     val textColor = if (enabled) {
@@ -247,14 +248,13 @@ fun SetRestRowCard(
     }
 
     StyledCard(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         enabled = enabled,
     ) {
         Text(
             text = restText,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+            modifier = textModifier
+                .padding( 15.dp),
             style = MaterialTheme.typography.bodyLarge,
             color = textColor,
             textAlign = TextAlign.Center
