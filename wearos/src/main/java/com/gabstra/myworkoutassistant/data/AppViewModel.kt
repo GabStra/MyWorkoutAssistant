@@ -799,7 +799,6 @@ open class AppViewModel : WorkoutViewModel() {
                 Log.e(TAG, "Error sending workout history to phone", e)
                 withContext(NonCancellable + Dispatchers.Main) {
                     Log.d(TAG, "Detailed sync error: ${e.message}")
-                    showSyncFailedToastIfInactive(context)
                     finishPhoneSync(success = false, onEnd = onEnd)
                 }
             }
@@ -864,6 +863,12 @@ open class AppViewModel : WorkoutViewModel() {
     private fun showSyncFailedToastIfInactive(context: Context) {
         if (!isWorkoutActive()) {
             Toast.makeText(context, "Couldn't sync with your phone. Try again.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showSyncRetryingToastIfInactive(context: Context) {
+        if (!isWorkoutActive()) {
+            Toast.makeText(context, "Sync is retrying in background.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1288,6 +1293,7 @@ open class AppViewModel : WorkoutViewModel() {
         sendWorkoutHistoryToPhone(syncContext) { success ->
             if (!success) {
                 WorkoutHistorySyncWorker.enqueue(syncContext)
+                showSyncRetryingToastIfInactive(syncContext)
             }
             clearPendingSync()
             _syncStatus.value = SyncStatus.Idle
