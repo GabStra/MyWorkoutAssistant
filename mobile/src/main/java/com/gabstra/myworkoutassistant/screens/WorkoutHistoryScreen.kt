@@ -833,7 +833,6 @@ fun WorkoutHistoryScreen(
                                     .fillMaxWidth()
                                     .padding(vertical = 10.dp),
                                 text = "Heart rate during workout",
-                                textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.titleMedium,
                             )
@@ -854,7 +853,7 @@ fun WorkoutHistoryScreen(
                                 onInteractionChange = { isChartInteractionActive = it },
                             )
 
-                            Spacer(modifier = Modifier.height(15.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             Row(
                                 modifier = Modifier
