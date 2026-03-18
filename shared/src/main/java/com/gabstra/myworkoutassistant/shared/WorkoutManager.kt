@@ -133,6 +133,38 @@ class WorkoutManager {
             }
         }
 
+        /**
+         * Merges plan sets with set history: keeps RestSets from the plan, replaces work sets from history when a matching setId exists.
+         * Used when saving a completed workout so rest-between-sets is preserved.
+         */
+        fun mergeExerciseSetsFromHistory(originalSets: List<Set>, setHistories: List<SetHistory>): List<Set> {
+            val setHistoryBySetId = setHistories.associateBy { it.setId }
+            return originalSets.map { set ->
+                when {
+                    set is RestSet -> set
+                    else -> setHistoryBySetId[set.id]?.let { getNewSetFromSetHistory(it) } ?: set
+                }
+            }
+        }
+
+        /**
+         * Replaces an exercise's sets list in the component tree (recurse into Superset).
+         */
+        fun replaceSetsInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, newSets: List<Set>): List<WorkoutComponent> {
+            return components.map { component ->
+                if (component.id == parentExercise.id) {
+                    val exercise = component as Exercise
+                    exercise.copy(sets = newSets, requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                } else {
+                    if (component is Superset) {
+                        component.copy(exercises = replaceSetsInExerciseRecursively(component.exercises, parentExercise, newSets) as List<Exercise>)
+                    } else {
+                        component
+                    }
+                }
+            }
+        }
+
         fun updateSetInExerciseRecursively(components: List<WorkoutComponent>, parentExercise: Exercise, oldSet: Set, updatedSet: Set): List<WorkoutComponent> {
             return components.map { component ->
                 if(component == parentExercise) {

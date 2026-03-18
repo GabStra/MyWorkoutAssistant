@@ -10,13 +10,12 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.mergeExerciseSetsFromHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
-import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -503,9 +502,7 @@ internal class WorkoutPersistenceCoordinator(
             var workoutComponents = selectedWorkoutSnapshot.workoutComponents
             for (exercise in exercises) {
                 if (exercise.doNotStoreHistory) continue
-                val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: continue
-
-                workoutComponents = removeSetsFromExerciseRecursively(workoutComponents, exercise)
+                val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: emptyList()
                 val validSetHistories = sanitizeRestPlacementInSetHistories(setHistories)
                     .filter {
                         when (val setData = it.setData) {
@@ -515,11 +512,8 @@ internal class WorkoutPersistenceCoordinator(
                             else -> true
                         }
                     }
-
-                for (setHistory in validSetHistories) {
-                    val newSet = getNewSetFromSetHistory(setHistory)
-                    workoutComponents = addSetToExerciseRecursively(workoutComponents, exercise, newSet, setHistory.order)
-                }
+                val mergedSets = mergeExerciseSetsFromHistory(exercise.sets, validSetHistories)
+                workoutComponents = replaceSetsInExerciseRecursively(workoutComponents, exercise, mergedSets)
             }
 
             val currentWorkoutStore = workoutStoreRepositoryRef.getWorkoutStore()
