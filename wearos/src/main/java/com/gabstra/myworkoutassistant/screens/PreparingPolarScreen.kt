@@ -3,18 +3,10 @@ package com.gabstra.myworkoutassistant.screens
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -22,24 +14,36 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.CircularProgressIndicator
-import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.composables.EnhancedIconButton
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
+import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
+import com.gabstra.myworkoutassistant.data.Screen
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -101,7 +105,7 @@ fun PreparingPolarScreen(
             if (hasTriggeredNextState) {
                 return@LaunchedEffect
             }
-            
+
             hasTriggeredNextState = true
 
             viewModel.lightScreenUp()
@@ -119,66 +123,121 @@ fun PreparingPolarScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                modifier = Modifier.fillMaxWidth(),
-                text = "Getting your Polar device ready",
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center
+    val transformingLazyColumnState = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec(
+        ResponsiveTransformationSpec.smallScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.75f)
+        ),
+        ResponsiveTransformationSpec.largeScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.6f)
+        )
+    )
+
+    ScreenScaffold(
+        scrollState = transformingLazyColumnState,
+        scrollIndicator = {
+            ScrollIndicator(
+                state = transformingLazyColumnState,
+                colors = ScrollIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.onBackground,
+                    trackColor = MediumDarkGray
+                )
             )
-            Spacer(modifier = Modifier.height(15.dp))
-
-            if(!(canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState)){
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+        }
+    ) { contentPadding ->
+        TransformingLazyColumn(
+            contentPadding = contentPadding,
+            state = transformingLazyColumnState,
+        ) {
+            item {
+                ListHeader(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec),
+                    transformation = SurfaceTransformation(spec)
                 ) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(8.dp))
-                    LoadingText(baseText = "Connecting")
-                }
-            }else{
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(
+                    Text(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        EnhancedIconButton(
-                            buttonSize = 50.dp,
-                            hitBoxScale = 1f,
-                            onClick = {
-                                if (hasTriggeredNextState) return@EnhancedIconButton
-                                hasTriggeredNextState = true
-                                hapticsViewModel.doGentleVibration()
-
-                                if (hasWorkoutRecord) {
-                                    if (viewModel.consumeSkipNextResumeLastState()) {
-                                        viewModel.resumeWorkout()
-                                    } else {
-                                        viewModel.resumeLastState()
-                                    }
-                                } else {
-                                    viewModel.setWorkoutStart()
-                                }
-
-                                viewModel.lightScreenUp()
-
-                                onReady()
-                            },
-                            buttonModifier = Modifier.clip(CircleShape),
-                        ) {
-                            Icon(modifier = Modifier.size(30.dp), imageVector = Icons.Default.DoubleArrow, contentDescription = "Close",tint = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
+                        text = "Getting your Polar device ready",
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
+
+            if(!(canSkip && deviceConnectionInfo == null && state.dataLoaded && !hasTriggeredNextState)){
+                item{
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(8.dp))
+                        LoadingText(baseText = "Connecting")
+                    }
+                }
+            }else{
+                item{
+                    Button(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec),
+                        transformation = SurfaceTransformation(spec),
+                        onClick = {
+                            if (hasTriggeredNextState) return@Button
+                            hasTriggeredNextState = true
+                            hapticsViewModel.doGentleVibration()
+
+                            if (hasWorkoutRecord) {
+                                if (viewModel.consumeSkipNextResumeLastState()) {
+                                    viewModel.resumeWorkout()
+                                } else {
+                                    viewModel.resumeLastState()
+                                }
+                            } else {
+                                viewModel.setWorkoutStart()
+                            }
+
+                            viewModel.lightScreenUp()
+
+                            onReady()
+                        },
+                    ) {
+                        Text(
+                            modifier = Modifier.fillMaxWidth(),
+                            text = "Skip",
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
+                item{
+                    ButtonWithText(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, spec),
+                        transformation = SurfaceTransformation(spec),
+                        text = "Back",
+                        onClick = {
+                            if (hasTriggeredNextState) return@ButtonWithText
+                            hapticsViewModel.doGentleVibration()
+
+                            polarViewModel.disconnectFromDevice()
+
+                            navController.navigate(Screen.WorkoutSelection.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        }
+                    )
+                }
+            }
+
         }
     }
 }
