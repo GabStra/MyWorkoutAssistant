@@ -286,6 +286,7 @@ fun TimedDurationSetScreen(
     LaunchedEffect(set.id, set.autoStart, isPaused) {
         val setData = state.currentSetData as? TimedDurationSetData
         state.hasBeenExecuted = setData?.hasBeenExecuted == true
+        val isRegistered = viewModel.workoutTimerService.isTimerRegistered(set.id)
 
         // Check if timer has already started (e.g., resuming workout)
         // Note: state.startTime check is inside the effect, not a dependency, to prevent
@@ -294,7 +295,6 @@ fun TimedDurationSetScreen(
             // Re-anchor once after recovery so resumed value matches what user last saw
             // before process death, even if recovery navigation took time.
             viewModel.applyPostRecoveryTimerReanchorIfNeeded()
-            val isRegistered = viewModel.workoutTimerService.isTimerRegistered(set.id)
             if (!isRegistered && state.hasBeenExecuted) {
                 // Set has already been executed and user navigated back to it.
                 // Do not auto-start here; show explicit repeat action.
@@ -308,6 +308,27 @@ fun TimedDurationSetScreen(
             }
             showStartButton = false
             showRepeatButton = false
+            autoStartJob?.cancel()
+            return@LaunchedEffect
+        }
+
+        // Handle completed timed sets that were reconstructed from history (e.g. after recovery)
+        // and navigated back to later. These sets have hasBeenExecuted = true, no active timer,
+        // and typically startTime == null, so treat them as repeatable instead of a fresh 0 timer.
+        if (state.hasBeenExecuted && !isRegistered) {
+            val timedData = state.currentSetData as? TimedDurationSetData
+            if (timedData != null) {
+                val normalizedData = if (timedData.endTimer == 0 && timedData.startTimer > 0) {
+                    timedData.copy(endTimer = timedData.startTimer)
+                } else {
+                    timedData
+                }
+                state.currentSetData = normalizedData
+                currentSet = normalizedData
+                currentMillis = normalizedData.startTimer
+            }
+            showStartButton = false
+            showRepeatButton = true
             autoStartJob?.cancel()
             return@LaunchedEffect
         }
