@@ -253,6 +253,85 @@ internal fun resolveSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndic
     return buildSetTrendIndicator(setState)
 }
 
+private fun isWorkSet(setState: WorkoutState.Set): Boolean = when (val set = setState.set) {
+    is WeightSet -> set.subCategory == SetSubCategory.WorkSet
+    is com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet ->
+        set.subCategory == SetSubCategory.WorkSet
+    else -> false
+}
+
+internal fun trendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
+    if (!isWorkSet(setState)) return null
+    val prev = setState.previousSetData ?: return null
+    val curr = setState.currentSetData
+    when {
+        curr is WeightSetData && prev is WeightSetData -> {
+            return when {
+                curr.actualWeight > prev.actualWeight -> SetTrendIndicator(glyph = "↑", color = Green)
+                curr.actualWeight < prev.actualWeight -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        curr is BodyWeightSetData && prev is BodyWeightSetData -> {
+            return when {
+                curr.getWeight() > prev.getWeight() -> SetTrendIndicator(glyph = "↑", color = Green)
+                curr.getWeight() < prev.getWeight() -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> return null
+    }
+}
+
+internal fun trendForReps(setState: WorkoutState.Set): SetTrendIndicator? {
+    if (!isWorkSet(setState)) return null
+    val prev = setState.previousSetData ?: return null
+    val curr = setState.currentSetData
+    when {
+        curr is WeightSetData && prev is WeightSetData -> {
+            return when {
+                curr.actualReps > prev.actualReps -> SetTrendIndicator(glyph = "↑", color = Green)
+                curr.actualReps < prev.actualReps -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        curr is BodyWeightSetData && prev is BodyWeightSetData -> {
+            return when {
+                curr.actualReps > prev.actualReps -> SetTrendIndicator(glyph = "↑", color = Green)
+                curr.actualReps < prev.actualReps -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> return null
+    }
+}
+
+internal fun trendForTime(setState: WorkoutState.Set): SetTrendIndicator? {
+    val prev = setState.previousSetData ?: return null
+    val curr = setState.currentSetData
+    when {
+        curr is TimedDurationSetData && prev is TimedDurationSetData -> {
+            val beforeDuration = prev.endTimer - prev.startTimer
+            val afterDuration = curr.endTimer - curr.startTimer
+            return when {
+                afterDuration > beforeDuration -> SetTrendIndicator(glyph = "↑", color = Green)
+                afterDuration < beforeDuration -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        curr is EnduranceSetData && prev is EnduranceSetData -> {
+            val beforeDuration = prev.endTimer - prev.startTimer
+            val afterDuration = curr.endTimer - curr.startTimer
+            return when {
+                afterDuration > beforeDuration -> SetTrendIndicator(glyph = "↑", color = Green)
+                afterDuration < beforeDuration -> SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> return null
+    }
+}
+
 @Composable
 internal fun ExerciseSetsTableHeader(
     modifier: Modifier = Modifier,
@@ -264,7 +343,7 @@ internal fun ExerciseSetsTableHeader(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -290,7 +369,7 @@ internal fun ExerciseSetsTableHeader(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -326,7 +405,6 @@ fun SetTableRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
-    val trendIndicator = resolveSetTrendIndicator(setState)
     val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
     val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
         setState = setState,
@@ -348,7 +426,7 @@ fun SetTableRow(
         }
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(2.5.dp)
+                .padding(2.dp)
                 .then(
                     rowSetContentDescription?.let { contentDescription ->
                         Modifier.semantics(mergeDescendants = false) {
@@ -359,11 +437,6 @@ fun SetTableRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             val baseSetDisplayText = rowSetContentDescription ?: ""
-            val setDisplayText = if (trendIndicator != null && baseSetDisplayText.isNotBlank()) {
-                "$baseSetDisplayText${trendIndicator.glyph}"
-            } else {
-                baseSetDisplayText
-            }
             ScalableFadingText(
                 modifier = Modifier
                     .weight(1f)
@@ -374,7 +447,7 @@ fun SetTableRow(
                             }
                         } else Modifier
                     ),
-                text = setDisplayText,
+                text = baseSetDisplayText,
                 style = itemStyle,
                 textAlign = TextAlign.Center,
                 color = textColor
@@ -383,6 +456,8 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
+                    val weightTrend = trendForWeight(setState)
+                    val repsTrend = trendForReps(setState)
 
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
@@ -392,24 +467,52 @@ fun SetTableRow(
                         else -> weightText
                     }
 
-                    ScalableFadingText(
+                    Row(
                         modifier = Modifier.weight(2f),
-                        text = displayWeightText,
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor,
-                    )
-                    ScalableFadingText(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = displayWeightText,
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor,
+                        )
+                        if (weightTrend != null) {
+                            ScalableFadingText(
+                                text = weightTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = weightTrend.color,
+                            )
+                        }
+                    }
+                    Row(
                         modifier = Modifier.weight(1f),
-                        text = "${weightSetData.actualReps}",
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor,
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = "${weightSetData.actualReps}",
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor,
+                        )
+                        if (repsTrend != null) {
+                            ScalableFadingText(
+                                text = repsTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = repsTrend.color,
+                            )
+                        }
+                    }
                 }
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
+                    val weightTrend = trendForWeight(setState)
+                    val repsTrend = trendForReps(setState)
 
                     val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
@@ -423,44 +526,98 @@ fun SetTableRow(
                         else -> baseWeightText
                     }
 
-                    ScalableFadingText(
+                    Row(
                         modifier = Modifier.weight(2f),
-                        text = displayWeightText,
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor
-                    )
-                    ScalableFadingText(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = displayWeightText,
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor
+                        )
+                        if (weightTrend != null) {
+                            ScalableFadingText(
+                                text = weightTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = weightTrend.color,
+                            )
+                        }
+                    }
+                    Row(
                         modifier = Modifier.weight(1f),
-                        text = "${bodyWeightSetData.actualReps}",
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = "${bodyWeightSetData.actualReps}",
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor
+                        )
+                        if (repsTrend != null) {
+                            ScalableFadingText(
+                                text = repsTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = repsTrend.color,
+                            )
+                        }
+                    }
                 }
 
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
+                    val timeTrend = trendForTime(setState)
 
-                    ScalableFadingText(
+                    Row(
                         modifier = Modifier.weight(3f),
-                        text = FormatTime(timedDurationSetData.startTimer / 1000),
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = FormatTime(timedDurationSetData.startTimer / 1000),
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor
+                        )
+                        if (timeTrend != null) {
+                            ScalableFadingText(
+                                text = timeTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = timeTrend.color,
+                            )
+                        }
+                    }
                 }
 
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
+                    val timeTrend = trendForTime(setState)
 
-                    ScalableFadingText(
+                    Row(
                         modifier = Modifier.weight(3f),
-                        text = FormatTime(enduranceSetData.startTimer / 1000),
-                        style = itemStyle,
-                        textAlign = TextAlign.Center,
-                        color = textColor
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ScalableFadingText(
+                            text = FormatTime(enduranceSetData.startTimer / 1000),
+                            style = itemStyle,
+                            textAlign = TextAlign.Center,
+                            color = textColor
+                        )
+                        if (timeTrend != null) {
+                            ScalableFadingText(
+                                text = timeTrend.glyph,
+                                style = itemStyle,
+                                textAlign = TextAlign.Center,
+                                color = timeTrend.color,
+                            )
+                        }
+                    }
                 }
 
                 else -> throw RuntimeException("Unsupported set type")

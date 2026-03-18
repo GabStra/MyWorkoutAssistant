@@ -71,9 +71,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
-import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
@@ -348,41 +348,33 @@ private fun UpcomingSetPreview(
     }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 25.dp),
+        verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
         ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(27.5.dp)
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val rowModifier = Modifier
-                .height(25.dp)
-                .border(BorderStroke(1.dp, borderColor), rowShape)
+        val rowModifier = Modifier
+            .height(25.dp)
+            .border(BorderStroke(1.dp, borderColor), rowShape)
 
-            SetTableRow(
-                modifier = rowModifier,
-                hapticsViewModel = hapticsViewModel,
+        SetTableRow(
+            modifier = rowModifier,
+            hapticsViewModel = hapticsViewModel,
+            viewModel = viewModel,
+            setState = setState,
+            setIdentifier = buildSetIdentifier(
                 viewModel = viewModel,
-                setState = setState,
-                setIdentifier = buildSetIdentifier(
-                    viewModel = viewModel,
-                    exerciseId = setState.exerciseId,
-                    setState = setState
-                ),
-                sideBadge = sideBadge,
-                index = 0,
-                isCurrentSet = true,
-                textColor = textColor,
-                hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
-                    allWorkoutStates = viewModel.allWorkoutStates,
-                    exerciseId = setState.exerciseId
-                )
+                exerciseId = setState.exerciseId,
+                setState = setState
+            ),
+            sideBadge = sideBadge,
+            index = 0,
+            isCurrentSet = true,
+            textColor = textColor,
+            hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+                allWorkoutStates = viewModel.allWorkoutStates,
+                exerciseId = setState.exerciseId
             )
-        }
+        )
     }
 }
 

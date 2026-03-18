@@ -818,7 +818,8 @@ open class AppViewModel : WorkoutViewModel() {
 
     private fun handleMissingPhoneConnection(context: Context, onEnd: (Boolean) -> Unit) {
         if (!isWorkoutActive()) {
-            Toast.makeText(context, "Connect your phone to sync.", Toast.LENGTH_SHORT).show()
+            // Toast disabled: "Connect your phone to sync."
+            // Toast.makeText(context, "Connect your phone to sync.", Toast.LENGTH_SHORT).show()
         }
         onEnd(false)
     }
@@ -862,13 +863,15 @@ open class AppViewModel : WorkoutViewModel() {
 
     private fun showSyncFailedToastIfInactive(context: Context) {
         if (!isWorkoutActive()) {
-            Toast.makeText(context, "Couldn't sync with your phone. Try again.", Toast.LENGTH_LONG).show()
+            // Toast disabled: "Couldn't sync with your phone. Try again."
+            // Toast.makeText(context, "Couldn't sync with your phone. Try again.", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun showSyncRetryingToastIfInactive(context: Context) {
         if (!isWorkoutActive()) {
-            Toast.makeText(context, "Sync is retrying in background.", Toast.LENGTH_SHORT).show()
+            // Toast disabled: "Sync is retrying in background."
+            // Toast.makeText(context, "Sync is retrying in background.", Toast.LENGTH_SHORT).show()
         }
     }
 

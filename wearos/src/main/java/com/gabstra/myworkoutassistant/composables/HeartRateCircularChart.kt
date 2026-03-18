@@ -462,18 +462,21 @@ private fun HeartRateDisplay(
                             color = MaterialTheme.colorScheme.background,
                             shape = shape
                         )
-                        .width(30.dp)
+                        .width(27.5.dp)
 
                     ,
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        modifier = Modifier.padding(2.5.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(2.dp),
                         text = zoneText,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelSmall.copy(platformStyle = PlatformTextStyle(
-                            includeFontPadding = false
-                        )
+                        style = MaterialTheme.typography.labelSmall
+                            .copy(platformStyle = PlatformTextStyle(
+                                includeFontPadding = false
+                            )
                         ),
                         color = chipBorderColor
                     )
