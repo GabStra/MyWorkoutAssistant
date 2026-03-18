@@ -4,7 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -130,6 +130,16 @@ fun ScalableText(
             finalSize.coerceAtLeast(minTextSize.value).sp
         }
 
+        val fittedTextWidth = remember(text, fittedSize, baseStyle) {
+            val result = measurer.measure(
+                text = text,
+                style = baseStyle.copy(fontSize = fittedSize),
+                maxLines = 1,
+                softWrap = false
+            )
+            with(density) { result.size.width.toDp() }
+        }
+
         // 3. Handle the Initial Fade-In
         val alphaAnim = remember { Animatable(0f) }
 
@@ -151,6 +161,14 @@ fun ScalableText(
             }
         }
 
+        val baseModifier = if(isInspectionMode){
+            textModifier
+        }else {
+            textModifier.graphicsLayer {
+                this.alpha = if (isLayoutReady) alphaAnim.value else 0f
+            }
+        }
+
         Text(
             text = text,
             // Use the animated size
@@ -160,17 +178,7 @@ fun ScalableText(
             textAlign = textAlign,
             overflow = overflow,
             // Use graphicsLayer for performant alpha changes
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(
-                if(isInspectionMode){
-                    textModifier
-                }else{
-                    textModifier.graphicsLayer {
-                        this.alpha = if (isLayoutReady) alphaAnim.value else 0f
-                    }
-                }
-            )
+            modifier =baseModifier.then(Modifier.width(fittedTextWidth))
         )
     }
 }
