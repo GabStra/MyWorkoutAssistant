@@ -1,10 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Switch
@@ -45,6 +45,7 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
+import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -91,7 +92,7 @@ fun PageButtons(
         ResponsiveTransformationSpec.smallScreen(
             containerAlpha = TransformationVariableSpec(1f),
             contentAlpha = TransformationVariableSpec(1f),
-            scale = TransformationVariableSpec(0.7f)
+            scale = TransformationVariableSpec(0.75f)
         ),
         ResponsiveTransformationSpec.largeScreen(
             containerAlpha = TransformationVariableSpec(1f),
@@ -99,7 +100,7 @@ fun PageButtons(
             scale = TransformationVariableSpec(0.6f)
         )
     )
-    val keepScreenOn by viewModel.keepScreenOn
+    val keepScreenOnOverride by viewModel.keepScreenOn
 
     ScreenScaffold(
         modifier = Modifier.fillMaxSize(),
@@ -164,39 +165,72 @@ fun PageButtons(
                     enabled = !isHistoryEmpty,
                 )
             }
-            item{
+            item {
+                val exerciseDefaultKeepOn = exercise.keepScreenOn
+                val statusText = when {
+                    exerciseDefaultKeepOn -> "This exercise keeps the screen on"
+                    !exerciseDefaultKeepOn && !keepScreenOnOverride -> "Screen can dim for this exercise"
+                    else -> "Screen will stay on for this workout"
+                }
+                val isSwitchEnabled = !exerciseDefaultKeepOn
+                val switchChecked = exerciseDefaultKeepOn || keepScreenOnOverride
+
                 FilledTonalButton(
+                    enabled = isSwitchEnabled,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 60.dp)
+                        //.heightIn(min = 80.dp)
                         .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.toggleKeepScreenOn()
+                        if (isSwitchEnabled) {
+                            hapticsViewModel.doGentleVibration()
+                            viewModel.toggleKeepScreenOn()
+                        } else {
+                            hapticsViewModel.doGentleVibration()
+                        }
                     }
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        Text(
-                            text = "Keep screen on",
+                        Column(
                             modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.Start
-                        )
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "Keep screen on",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                textAlign = TextAlign.Start,
+                                color = MediumLighterGray
+                            )
+                        }
                         Switch(
-                            checked = keepScreenOn,
-                            onCheckedChange = null,
+                            checked = switchChecked,
+                            onCheckedChange = {
+                                if (isSwitchEnabled) {
+                                    viewModel.toggleKeepScreenOn()
+                                }
+                            },
+                            enabled = isSwitchEnabled,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,
                                 uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
                                 uncheckedTrackColor = MediumLightGray,
-                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
+                                disabledCheckedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                disabledCheckedTrackColor = MaterialTheme.colorScheme.primary,
+                                disabledCheckedBorderColor = MaterialTheme.colorScheme.primary,
                             ),
                             modifier = Modifier
                         )
