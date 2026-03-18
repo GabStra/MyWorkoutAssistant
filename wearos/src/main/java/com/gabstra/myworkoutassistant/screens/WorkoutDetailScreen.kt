@@ -160,7 +160,7 @@ fun WorkoutDetailScreen(
             ResponsiveTransformationSpec.smallScreen(
                 containerAlpha = TransformationVariableSpec(1f),
                 contentAlpha = TransformationVariableSpec(1f),
-                scale = TransformationVariableSpec(0.7f)
+                scale = TransformationVariableSpec(0.75f)
             ),
             ResponsiveTransformationSpec.largeScreen(
                 containerAlpha = TransformationVariableSpec(1f),

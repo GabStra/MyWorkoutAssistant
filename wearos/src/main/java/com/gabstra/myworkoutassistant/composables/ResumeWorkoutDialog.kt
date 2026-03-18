@@ -26,6 +26,8 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -56,8 +58,18 @@ fun ResumeWorkoutDialog(
                     .fillMaxSize()
             ) {
                 val state = rememberTransformingLazyColumnState()
-                val spec = rememberTransformationSpec()
-
+                val spec = rememberTransformationSpec(
+                    ResponsiveTransformationSpec.smallScreen(
+                        containerAlpha = TransformationVariableSpec(0.5f),
+                        contentAlpha = TransformationVariableSpec(0.5f),
+                        scale = TransformationVariableSpec(0.75f)
+                    ),
+                    ResponsiveTransformationSpec.largeScreen(
+                        containerAlpha = TransformationVariableSpec(0.5f),
+                        contentAlpha = TransformationVariableSpec(0.5f),
+                        scale = TransformationVariableSpec(0.6f)
+                    )
+                )
                 ScreenScaffold(
                     scrollState = state,
                     scrollIndicator = {

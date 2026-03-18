@@ -97,7 +97,7 @@ internal fun RecoveryDialog(
                 ResponsiveTransformationSpec.smallScreen(
                     containerAlpha = TransformationVariableSpec(1f),
                     contentAlpha = TransformationVariableSpec(1f),
-                    scale = TransformationVariableSpec(0.7f)
+                    scale = TransformationVariableSpec(0.75f)
                 ),
                 ResponsiveTransformationSpec.largeScreen(
                     containerAlpha = TransformationVariableSpec(1f),
@@ -120,7 +120,7 @@ internal fun RecoveryDialog(
             ) { contentPadding ->
                 TransformingLazyColumn(
                     contentPadding = contentPadding,
-                    state = state
+                    state = state,
                 ) {
                     item {
                         ListHeader(
@@ -379,7 +379,6 @@ private fun RecoveryBodyText(
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
             color = MediumLighterGray,
-
         )
     }
 }
