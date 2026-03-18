@@ -110,14 +110,14 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.0-beta01")
-    implementation("androidx.wear.compose:compose-navigation:1.6.0-beta01")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-beta01")
-    implementation("androidx.wear.compose:compose-foundation:1.6.0-beta01")
+    implementation("androidx.wear.compose:compose-material3:1.6.0-rc01")
+    implementation("androidx.wear.compose:compose-navigation:1.6.0-rc01")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0-rc01")
+    implementation("androidx.wear.compose:compose-foundation:1.6.0-rc01")
 
     // AndroidX / Google
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.4")
+    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("androidx.work:work-runtime-ktx:2.11.1")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
@@ -150,7 +150,7 @@ dependencies {
     implementation("com.airbnb.android:lottie-compose:6.7.1")
     // Test
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.mockito:mockito-core:5.22.0")
+    testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
@@ -161,5 +161,5 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta01")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
 }

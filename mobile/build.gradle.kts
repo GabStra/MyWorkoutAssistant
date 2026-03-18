@@ -115,8 +115,8 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.9.7")
 
     // AndroidX core
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.12.4")
+    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.work:work-runtime-ktx:2.11.1")
 
     // Lifecycle
@@ -138,7 +138,7 @@ dependencies {
 
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")
-    implementation("com.patrykandpatrick.vico:compose:3.0.2")
+    implementation("com.patrykandpatrick.vico:compose:3.0.3")
     implementation("com.kizitonwose.calendar:compose:2.10.0")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
@@ -148,7 +148,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta01")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.0-beta02")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
