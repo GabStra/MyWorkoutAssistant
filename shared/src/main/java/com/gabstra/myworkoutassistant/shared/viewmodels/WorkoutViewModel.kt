@@ -256,6 +256,34 @@ open class WorkoutViewModel(
         !isPaused.value && currentScreenDimmingState.value && !keepScreenOn.value
     }
 
+    /**
+     * Returns the keep-screen-on default for the current exercise when in a Set state.
+     * For non-set states, returns null because there is no single exercise driving behavior.
+     */
+    fun currentExerciseKeepOnDefault(): Boolean? {
+        val state = workoutState.value
+        return when (state) {
+            is WorkoutState.Set -> {
+                val exercise = exercisesById[state.exerciseId] ?: return null
+                exercise.keepScreenOn
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Returns the effective keep-screen-on behavior for the current Set state, combining
+     * the exercise default with the per-workout override flag. For non-set states this
+     * returns null and callers should reason based on state type instead.
+     *
+     * This does not change dimming logic (which still uses enableDimming); it exists
+     * purely to help UIs explain what is happening.
+     */
+    fun effectiveKeepOnForCurrentState(): Boolean? {
+        val exerciseDefault = currentExerciseKeepOnDefault() ?: return null
+        return exerciseDefault || keepScreenOn.value
+    }
+
     fun toggleKeepScreenOn() {
         _keepScreenOn.value = !_keepScreenOn.value
         rebuildScreenState()
@@ -335,6 +363,7 @@ open class WorkoutViewModel(
 
     fun resumeWorkout() {
         _isPaused.value = false
+        if (stateMachine != null) updateStateFlowsFromMachine()
         rebuildScreenState()
     }
 
