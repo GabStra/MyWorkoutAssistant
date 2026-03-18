@@ -107,6 +107,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -508,6 +509,9 @@ open class WorkoutViewModel(
 
     private val _isHistoryEmpty = MutableStateFlow<Boolean>(true)
     val isHistoryEmpty = _isHistoryEmpty.asStateFlow()
+
+    private val _completionPushCompleted = MutableStateFlow(false)
+    val completionPushCompleted: StateFlow<Boolean> = _completionPushCompleted.asStateFlow()
 
     internal val setStates: LinkedList<WorkoutState.Set> = LinkedList()
 
@@ -1482,6 +1486,7 @@ open class WorkoutViewModel(
         launchMain {
             withContext(dispatchers.io) {
                 try {
+                    clearCompletionPushCompleted()
                     _enableWorkoutNotificationFlow.value = null
                     _currentScreenDimmingState.value = false
 
@@ -1798,7 +1803,14 @@ open class WorkoutViewModel(
                 currentWorkoutHistory = workoutHistoryForThisPush
             }
             onEnd()
+            if (isDone) {
+                _completionPushCompleted.value = true
+            }
         }
+    }
+
+    fun clearCompletionPushCompleted() {
+        _completionPushCompleted.value = false
     }
 
     fun storeSetData() {

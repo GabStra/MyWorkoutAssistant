@@ -44,7 +44,6 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -91,6 +90,7 @@ fun WorkoutCompleteScreen(
             }
 
             if (isActive) {
+                viewModel.clearCompletionPushCompleted()
                 Toast.makeText(context, "Workout saved.", Toast.LENGTH_SHORT).show()
                 (context as? Activity)?.finishAndRemoveTask()
             }
@@ -151,6 +151,7 @@ fun WorkoutCompleteScreen(
             ProgressionSection(
                 modifier = Modifier.weight(1f),
                 viewModel = viewModel,
+                waitForCompletionPush = true,
                 onProgressionDataCalculated = { isEmpty ->
                     if (!progressionDataCalculated) {
                         progressionDataCalculated = true
@@ -168,6 +169,7 @@ fun WorkoutCompleteScreen(
         handleYesClick = {
             closeJob?.cancel()
             hapticsViewModel.doGentleVibration()
+            viewModel.clearCompletionPushCompleted()
             // Flush any pending sync before navigating away
             scope.launch {
                 viewModel.flushWorkoutSync()
@@ -210,7 +212,7 @@ private fun WorkoutCompleteScreenContent(
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .fillMaxSize()
@@ -222,7 +224,8 @@ private fun WorkoutCompleteScreenContent(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .padding(bottom = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
@@ -242,8 +245,8 @@ private fun WorkoutCompleteScreenContent(
         progressionContent()
         if(showCountdown){
             Text(
-                modifier = Modifier.padding(top = 2.5.dp),
-                text = "Closing in $countDownSeconds",
+                modifier = Modifier.padding(top = 5.dp),
+                text = "CLOSING IN: $countDownSeconds",
                 style = headerStyle,
                 textAlign = TextAlign.Center,
             )
@@ -266,7 +269,7 @@ private fun WorkoutCompleteScreenPreview() {
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    text = "Progress summary",
+                    text = "PROGRESS SUMMARY",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodySmall
                 )

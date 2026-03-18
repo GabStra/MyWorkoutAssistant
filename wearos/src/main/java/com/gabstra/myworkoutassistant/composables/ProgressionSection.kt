@@ -5,12 +5,14 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -31,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
@@ -50,6 +53,7 @@ import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 data class ProgressionInfo(
@@ -141,11 +145,15 @@ private fun ProgressionRow(
 fun ProgressionSection(
     modifier: Modifier = Modifier,
     viewModel: AppViewModel,
+    waitForCompletionPush: Boolean = false,
     onProgressionDataCalculated: ((isEmpty: Boolean) -> Unit)? = null
 ) {
     var progressionData by remember { mutableStateOf<List<ProgressionInfo>?>(null) }
 
-    LaunchedEffect(viewModel) {
+    LaunchedEffect(viewModel, waitForCompletionPush) {
+        if (waitForCompletionPush) {
+            viewModel.completionPushCompleted.first { it }
+        }
         progressionData = withContext(Dispatchers.IO) {
             val exerciseIds = viewModel.executedSetsHistory
                 .mapNotNull { it.exerciseId }
@@ -202,7 +210,20 @@ fun ProgressionSection(
         )
     }
 
-    if (!progressionData.isNullOrEmpty()) {
+    if (progressionData == null && waitForCompletionPush) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                LoadingText(baseText = "Loading", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    } else if (!progressionData.isNullOrEmpty()) {
         Column(
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(2.5.dp),
