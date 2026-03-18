@@ -647,7 +647,7 @@ fun WearApp(
 
             LaunchedEffect(showRecoveredNotice) {
                 if (!showRecoveredNotice) return@LaunchedEffect
-                Toast.makeText(localContext, "Recovered your workout.", Toast.LENGTH_SHORT).show()
+                //Toast.makeText(localContext, "Recovered your workout.", Toast.LENGTH_SHORT).show()
                 appViewModel.consumeRecoveredWorkoutNotice()
             }
 
