@@ -1032,7 +1032,13 @@ open class AppViewModel : WorkoutViewModel() {
             }
             applyTimerRecoveryChoice(recoveryOptions.timerChoice)
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
-            resumeWorkout()
+            if (selectedWorkout.value.usePolarDevice) {
+                // Leave user on Preparing Polar screen so they can try to connect or skip
+                markSessionReady()
+                rebuildScreenState()
+            } else {
+                resumeWorkout()
+            }
             skipNextResumeLastState = true
             pendingPostRecoveryTimerReanchor =
                 recoveryOptions.timerChoice == TimerRecoveryChoice.CONTINUE
