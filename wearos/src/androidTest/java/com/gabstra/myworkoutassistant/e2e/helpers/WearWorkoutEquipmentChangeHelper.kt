@@ -24,6 +24,12 @@ object WearWorkoutEquipmentChangeHelper {
         val additionalWeight: Double?
     )
 
+    data class ExerciseEquipmentSnapshot(
+        val exerciseName: String,
+        val equipmentName: String?,
+        val isRefreshing: Boolean
+    )
+
     fun waitForCurrentSetSnapshot(
         timeoutMs: Long,
         predicate: (CurrentSetSnapshot) -> Boolean
@@ -89,6 +95,19 @@ object WearWorkoutEquipmentChangeHelper {
                 return liveSnapshot
             }
 
+            val definitionSnapshot = readForegroundExerciseEquipmentSnapshot(exerciseName)
+            if (
+                definitionSnapshot != null &&
+                !definitionSnapshot.isRefreshing &&
+                definitionSnapshot.equipmentName == expectedEquipmentName
+            ) {
+                return CurrentSetSnapshot(
+                    exerciseName = definitionSnapshot.exerciseName,
+                    equipmentName = definitionSnapshot.equipmentName,
+                    additionalWeight = liveSnapshot?.additionalWeight
+                )
+            }
+
             val runtimeSnapshot = readRuntimeSnapshotCurrentSet(context)
             if (
                 runtimeSnapshot?.exerciseName == exerciseName &&
@@ -132,6 +151,23 @@ object WearWorkoutEquipmentChangeHelper {
                 exerciseName = exercise.name,
                 equipmentName = equipmentName,
                 additionalWeight = additionalWeight
+            )
+        }
+        return snapshot
+    }
+
+    private fun readForegroundExerciseEquipmentSnapshot(exerciseName: String): ExerciseEquipmentSnapshot? {
+        var snapshot: ExerciseEquipmentSnapshot? = null
+        withResumedViewModel { viewModel ->
+            val exercise = viewModel.exercisesById.values.firstOrNull { it.name == exerciseName }
+                ?: return@withResumedViewModel
+            val equipmentName = exercise.equipmentId
+                ?.let(viewModel::getEquipmentById)
+                ?.name
+            snapshot = ExerciseEquipmentSnapshot(
+                exerciseName = exercise.name,
+                equipmentName = equipmentName,
+                isRefreshing = viewModel.isRefreshing.value
             )
         }
         return snapshot
@@ -204,13 +240,9 @@ object WearWorkoutEquipmentChangeHelper {
     private fun withResumedViewModel(block: (AppViewModel) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {
-            val activity = sequenceOf(Stage.RESUMED, Stage.STARTED, Stage.PAUSED)
-                .mapNotNull { stage ->
-                    ActivityLifecycleMonitorRegistry.getInstance()
-                        .getActivitiesInStage(stage)
-                        .firstOrNull() as? ComponentActivity
-                }
-                .firstOrNull()
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? ComponentActivity
                 ?: return@runOnMainSync
             val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
             block(viewModel)
