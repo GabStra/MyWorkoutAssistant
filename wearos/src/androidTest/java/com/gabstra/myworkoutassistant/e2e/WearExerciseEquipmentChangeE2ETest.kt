@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.e2e
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.EquipmentChangeWorkoutStoreFixture
@@ -13,6 +14,10 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
+    private companion object {
+        const val changeEquipmentLabel = "Change equipment"
+    }
+
     private lateinit var workoutDriver: WearWorkoutDriver
 
     @Before
@@ -82,16 +87,18 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
     }
 
     private fun openButtonsPage() {
-        require(navigateToPageContainingText("Change Equipment", preferredDirection = Direction.RIGHT)) {
-            "Buttons page with Change Equipment was not reachable"
+        require(navigateToPageContainingText(changeEquipmentLabel, preferredDirection = Direction.RIGHT)) {
+            "Buttons page with $changeEquipmentLabel was not reachable"
         }
     }
 
     private fun openEquipmentPicker() {
         repeat(3) { attempt ->
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
-            workoutDriver.clickText("Change Equipment", defaultTimeoutMs)
-            if (device.wait(Until.hasObject(By.text("Select equipment")), 5_000)) {
+            val button = findChangeEquipmentButton()
+            require(button != null) { "Change equipment action was not visible on the Buttons page" }
+            workoutDriver.clickObjectOrAncestor(button)
+            if (device.wait(Until.hasObject(By.text("Choose equipment")), 5_000)) {
                 return
             }
             if (attempt < 2) {
@@ -99,6 +106,14 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
             }
         }
         error("Equipment picker did not appear")
+    }
+
+    private fun findChangeEquipmentButton(): UiObject2? {
+        return workoutDriver.findWithScrollFallback(
+            selector = By.text(changeEquipmentLabel),
+            initialWaitMs = 1_000,
+            directions = listOf(Direction.DOWN, Direction.UP)
+        )
     }
 
     private fun selectEquipmentAndConfirm(optionLabel: String) {
@@ -142,7 +157,7 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
 
     private fun swipePager(direction: Direction) {
         workoutDriver.navigateToPagerPage(direction)
-        if (device.hasObject(By.text("Change Equipment")) || device.hasObject(By.text("Loading Guide"))) {
+        if (device.hasObject(By.text(changeEquipmentLabel)) || device.hasObject(By.text("Loading Guide"))) {
             return
         }
 
@@ -191,7 +206,8 @@ class WearExerciseEquipmentChangeE2ETest : WearBaseE2ETest() {
         expectedEquipmentName: String?
     ) {
         require(
-            WearWorkoutEquipmentChangeHelper.waitForLiveExerciseEquipment(
+            WearWorkoutEquipmentChangeHelper.waitForObservedExerciseEquipment(
+                context = context,
                 exerciseName = exerciseName,
                 expectedEquipmentName = expectedEquipmentName,
                 timeoutMs = 10_000

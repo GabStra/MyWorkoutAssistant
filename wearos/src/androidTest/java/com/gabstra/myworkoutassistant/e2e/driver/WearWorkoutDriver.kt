@@ -571,8 +571,8 @@ class WearWorkoutDriver(
         device.pressBack()
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
-        val dialogAppeared = device.wait(Until.hasObject(By.text("Skip Rest")), timeoutMs)
-        require(dialogAppeared) { "Skip Rest dialog did not appear" }
+        val dialogAppeared = device.wait(Until.hasObject(By.text("Skip rest?")), timeoutMs)
+        require(dialogAppeared) { "Skip rest dialog did not appear" }
         longPressByDesc("Done", timeoutMs)
     }
 
