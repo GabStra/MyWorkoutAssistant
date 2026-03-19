@@ -944,6 +944,9 @@ class DataLayerListenerService : WearableListenerService() {
                                                 workoutHistoryDao.insertWithVersionCheck(
                                                     workoutHistoryStore.WorkoutHistory
                                                 )
+                                                setHistoryDao.deleteByWorkoutHistoryId(
+                                                    workoutHistoryStore.WorkoutHistory.id
+                                                )
                                                 setHistoryDao.insertAllWithVersionCheck(*workoutHistoryStore.SetHistories.toTypedArray())
 
                                                 if (

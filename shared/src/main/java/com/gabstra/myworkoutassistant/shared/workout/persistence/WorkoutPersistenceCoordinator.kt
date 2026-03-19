@@ -231,6 +231,7 @@ internal class WorkoutPersistenceCoordinator(
 
         executedSetStore.replaceAll(newExecutedSetsHistory)
         workoutHistoryDaoRef.insertWithVersionCheck(workoutHistoryForThisPush)
+        setHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
         setHistoryDaoRef.insertAllWithVersionCheck(*newExecutedSetsHistory.toTypedArray())
 
         if (isDone) {
@@ -624,5 +625,4 @@ internal class WorkoutPersistenceCoordinator(
         )
     }
 }
-
 
