@@ -289,10 +289,6 @@ class AutoRegulationProgressionTest {
         )
         viewModel.stateMachine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, 1)
 
-        val exercisesByIdField = WorkoutViewModel::class.java.getDeclaredField("exercisesById")
-        exercisesByIdField.isAccessible = true
-        exercisesByIdField.set(viewModel, mapOf(exerciseId to workoutExercise))
-
         viewModel.applyAutoRegulationRIR(rir = rir)
         advanceUntilIdle()
 
@@ -1034,10 +1030,6 @@ class AutoRegulationProgressionTest {
         viewModel.stateMachine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, 0)
         viewModel.updateStateFlowsFromMachine()
 
-        val exercisesByIdField = WorkoutViewModel::class.java.getDeclaredField("exercisesById")
-        exercisesByIdField.isAccessible = true
-        exercisesByIdField.set(viewModel, mapOf(exerciseId to workoutExercise))
-
         viewModel.completeAutoRegulationSet()
         advanceUntilIdle()
 
@@ -1198,10 +1190,6 @@ class AutoRegulationProgressionTest {
         )
         viewModel.stateMachine = WorkoutStateMachine.fromSequence(sequence, { LocalDateTime.now() }, 0)
         viewModel.updateStateFlowsFromMachine()
-
-        val exercisesByIdField = WorkoutViewModel::class.java.getDeclaredField("exercisesById")
-        exercisesByIdField.isAccessible = true
-        exercisesByIdField.set(viewModel, mapOf(exerciseId to workoutExercise))
 
         viewModel.completeAutoRegulationSet()
         advanceUntilIdle()
