@@ -260,7 +260,7 @@ fun WorkoutsStatusTab(
                         ) {
                             Text(
                                 modifier = Modifier.weight(1f),
-                                text = "Weekly progress ($selectedWeekLabel)",
+                                text = "Weekly progress\n($selectedWeekLabel)",
                                 style = MaterialTheme.typography.titleMedium,
                                 textAlign = TextAlign.Start,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -275,13 +275,13 @@ fun WorkoutsStatusTab(
                                 minHeight = 36.dp,
                             )
                         }
-                        if (weeklyProgressSnapshot.hasOverride && !weeklyProgressSnapshot.isOverrideBoundary) {
+/*                        if (weeklyProgressSnapshot.hasOverride && !weeklyProgressSnapshot.isOverrideBoundary) {
                             Text(
                                 text = "Saved rule active since ${overrideStartLabel ?: selectedWeekLabel}",
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                        }
+                        }*/
                         ExpandableContainer(
                             isOpen = false,
                             isExpandable = weeklyProgressSnapshot.hasOverride ||
