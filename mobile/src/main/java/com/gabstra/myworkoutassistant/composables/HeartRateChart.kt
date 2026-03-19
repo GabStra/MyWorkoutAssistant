@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Velocity
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
@@ -241,7 +242,7 @@ fun HeartRateChart(
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
     minYBpm: Double? = null,
-    zoneTickValuesBpm: List<Double>? = null,
+    zoneGuideValuesBpm: List<Double>? = null,
     lineZoneIndices: List<Int>? = null,
     includeCard: Boolean = true,
 ) {
@@ -253,7 +254,7 @@ fun HeartRateChart(
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate,
             minYBpm = minYBpm,
-            zoneTickValuesBpm = zoneTickValuesBpm,
+            zoneGuideValuesBpm = zoneGuideValuesBpm,
             lineZoneIndices = lineZoneIndices,
         )
     }
@@ -293,7 +294,7 @@ fun HeartRateChartContent(
     measuredMaxHeartRate: Int? = null,
     restingHeartRate: Int? = null,
     minYBpm: Double? = null,
-    zoneTickValuesBpm: List<Double>? = null,
+    zoneGuideValuesBpm: List<Double>? = null,
     lineZoneIndices: List<Int>? = null,
     onInteractionChange: ((Boolean) -> Unit)? = null,
 ) {
@@ -311,24 +312,21 @@ fun HeartRateChartContent(
             ): Velocity = available
         }
     }
-    val zoneAxisValues = remember(userAge, measuredMaxHeartRate, restingHeartRate, zoneTickValuesBpm) {
-        zoneTickValuesBpm ?: listOf(50f, 60f, 70f, 80f, 90f, 100f).map {
+    val zoneValues = remember(userAge, measuredMaxHeartRate, restingHeartRate, zoneGuideValuesBpm) {
+        zoneGuideValuesBpm ?: (listOf(50f, 60f, 70f, 80f, 90f).map {
             getHeartRateFromPercentage(
                 it,
                 userAge,
                 measuredMaxHeartRate,
                 restingHeartRate
             ).toDouble()
-        }.distinct().sorted()
+        } + getMaxHeartRate(userAge).toDouble()).distinct().sorted()
     }
-    val zoneStartAxisValues = remember(zoneAxisValues) {
-        if (zoneAxisValues.size > 1) zoneAxisValues.dropLast(1) else zoneAxisValues
-    }
-
-    val startAxisValueFormatter =
-        CartesianValueFormatter { _, value, _ ->
-            value.toInt().toString()
+    val guideLines = remember(zoneValues) {
+        zoneValues.mapIndexed { index, value ->
+            colorsByZone[(index + 1).coerceIn(0, colorsByZone.lastIndex)].copy(alpha = 0.75f) to value
         }
+    }
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
     val shapeComponent = rememberShapeComponent(Fill(Color.White), RoundedCornerShape(percent = 50))
@@ -354,8 +352,8 @@ fun HeartRateChartContent(
 
     val firstModel = cartesianChartModel.models.firstOrNull()
     val modelMaxY = firstModel?.maxY ?: 1.0
-    val effectiveMinY = minOf(minYBpm ?: modelMaxY, zoneAxisValues.firstOrNull() ?: modelMaxY) - 2.0
-    val effectiveMaxY = maxOf(modelMaxY, (zoneAxisValues.lastOrNull() ?: modelMaxY) + 2.0)
+    val effectiveMinY = minOf(minYBpm ?: modelMaxY, zoneValues.firstOrNull() ?: modelMaxY) - 2.0
+    val effectiveMaxY = maxOf(modelMaxY, (zoneValues.lastOrNull() ?: modelMaxY) + 2.0)
 
     val modelSeriesCount = (cartesianChartModel.models.firstOrNull() as? LineCartesianLayerModel)?.series?.size ?: 0
     val effectiveLineZoneIndices = if (
@@ -413,21 +411,29 @@ fun HeartRateChartContent(
                     maxY = effectiveMaxY
                 ),
             ),
-            decorations = zoneStartAxisValues.mapIndexed { index, threshold ->
-                val zoneColor = colorsByZone[(index + 1).coerceIn(0, colorsByZone.lastIndex)]
+            decorations = guideLines.map { (zoneColor, threshold) ->
                 rememberHorizontalLine(
-                    color = zoneColor.copy(alpha = 0.75f),
+                    color = zoneColor,
                     y = threshold,
                 )
             },
             startAxis = VerticalAxis.rememberStart(
-                line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
-                tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
+                line = null,
+                tick = null,
+                tickLength = 0.dp,
                 guideline = null,
-                valueFormatter = startAxisValueFormatter,
-                itemPlacer = remember(zoneAxisValues) {
-                    FixedValuesVerticalAxisItemPlacer(zoneAxisValues)
-                }),
+                horizontalLabelPosition = VerticalAxis.HorizontalLabelPosition.Outside,
+                verticalLabelPosition = Position.Vertical.Center,
+                label = rememberTextComponent(
+                    style = TextStyle(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                    ),
+                    padding = Insets(end = 6.dp),
+                ),
+                valueFormatter = CartesianValueFormatter { _, value, _ -> "${value.toInt()}" },
+                itemPlacer = remember(zoneValues) { FixedValuesVerticalAxisItemPlacer(zoneValues) },
+            ),
             bottomAxis = HorizontalAxis.rememberBottom(
                 line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
                 tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),

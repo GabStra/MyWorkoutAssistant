@@ -2,8 +2,6 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -75,6 +73,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
+import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -111,7 +110,7 @@ private fun roundXToSupportedPrecision(value: Double): Double {
     return (value * 10_000.0).roundToLong() / 10_000.0
 }
 
-private fun getHeartRateZoneTickValues(
+private fun getHeartRateZoneGuideValues(
     userAge: Int,
     measuredMaxHeartRate: Int?,
     restingHeartRate: Int?,
@@ -121,21 +120,8 @@ private fun getHeartRateZoneTickValues(
         measuredMaxHeartRate = measuredMaxHeartRate,
         restingHeartRate = restingHeartRate,
     )
-    return (zoneBounds.drop(1).map { it.first.toDouble() } + zoneBounds.last().last.toDouble())
+    return (zoneBounds.drop(1).map { it.first.toDouble() } + getMaxHeartRate(userAge).toDouble())
         .distinct().sorted()
-}
-
-private fun getHeartRateZoneThresholdValues(
-    userAge: Int,
-    measuredMaxHeartRate: Int?,
-    restingHeartRate: Int?,
-): List<Double> {
-    val zoneBounds = getHeartRateZoneBounds(
-        userAge = userAge,
-        measuredMaxHeartRate = measuredMaxHeartRate,
-        restingHeartRate = restingHeartRate,
-    )
-    return zoneBounds.drop(1).dropLast(1).map { it.first.toDouble() }
 }
 
 private fun getHeartRateZoneBounds(
@@ -831,7 +817,7 @@ fun WorkoutHistoryScreen(
                             Text(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 10.dp),
+                                    .padding(10.dp),
                                 text = "Heart rate during workout",
                                 color = MaterialTheme.colorScheme.onBackground,
                                 style = MaterialTheme.typography.titleMedium,
@@ -845,7 +831,7 @@ fun WorkoutHistoryScreen(
                                 measuredMaxHeartRate = measuredMaxHeartRate,
                                 restingHeartRate = restingHeartRate,
                                 minYBpm = heartRateMinY,
-                                zoneTickValuesBpm = getHeartRateZoneTickValues(
+                                zoneGuideValuesBpm = getHeartRateZoneGuideValues(
                                     userAge = userAge,
                                     measuredMaxHeartRate = measuredMaxHeartRate,
                                     restingHeartRate = restingHeartRate,
@@ -1343,5 +1329,4 @@ fun WorkoutHistoryScreen(
         }
     }
 }
-
 
