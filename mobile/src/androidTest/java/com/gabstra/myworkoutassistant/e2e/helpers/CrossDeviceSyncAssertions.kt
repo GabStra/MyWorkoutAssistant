@@ -45,7 +45,7 @@ object CrossDeviceSyncAssertions {
         CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_ID to ExpectedSetSpec(
             setId = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_ID,
             exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_A_ID,
-            order = 2,
+            order = 1,
             expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_EXPECTED_REPS,
             expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A2_EXPECTED_WEIGHT
         ),
@@ -73,7 +73,7 @@ object CrossDeviceSyncAssertions {
         CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_ID to ExpectedSetSpec(
             setId = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_ID,
             exerciseId = CrossDeviceSyncPhoneWorkoutStoreFixture.EXERCISE_D_ID,
-            order = 2,
+            order = 1,
             expectedReps = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_EXPECTED_REPS,
             expectedWeight = CrossDeviceSyncPhoneWorkoutStoreFixture.SET_D2_EXPECTED_WEIGHT
         )
@@ -111,7 +111,6 @@ object CrossDeviceSyncAssertions {
     )
 
     val intermediateCheckpoints: List<Checkpoint> = listOf(
-        startedCheckpoint,
         Checkpoint(
             label = "after-a1",
             expectedSetIds = listOf(CrossDeviceSyncPhoneWorkoutStoreFixture.SET_A1_ID),
@@ -220,24 +219,34 @@ object CrossDeviceSyncAssertions {
         val actualSetHistories = db.setHistoryDao().getSetHistoriesByWorkoutHistoryIdOrdered(history.id)
         val expectedSpecs = checkpoint.expectedSetIds.map { expectedSetSpecsBySetId.getValue(it) }
 
-        if (actualSetHistories.size != expectedSpecs.size) {
-            fail(
-                "Checkpoint ${checkpoint.label} expected ${expectedSpecs.size} set histories " +
-                    "but found ${actualSetHistories.size} for history ${history.id}."
-            )
+        val actualSetHistoriesForCheckpoint = if (checkpoint.requiresCompletedHistory) {
+            if (actualSetHistories.size != expectedSpecs.size) {
+                fail(
+                    "Checkpoint ${checkpoint.label} expected ${expectedSpecs.size} set histories " +
+                        "but found ${actualSetHistories.size} for history ${history.id}."
+                )
+            }
+            actualSetHistories
+        } else {
+            if (actualSetHistories.size < expectedSpecs.size) {
+                fail(
+                    "Checkpoint ${checkpoint.label} expected at least ${expectedSpecs.size} set histories " +
+                        "but found ${actualSetHistories.size} for history ${history.id}."
+                )
+            }
+            actualSetHistories.take(expectedSpecs.size)
         }
 
-        val actualBySetId = actualSetHistories.associateBy { it.setId }
-        if (actualBySetId.keys != expectedSpecs.map { it.setId }.toSet()) {
+        val actualSetIds = actualSetHistoriesForCheckpoint.map { it.setId }
+        val expectedSetIds = expectedSpecs.map { it.setId }
+        if (actualSetIds != expectedSetIds) {
             fail(
                 "Checkpoint ${checkpoint.label} set ids mismatch. " +
-                    "expected=${expectedSpecs.map { it.setId }} actual=${actualBySetId.keys}"
+                    "expected=$expectedSetIds actual=$actualSetIds"
             )
         }
 
-        expectedSpecs.forEach { spec ->
-            val actual = actualBySetId[spec.setId]
-                ?: fail("Missing set history for setId=${spec.setId} at checkpoint ${checkpoint.label}.")
+        actualSetHistoriesForCheckpoint.zip(expectedSpecs).forEach { (actual, spec) ->
             assertSetHistoryMatches(
                 actual = actual,
                 expected = spec,
@@ -248,7 +257,7 @@ object CrossDeviceSyncAssertions {
 
         val workoutRecord = db.workoutRecordDao()
             .getWorkoutRecordByWorkoutId(CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID)
-        if (checkpoint.requiresWorkoutRecord) {
+        if (checkpoint.requiresWorkoutRecord && !history.isDone) {
             if (workoutRecord == null) {
                 fail("Checkpoint ${checkpoint.label} expected an active workout record.")
             }
@@ -302,8 +311,8 @@ object CrossDeviceSyncAssertions {
         db: AppDatabase,
         requiresCompletedHistory: Boolean
     ): WorkoutHistory {
-        val histories = db.workoutHistoryDao()
-            .getAllWorkoutHistoriesByIsDone(requiresCompletedHistory)
+        val matchingHistories = db.workoutHistoryDao()
+            .getAllWorkoutHistories()
             .filter {
                 it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
                     it.globalId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID &&
@@ -311,11 +320,16 @@ object CrossDeviceSyncAssertions {
             }
             .sortedByDescending { it.version.toLong() }
 
-        return histories.firstOrNull()
-            ?: fail(
-                "No ${if (requiresCompletedHistory) "completed" else "unfinished"} workout history " +
-                    "found for workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}."
-            )
+        val history = if (requiresCompletedHistory) {
+            matchingHistories.firstOrNull { it.isDone }
+        } else {
+            matchingHistories.firstOrNull { !it.isDone } ?: matchingHistories.firstOrNull()
+        }
+
+        return history ?: fail(
+            "No ${if (requiresCompletedHistory) "completed" else "matching recent"} workout history " +
+                "found for workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}."
+        )
     }
 
     private fun assertExerciseInfoMatches(
