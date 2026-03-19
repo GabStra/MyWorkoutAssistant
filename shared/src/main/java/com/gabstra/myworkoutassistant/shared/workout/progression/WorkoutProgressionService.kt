@@ -144,11 +144,9 @@ class WorkoutProgressionService(
         for ((index, setInfo) in distributedSets.withIndex()) {
             if (index > 0) {
                 val previousRestSet = restSets.getOrNull(index - 1)
-                var newRestSet = RestSet(UUID.randomUUID(), 90)
                 if (previousRestSet != null) {
-                    newRestSet = newRestSet.copy(id = previousRestSet.id, previousRestSet.timeInSeconds)
+                    newSets.add(previousRestSet)
                 }
-                newSets.add(newRestSet)
             }
 
             val setId = exerciseSets.getOrNull(index)?.id ?: UUID.randomUUID()
