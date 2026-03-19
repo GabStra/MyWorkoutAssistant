@@ -253,7 +253,7 @@ class PlateCalculatorTest {
     @Test
     fun optimizeWeightsForPercentages_smallWeights() {
         val barbell = createTestBarbell(barWeight = 9.0)
-        val workWeight = 50.0
+        val workWeight = 49.0
         val percentages = listOf(0.4, 0.5, 0.6)
 
         val result = PlateCalculator.optimizeWeightsForPercentages(
