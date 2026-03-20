@@ -11,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -100,6 +101,46 @@ fun fromJSONToWorkoutStore(json: String): WorkoutStore {
     return gson.fromJson(json, WorkoutStore::class.java)
 }
 
+fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String {
+    val gson = GsonBuilder()
+        .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
+        .registerTypeAdapter(WeightSet::class.java, SetAdapter())
+        .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
+        .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
+        .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(RestSet::class.java, SetAdapter())
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .create()
+    return gson.toJson(workoutPlanPackage)
+}
+
+fun fromJSONToWorkoutPlanPackage(json: String): WorkoutPlanPackage {
+    val gson = GsonBuilder()
+        .registerTypeAdapter(WorkoutPlanPackage::class.java, WorkoutPlanPackageAdapter())
+        .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
+        .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .create()
+    return gson.fromJson(json, WorkoutPlanPackage::class.java)
+}
+
 fun logLargeString(tag: String, content: String, chunkSize: Int  = 200) {
     var i = 0
     while (i < content.length) {
@@ -167,6 +208,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 
 enum class BackupFileType {
     APP_BACKUP,
+    WORKOUT_PLAN_PACKAGE,
     WORKOUT_STORE,
     UNKNOWN
 }
@@ -174,7 +216,8 @@ enum class BackupFileType {
 /**
  * Detects the type of backup file by examining its JSON structure.
  * - AppBackup has a "WorkoutStore" field (capital W)
- * - WorkoutStore has "workouts" field at root level (lowercase)
+ * - WorkoutPlanPackage has "name", "workouts", and "equipments" at root level
+ * - WorkoutStore has "workouts" plus user/global root fields like "birthDateYear"
  * 
  * @param json The JSON string to analyze
  * @return The detected file type, or UNKNOWN if detection fails
@@ -193,8 +236,23 @@ fun detectBackupFileType(json: String): BackupFileType {
             return BackupFileType.APP_BACKUP
         }
         
-        // Check for WorkoutStore structure (has "workouts" field at root)
-        if (jsonObject.has("workouts")) {
+        // Check for WorkoutPlanPackage structure before WorkoutStore
+        if (
+            jsonObject.has("name") &&
+            jsonObject.has("workouts") &&
+            jsonObject.has("equipments") &&
+            !jsonObject.has("birthDateYear")
+        ) {
+            return BackupFileType.WORKOUT_PLAN_PACKAGE
+        }
+
+        // Check for WorkoutStore structure (has "workouts" and user/global root fields)
+        if (
+            jsonObject.has("workouts") &&
+            jsonObject.has("birthDateYear") &&
+            jsonObject.has("weightKg") &&
+            jsonObject.has("progressionPercentageAmount")
+        ) {
             return BackupFileType.WORKOUT_STORE
         }
         

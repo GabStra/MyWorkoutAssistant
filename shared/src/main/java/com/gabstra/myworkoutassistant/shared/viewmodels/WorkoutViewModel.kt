@@ -425,6 +425,79 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    suspend fun applyExternalSyncWorkoutStore(newWorkoutStore: WorkoutStore) {
+        val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
+        val selectedWorkoutSnapshot = _selectedWorkout.value
+        val previousState = _workoutState.value
+        val hadActiveSession =
+            stateMachine != null ||
+                _hasWorkoutRecord.value ||
+                _sessionPhase.value == WorkoutSessionPhase.ACTIVE
+
+        updateWorkoutStore(newWorkoutStore)
+
+        val syncedSelectedWorkout = newWorkoutStore.workouts.firstOrNull { workout ->
+            selectedWorkoutIdSnapshot != null && workout.id == selectedWorkoutIdSnapshot
+        } ?: newWorkoutStore.workouts.firstOrNull { workout ->
+            workout.globalId == selectedWorkoutSnapshot.globalId && workout.isActive
+        } ?: run {
+            rebuildScreenState()
+            return
+        }
+
+        _selectedWorkout.value = syncedSelectedWorkout
+        _selectedWorkoutId.value = syncedSelectedWorkout.id
+        initializeExercisesMaps(syncedSelectedWorkout)
+
+        val recordState = workoutRecordService.resolveWorkoutRecord(syncedSelectedWorkout.id)
+        _workoutRecord = recordState.workoutRecord
+        _hasWorkoutRecord.value = recordState.hasWorkoutRecord
+        _workoutResumeInfo.value = recordState.workoutRecord?.let { workoutRecord ->
+            resolveWorkoutResumeInfo(
+                workout = syncedSelectedWorkout,
+                workoutRecord = workoutRecord
+            )
+        }
+
+        if (recordState.hasWorkoutRecord && hadActiveSession) {
+            resumeWorkoutFromRecord {
+                resumeLastState()
+            }
+            return
+        }
+
+        if (hadActiveSession && previousState !is WorkoutState.Completed) {
+            val refreshedHistory = currentWorkoutHistory?.id?.let { historyId ->
+                workoutHistoryDao.getWorkoutHistoryById(historyId)
+            } ?: workoutHistoryDao.getAllWorkoutHistories()
+                .asSequence()
+                .filter { history ->
+                    history.workoutId == syncedSelectedWorkout.id ||
+                        history.globalId == syncedSelectedWorkout.globalId
+                }
+                .maxByOrNull { history -> history.version.toLong() }
+
+            if (refreshedHistory?.isDone == true) {
+                currentWorkoutHistory = refreshedHistory
+                stateMachine = null
+                setStates.clear()
+                weightsByEquipment.clear()
+                _isPaused.value = false
+                _sessionPhase.value = WorkoutSessionPhase.COMPLETED
+                _nextWorkoutState.value = null
+
+                val completedState = WorkoutState.Completed(
+                    startWorkoutTime ?: refreshedHistory.startTime
+                )
+                completedState.endWorkoutTime =
+                    refreshedHistory.startTime.plusSeconds(refreshedHistory.duration.toLong())
+                _workoutState.value = completedState
+            }
+        }
+
+        rebuildScreenState()
+    }
+
     fun initExerciseHistoryDao(context: Context) {
         val db = AppDatabase.getDatabase(context)
         setHistoryDao = db.setHistoryDao()

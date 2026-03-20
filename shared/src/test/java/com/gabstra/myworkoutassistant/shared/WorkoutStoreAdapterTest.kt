@@ -52,4 +52,32 @@ class WorkoutStoreAdapterTest {
 
         assertEquals(listOf(overrideA, overrideB), roundTripped.weeklyProgressOverrides)
     }
+
+    @Test
+    fun workoutPlanPackage_roundTripsThroughJson() {
+        val original = WorkoutPlanPackage(
+            name = "Push Pull Legs",
+            workouts = emptyList(),
+            equipments = emptyList(),
+            accessoryEquipments = emptyList()
+        )
+
+        val roundTripped = fromJSONToWorkoutPlanPackage(fromWorkoutPlanPackageToJSON(original))
+
+        assertEquals(original, roundTripped)
+    }
+
+    @Test
+    fun detectBackupFileType_identifiesWorkoutPlanPackage() {
+        val json = """
+            {
+              "name": "Push Pull Legs",
+              "workouts": [],
+              "equipments": [],
+              "accessoryEquipments": []
+            }
+        """.trimIndent()
+
+        assertEquals(BackupFileType.WORKOUT_PLAN_PACKAGE, detectBackupFileType(json))
+    }
 }
