@@ -12,7 +12,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
@@ -62,15 +61,7 @@ internal class WorkoutSessionLifecycleService(
         val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
 
         exercises.forEach { exercise ->
-            val expectedSetIds = exercise.sets
-                .filterNot { it is RestSet }
-                .map { it.id }
-                .toSet()
-
-            var fallbackSetHistories: List<SetHistory> = emptyList()
-            var fallbackCoverage = 0
             var selectedSetHistories: List<SetHistory> = emptyList()
-
             for (workoutHistory in workoutHistories) {
                 val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
@@ -79,23 +70,13 @@ internal class WorkoutSessionLifecycleService(
                 if (setHistories.isEmpty()) continue
 
                 val sanitized = sanitizeRestPlacementInSetHistories(setHistories.sortedBy { it.order })
-                val bySetId = sanitized.distinctBy { it.setId }
-                val coveredSetIds = bySetId.map { it.setId }.toSet()
-                val coverage = coveredSetIds.size
-
-                if (coverage > fallbackCoverage) {
-                    fallbackCoverage = coverage
-                    fallbackSetHistories = sanitized
-                }
-
-                if (expectedSetIds.isNotEmpty() && expectedSetIds.all { it in coveredSetIds }) {
-                    selectedSetHistories = sanitized
+                val comparable = sanitized
+                    .filterNot { it.isExcludedFromProgressionComparison() }
+                    .distinctBy { it.setId }
+                if (comparable.isNotEmpty()) {
+                    selectedSetHistories = comparable
                     break
                 }
-            }
-
-            if (selectedSetHistories.isEmpty()) {
-                selectedSetHistories = fallbackSetHistories
             }
 
             for (setHistoryFound in selectedSetHistories) {
@@ -159,6 +140,21 @@ internal class WorkoutSessionLifecycleService(
             }
 
         return if (executedSets.isEmpty()) null else executedSets
+    }
+
+    private fun SetHistory.isExcludedFromProgressionComparison(): Boolean {
+        return when (val setData = setData) {
+            is BodyWeightSetData ->
+                setData.subCategory == SetSubCategory.RestPauseSet ||
+                    setData.subCategory == SetSubCategory.CalibrationSet
+            is WeightSetData ->
+                setData.subCategory == SetSubCategory.RestPauseSet ||
+                    setData.subCategory == SetSubCategory.CalibrationSet
+            is RestSetData ->
+                setData.subCategory == SetSubCategory.RestPauseSet ||
+                    setData.subCategory == SetSubCategory.CalibrationSet
+            else -> false
+        }
     }
 
     private fun flattenExercises(workout: Workout): List<Exercise> {

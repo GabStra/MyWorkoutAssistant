@@ -115,20 +115,28 @@ class WorkoutSetStateFactory {
         setIndex: Int
     ): ExerciseChildItem.UnilateralSetBlock? {
         val restDuration = exercise.intraSetRestInSeconds ?: return null
-        val updatedSetState = setState.copy(isUnilateral = true, intraSetTotal = 2u, intraSetCounter = 1u)
+        val firstSideSetState = setState.copy(
+            isUnilateral = true,
+            intraSetTotal = 2u,
+            intraSetCounter = 1u
+        )
+        val secondSideSetState = setState.copy(
+            isUnilateral = true,
+            intraSetTotal = 2u,
+            intraSetCounter = 2u
+        )
         val restSet = RestSet(UUID.randomUUID(), restDuration)
         val restState = WorkoutState.Rest(
             set = restSet,
             order = setIndex.toUInt(),
             currentSetDataState = mutableStateOf(initializeSetData(restSet)),
-            nextState = updatedSetState,
+            nextState = secondSideSetState,
             exerciseId = exercise.id,
             isIntraSetRest = true
         )
         return ExerciseChildItem.UnilateralSetBlock(
-            mutableListOf(updatedSetState, restState, updatedSetState)
+            mutableListOf(firstSideSetState, restState, secondSideSetState)
         )
     }
 }
-
 

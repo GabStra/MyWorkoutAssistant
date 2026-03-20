@@ -1131,6 +1131,10 @@ open class WorkoutViewModel(
         return machine.getStatesForSuperset(supersetId)
     }
 
+    fun getWorkoutSequenceItems(): List<WorkoutStateSequenceItem> {
+        return stateMachine?.sequenceSnapshot() ?: emptyList()
+    }
+
     /**
      * Returns the total number of logical sets for an exercise, from the state machine.
      * Counts Set states only (including calibration execution sets; unilateral counts once).
