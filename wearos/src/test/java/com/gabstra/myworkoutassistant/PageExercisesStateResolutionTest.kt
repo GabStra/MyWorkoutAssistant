@@ -1,23 +1,37 @@
 package com.gabstra.myworkoutassistant
 
 import androidx.compose.runtime.mutableStateOf
+import com.gabstra.myworkoutassistant.composables.PageExercisesItem
+import com.gabstra.myworkoutassistant.composables.buildPageExercisesItems
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesActiveState
+import com.gabstra.myworkoutassistant.composables.resolvePageExercisesCurrentItemIndex
 import com.gabstra.myworkoutassistant.composables.toExerciseSetDisplayRowOrNull
+import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.screens.setCurrentWorkoutState
+import com.gabstra.myworkoutassistant.screens.setFieldValue
+import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import org.junit.Assert.assertNull
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
 
 class PageExercisesStateResolutionTest {
 
     @Test
-    fun `rest state resolves to next executable state for exercises page`() {
+    fun `intra exercise rest state resolves to next executable state for exercises page`() {
         val upcomingSetState = createSetState()
         val restState = createRestState(nextState = upcomingSetState)
 
@@ -40,26 +54,25 @@ class PageExercisesStateResolutionTest {
     }
 
     @Test
-    fun `rest state resolves to same exercise next set for exercises page`() {
-        val exerciseId = UUID.randomUUID()
-        val upcomingSetState = createSetState(exerciseId = exerciseId)
-        val restState = createRestState(
-            exerciseId = exerciseId,
+    fun `rest between exercises remains current state for exercises page`() {
+        val upcomingSetState = createSetState()
+        val interExerciseRestState = createRestState(
+            exerciseId = null,
             nextState = upcomingSetState
         )
 
-        val resolvedState = resolvePageExercisesActiveState(workoutState = restState)
+        val resolvedState = resolvePageExercisesActiveState(workoutState = interExerciseRestState)
 
-        assertSame(upcomingSetState, resolvedState)
+        assertSame(interExerciseRestState, resolvedState)
     }
 
     @Test
-    fun `rest states are omitted from exercise display rows`() {
+    fun `rest states are included in exercise display rows`() {
         val restState = createRestState(nextState = null)
 
         val displayRow = toExerciseSetDisplayRowOrNull(restState)
 
-        assertNull(displayRow)
+        assertNotNull(displayRow)
     }
 
     @Test
@@ -69,6 +82,137 @@ class PageExercisesStateResolutionTest {
         val resolvedState = resolvePageExercisesActiveState(workoutState = setState)
 
         assertSame(setState, resolvedState)
+    }
+
+    @Test
+    fun `page exercises inserts rest page between exercise containers`() {
+        val firstExercise = createExercise(name = "Bench Press")
+        val secondExercise = createExercise(name = "Row")
+        val firstSet = createSetState(exerciseId = firstExercise.id)
+        val secondSet = createSetState(exerciseId = secondExercise.id)
+        val restState = createRestState(exerciseId = null, nextState = secondSet)
+        val viewModel = createViewModelWithSequence(
+            exercises = listOf(firstExercise, secondExercise),
+            sequence = listOf(
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = firstExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(firstSet))
+                    )
+                ),
+                WorkoutStateSequenceItem.RestBetweenExercises(restState),
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = secondExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(secondSet))
+                    )
+                )
+            ),
+            currentState = restState
+        )
+
+        val items = buildPageExercisesItems(viewModel)
+
+        assertEquals(3, items.size)
+        assertEquals(PageExercisesItem.ExercisePage(firstExercise), items[0])
+        assertTrue(items[1] is PageExercisesItem.RestPage)
+        assertEquals(PageExercisesItem.ExercisePage(secondExercise), items[2])
+    }
+
+    @Test
+    fun `current item index points to inter exercise rest page when active`() {
+        val firstExercise = createExercise(name = "Bench Press")
+        val secondExercise = createExercise(name = "Row")
+        val firstSet = createSetState(exerciseId = firstExercise.id)
+        val secondSet = createSetState(exerciseId = secondExercise.id)
+        val restState = createRestState(exerciseId = null, nextState = secondSet)
+        val viewModel = createViewModelWithSequence(
+            exercises = listOf(firstExercise, secondExercise),
+            sequence = listOf(
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = firstExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(firstSet))
+                    )
+                ),
+                WorkoutStateSequenceItem.RestBetweenExercises(restState),
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = secondExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(secondSet))
+                    )
+                )
+            ),
+            currentState = restState
+        )
+        val items = buildPageExercisesItems(viewModel)
+
+        val index = resolvePageExercisesCurrentItemIndex(
+            items = items,
+            workoutState = restState,
+            fallbackSetState = secondSet,
+            viewModel = viewModel
+        )
+
+        assertEquals(1, index)
+    }
+
+    private fun createViewModelWithSequence(
+        exercises: List<Exercise>,
+        sequence: List<WorkoutStateSequenceItem>,
+        currentState: WorkoutState,
+    ): AppViewModel {
+        val viewModel = AppViewModel()
+        viewModel.exercisesById = exercises.associateBy { it.id }
+        viewModel.supersetIdByExerciseId = emptyMap()
+        viewModel.exercisesBySupersetId = emptyMap()
+        val stateMachine = WorkoutStateMachine.fromSequence(sequence, startIndex = sequence
+            .flatMap { item ->
+                when (item) {
+                    is WorkoutStateSequenceItem.Container -> when (val container = item.container) {
+                        is WorkoutStateContainer.ExerciseState -> container.childItems.flatMap { childItem ->
+                            when (childItem) {
+                                is ExerciseChildItem.Normal -> listOf(childItem.state)
+                                is ExerciseChildItem.CalibrationExecutionBlock -> childItem.childStates
+                                is ExerciseChildItem.LoadSelectionBlock -> childItem.childStates
+                                is ExerciseChildItem.UnilateralSetBlock -> childItem.childStates
+                            }
+                        }
+                        is WorkoutStateContainer.SupersetState -> container.childStates
+                    }
+                    is WorkoutStateSequenceItem.RestBetweenExercises -> listOf(item.rest)
+                }
+            }.indexOf(currentState))
+        setFieldValue(viewModel, "stateMachine", stateMachine)
+        setCurrentWorkoutState(viewModel, currentState)
+        return viewModel
+    }
+
+    private fun createExercise(
+        id: UUID = UUID.randomUUID(),
+        name: String,
+    ): Exercise {
+        return Exercise(
+            id = id,
+            enabled = true,
+            name = name,
+            doNotStoreHistory = false,
+            notes = "",
+            sets = emptyList(),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 0.0,
+            minReps = 6,
+            maxReps = 10,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = null,
+            bodyWeightPercentage = null,
+            generateWarmUpSets = false,
+            keepScreenOn = false,
+            showCountDownTimer = false,
+            requiresLoadCalibration = false
+        )
     }
 
     private fun createSetState(exerciseId: UUID = UUID.randomUUID()): WorkoutState.Set {
@@ -100,7 +244,7 @@ class PageExercisesStateResolutionTest {
 
     private fun createRestState(
         nextState: WorkoutState?,
-        exerciseId: UUID = UUID.randomUUID(),
+        exerciseId: UUID? = UUID.randomUUID(),
     ): WorkoutState.Rest {
         return WorkoutState.Rest(
             set = RestSet(
