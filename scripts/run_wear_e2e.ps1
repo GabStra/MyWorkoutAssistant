@@ -13,7 +13,65 @@ Param(
     [switch]$FastTimeoutProfile = $false
 )
 
-$adb = "adb"
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
+
+function Get-AndroidSdkRoot {
+    $candidates = @()
+
+    if ($env:ANDROID_SDK_ROOT) {
+        $candidates += $env:ANDROID_SDK_ROOT
+    }
+    if ($env:ANDROID_HOME) {
+        $candidates += $env:ANDROID_HOME
+    }
+
+    $localPropertiesPath = Join-Path $repoRoot "local.properties"
+    if (Test-Path $localPropertiesPath) {
+        $sdkDirLine = Get-Content $localPropertiesPath |
+            Where-Object { $_ -match '^sdk\.dir=' } |
+            Select-Object -First 1
+        if ($sdkDirLine) {
+            $rawPath = $sdkDirLine.Substring("sdk.dir=".Length)
+            $normalizedPath = $rawPath.Replace('\:', ':').Replace('\\', '\')
+            if (-not [string]::IsNullOrWhiteSpace($normalizedPath)) {
+                $candidates += $normalizedPath
+            }
+        }
+    }
+
+    $defaultLocalSdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    if ($defaultLocalSdk) {
+        $candidates += $defaultLocalSdk
+    }
+
+    return $candidates |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+}
+
+function Resolve-AdbPath {
+    $sdkCandidates = Get-AndroidSdkRoot
+    foreach ($sdkRoot in $sdkCandidates) {
+        $adbCandidate = Join-Path $sdkRoot "platform-tools\adb.exe"
+        if (Test-Path $adbCandidate) {
+            return $adbCandidate
+        }
+    }
+
+    $cmd = Get-Command adb -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    return $null
+}
+
+$adb = Resolve-AdbPath
+if (-not $adb) {
+    Write-Error "Could not find adb. Set ANDROID_SDK_ROOT/ANDROID_HOME, ensure local.properties contains sdk.dir, or add adb to PATH."
+    exit 1
+}
 $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
@@ -88,6 +146,12 @@ function Resolve-EmulatorPath {
         "$env:ANDROID_HOME\emulator\emulator.exe",
         "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe"
     ) | Where-Object { $_ -and (Test-Path $_) }
+
+    if ($candidates.Count -eq 0) {
+        $candidates = Get-AndroidSdkRoot |
+            ForEach-Object { Join-Path $_ "emulator\emulator.exe" } |
+            Where-Object { Test-Path $_ }
+    }
 
     if ($candidates.Count -gt 0) {
         return $candidates[0]
