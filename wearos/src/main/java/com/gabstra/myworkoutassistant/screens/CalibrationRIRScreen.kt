@@ -200,12 +200,13 @@ fun CalibrationRIRScreen(
                             Box(modifier = Modifier.fillMaxSize()) {
                                 PageExercises(
                                     selectedExercise = selectedExercise,
+                                    selectedRestPageId = null,
                                     workoutState = state,
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
                                     currentExercise = exercise,
-                                    onExerciseSelected = {
-                                        selectedExercise = it
+                                    onPageSelected = { exerciseSelection, _ ->
+                                        selectedExercise = exerciseSelection
                                     }
                                 )
                             }

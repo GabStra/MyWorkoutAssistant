@@ -342,7 +342,6 @@ fun BodyWeightSetScreen(
                 text = repsText,
                 style = style,
                 color = textColor,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -417,7 +416,6 @@ fun BodyWeightSetScreen(
                 text = weightText,
                 style = style,
                 color =  textColor,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -592,4 +590,3 @@ fun BodyWeightSetScreen(
         }
     )
 }
-

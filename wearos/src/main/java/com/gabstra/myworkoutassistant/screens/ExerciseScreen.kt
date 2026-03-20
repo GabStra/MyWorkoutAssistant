@@ -254,6 +254,7 @@ fun ExerciseScreen(
         viewModel.exercisesBySupersetId.containsKey(exerciseOrSupersetId)
     }
     var selectedExercise by remember(state.exerciseId) { mutableStateOf(exercise) }
+    var selectedRestPageId by remember(state.exerciseId, state.set.id) { mutableStateOf<UUID?>(null) }
     val context = LocalContext.current
 
     LaunchedEffect(exercise) {
@@ -274,6 +275,7 @@ fun ExerciseScreen(
 
         if (horizontalPagerState.currentPage != exercisesPageIndex) {
             selectedExercise = exercise
+            selectedRestPageId = null
         }
 
         if (horizontalPagerState.currentPage != exerciseDetailPageIndex) {
@@ -418,11 +420,15 @@ fun ExerciseScreen(
                         Box(modifier = pageModifier) {
                             PageExercises(
                                 selectedExercise = selectedExercise,
+                                selectedRestPageId = selectedRestPageId,
                                 workoutState = state,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 currentExercise = exercise,
-                                onExerciseSelected = { selectedExercise = it }
+                                onPageSelected = { exerciseSelection, restPageId ->
+                                    selectedExercise = exerciseSelection
+                                    selectedRestPageId = restPageId
+                                }
                             )
                         }
                     }

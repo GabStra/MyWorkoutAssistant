@@ -125,7 +125,6 @@ fun ExerciseMetadataStrip(
             color = secondaryTextColor,
             onClick = onTap,
             minTextSize = baseStyle.fontSize,
-            textAlign = TextAlign.Center
         )
     }
 }

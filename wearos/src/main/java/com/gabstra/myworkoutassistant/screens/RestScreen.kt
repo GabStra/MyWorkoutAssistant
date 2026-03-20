@@ -466,6 +466,9 @@ fun RestScreen(
         pageCount = { horizontalPageTypes.size }
     )
     var selectedExercise by remember(exerciseForPages.id) { mutableStateOf(exerciseForPages) }
+    var selectedRestPageId by remember(state.set.id, exerciseForPages.id) {
+        mutableStateOf(if (state.exerciseId == null) state.set.id else null)
+    }
     val setStateForPages = resolvedNextSetState
     val nextState = state.nextState
     val indicatorStateOverride = remember(state, nextState, resolvedNextSetState) {
@@ -497,6 +500,7 @@ fun RestScreen(
 
         if (horizontalPagerState.currentPage != exercisesPageIndex) {
             selectedExercise = exerciseForPages
+            selectedRestPageId = if (state.exerciseId == null) state.set.id else null
         }
     }
 
@@ -589,11 +593,15 @@ fun RestScreen(
                         Box(modifier = pageModifier) {
                             PageExercises(
                                 selectedExercise = selectedExercise,
+                                selectedRestPageId = selectedRestPageId,
                                 workoutState = state,
                                 viewModel = viewModel,
                                 hapticsViewModel = hapticsViewModel,
                                 currentExercise = exerciseForPages,
-                                onExerciseSelected = { selectedExercise = it }
+                                onPageSelected = { exercise, restPageId ->
+                                    selectedExercise = exercise
+                                    selectedRestPageId = restPageId
+                                }
                             )
                         }
                     }

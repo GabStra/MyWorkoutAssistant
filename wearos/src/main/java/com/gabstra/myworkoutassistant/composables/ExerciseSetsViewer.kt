@@ -32,7 +32,6 @@ import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
@@ -43,7 +42,10 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -73,7 +75,7 @@ sealed class ExerciseSetDisplayRow {
 internal fun toExerciseSetDisplayRowOrNull(state: WorkoutState): ExerciseSetDisplayRow? {
     return when (state) {
         is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
-        is WorkoutState.Rest -> null
+        is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
         is WorkoutState.CalibrationLoadSelection ->
             if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
         is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
@@ -253,6 +255,84 @@ internal fun resolveSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndic
     return buildSetTrendIndicator(setState)
 }
 
+internal fun userEditedTrendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
+    val programmedSet = setState.set
+    val currentSetData = setState.currentSetData
+    return when {
+        programmedSet is WeightSet && currentSetData is WeightSetData -> {
+            when {
+                currentSetData.actualWeight > programmedSet.weight ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.actualWeight < programmedSet.weight ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        programmedSet is BodyWeightSet && currentSetData is BodyWeightSetData -> {
+            when {
+                currentSetData.additionalWeight > programmedSet.additionalWeight ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.additionalWeight < programmedSet.additionalWeight ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> null
+    }
+}
+
+internal fun userEditedTrendForReps(setState: WorkoutState.Set): SetTrendIndicator? {
+    val programmedSet = setState.set
+    val currentSetData = setState.currentSetData
+    return when {
+        programmedSet is WeightSet && currentSetData is WeightSetData -> {
+            when {
+                currentSetData.actualReps > programmedSet.reps ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.actualReps < programmedSet.reps ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        programmedSet is BodyWeightSet && currentSetData is BodyWeightSetData -> {
+            when {
+                currentSetData.actualReps > programmedSet.reps ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.actualReps < programmedSet.reps ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> null
+    }
+}
+
+internal fun userEditedTrendForTime(setState: WorkoutState.Set): SetTrendIndicator? {
+    val programmedSet = setState.set
+    val currentSetData = setState.currentSetData
+    return when {
+        programmedSet is TimedDurationSet && currentSetData is TimedDurationSetData -> {
+            when {
+                currentSetData.startTimer > programmedSet.timeInMillis ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.startTimer < programmedSet.timeInMillis ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        programmedSet is EnduranceSet && currentSetData is EnduranceSetData -> {
+            when {
+                currentSetData.startTimer > programmedSet.timeInMillis ->
+                    SetTrendIndicator(glyph = "↑", color = Green)
+                currentSetData.startTimer < programmedSet.timeInMillis ->
+                    SetTrendIndicator(glyph = "↓", color = Red)
+                else -> null
+            }
+        }
+        else -> null
+    }
+}
+
 private fun isWorkSet(setState: WorkoutState.Set): Boolean = when (val set = setState.set) {
     is WeightSet -> set.subCategory == SetSubCategory.WorkSet
     is com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet ->
@@ -426,7 +506,7 @@ fun SetTableRow(
         }
         Row(
             modifier = Modifier.fillMaxSize()
-                .padding(2.dp)
+                .padding(2.5.dp)
                 .then(
                     rowSetContentDescription?.let { contentDescription ->
                         Modifier.semantics(mergeDescendants = false) {
@@ -449,15 +529,14 @@ fun SetTableRow(
                     ),
                 text = baseSetDisplayText,
                 style = itemStyle,
-                textAlign = TextAlign.Center,
                 color = textColor
             )
 
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
-                    val weightTrend = trendForWeight(setState)
-                    val repsTrend = trendForReps(setState)
+                    val weightTrend = userEditedTrendForWeight(setState) ?: trendForWeight(setState)
+                    val repsTrend = userEditedTrendForReps(setState) ?: trendForReps(setState)
 
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
@@ -475,14 +554,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = displayWeightText,
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor,
                         )
                         if (weightTrend != null) {
                             ScalableFadingText(
                                 text = weightTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = weightTrend.color,
                             )
                         }
@@ -495,14 +572,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = "${weightSetData.actualReps}",
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor,
                         )
                         if (repsTrend != null) {
                             ScalableFadingText(
                                 text = repsTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = repsTrend.color,
                             )
                         }
@@ -511,8 +586,8 @@ fun SetTableRow(
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                    val weightTrend = trendForWeight(setState)
-                    val repsTrend = trendForReps(setState)
+                    val weightTrend = userEditedTrendForWeight(setState) ?: trendForWeight(setState)
+                    val repsTrend = userEditedTrendForReps(setState) ?: trendForReps(setState)
 
                     val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
@@ -534,14 +609,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = displayWeightText,
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor
                         )
                         if (weightTrend != null) {
                             ScalableFadingText(
                                 text = weightTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = weightTrend.color,
                             )
                         }
@@ -554,14 +627,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = "${bodyWeightSetData.actualReps}",
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor
                         )
                         if (repsTrend != null) {
                             ScalableFadingText(
                                 text = repsTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = repsTrend.color,
                             )
                         }
@@ -570,7 +641,7 @@ fun SetTableRow(
 
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
-                    val timeTrend = trendForTime(setState)
+                    val timeTrend = userEditedTrendForTime(setState) ?: trendForTime(setState)
 
                     Row(
                         modifier = Modifier.weight(3f),
@@ -580,14 +651,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = FormatTime(timedDurationSetData.startTimer / 1000),
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor
                         )
                         if (timeTrend != null) {
                             ScalableFadingText(
                                 text = timeTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = timeTrend.color,
                             )
                         }
@@ -596,7 +665,7 @@ fun SetTableRow(
 
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
-                    val timeTrend = trendForTime(setState)
+                    val timeTrend = userEditedTrendForTime(setState) ?: trendForTime(setState)
 
                     Row(
                         modifier = Modifier.weight(3f),
@@ -606,14 +675,12 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = FormatTime(enduranceSetData.startTimer / 1000),
                             style = itemStyle,
-                            textAlign = TextAlign.Center,
                             color = textColor
                         )
                         if (timeTrend != null) {
                             ScalableFadingText(
                                 text = timeTrend.glyph,
                                 style = itemStyle,
-                                textAlign = TextAlign.Center,
                                 color = timeTrend.color,
                             )
                         }
@@ -635,15 +702,13 @@ private fun CenteredLabelRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
     Box(
         modifier = modifier
-            .fillMaxSize()
             .padding(2.5.dp),
         contentAlignment = Alignment.Center
     ) {
-        ScalableFadingText(
+        ScalableText(
             text = text,
+            color = textColor,
             style = itemStyle,
-            textAlign = TextAlign.Center,
-            color = textColor
         )
     }
 }
@@ -729,30 +794,14 @@ fun ExerciseSetsViewer(
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
-        val backgroundColor = when (progressState) {
-            ProgressState.PAST -> MaterialTheme.colorScheme.background
-            ProgressState.CURRENT -> when {
-                rowIndex == setIndex -> borderColor.copy(alpha = 0.25f)
-                rowIndex < setIndex -> borderColor.copy(alpha = 0.25f)
-                else ->  MaterialTheme.colorScheme.background
-            }
-            ProgressState.FUTURE -> MaterialTheme.colorScheme.background
-        }
-
         val textColor = borderColor
-
-        val markAsDone = when (progressState) {
-            ProgressState.PAST -> true
-            ProgressState.CURRENT -> rowIndex < setIndex
-            ProgressState.FUTURE -> false
-        }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(27.5.dp)
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .height(27.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
             val shape = RoundedCornerShape(25)
 
@@ -831,7 +880,7 @@ fun ExerciseSetsViewer(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalColumnScrollbar(scrollState = scrollState)
+                    //.verticalColumnScrollbar(scrollState = scrollState)
                     .verticalScroll(scrollState)
             ) {
                 displayRows.forEachIndexed { index, setState ->

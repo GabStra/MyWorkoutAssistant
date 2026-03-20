@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,7 +21,6 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -38,7 +36,6 @@ fun ScalableFadingText(
     style: TextStyle = LocalTextStyle.current,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 12.dp,
-    textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
     scaleDownOnly: Boolean = true,
@@ -50,7 +47,6 @@ fun ScalableFadingText(
         style = style,
         color = color,
         fadeWidth = fadeWidth,
-        textAlign = textAlign,
         onClick = onClick,
         minTextSize = minTextSize,
         scaleDownOnly = scaleDownOnly,
@@ -65,7 +61,6 @@ fun ScalableFadingText(
     style: TextStyle = LocalTextStyle.current,
     color: Color = MaterialTheme.colorScheme.onBackground,
     fadeWidth: Dp = 12.dp,
-    textAlign: TextAlign? = null,
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
     scaleDownOnly: Boolean = true,
@@ -149,7 +144,6 @@ fun ScalableFadingText(
     val marqueeState = rememberTrackableMarqueeState()
     
     val boxModifier = modifier
-        .fillMaxWidth()
         .clipToBounds()
         .then(
             if (isInspectionMode) {
@@ -183,11 +177,9 @@ fun ScalableFadingText(
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {
         ScalableText(
             text = text,
-            modifier = Modifier.fillMaxWidth(),
             textModifier = textModifier,
             color = color,
             style = style,
-            textAlign = textAlign,
             minTextSize = minTextSize,
             scaleDownOnly = scaleDownOnly,
             fadeInMillis = fadeInMillis

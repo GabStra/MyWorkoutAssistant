@@ -92,7 +92,6 @@ fun HistoricalSetDeltaBadge(
         ScalableText(
             text = differenceText,
             style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
             color = comparisonColor
         )
     }

@@ -270,7 +270,6 @@ private fun PagePlatesContent(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
-                        textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
                                 onHeaderTap()
@@ -295,7 +294,6 @@ private fun PagePlatesContent(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
-                        textAlign = TextAlign.Center,
                         modifier = Modifier
                             .clickable {
                                 onHeaderTap()

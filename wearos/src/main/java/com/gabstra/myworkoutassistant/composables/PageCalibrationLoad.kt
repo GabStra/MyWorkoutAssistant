@@ -174,7 +174,6 @@ fun PageCalibrationLoad(
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -239,7 +238,6 @@ fun PageCalibrationLoad(
                     text = weightText,
                     style = itemStyle,
                     color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center
                 )
             }
         } else {

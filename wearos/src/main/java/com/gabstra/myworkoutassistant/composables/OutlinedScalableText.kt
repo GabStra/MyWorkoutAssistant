@@ -8,7 +8,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.LocalTextStyle
@@ -19,7 +18,6 @@ fun OutlinedScalableText(
     text: String,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
-    textAlign: TextAlign? = TextAlign.Center,
     fill: Color = MaterialTheme.colorScheme.onBackground,
     outline: Color = Color.Black,
     outlineWidth: Dp = 1.dp,
@@ -32,14 +30,12 @@ fun OutlinedScalableText(
         ScalableText(
             text = text,
             style = style.copy(drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = px)),
-            textAlign = TextAlign.Center,
             color = outline
         )
         // Fill (top)
         ScalableText(
             text = text,
             style = style,
-            textAlign = textAlign,
             color = fill
         )
     }

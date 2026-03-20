@@ -246,14 +246,12 @@ fun PlaceholderSetRow(
                         modifier = Modifier.weight(2f),
                         text = "-",
                         style = itemStyle,
-                        textAlign = TextAlign.Center,
                         color = textColor
                     )
                     ScalableText(
                         modifier = Modifier.weight(1f),
                         text = "-",
                         style = itemStyle,
-                        textAlign = TextAlign.Center,
                         color = textColor
                     )
                 }
@@ -263,7 +261,6 @@ fun PlaceholderSetRow(
                         modifier = Modifier.weight(1f),
                         text = "-",
                         style = itemStyle,
-                        textAlign = TextAlign.Center,
                         color = textColor
                     )
                     Spacer(modifier = Modifier.width(18.dp))
@@ -274,7 +271,6 @@ fun PlaceholderSetRow(
                         modifier = Modifier.weight(1f),
                         text = "-",
                         style = itemStyle,
-                        textAlign = TextAlign.Center,
                         color = textColor
                     )
                     Spacer(modifier = Modifier.width(18.dp))
@@ -429,7 +425,6 @@ fun PageProgressionComparison(
             Text(
                 text = setIndicatorText,
                 style = baseStyle,
-                textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 4.dp)
@@ -628,7 +623,6 @@ fun PageProgressionComparison(
             ScalableText(
                 text = differenceText,
                 style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
                 color = comparisonColor
             )
         }

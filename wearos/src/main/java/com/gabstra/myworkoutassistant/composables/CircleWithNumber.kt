@@ -83,7 +83,6 @@ fun CircleWithNumber(
                     text = number.toString(),
                     minTextSize = 6.sp,
                     style = MaterialTheme.typography.numeralMedium.copy(fontWeight = FontWeight.Bold),
-                    textAlign = TextAlign.Center,
                 )
             }
         }

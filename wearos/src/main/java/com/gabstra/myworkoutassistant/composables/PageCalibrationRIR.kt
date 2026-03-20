@@ -168,7 +168,6 @@ fun PageCalibrationRIR(
                 text = rirText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -203,7 +202,6 @@ fun PageCalibrationRIR(
                     text = rirText,
                     style = itemStyle,
                     color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center
                 )
             }
         } else {
@@ -382,7 +380,6 @@ fun PageCalibrationRIR(
                 text = rirText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -409,7 +406,6 @@ fun PageCalibrationRIR(
                     text = rirText,
                     style = itemStyle,
                     color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center
                 )
             }
         } else {

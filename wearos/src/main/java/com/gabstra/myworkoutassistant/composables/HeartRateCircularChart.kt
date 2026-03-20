@@ -470,7 +470,7 @@ private fun HeartRateDisplay(
                     Text(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(2.dp),
+                            .padding(2.5.dp),
                         text = zoneText,
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelSmall

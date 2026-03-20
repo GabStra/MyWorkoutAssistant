@@ -334,7 +334,6 @@ fun WeightSetScreen(
                 text = repsText,
                 style = style,
                 color = textColor,
-                textAlign = TextAlign.Center
             )
         }
     }
@@ -405,7 +404,6 @@ fun WeightSetScreen(
                 text = weightText,
                 style = style,
                 color = textColor,
-                textAlign = TextAlign.Center
             )
         }
     }

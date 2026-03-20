@@ -131,7 +131,6 @@ private fun ProgressionRow(
                     modifier = Modifier.weight(2f).basicMarquee(iterations = Int.MAX_VALUE),
                     text = info.exerciseName,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    textAlign = TextAlign.Center
                 )
                 StatusIcon(label = "LAST", status = info.vsLast, modifier = Modifier.weight(1f))
                 StatusIcon(label = "EXP", status = info.vsExpected, modifier = Modifier.weight(1f))
