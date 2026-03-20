@@ -55,5 +55,10 @@ class WearSupersetPageExercisesE2ETest : WearBaseE2ETest() {
         require(supersetB1Found) {
             "Set identifier B1 not visible - PageExercises should show unified superset sets (A1, B1, ...)"
         }
+
+        val restRowFound = workoutDriver.findWithScrollFallback(By.textContains("REST")) != null
+        require(restRowFound) {
+            "REST row not visible - unified superset PageExercises should include rest states"
+        }
     }
 }

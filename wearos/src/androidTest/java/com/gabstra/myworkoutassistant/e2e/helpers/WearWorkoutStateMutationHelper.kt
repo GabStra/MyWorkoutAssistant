@@ -39,6 +39,33 @@ object WearWorkoutStateMutationHelper {
         return updated
     }
 
+    fun updateCurrentWeightSet(
+        device: UiDevice,
+        actualReps: Int? = null,
+        actualWeight: Double? = null
+    ): Boolean {
+        var updated = false
+        withResumedViewModel { viewModel ->
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@withResumedViewModel
+            currentState.currentSetData = when (val setData = currentState.currentSetData) {
+                is WeightSetData -> {
+                    val nextData = setData.copy(
+                        actualReps = actualReps ?: setData.actualReps,
+                        actualWeight = actualWeight ?: setData.actualWeight
+                    )
+                    nextData.copy(volume = nextData.calculateVolume())
+                }
+                else -> return@withResumedViewModel
+            }
+            updated = true
+        }
+
+        if (updated) {
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        }
+        return updated
+    }
+
     fun completeCurrentSet(device: UiDevice, context: Context, timeoutMs: Long = 15_000): Boolean {
         val currentSetId = getCurrentSetId() ?: return false
         var invoked = false
