@@ -68,7 +68,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
-import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
@@ -109,7 +108,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
-import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutStore
+import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
@@ -611,13 +610,7 @@ fun MyWorkoutAssistantNavHost(
         }
     }
     
-    var showPlanNameDialog by remember { mutableStateOf(false) }
     var importPlanResultMessage by remember { mutableStateOf<String?>(null) }
-    var pendingImportedWorkoutStore by remember {
-        mutableStateOf<com.gabstra.myworkoutassistant.shared.WorkoutStore?>(
-            null
-        )
-    }
 
     val workoutStorePickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -626,10 +619,46 @@ fun MyWorkoutAssistantNavHost(
                     context.contentResolver.openInputStream(it)?.use { inputStream ->
                         val reader = inputStream.bufferedReader()
                         val content = reader.readText()
-                        val importedWorkoutStore = fromJSONToWorkoutStore(content)
+                        val fileType = detectBackupFileType(content)
+                        when (fileType) {
+                            BackupFileType.APP_BACKUP -> {
+                                Toast.makeText(
+                                    context,
+                                    "That file is a backup. Use Restore Backup instead.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.WORKOUT_STORE -> {
+                                Toast.makeText(
+                                    context,
+                                    "That file is a full workout export, not a workout plan package.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.UNKNOWN -> {
+                                Toast.makeText(
+                                    context,
+                                    "That file isn't a valid workout plan package.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@let
+                            }
+                            BackupFileType.WORKOUT_PLAN_PACKAGE -> Unit
+                        }
+                        val importedWorkoutPlanPackage = fromJSONToWorkoutPlanPackage(content)
 
-                        // Check if there are any workouts in the imported store
-                        if (importedWorkoutStore.workouts.isEmpty()) {
+                        if (importedWorkoutPlanPackage.name.isBlank()) {
+                            Toast.makeText(
+                                context,
+                                "That workout plan package is missing a plan name.",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            return@let
+                        }
+
+                        if (importedWorkoutPlanPackage.workouts.isEmpty()) {
                             Toast.makeText(
                                 context,
                                 "That file doesn't contain any workouts to import.",
@@ -638,8 +667,69 @@ fun MyWorkoutAssistantNavHost(
                             return@let
                         }
 
-                        pendingImportedWorkoutStore = importedWorkoutStore
-                        showPlanNameDialog = true
+                        scope.launch {
+                            try {
+                                val existingWorkoutsCount = appViewModel.workouts.size
+                                val existingEquipmentCount = appViewModel.equipments.size
+                                val existingAccessoriesCount = appViewModel.accessoryEquipments.size
+
+                                val newPlanId = java.util.UUID.randomUUID()
+                                val nextOrder =
+                                    (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
+                                val newPlan = WorkoutPlan(
+                                    id = newPlanId,
+                                    name = importedWorkoutPlanPackage.name,
+                                    workoutIds = importedWorkoutPlanPackage.workouts.map { it.id },
+                                    order = nextOrder
+                                )
+
+                                val workoutsWithPlanId = importedWorkoutPlanPackage.workouts.map { workout ->
+                                    workout.copy(workoutPlanId = newPlanId)
+                                }
+                                val currentWorkoutStore = appViewModel.workoutStore
+                                val importedWorkoutStoreWithPlan = currentWorkoutStore.copy(
+                                    workouts = workoutsWithPlanId,
+                                    equipments = importedWorkoutPlanPackage.equipments,
+                                    accessoryEquipments = importedWorkoutPlanPackage.accessoryEquipments,
+                                    workoutPlans = listOf(newPlan)
+                                )
+
+                                appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
+
+                                workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
+                                val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
+                                    appViewModel.workoutStore,
+                                    db,
+                                    workoutStoreRepository
+                                )
+                                appViewModel.updateWorkoutStore(migratedWorkoutStore)
+
+                                val newWorkoutsCount = appViewModel.workouts.size
+                                val newEquipmentCount = appViewModel.equipments.size
+                                val newAccessoriesCount = appViewModel.accessoryEquipments.size
+                                val addedWorkouts = newWorkoutsCount - existingWorkoutsCount
+                                val addedEquipment = newEquipmentCount - existingEquipmentCount
+                                val addedAccessories = newAccessoriesCount - existingAccessoriesCount
+
+                                val message = buildString {
+                                    append("Imported workout plan: ${importedWorkoutPlanPackage.name}")
+                                    append("\n$addedWorkouts workout(s)")
+                                    if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
+                                    if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
+                                }
+
+                                importPlanResultMessage = message
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    e.toMainActivityToastMessage(
+                                        intro = "Couldn't import that workout plan.",
+                                        fallbackDetail = "Please try again."
+                                    ),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Toast.makeText(
@@ -653,85 +743,6 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
         }
-
-    WorkoutPlanNameDialog(
-        show = showPlanNameDialog,
-        onDismiss = {
-            showPlanNameDialog = false
-            pendingImportedWorkoutStore = null
-        },
-        onConfirm = { planName ->
-            showPlanNameDialog = false
-            val importedWorkoutStore = pendingImportedWorkoutStore ?: return@WorkoutPlanNameDialog
-            pendingImportedWorkoutStore = null
-
-            scope.launch {
-                try {
-                    val existingWorkoutsCount = appViewModel.workouts.size
-                    val existingEquipmentCount = appViewModel.equipments.size
-                    val existingAccessoriesCount = appViewModel.accessoryEquipments.size
-
-                    // Create new workout plan
-                    val newPlanId = java.util.UUID.randomUUID()
-                    val nextOrder =
-                        (appViewModel.getAllWorkoutPlans().maxOfOrNull { it.order } ?: -1) + 1
-                    val newPlan = WorkoutPlan(
-                        id = newPlanId,
-                        name = planName,
-                        workoutIds = importedWorkoutStore.workouts.map { it.id },
-                        order = nextOrder
-                    )
-
-                    // Set workoutPlanId on all imported workouts
-                    val workoutsWithPlanId = importedWorkoutStore.workouts.map { workout ->
-                        workout.copy(workoutPlanId = newPlanId)
-                    }
-                    val importedWorkoutStoreWithPlan = importedWorkoutStore.copy(
-                        workouts = workoutsWithPlanId,
-                        workoutPlans = listOf(newPlan)
-                    )
-
-                    // Merge with existing data
-                    // The merge function correctly handles adding the plan from importedWorkoutStoreWithPlan
-                    appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
-
-                    // Save to repository
-                    workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                        appViewModel.workoutStore,
-                        db,
-                        workoutStoreRepository
-                    )
-                    appViewModel.updateWorkoutStore(migratedWorkoutStore)
-
-                    val newWorkoutsCount = appViewModel.workouts.size
-                    val newEquipmentCount = appViewModel.equipments.size
-                    val newAccessoriesCount = appViewModel.accessoryEquipments.size
-                    val addedWorkouts = newWorkoutsCount - existingWorkoutsCount
-                    val addedEquipment = newEquipmentCount - existingEquipmentCount
-                    val addedAccessories = newAccessoriesCount - existingAccessoriesCount
-
-                    val message = buildString {
-                        append("Imported workout plan: $planName")
-                        append("\n$addedWorkouts workout(s)")
-                        if (addedEquipment > 0) append(", $addedEquipment equipment item(s)")
-                        if (addedAccessories > 0) append(", $addedAccessories accessory item(s)")
-                    }
-
-                    importPlanResultMessage = message
-                } catch (e: Exception) {
-                    Toast.makeText(
-                        context,
-                        e.toMainActivityToastMessage(
-                            intro = "Couldn't import that workout plan.",
-                            fallbackDetail = "Please try again."
-                        ),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
-        }
-    )
 
     importPlanResultMessage?.let { message ->
         StandardDialog(
@@ -1012,10 +1023,19 @@ fun MyWorkoutAssistantNavHost(
                         // Validate file type before attempting to parse
                         val fileType = detectBackupFileType(content)
                         when (fileType) {
+                            BackupFileType.WORKOUT_PLAN_PACKAGE -> {
+                                Toast.makeText(
+                                    context,
+                                    "That file is a workout plan package. Use Import Workout Plan instead.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@let
+                            }
+
                             BackupFileType.WORKOUT_STORE -> {
                                 Toast.makeText(
                                     context,
-                                    "That file is a workout plan export. Use Import Workout Plan instead.",
+                                    "That file is a workout export, not a backup.",
                                     Toast.LENGTH_LONG
                                 ).show()
                                 return@let

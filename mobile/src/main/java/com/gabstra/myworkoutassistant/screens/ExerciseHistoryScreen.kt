@@ -155,6 +155,7 @@ fun ExerciseHistoryScreen(
     }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+    val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
 
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
@@ -319,7 +320,12 @@ fun ExerciseHistoryScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(
+        updateMessage,
+        workout.id,
+        exercise.id,
+        workouts.map { it.id }.toSet()
+    ) {
         isLoading = true
         val loadedWorkoutHistories = withContext(Dispatchers.IO) {
             workouts.flatMap { workout ->

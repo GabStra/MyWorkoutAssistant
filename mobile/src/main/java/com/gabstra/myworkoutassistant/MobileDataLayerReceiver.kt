@@ -52,7 +52,7 @@ internal class MobileDataLayerReceiver(
                 workoutStoreRepository
             )
             appViewModel.updateWorkoutStore(migratedWorkoutStore, false)
-            workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+            workoutViewModel.applyExternalSyncWorkoutStore(migratedWorkoutStore)
             appViewModel.triggerUpdate()
 
             try {

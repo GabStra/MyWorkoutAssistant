@@ -356,6 +356,7 @@ fun WorkoutHistoryScreen(
     var isLoading by remember { mutableStateOf(true) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
+    val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
     val selectedWorkout = workouts.find { it.id == workout.id }!!
     val supersetsById = remember(selectedWorkout) {
         selectedWorkout.workoutComponents.filterIsInstance<Superset>().associateBy { it.id }
@@ -491,7 +492,7 @@ fun WorkoutHistoryScreen(
             CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
     }
 
-    LaunchedEffect(workout) {
+    LaunchedEffect(workout, updateMessage) {
         isLoading = true
         withContext(Dispatchers.IO) {
             val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
@@ -1329,4 +1330,3 @@ fun WorkoutHistoryScreen(
         }
     }
 }
-
