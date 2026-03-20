@@ -1212,8 +1212,8 @@ def emit_exercise_definition(
         f"{muscle_group_enum_text}\n"
         f"Set requiredAccessoryEquipmentIds to EXACTLY match plan entry requiredAccessoryEquipmentIds.\n"
         f"{accessory_hint}"
-        f"IMPORTANT: Set requiresLoadCalibration to true ONLY if the user explicitly requested calibration sets for this exercise. "
-        f"Otherwise, default to false. Calibration sets are only applicable to WEIGHT exercises or BODY_WEIGHT exercises with equipment.\n"
+        f"IMPORTANT: Set progressionMode to one of OFF, DOUBLE_PROGRESSION, or AUTO_REGULATION. "
+        f"Set requiresLoadCalibration to true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
         f"Output only the exercise object JSON, not a wrapper."
     )
     
@@ -2463,10 +2463,10 @@ def self_heal_validation_error_full_json(client, workout_json, validation_error,
 
 def save_workout_to_file(workout_json, script_dir=None):
     """
-    Save workout JSON to a timestamped file in the workouts/ directory.
+    Save workout plan package JSON to a timestamped file in the workouts/ directory.
     
     Args:
-        workout_json: The complete workout JSON dictionary
+        workout_json: The complete workout plan package JSON dictionary
         script_dir: Directory where the script is located (defaults to current directory)
     
     Returns:
@@ -2488,7 +2488,7 @@ def save_workout_to_file(workout_json, script_dir=None):
         
         # Generate timestamped filename
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        filename = f"workout_{timestamp}.json"
+        filename = f"workout_plan_{timestamp}.json"
         filepath = os.path.join(workouts_dir, filename)
         
         # Write JSON to file
@@ -2502,16 +2502,17 @@ def save_workout_to_file(workout_json, script_dir=None):
 
 def display_workout_summary(workout_json, filepath, logger=None):
     """
-    Display a summary of the generated workout.
+    Display a summary of the generated workout plan package.
     
     Args:
-        workout_json: The complete workout JSON dictionary
+        workout_json: The complete workout plan package JSON dictionary
         filepath: Path to the saved file
         logger: Optional ConversationLogger for debug logging
     """
     _out = (lambda m: logger.log_print(m)) if logger else (lambda m: print(m))
     workouts = workout_json.get("workouts", [])
     equipments = workout_json.get("equipments", [])
+    plan_name = workout_json.get("name", "Generated Workout Plan")
     
     if not workouts:
         _out("Warning: No workouts found in generated JSON")
@@ -2544,8 +2545,9 @@ def display_workout_summary(workout_json, filepath, logger=None):
     
     # Display summary
     _out("\n" + "=" * 70)
-    _out("Workout Generated Successfully!")
+    _out("Workout Plan Generated Successfully!")
     _out("=" * 70)
+    _out(f"Plan Name: {plan_name}")
     if len(workout_names) == 1:
         _out(f"Workout Name: {workout_names[0]}")
     else:
@@ -2594,7 +2596,7 @@ def display_timing_summary(timing_data, is_resume=False, logger=None):
             2: "Emit equipment items",
             3: "Emit exercise definitions",
             4: "Emit workout structures",
-            5: "Assemble placeholder WorkoutStore",
+            5: "Assemble placeholder workout plan package",
             6: "Validate and repair JSON",
             7: "Convert placeholders to UUIDs"
         }

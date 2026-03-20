@@ -417,7 +417,8 @@ def validate_load_percent_range(exercise):
     exercise_type = exercise.get("exerciseType")
     min_load = exercise.get("minLoadPercent", 0.0)
     max_load = exercise.get("maxLoadPercent", 0.0)
-    enable_progression = exercise.get("enableProgression", False)
+    progression_mode = exercise.get("progressionMode", "OFF")
+    progression_enabled = progression_mode in {"DOUBLE_PROGRESSION", "AUTO_REGULATION"}
     
     if not exercise_type:
         return True, None, False
@@ -428,8 +429,8 @@ def validate_load_percent_range(exercise):
     
     if exercise_type in ["WEIGHT", "BODY_WEIGHT"]:
         if min_load == 0.0 and max_load == 0.0:
-            if enable_progression:
-                return False, f"Exercise '{exercise.get('name', 'Unknown')}' has enableProgression=true but minLoadPercent=0.0 and maxLoadPercent=0.0. These are required for double progression.", True
+            if progression_enabled:
+                return False, f"Exercise '{exercise.get('name', 'Unknown')}' has progressionMode='{progression_mode}' but minLoadPercent=0.0 and maxLoadPercent=0.0. These are required for progression.", True
             else:
                 # Warn but allow - should still be set correctly
                 return True, f"Exercise '{exercise.get('name', 'Unknown')}' has minLoadPercent=0.0 and maxLoadPercent=0.0. Consider setting appropriate values (e.g., 65-85% for hypertrophy).", True
@@ -1165,11 +1166,11 @@ def ensure_requiresLoadCalibration(workout_store):
     return workout_store
 
 
-def assemble_placeholder_workout_store(equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index, user_data):
+def assemble_placeholder_workout_store(equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index, user_data=None):
     """
-    Assemble emitted objects into a placeholder-based WorkoutStore candidate.
+    Assemble emitted objects into a placeholder-based workout plan package candidate.
     This assembles the normalized objects (EquipmentItem, AccessoryEquipment, ExerciseDefinition, WorkoutStructure)
-    into a single WorkoutStore structure matching JSON_SCHEMA, all using placeholder IDs.
+    into a single workout plan package structure matching JSON_SCHEMA, all using placeholder IDs.
     
     Args:
         equipment_items: Dict mapping equipment_id -> EquipmentItem (weight-loaded equipment)
@@ -1177,10 +1178,8 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
         exercise_definitions: Dict mapping exercise_id -> ExerciseDefinition
         workout_structures: Dict mapping workout_id -> WorkoutStructure
         plan_index: PlanIndex dict
-        user_data: Dict with birthDateYear, weightKg, progressionPercentageAmount, polarDeviceId
-    
     Returns:
-        dict: Placeholder-based WorkoutStore matching JSON_SCHEMA shape
+        dict: Placeholder-based workout plan package matching JSON_SCHEMA shape
     """
     # Build equipments array from equipment_items (weight-loaded only)
     equipments = list(equipment_items.values())
@@ -1293,19 +1292,19 @@ def assemble_placeholder_workout_store(equipment_items, accessory_items, exercis
             "isActive": metadata.get("isActive", True),
             "timesCompletedInAWeek": metadata.get("timesCompletedInAWeek"),
             "globalId": f"{workout_id}_GLOBAL",
-            "type": metadata.get("type", 0)
+            "type": metadata.get("type", 0),
+            "workoutPlanId": metadata.get("workoutPlanId"),
         }
         workouts.append(workout)
     
-    # Assemble final placeholder-based WorkoutStore
+    plan_name = plan_index.get("planName") or "Generated Workout Plan"
+
+    # Assemble final placeholder-based workout plan package
     placeholder_workout_store = {
+        "name": plan_name,
         "workouts": workouts,
         "equipments": equipments,
         "accessoryEquipments": accessory_equipments,
-        "birthDateYear": user_data.get("birthDateYear", 1990),
-        "weightKg": user_data.get("weightKg", 80.0),
-        "progressionPercentageAmount": user_data.get("progressionPercentageAmount", 2.5),
-        "polarDeviceId": user_data.get("polarDeviceId")
     }
     
     # Remove any None values from workoutComponents arrays
@@ -1518,6 +1517,8 @@ def sync_exercises_from_definitions(workout_store, exercise_definitions):
         "maxReps",
         "minLoadPercent",
         "maxLoadPercent",
+        "progressionMode",
+        "requiresLoadCalibration",
     ]
 
     def sync_one(exercise):

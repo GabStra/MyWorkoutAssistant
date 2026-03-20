@@ -29,6 +29,10 @@ def _work_set_type_for_exercise_type(exercise_type: str) -> Optional[str]:
 def _collect_contract_issues_plan_index(plan_index: Dict[str, Any]) -> List[ContractIssue]:
     issues: List[ContractIssue] = []
 
+    plan_name = plan_index.get("planName")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        issues.append(ContractIssue("missing_plan_name", "PlanIndex is missing a non-empty planName."))
+
     exercises = plan_index.get("exercises", []) or []
     workouts = plan_index.get("workouts", []) or []
 
@@ -329,10 +333,13 @@ def _canonicalize_ids_for_parity(value: Any, key: Optional[str] = None) -> Any:
         "previousVersionId",
         "nextVersionId",
         "polarDeviceId",
+        "workoutPlanId",
     }
     id_list_keys = {
         "requiredAccessoryEquipmentIds",
         "exerciseIds",
+        "workoutIds",
+        "includedWorkoutGlobalIds",
     }
 
     if isinstance(value, dict):

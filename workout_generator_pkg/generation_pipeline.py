@@ -758,18 +758,12 @@ def execute_workout_generation(
             step_data["step_4_workout_structures"] = workout_structures
             _gen_print(f"Step 4: Using saved workout structures ({len(workout_structures)} workouts)")
         
-        # Step 5: Assemble placeholder-based WorkoutStore
+        # Step 5: Assemble placeholder workout plan package
         if current_step < 5:
             step_start_time = time.time()
-            _gen_print("Step 5: Assembling placeholder-based WorkoutStore...")
-            user_data = {
-                "birthDateYear": 1990,
-                "weightKg": 80.0,
-                "progressionPercentageAmount": 2.5,
-                "polarDeviceId": None
-            }
+            _gen_print("Step 5: Assembling placeholder workout plan package...")
             placeholder_workout_store = assemble_placeholder_workout_store(
-                equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index, user_data
+                equipment_items, accessory_items, exercise_definitions, workout_structures, plan_index
             )
             placeholder_workout_store = sync_exercises_from_definitions(placeholder_workout_store, exercise_definitions)
             # Rewrite any duplicate accessory IDs to provided IDs in emitted exercises
@@ -777,7 +771,7 @@ def execute_workout_generation(
             step_time = time.time() - step_start_time
             timing_data["step_times"][5] = step_time
             timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Assembled placeholder WorkoutStore ({step_time:.2f}s)")
+            _gen_print(f"✓ Assembled placeholder workout plan package ({step_time:.2f}s)")
             step_data["step_5_placeholder_workout_store"] = placeholder_workout_store
             timing_data["last_step_time"] = datetime.now().isoformat()
             _, save_time = save_generation_progress(session_id, 5, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
@@ -786,7 +780,7 @@ def execute_workout_generation(
             if not placeholder_workout_store:
                 return {"success": False, "filepath": None, "error": "Missing placeholder_workout_store in saved progress"}
             step_data["step_5_placeholder_workout_store"] = placeholder_workout_store
-            _gen_print("Step 5: Using saved placeholder WorkoutStore")
+            _gen_print("Step 5: Using saved placeholder workout plan package")
         
         # Step 6: Validate and repair placeholder JSON
         if current_step < 6:
@@ -850,7 +844,7 @@ def execute_workout_generation(
             step_time = time.time() - step_start_time
             timing_data["step_times"][7] = step_time
             timing_data["total_time_seconds"] += step_time
-            _gen_print(f"✓ Converted to UUID-based WorkoutStore ({step_time:.2f}s)")
+            _gen_print(f"✓ Converted to UUID-based workout plan package ({step_time:.2f}s)")
             step_data["step_7_final_workout_store"] = data
             timing_data["last_step_time"] = datetime.now().isoformat()
             _, save_time = save_generation_progress(session_id, 7, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
@@ -862,7 +856,7 @@ def execute_workout_generation(
                 validate_uuid_conversion_parity(validated_placeholder_store, data)
             except ContractValidationError as e:
                 return {"success": False, "filepath": None, "error": str(e)}
-            _gen_print("Step 7: Using saved final workout store")
+            _gen_print("Step 7: Using saved final workout plan package")
         
         # Update final total time (including save times)
         save_times_total = sum(timing_data.get("save_times", []))

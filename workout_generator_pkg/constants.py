@@ -4,24 +4,20 @@ import json
 
 JSON_SCHEMA = {                                                                                                                                                                                                                                  
     "$schema": "https://json-schema.org/draft/2020-12/schema",                                                                                                                                                                                   
-    "title": "WorkoutStore",                                                                                                                                                                                                                     
+    "title": "WorkoutPlanPackage",                                                                                                                                                                                                               
     "type": "object",                                                                                                                                                                                                                            
     "additionalProperties": False,                                                                                                                                                                                                               
     "required": [                                                                                                                                                                                                                                
+        "name",
         "workouts",                                                                                                                                                                                                                              
-        "equipments",                                                                                                                                                                                                                            
-        "birthDateYear",                                                                                                                                                                                                                         
-        "weightKg",                                                                                                                                                                                                                              
-        "progressionPercentageAmount"                                                                                                                                                                                                            
+        "equipments",
+        "accessoryEquipments",
     ],
     "properties": {                                                                                                                                                                                                                              
+        "name": {"type": "string"},
         "workouts": {"type": "array", "items": {"$ref": "#/$defs/Workout"}},                                                                                                                                                                    
         "equipments": {"type": "array", "items": {"$ref": "#/$defs/Equipment"}},                                                                                                                                                                
         "accessoryEquipments": {"type": "array", "items": {"$ref": "#/$defs/EquipmentAccessory"}},
-        "polarDeviceId": {"type": ["string", "null"]},                                                                                                                                                                                           
-        "birthDateYear": {"type": "integer"},
-        "weightKg": {"type": "number"},                                                                                                                                                                                                          
-        "progressionPercentageAmount": {"type": "number"}                                                                                                                                                                                        
     },
     "$defs": {                                                                                                                                                                                                                                   
         "UUID": {                                                                                                                                                                                                                                
@@ -34,12 +30,16 @@ JSON_SCHEMA = {
         },                                                                                                                                                                                                                                       
         "SetSubCategory": {                                                                                                                                                                                                                      
             "type": "string",                                                                                                                                                                                                                    
-            "enum": ["WorkSet", "WarmupSet", "RestPauseSet", "BackOffSet"]
+            "enum": ["WorkSet", "WarmupSet", "RestPauseSet", "BackOffSet", "CalibrationPendingSet", "CalibrationSet"]
         },                                                                                                                                                                                                                                       
         "ExerciseType": {                                                                                                                                                                                                                        
             "type": "string",                                                                                                                                                                                                                    
             "enum": ["COUNTUP", "BODY_WEIGHT", "COUNTDOWN", "WEIGHT"]                                                                                                                                                                            
         },                                                                                                                                                                                                                                       
+        "ProgressionMode": {
+            "type": "string",
+            "enum": ["OFF", "DOUBLE_PROGRESSION", "AUTO_REGULATION"]
+        },
         "ExerciseCategory": {
             "type": "string",
             "enum": ["HEAVY_COMPOUND", "MODERATE_COMPOUND", "ISOLATION"]
@@ -181,9 +181,10 @@ JSON_SCHEMA = {
                 "minReps",                                                                                                                                                                                                                       
                 "maxReps",                                                                                                                                                                                                                       
                 "generateWarmUpSets",                                                                                                                                                                                                            
-                "enableProgression",                                                                                                                                                                                                             
+                "progressionMode",                                                                                                                                                                                                               
                 "keepScreenOn",                                                                                                                                                                                                                  
-                "showCountDownTimer"                                                                                                                                                                                                             
+                "showCountDownTimer",
+                "requiresLoadCalibration"                                                                                                                                                                                                        
             ],                                                                                                                                                                                                                                   
             "properties": {                                                                                                                                                                                                                      
                 "id": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                                  
@@ -208,7 +209,7 @@ JSON_SCHEMA = {
                 },                                                                                                                                                                                                                               
                 "bodyWeightPercentage": {"type": ["number", "null"]},                                                                                                                                                                            
                 "generateWarmUpSets": {"type": "boolean"},                                                                                                                                                                                       
-                "enableProgression": {"type": "boolean"},                                                                                                                                                                                        
+                "progressionMode": {"$ref": "#/$defs/ProgressionMode"},                                                                                                                                                                          
                 "keepScreenOn": {"type": "boolean"},                                                                                                                                                                                             
                 "showCountDownTimer": {"type": "boolean"},                                                                                                                                                                                       
                 "intraSetRestInSeconds": {"type": ["integer", "null"]},                                                                                                                                                                          
@@ -325,9 +326,38 @@ JSON_SCHEMA = {
                 "isActive": {"type": "boolean"},                                                                                                                                                                                                 
                 "timesCompletedInAWeek": {"type": ["integer", "null"]},                                                                                                                                                                          
                 "globalId": {"$ref": "#/$defs/UUID"},                                                                                                                                                                                            
-                "type": {"type": "integer"}                                                                                                                                                                                                      
+                "type": {"type": "integer"},
+                "workoutPlanId": {
+                    "anyOf": [
+                        {"$ref": "#/$defs/UUID"},
+                        {"type": "null"}
+                    ]
+                }                                                                                                                                                                                                      
             }                                                                                                                                                                                                                                    
         },                                                                                                                                                                                                                                       
+        "WorkoutPlan": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "name", "workoutIds", "order"],
+            "properties": {
+                "id": {"$ref": "#/$defs/UUID"},
+                "name": {"type": "string"},
+                "workoutIds": {"type": "array", "items": {"$ref": "#/$defs/UUID"}},
+                "order": {"type": "integer"}
+            }
+        },
+        "WeeklyProgressOverride": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["weekStart", "includedWorkoutGlobalIds"],
+            "properties": {
+                "weekStart": {"$ref": "#/$defs/LocalDate"},
+                "includedWorkoutGlobalIds": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/UUID"}
+                }
+            }
+        },
         # EquipmentBarbell: sleeveLength is in millimeters (mm) - refers to sleeve length (where plates are loaded), not total barbell length
         "EquipmentBarbell": {
             "type": "object",
@@ -491,7 +521,7 @@ EXAMPLE_JSON = {
                     "equipmentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",                                                                                                                                                                       
                     "bodyWeightPercentage": None,                                                                                                                                                                                                
                     "generateWarmUpSets": False,                                                                                                                                                                                                 
-                    "enableProgression": False,                                                                                                                                                                                                  
+                    "progressionMode": "OFF",                                                                                                                                                                                                    
                     "keepScreenOn": False,                                                                                                                                                                                                       
                     "showCountDownTimer": False,                                                                                                                                                                                                 
                     "intraSetRestInSeconds": None,                                                                                                                                                                                               
@@ -520,6 +550,7 @@ EXAMPLE_JSON = {
             "type": 0                                                                                                                                                                                                                            
         }                                                                                                                                                                                                                                        
     ],                                                                                                                                                                                                                                           
+    "name": "Push Pull Legs",
     "equipments": [
         {
             "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -534,10 +565,7 @@ EXAMPLE_JSON = {
             "sleeveLength": 200
         }
     ],
-    "polarDeviceId": None,                                                                                                                                                                                                                       
-    "birthDateYear": 1990,                                                                                                                                                                                                                       
-    "weightKg": 80.0,                                                                                                                                                                                                                            
-    "progressionPercentageAmount": 2.5                                                                                                                                                                                                           
+    "accessoryEquipments": []                                                                                                                                                                                                                    
 }                                                                                                                                                                                                                                                   
 PARALLEL_LOG_REQUEST_TRUNCATE = 8000
 DEEPSEEK_CHAT_DEFAULT_TOKENS = 4000
@@ -613,7 +641,7 @@ JSON_SYSTEM_PROMPT = (
     "- exercise.notes max 500 chars, concise.\n\n"
     "Optional advanced fields:\n"
     "- HR target fields and load jump tuning fields should be set only when explicitly requested; otherwise null.\n"
-    "- If doNotStoreHistory=true, set enableProgression=false.\n\n"
+    "- If doNotStoreHistory=true, set progressionMode=\"OFF\".\n\n"
     "JSON Schema:\n"
     f"{json.dumps(JSON_SCHEMA, indent=2)}\n\n"
     "Example JSON Output:\n"
@@ -632,7 +660,7 @@ SELF_HEAL_SYSTEM_PROMPT = (
     f"- SetSubCategory enum: {SET_SUBCATEGORY_ENUM_VALUES}.\n"
     "- Prefer semantically correct fixes (infer from exercise/workout context).\n\n"
     "Input modes:\n"
-    "- Full mode: complete WorkoutStore JSON -> return complete corrected JSON.\n"
+    "- Full mode: complete workout plan package JSON -> return complete corrected JSON.\n"
     "- Targeted mode: {item, itemType, context} -> return only fixed item (no wrapper).\n\n"
     "Heuristics:\n"
     "- Empty/invalid muscle groups: infer from exercise name and type.\n"
@@ -804,7 +832,7 @@ EXERCISE_EXAMPLE = {
             "equipmentId": None,
             "bodyWeightPercentage": None,
             "generateWarmUpSets": False,
-            "enableProgression": False,
+            "progressionMode": "OFF",
             "keepScreenOn": False,
             "showCountDownTimer": True,
             "intraSetRestInSeconds": None,
@@ -844,7 +872,7 @@ EXERCISE_EXAMPLE = {
             "equipmentId": "EQUIPMENT_0",
             "bodyWeightPercentage": None,
             "generateWarmUpSets": False,
-            "enableProgression": False,
+            "progressionMode": "OFF",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
@@ -884,7 +912,7 @@ EXERCISE_EXAMPLE = {
             "equipmentId": "EQUIPMENT_1",
             "bodyWeightPercentage": None,
             "generateWarmUpSets": False,
-            "enableProgression": True,
+            "progressionMode": "DOUBLE_PROGRESSION",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": 60,
@@ -931,7 +959,7 @@ EXERCISE_EXAMPLE = {
             "equipmentId": None,
             "bodyWeightPercentage": 100.0,
             "generateWarmUpSets": False,
-            "enableProgression": True,
+            "progressionMode": "DOUBLE_PROGRESSION",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
@@ -978,7 +1006,7 @@ EXERCISE_EXAMPLE = {
             "equipmentId": None,
             "bodyWeightPercentage": 100.0,
             "generateWarmUpSets": False,
-            "enableProgression": True,
+            "progressionMode": "DOUBLE_PROGRESSION",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
@@ -1024,7 +1052,8 @@ EXERCISE_SYSTEM_PROMPT = (
     "Other required behavior:\n"
     "- Use notes as concise string (max 500 chars).\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"
-    "- requiresLoadCalibration=true only when user explicitly requests calibration; otherwise false.\n"
+    "- progressionMode must be one of OFF, DOUBLE_PROGRESSION, AUTO_REGULATION.\n"
+    "- requiresLoadCalibration=true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
     "- Optional HR/load-jump fields only when explicitly requested; otherwise null.\n\n"
     "Output format:\n"
     f"{json.dumps(EXERCISE_EXAMPLE, indent=2)}\n\n"
@@ -1098,6 +1127,7 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
 )
 # PlanIndex structure for planner/emitter architecture
 PLAN_INDEX_EXAMPLE = {
+    "planName": "Push Pull Legs",
     "equipments": [
         {
             "id": "EQUIPMENT_0",
@@ -1179,6 +1209,8 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate a PlanIndex (not full workout JSON) using placeholder IDs only.\n"
     "IDs: EQUIPMENT_X, ACCESSORY_X, EXERCISE_X, WORKOUT_X.\n\n"
+    "Plan constraints:\n"
+    "- Include a top-level planName string for the single workout plan package.\n\n"
     "Equipment constraints:\n"
     "- Provided equipment/accessory lists are immutable.\n"
     "- Reuse existing IDs when available (especially accessories by same name).\n"
