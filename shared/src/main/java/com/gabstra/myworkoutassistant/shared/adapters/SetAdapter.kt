@@ -65,7 +65,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
         val jsonObject = json.asJsonObject
 
         val id = UUID.fromString(jsonObject.get("id").asString)
-        val type = jsonObject.get("type").asString
+        val type = resolveSetType(jsonObject)
 
         return when (type) {
             "WeightSet" -> {
@@ -165,5 +165,35 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
 
             else -> throw RuntimeException("Unsupported set type")
         }
+    }
+
+    private fun resolveSetType(jsonObject: JsonObject): String {
+        val explicitType = jsonObject.get("type")
+        if (explicitType != null && !explicitType.isJsonNull) {
+            return explicitType.asString
+        }
+
+        if (jsonObject.has("timeInSeconds")) {
+            return "RestSet"
+        }
+
+        if (jsonObject.has("additionalWeight")) {
+            return "BodyWeightSet"
+        }
+
+        if (jsonObject.has("weight")) {
+            return "WeightSet"
+        }
+
+        if (jsonObject.has("timeInMillis")) {
+            val hasAutoFlags = jsonObject.has("autoStart") || jsonObject.has("autoStop")
+            return if (hasAutoFlags) {
+                "TimedDurationSet"
+            } else {
+                "EnduranceSet"
+            }
+        }
+
+        throw RuntimeException("Unsupported set type")
     }
 }
