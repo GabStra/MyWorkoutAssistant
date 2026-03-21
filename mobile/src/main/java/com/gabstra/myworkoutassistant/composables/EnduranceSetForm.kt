@@ -33,6 +33,9 @@ fun EnduranceSetForm(
 
     val autoStartState = remember { mutableStateOf(enduranceSet?.autoStart ?: false) }
     val autoStopState = remember { mutableStateOf(enduranceSet?.autoStop ?: false) }
+    val shouldReapplyHistoryState = remember {
+        mutableStateOf(enduranceSet?.shouldReapplyHistoryToSet ?: true)
+    }
 
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(enduranceSet?.timeInMillis?.div(1000) ?: 0)) }
     val (hours, minutes, seconds) = hms.value
@@ -92,6 +95,12 @@ fun EnduranceSetForm(
             Text(text = "Auto stop")
         }
 
+        SetHistoryReapplySetting(
+            checked = shouldReapplyHistoryState.value,
+            onCheckedChange = { shouldReapplyHistoryState.value = it },
+            subtitle = "When enabled, the last completed execution can prefill this programmed set in future sessions."
+        )
+
         // Submit button
         Row(
             modifier = Modifier
@@ -110,10 +119,11 @@ fun EnduranceSetForm(
                 text = "Save",
                 onClick = {
                     val newEnduranceSet = EnduranceSet(
-                        id = UUID.randomUUID(),
+                        id = enduranceSet?.id ?: UUID.randomUUID(),
                         timeInMillis = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds) * 1000,
                         autoStart = autoStartState.value,
                         autoStop = autoStopState.value,
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
                     )
 
                     onSetUpsert(newEnduranceSet)

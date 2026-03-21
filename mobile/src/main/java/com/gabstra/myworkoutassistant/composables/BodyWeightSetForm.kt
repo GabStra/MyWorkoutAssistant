@@ -50,6 +50,9 @@ fun BodyWeightSetForm(
     val repsState = remember { mutableStateOf(bodyWeightSet?.reps?.toString() ?: "") }
     val additionalWeightState =
         remember { mutableStateOf(bodyWeightSet?.additionalWeight?.toString() ?: "0") }
+    val shouldReapplyHistoryState = remember {
+        mutableStateOf(bodyWeightSet?.shouldReapplyHistoryToSet ?: true)
+    }
     val isCalibrationExercise = exercise.requiresLoadCalibration &&
         CalibrationHelper.supportsCalibrationForExercise(exercise)
     val shouldLockAdditionalWeightSelection = (bodyWeightSet?.subCategory in setOf(
@@ -188,6 +191,11 @@ fun BodyWeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         )
+        SetHistoryReapplySetting(
+            checked = shouldReapplyHistoryState.value,
+            onCheckedChange = { shouldReapplyHistoryState.value = it },
+            subtitle = "When enabled, the last completed execution can prefill this programmed set in future sessions."
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -221,7 +229,8 @@ fun BodyWeightSetForm(
                             SetSubCategory.CalibrationPendingSet
                         } else {
                             SetSubCategory.WorkSet
-                        }
+                        },
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
                     )
 
                     onSetUpsert(newBodyWeightSet)

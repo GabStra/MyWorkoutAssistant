@@ -54,6 +54,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -339,6 +340,32 @@ private fun WorkoutSessionActionCard(
     onResumeWorkout: () -> Unit,
     onRequestDeleteInterruptedWorkout: () -> Unit
 ) {
+    val sessionStatus = workoutResumeInfo?.sessionStatus
+    val hasResumeAction = when (sessionStatus) {
+        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+        WorkoutSessionStatus.STALE_ON_WEAR,
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+        WorkoutSessionStatus.INTERRUPTED -> true
+        WorkoutSessionStatus.COMPLETED,
+        null -> false
+    }
+    val titleText = when (sessionStatus) {
+        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Workout in progress on watch"
+        WorkoutSessionStatus.STALE_ON_WEAR -> "Watch not responding"
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+        WorkoutSessionStatus.INTERRUPTED -> "Interrupted workout"
+        WorkoutSessionStatus.COMPLETED,
+        null -> "Interrupted workout"
+    }
+    val primaryActionText = when (sessionStatus) {
+        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+        WorkoutSessionStatus.STALE_ON_WEAR -> "Resume on phone"
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+        WorkoutSessionStatus.INTERRUPTED -> "Resume workout"
+        WorkoutSessionStatus.COMPLETED,
+        null -> "Resume workout"
+    }
+
     PrimarySurface(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -364,7 +391,7 @@ private fun WorkoutSessionActionCard(
                 }
             }
 
-            hasWorkoutRecord -> {
+            hasWorkoutRecord && hasResumeAction -> {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -387,7 +414,7 @@ private fun WorkoutSessionActionCard(
                             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                         ) {
                             Text(
-                                text = "Interrupted workout",
+                                text = titleText,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -402,7 +429,7 @@ private fun WorkoutSessionActionCard(
 
                     AppPrimaryButton(
                         modifier = Modifier.fillMaxWidth(),
-                        text = "Resume workout",
+                        text = primaryActionText,
                         onClick = onResumeWorkout
                     )
                     AppPrimaryOutlinedButton(
@@ -480,15 +507,26 @@ private fun buildResumeDescription(
     }
 
     val sessionTime = workoutResumeInfo.startedAt?.format(timeFormatter)
+    val staleTime = workoutResumeInfo.lastActiveSyncAt?.format(timeFormatter)
 
     return buildString {
-        append("Resume at ")
+        when (workoutResumeInfo.sessionStatus) {
+            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> append("This workout is still running on your watch. Resume on phone at ")
+            WorkoutSessionStatus.STALE_ON_WEAR -> append("Your watch stopped communicating. Resume on phone at ")
+            WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+            WorkoutSessionStatus.INTERRUPTED,
+            WorkoutSessionStatus.COMPLETED -> append("Resume at ")
+        }
         append(workoutResumeInfo.exerciseName)
         append(", set ")
         append(workoutResumeInfo.setNumber)
         if (sessionTime != null) {
             append(". Started ")
             append(sessionTime)
+        }
+        if (workoutResumeInfo.sessionStatus == WorkoutSessionStatus.STALE_ON_WEAR && staleTime != null) {
+            append(". Last watch update ")
+            append(staleTime)
         }
     }
 }

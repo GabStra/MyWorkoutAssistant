@@ -80,6 +80,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -153,6 +155,15 @@ private fun getHeartRateZoneBounds(
         }
         lowerBound..maxOf(lowerBound, upperBound)
     }
+}
+
+private fun workoutHistoryStatusLabel(status: WorkoutSessionStatus?): String? = when (status) {
+    WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "In progress on watch"
+    WorkoutSessionStatus.STALE_ON_WEAR -> "Watch not responding"
+    WorkoutSessionStatus.INTERRUPTED -> "Interrupted"
+    WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "In progress on phone"
+    WorkoutSessionStatus.COMPLETED,
+    null -> null
 }
 
 private fun getZoneFromHeartRate(
@@ -312,6 +323,7 @@ fun WorkoutHistoryScreen(
     var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
 
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
+    var workoutSessionStatuses by remember { mutableStateOf<Map<UUID, WorkoutSessionStatus>>(emptyMap()) }
 
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
@@ -503,6 +515,15 @@ fun WorkoutHistoryScreen(
                 workoutHistoryDao.getWorkoutsByWorkoutId(workoutVersion.id)
             }.filter { workoutHistoryIdsWithSets.contains(it.id) }
                 .sortedBy { it.date }
+
+            val recordsByHistoryId = workoutRecordDao.getAll()
+                .associateBy { workoutRecord -> workoutRecord.workoutHistoryId }
+            workoutSessionStatuses = workoutHistories.associate { history ->
+                history.id to resolveWorkoutSessionStatus(
+                    workoutHistory = history,
+                    workoutRecord = recordsByHistoryId[history.id]
+                )
+            }
 
             if (workoutHistoryId == null) {
                 val completedHistories = workoutHistories.filter { it.isDone }
@@ -762,16 +783,31 @@ fun WorkoutHistoryScreen(
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                Text(
+                Column(
                     modifier = Modifier
                         .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
-                        timeFormatter
-                    ),
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " + selectedWorkoutHistory!!.time.format(
+                            timeFormatter
+                        ),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    workoutHistoryStatusLabel(
+                        workoutSessionStatuses[selectedWorkoutHistory!!.id]
+                    )?.let { statusLabel ->
+                        Text(
+                            text = statusLabel,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.width(10.dp))
                 Box(
                     modifier = Modifier.size(25.dp),

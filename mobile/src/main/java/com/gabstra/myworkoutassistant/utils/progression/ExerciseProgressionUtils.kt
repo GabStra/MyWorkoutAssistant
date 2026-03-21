@@ -52,12 +52,15 @@ import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.exerciseSessionSnapshotFromLegacySetHistories
+import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -300,19 +303,7 @@ suspend fun backfillExerciseSessionProgressions(
                 // Calculate comparisons
                 val vsExpected = compareSetListsUnordered(executedSets, finalExpectedSets)
                 
-                val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                            else SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        is BodyWeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                            else SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        else -> null
-                    }
-                } ?: emptyList()
+                val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.toExecutedSimpleSets() ?: emptyList()
 
                 val vsPrevious = if (previousSessionSets.isNotEmpty()) {
                     compareSetListsUnordered(executedSets, previousSessionSets)
@@ -321,19 +312,7 @@ suspend fun backfillExerciseSessionProgressions(
                 }
 
                 // Calculate volumes
-                val previousSessionVolume = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                            else SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        is BodyWeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                            else SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        else -> null
-                    }
-                }?.sumOf { it.weight * it.reps } ?: 0.0
+                val previousSessionVolume = previousSessionSets.sumOf { it.weight * it.reps }
 
                 val expectedVolume = finalExpectedSets.sumOf { it.weight * it.reps }
                 val executedVolume = executedSets.sumOf { it.weight * it.reps }
@@ -402,19 +381,7 @@ private suspend fun calculateExpectedSetsAndProgressionState(
         }
 
         // Get previous session sets
-        val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.mapNotNull { setHistory ->
-            when (val setData = setHistory.setData) {
-                is WeightSetData -> {
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                    else SimpleSet(setData.getWeight(), setData.actualReps)
-                }
-                is BodyWeightSetData -> {
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) null
-                    else SimpleSet(setData.getWeight(), setData.actualReps)
-                }
-                else -> null
-            }
-        } ?: emptyList()
+        val previousSessionSets = exerciseInfoBefore?.lastSuccessfulSession?.toExecutedSimpleSets() ?: emptyList()
 
         if (previousSessionSets.isEmpty()) {
             // No previous session, cannot calculate expected sets
@@ -505,6 +472,7 @@ private suspend fun updateExerciseInfoState(
 ) {
     try {
         val today = workoutHistoryDate
+        val currentSessionSnapshot = exerciseSessionSnapshotFromLegacySetHistories(currentSession)
 
         // Calculate weekly count
         var weeklyCount = 0
@@ -526,8 +494,8 @@ private suspend fun updateExerciseInfoState(
             // First session for this exercise
             ExerciseInfo(
                 id = exerciseId,
-                bestSession = currentSession,
-                lastSuccessfulSession = currentSession,
+                bestSession = currentSessionSnapshot,
+                lastSuccessfulSession = currentSessionSnapshot,
                 successfulSessionCounter = 1u,
                 sessionFailedCounter = 0u,
                 timesCompletedInAWeek = weeklyCount,
@@ -547,24 +515,12 @@ private suspend fun updateExerciseInfoState(
                 info = info.copy(lastSessionWasDeload = false)
 
                 // Convert best session to SimpleSet list for comparison
-                val bestSessionSets = info.bestSession.mapNotNull { setHistory ->
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                            SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        is BodyWeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                            SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        else -> null
-                    }
-                }
+                val bestSessionSets = info.bestSession.toExecutedSimpleSets()
 
                 // Check if current session is better than best session
                 val vsBest = compareSetListsUnordered(executedSets, bestSessionSets)
                 if (vsBest == Ternary.ABOVE) {
-                    info = info.copy(bestSession = currentSession)
+                    info = info.copy(bestSession = currentSessionSnapshot)
                 }
 
                 if (progressionState != null) {
@@ -574,7 +530,7 @@ private suspend fun updateExerciseInfoState(
 
                         info = if (isSuccess) {
                             info.copy(
-                                lastSuccessfulSession = currentSession,
+                                lastSuccessfulSession = currentSessionSnapshot,
                                 successfulSessionCounter = info.successfulSessionCounter.inc(),
                                 sessionFailedCounter = 0u
                             )
@@ -590,7 +546,7 @@ private suspend fun updateExerciseInfoState(
                             Ternary.ABOVE -> {
                                 // Exceeded retry target - success
                                 info = info.copy(
-                                    lastSuccessfulSession = currentSession,
+                                    lastSuccessfulSession = currentSessionSnapshot,
                                     successfulSessionCounter = info.successfulSessionCounter.inc(),
                                     sessionFailedCounter = 0u
                                 )
@@ -598,7 +554,7 @@ private suspend fun updateExerciseInfoState(
                             Ternary.EQUAL -> {
                                 // Met retry target exactly - complete retry, reset counters
                                 info = info.copy(
-                                    lastSuccessfulSession = currentSession,
+                                    lastSuccessfulSession = currentSessionSnapshot,
                                     successfulSessionCounter = 0u,
                                     sessionFailedCounter = 0u
                                 )
@@ -611,26 +567,14 @@ private suspend fun updateExerciseInfoState(
                     }
                 } else {
                     // No progression state - compare against last successful session
-                    val lastSessionSets = info.lastSuccessfulSession.mapNotNull { setHistory ->
-                        when (val setData = setHistory.setData) {
-                            is WeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                SimpleSet(setData.getWeight(), setData.actualReps)
-                            }
-                            is BodyWeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                SimpleSet(setData.getWeight(), setData.actualReps)
-                            }
-                            else -> null
-                        }
-                    }
+                    val lastSessionSets = info.lastSuccessfulSession.toExecutedSimpleSets()
 
                     val vsLast = compareSetListsUnordered(executedSets, lastSessionSets)
                     val isSuccess = vsLast == Ternary.ABOVE || vsLast == Ternary.EQUAL
 
                     info = if (isSuccess) {
                         info.copy(
-                            lastSuccessfulSession = currentSession,
+                            lastSuccessfulSession = currentSessionSnapshot,
                             successfulSessionCounter = info.successfulSessionCounter.inc(),
                             sessionFailedCounter = 0u
                         )

@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import java.time.format.DateTimeFormatter
 
@@ -36,6 +37,7 @@ fun WorkoutHistoryCard(
     appViewModel: AppViewModel,
     timeFormatter: DateTimeFormatter,
     statusBadgeText: String? = null,
+    sessionStatus: WorkoutSessionStatus? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -65,7 +67,11 @@ fun WorkoutHistoryCard(
         ) {
             Text(
                 modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
-                text = if (workoutHistory.isDone) workout.name else "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}",
+                text = if (sessionStatus == WorkoutSessionStatus.INTERRUPTED) {
+                    "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}"
+                } else {
+                    workout.name
+                },
                 color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                 style = MaterialTheme.typography.bodyLarge,
             )

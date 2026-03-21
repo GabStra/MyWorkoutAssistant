@@ -49,6 +49,9 @@ fun WeightSetForm(
 ) {
     val repsState = remember { mutableStateOf(weightSet?.reps?.toString() ?: "") }
     val weightState = remember { mutableStateOf(weightSet?.weight?.toString() ?: "0") }
+    val shouldReapplyHistoryState = remember {
+        mutableStateOf(weightSet?.shouldReapplyHistoryToSet ?: true)
+    }
 
     var possibleCombinations by remember { mutableStateOf<kotlin.collections.Set<Pair<Double, String>>>(emptySet()) }
     var isLoadingCombinations by remember { mutableStateOf(true) }
@@ -183,6 +186,11 @@ fun WeightSetForm(
                 .fillMaxWidth()
                 .padding(8.dp)
         )
+        SetHistoryReapplySetting(
+            checked = shouldReapplyHistoryState.value,
+            onCheckedChange = { shouldReapplyHistoryState.value = it },
+            subtitle = "When enabled, the last completed execution can prefill this programmed set in future sessions."
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -218,7 +226,8 @@ fun WeightSetForm(
                             SetSubCategory.CalibrationPendingSet
                         } else {
                             SetSubCategory.WorkSet
-                        }
+                        },
+                        shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
                     )
 
                     onSetUpsert(newWeightSet)

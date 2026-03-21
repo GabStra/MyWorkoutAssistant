@@ -8,6 +8,7 @@ import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -21,9 +22,11 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWork
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
@@ -36,6 +39,10 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
+import com.gabstra.myworkoutassistant.shared.workout.model.isWorkoutRecordFresh
+import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -87,7 +94,12 @@ class DataLayerListenerService : WearableListenerService() {
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
         .create()
 
     @OptIn(ExperimentalEncodingApi::class)
@@ -295,6 +307,40 @@ class DataLayerListenerService : WearableListenerService() {
         val existingHistory =
             workoutHistoryDao.getWorkoutHistoryById(existingRecord.workoutHistoryId) ?: return true
 
+        if (incomingRecord.activeSessionRevision > existingRecord.activeSessionRevision) {
+            return true
+        }
+        if (incomingRecord.activeSessionRevision < existingRecord.activeSessionRevision) {
+            Log.w(
+                "WorkoutSync",
+                "Ignoring stale workout record revision for workoutId=$workoutId " +
+                    "incomingRevision=${incomingRecord.activeSessionRevision} " +
+                    "existingRevision=${existingRecord.activeSessionRevision}"
+            )
+            return false
+        }
+        val incomingOwner = incomingRecord.ownerDeviceOrDefault()
+        val existingOwner = existingRecord.ownerDeviceOrDefault()
+        if (existingOwner == SessionOwnerDevice.PHONE && incomingOwner == SessionOwnerDevice.WEAR) {
+            Log.w(
+                "WorkoutSync",
+                "Ignoring Wear-owned update because phone already owns workoutId=$workoutId " +
+                    "at revision=${existingRecord.activeSessionRevision}"
+            )
+            return false
+        }
+        if (
+            incomingOwner == SessionOwnerDevice.WEAR &&
+            existingOwner == SessionOwnerDevice.WEAR &&
+            !isWorkoutRecordFresh(incomingRecord) &&
+            isWorkoutRecordFresh(existingRecord)
+        ) {
+            Log.w(
+                "WorkoutSync",
+                "Ignoring stale Wear workout record for workoutId=$workoutId"
+            )
+            return false
+        }
         if (incomingHistory.version > existingHistory.version) {
             return true
         }
@@ -914,8 +960,28 @@ class DataLayerListenerService : WearableListenerService() {
                                                     LocalDateTimeAdapter()
                                                 )
                                                 .registerTypeAdapter(
+                                                    Set::class.java,
+                                                    SetAdapter()
+                                                )
+                                                .registerTypeAdapter(
                                                     SetData::class.java,
                                                     SetDataAdapter()
+                                                )
+                                                .registerTypeAdapter(
+                                                    BodyWeightSetData::class.java,
+                                                    SetDataAdapter()
+                                                )
+                                                .registerTypeAdapter(
+                                                    RestSetData::class.java,
+                                                    SetDataAdapter()
+                                                )
+                                                .registerTypeAdapter(
+                                                    WeightSetData::class.java,
+                                                    SetDataAdapter()
+                                                )
+                                                .registerTypeAdapter(
+                                                    ExerciseSessionSnapshot::class.java,
+                                                    ExerciseSessionSnapshotAdapter()
                                                 )
                                                 .create()
 

@@ -36,6 +36,7 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.composables.SetHistoryReapplySetting
 import com.gabstra.myworkoutassistant.composables.SectionDivider
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
@@ -54,6 +55,9 @@ fun RestSetForm(
 ) {
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(restSet?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
+    val shouldReapplyHistoryState = remember {
+        mutableStateOf(restSet?.shouldReapplyHistoryToSet ?: false)
+    }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
     Box(modifier = Modifier.fillMaxSize()) {
@@ -130,6 +134,11 @@ fun RestSetForm(
                         hms.value = Triple(hour, minute, second)
                     }
                 )
+                SetHistoryReapplySetting(
+                    checked = shouldReapplyHistoryState.value,
+                    onCheckedChange = { shouldReapplyHistoryState.value = it },
+                    subtitle = "Rest history is still saved when this is off. Keep this off unless completed rests should overwrite the programmed rest next time."
+                )
             }
 
             SectionDivider()
@@ -155,6 +164,7 @@ fun RestSetForm(
                         val newRest = RestSet(
                             id = restSet?.id ?: UUID.randomUUID(),
                             timeInSeconds = TimeConverter.hmsToTotalSeconds(hours, minutes, seconds),
+                            shouldReapplyHistoryToSet = shouldReapplyHistoryState.value
                         )
 
                         onRestSetUpsert(newRest)
