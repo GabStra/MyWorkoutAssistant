@@ -334,6 +334,8 @@ fun WeightSetScreen(
                 text = repsText,
                 style = style,
                 color = textColor,
+                fadeInMillis = 0,
+                hideUntilMeasuredOnTextChange = true,
             )
         }
     }
@@ -404,6 +406,8 @@ fun WeightSetScreen(
                 text = weightText,
                 style = style,
                 color = textColor,
+                fadeInMillis = 0,
+                hideUntilMeasuredOnTextChange = true,
             )
         }
     }

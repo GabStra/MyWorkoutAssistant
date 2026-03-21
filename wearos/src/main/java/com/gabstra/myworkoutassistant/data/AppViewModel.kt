@@ -27,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
+import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
@@ -824,16 +825,24 @@ open class AppViewModel : WorkoutViewModel() {
         onEnd(false)
     }
 
-    private suspend fun resolveWorkoutHistoryForSync() =
-        currentWorkoutHistory?.id?.let { workoutHistoryDao.getWorkoutHistoryById(it) }
-            ?: workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
-                selectedWorkout.value.id,
-                isDone = false
-            )
-            ?: workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
-                selectedWorkout.value.id,
-                isDone = true
-            )
+    private suspend fun resolveWorkoutHistoryForSync(): com.gabstra.myworkoutassistant.shared.WorkoutHistory? {
+        val selectedWorkoutId = selectedWorkout.value.id
+        val persistedCurrentHistory = currentWorkoutHistory?.id?.let { workoutHistoryDao.getWorkoutHistoryById(it) }
+        val latestUnfinishedHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
+            selectedWorkoutId,
+            isDone = false
+        )
+        val latestCompletedHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(
+            selectedWorkoutId,
+            isDone = true
+        )
+
+        return if (workoutState.value is WorkoutState.Completed) {
+            latestCompletedHistory ?: persistedCurrentHistory ?: latestUnfinishedHistory
+        } else {
+            persistedCurrentHistory ?: latestUnfinishedHistory ?: latestCompletedHistory
+        }
+    }
 
     private suspend fun buildWorkoutHistoryStoreForSelectedWorkout(
         workoutHistory: com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -1333,4 +1342,6 @@ open class AppViewModel : WorkoutViewModel() {
             allWorkouts.filter { it.workoutPlanId == planId }
         }
     }
+
+    override fun activeSessionOwnerDevice(): SessionOwnerDevice = SessionOwnerDevice.WEAR
 }

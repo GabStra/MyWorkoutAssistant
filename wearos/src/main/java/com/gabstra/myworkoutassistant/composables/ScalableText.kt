@@ -48,6 +48,7 @@ import androidx.wear.compose.material3.LocalTextConfiguration
 import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 import kotlin.math.min
@@ -63,7 +64,8 @@ fun ScalableText(
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
     fadeInMillis: Int = 250, // Slower fade for a premium feel
-    scaleDownOnly: Boolean = true
+    scaleDownOnly: Boolean = true,
+    hideUntilMeasuredOnTextChange: Boolean = false
 ) {
     ScalableText(
         text = AnnotatedString(text),
@@ -75,7 +77,8 @@ fun ScalableText(
         minTextSize = minTextSize,
         contentAlignment = contentAlignment,
         fadeInMillis = fadeInMillis,
-        scaleDownOnly = scaleDownOnly
+        scaleDownOnly = scaleDownOnly,
+        hideUntilMeasuredOnTextChange = hideUntilMeasuredOnTextChange
     )
 }
 
@@ -90,7 +93,8 @@ fun ScalableText(
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
     fadeInMillis: Int = 250, // Slower fade for a premium feel
-    scaleDownOnly: Boolean = true
+    scaleDownOnly: Boolean = true,
+    hideUntilMeasuredOnTextChange: Boolean = false
 ) {
     val isInspectionMode = LocalInspectionMode.current
 
@@ -201,12 +205,22 @@ fun ScalableText(
         // 3. Handle the Initial Fade-In
         val alphaAnim = remember { Animatable(0f) }
 
-        // Trigger ONLY on initial composition (Unit key), not when text changes
-        LaunchedEffect(Unit) {
-            if (fadeInMillis > 0) {
-                alphaAnim.snapTo(0f)
+        val visibilityAnimationKey = if (hideUntilMeasuredOnTextChange) {
+            text to fittedSize
+        } else {
+            Unit
+        }
+
+        LaunchedEffect(visibilityAnimationKey) {
+            alphaAnim.snapTo(0f)
+            if (hideUntilMeasuredOnTextChange) {
+                withFrameNanos { }
+            } else {
                 // Small delay ensures layout is stable before making it visible
                 delay(50)
+            }
+
+            if (fadeInMillis > 0) {
                 alphaAnim.animateTo(
                     targetValue = 1f,
                     animationSpec = tween(
@@ -425,8 +439,6 @@ private fun TextOverflow.toAndroidEllipsize(): TextUtils.TruncateAt? {
 }
 
 private class BoundsAwareTextView(context: Context) : AppCompatTextView(context) {
-    private val textBounds = Rect()
-
     override fun onDraw(canvas: Canvas) {
         val currentText = text?.toString().orEmpty()
         val currentLayout = layout
@@ -435,17 +447,13 @@ private class BoundsAwareTextView(context: Context) : AppCompatTextView(context)
             return
         }
 
-        paint.getTextBounds(currentText, 0, currentText.length, textBounds)
-        if (textBounds.isEmpty) {
-            super.onDraw(canvas)
-            return
-        }
-
         val contentTop = compoundPaddingTop.toFloat()
         val contentHeight = (height - compoundPaddingTop - compoundPaddingBottom).toFloat()
         val baseline = compoundPaddingTop + currentLayout.getLineBaseline(0).toFloat()
-        val glyphTop = baseline + textBounds.top
-        val desiredGlyphTop = contentTop + ((contentHeight - textBounds.height()) / 2f)
+        val fontMetrics = paint.fontMetrics
+        val fontBoxHeight = (fontMetrics.descent - fontMetrics.ascent).coerceAtLeast(1f)
+        val glyphTop = baseline + fontMetrics.ascent
+        val desiredGlyphTop = contentTop + ((contentHeight - fontBoxHeight) / 2f)
         val verticalShift = desiredGlyphTop - glyphTop
 
         val saveCount = canvas.save()

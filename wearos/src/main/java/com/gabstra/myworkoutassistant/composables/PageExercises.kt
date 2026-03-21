@@ -86,6 +86,8 @@ internal sealed class PageExercisesItem {
 
     data class RestPage(
         val restState: WorkoutState.Rest,
+        val previousDisplayName: AnnotatedString,
+        val nextDisplayName: AnnotatedString,
         override val representativeExercise: Exercise,
     ) : PageExercisesItem()
 }
@@ -119,8 +121,44 @@ private fun resolveRestPageRepresentativeExercise(
     return viewModel.exercisesById[nextExerciseId]
 }
 
+private fun resolveSequenceItemRepresentativeExercise(
+    viewModel: AppViewModel,
+    item: WorkoutStateSequenceItem,
+): Exercise? {
+    return when (item) {
+        is WorkoutStateSequenceItem.Container -> {
+            when (val container = item.container) {
+                is WorkoutStateContainer.ExerciseState -> viewModel.exercisesById[container.exerciseId]
+                is WorkoutStateContainer.SupersetState ->
+                    viewModel.exercisesBySupersetId[container.supersetId]?.firstOrNull()
+            }
+        }
+        is WorkoutStateSequenceItem.RestBetweenExercises -> resolveRestPageRepresentativeExercise(viewModel, item.rest)
+    }
+}
+
+private fun resolveSequenceItemDisplayName(
+    viewModel: AppViewModel,
+    item: WorkoutStateSequenceItem,
+): AnnotatedString? {
+    return when (item) {
+        is WorkoutStateSequenceItem.Container -> {
+            when (val container = item.container) {
+                is WorkoutStateContainer.ExerciseState ->
+                    viewModel.exercisesById[container.exerciseId]?.let { AnnotatedString(it.name) }
+                is WorkoutStateContainer.SupersetState ->
+                    viewModel.exercisesBySupersetId[container.supersetId]
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let(::buildSupersetDisplayName)
+            }
+        }
+        is WorkoutStateSequenceItem.RestBetweenExercises -> null
+    }
+}
+
 internal fun buildPageExercisesItems(viewModel: AppViewModel): List<PageExercisesItem> {
-    return viewModel.getWorkoutSequenceItems().mapNotNull { item ->
+    val sequenceItems = viewModel.getWorkoutSequenceItems()
+    return sequenceItems.mapIndexedNotNull { index, item ->
         when (item) {
             is WorkoutStateSequenceItem.Container -> {
                 when (val container = item.container) {
@@ -140,37 +178,83 @@ internal fun buildPageExercisesItems(viewModel: AppViewModel): List<PageExercise
                 }
             }
             is WorkoutStateSequenceItem.RestBetweenExercises -> {
-                resolveRestPageRepresentativeExercise(viewModel, item.rest)
-                    ?.let { exercise -> PageExercisesItem.RestPage(item.rest, exercise) }
+                val nextExercise = resolveRestPageRepresentativeExercise(viewModel, item.rest) ?: return@mapIndexedNotNull null
+                val previousItem = sequenceItems
+                    .subList(0, index)
+                    .asReversed()
+                    .firstOrNull { previousItem ->
+                        resolveSequenceItemRepresentativeExercise(viewModel, previousItem) != null
+                    } ?: return@mapIndexedNotNull null
+                val previousDisplayName = resolveSequenceItemDisplayName(viewModel, previousItem)
+                    ?: return@mapIndexedNotNull null
+                val nextSequenceItem = sequenceItems
+                    .drop(index + 1)
+                    .firstOrNull()
+                val nextDisplayName = nextSequenceItem
+                    ?.let { resolveSequenceItemDisplayName(viewModel, it) }
+                    ?: AnnotatedString(nextExercise.name)
+
+                PageExercisesItem.RestPage(
+                    restState = item.rest,
+                    previousDisplayName = previousDisplayName,
+                    nextDisplayName = nextDisplayName,
+                    representativeExercise = nextExercise
+                )
             }
         }
     }
 }
 
-private fun resolvePageExercisesItemIndex(
+internal fun resolvePageExercisesItemIndex(
     items: List<PageExercisesItem>,
     selectedExercise: Exercise,
-    workoutState: WorkoutState?,
     viewModel: AppViewModel,
 ): Int {
     val selectedExerciseOrSupersetId = resolveExerciseOrSupersetId(viewModel, selectedExercise.id)
-    val isCurrentInterExerciseRest = workoutState is WorkoutState.Rest && workoutState.exerciseId == null
 
-    if (isCurrentInterExerciseRest && selectedExercise.id == resolveRestPageRepresentativeExercise(viewModel, workoutState)?.id) {
-        val restIndex = items.indexOfFirst { page ->
-            page is PageExercisesItem.RestPage && page.restState == workoutState
-        }
-        if (restIndex >= 0) return restIndex
-    }
-
-    val directIndex = items.indexOfFirst { page ->
+    val directExerciseOrSupersetIndex = items.indexOfFirst { page ->
         when (page) {
             is PageExercisesItem.ExercisePage -> page.exercise.id == selectedExercise.id
             is PageExercisesItem.SupersetPage -> page.supersetId == selectedExerciseOrSupersetId
-            is PageExercisesItem.RestPage -> page.representativeExercise.id == selectedExercise.id
+            is PageExercisesItem.RestPage -> false
         }
     }
-    return directIndex.takeIf { it >= 0 } ?: 0
+    if (directExerciseOrSupersetIndex >= 0) return directExerciseOrSupersetIndex
+
+    val restIndex = items.indexOfFirst { page ->
+        page is PageExercisesItem.RestPage && page.representativeExercise.id == selectedExercise.id
+    }
+    return restIndex.takeIf { it >= 0 } ?: 0
+}
+
+internal fun resolvePageExercisesDisplayCounter(
+    items: List<PageExercisesItem>,
+    selectedPageIndex: Int,
+): String? {
+    if (items.isEmpty() || selectedPageIndex !in items.indices) return null
+
+    val countedPageIndices = items.mapIndexedNotNull { index, item ->
+        index.takeIf { item !is PageExercisesItem.RestPage }
+    }
+    if (countedPageIndices.size <= 1) return null
+
+    val selectedItem = items[selectedPageIndex]
+    val displayIndex = when (selectedItem) {
+        is PageExercisesItem.RestPage -> {
+            countedPageIndices.indexOfFirst { index ->
+                when (val item = items[index]) {
+                    is PageExercisesItem.ExercisePage ->
+                        item.exercise.id == selectedItem.representativeExercise.id
+                    is PageExercisesItem.SupersetPage ->
+                        item.exercises.any { exercise -> exercise.id == selectedItem.representativeExercise.id }
+                    is PageExercisesItem.RestPage -> false
+                }
+            }
+        }
+        else -> countedPageIndices.indexOf(selectedPageIndex)
+    }.takeIf { it >= 0 } ?: return null
+
+    return "${displayIndex + 1}/${countedPageIndices.size}"
 }
 
 internal fun resolvePageExercisesCurrentItemIndex(
@@ -245,7 +329,8 @@ private fun buildSupersetDisplayName(exercises: List<Exercise>): AnnotatedString
 @Composable
 private fun RestPageContent(
     restState: WorkoutState.Rest,
-    upcomingExercise: Exercise,
+    previousDisplayName: AnnotatedString,
+    nextDisplayName: AnnotatedString,
     progressState: ProgressState,
 ) {
     val borderColor: Color = when (progressState) {
@@ -257,13 +342,53 @@ private fun RestPageContent(
     val restSeconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
     val shape = RoundedCornerShape(25)
 
+    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 22.5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(7.5.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        ) {
+            Text(
+                text = "FROM",
+                style = MaterialTheme.typography.bodyExtraSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center
+            )
+            ExerciseNameText(
+                text = previousDisplayName,
+                modifier = Modifier.fillMaxWidth(),
+                style = titleStyle,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        ) {
+            Text(
+                text = "TO",
+                style = MaterialTheme.typography.bodyExtraSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center
+            )
+            ExerciseNameText(
+                text = nextDisplayName,
+                modifier = Modifier.fillMaxWidth(),
+                style = titleStyle,
+                textAlign = TextAlign.Center
+            )
+        }
+
         Box(
             modifier = Modifier
                 .height(25.dp)
@@ -271,24 +396,12 @@ private fun RestPageContent(
             contentAlignment = Alignment.Center
         ) {
             ScalableText(
-                modifier = Modifier.padding(2.5.dp),
+                modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
                 text = "REST ${FormatTime(restSeconds)}",
-                style = MaterialTheme.typography.numeralSmall,
+                style = MaterialTheme.typography.numeralMedium,
                 color = textColor,
             )
         }
-        Text(
-            text = "UP NEXT",
-            style = MaterialTheme.typography.bodyExtraSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            textAlign = TextAlign.Center
-        )
-        ExerciseNameText(
-            text = AnnotatedString(upcomingExercise.name),
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            textAlign = TextAlign.Center
-        )
     }
 }
 
@@ -323,7 +436,6 @@ fun PageExercises(
                 resolvePageExercisesItemIndex(
                     items = pageItems,
                     selectedExercise = selectedExercise,
-                    workoutState = workoutState,
                     viewModel = viewModel
                 )
             }
@@ -343,6 +455,12 @@ fun PageExercises(
     val selectedPageItem = pageItems.getOrNull(selectedPageIndex.value)
     val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
     val pageCount = pageItems.size
+    val displayCounter = remember(pageItems, selectedPageIndex.value) {
+        resolvePageExercisesDisplayCounter(
+            items = pageItems,
+            selectedPageIndex = selectedPageIndex.value
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -354,45 +472,37 @@ fun PageExercises(
             verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                when (selectedPageItem) {
-                    is PageExercisesItem.RestPage -> {
-                        Text(
-                            text = "REST",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 22.5.dp),
-                            style = titleStyle,
-                            textAlign = TextAlign.Center
-                        )
+            if(selectedPageItem !is PageExercisesItem.RestPage){
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when (selectedPageItem) {
+                        is PageExercisesItem.SupersetPage -> {
+                            ExerciseNameText(
+                                text = buildSupersetDisplayName(selectedPageItem.exercises),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(25.dp)
+                                    .padding(horizontal = 22.5.dp),
+                                style = titleStyle,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        is PageExercisesItem.ExercisePage -> {
+                            ExerciseNameText(
+                                text = AnnotatedString(selectedPageItem.exercise.name),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(25.dp)
+                                    .padding(horizontal = 22.5.dp),
+                                style = titleStyle,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        null -> Unit
                     }
-                    is PageExercisesItem.SupersetPage -> {
-                        ExerciseNameText(
-                            text = buildSupersetDisplayName(selectedPageItem.exercises),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(25.dp)
-                                .padding(horizontal = 22.5.dp),
-                            style = titleStyle,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    is PageExercisesItem.ExercisePage -> {
-                        ExerciseNameText(
-                            text = AnnotatedString(selectedPageItem.exercise.name),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(25.dp)
-                                .padding(horizontal = 22.5.dp),
-                            style = titleStyle,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    null -> Unit
                 }
             }
 
@@ -404,12 +514,12 @@ fun PageExercises(
                 when (selectedPageItem) {
                     is PageExercisesItem.SupersetPage -> {
                         SupersetMetadataStrip(
-                            containerLabel = if (pageCount > 1) "${selectedPageIndex.value + 1}/$pageCount" else null
+                            containerLabel = displayCounter
                         )
                     }
                     is PageExercisesItem.ExercisePage -> {
                         ExerciseMetadataStrip(
-                            exerciseLabel = if (pageCount > 1) "${selectedPageIndex.value + 1}/$pageCount" else null,
+                            exerciseLabel = displayCounter,
                             supersetExerciseIndex = null,
                             supersetExerciseTotal = null,
                             sideIndicator = null,
@@ -417,14 +527,14 @@ fun PageExercises(
                         )
                     }
                     is PageExercisesItem.RestPage -> {
-                        if (pageCount > 1) {
+/*                        if (displayCounter != null) {
                             Text(
-                                text = "${selectedPageIndex.value + 1}/$pageCount",
+                                text = displayCounter,
                                 style = MaterialTheme.typography.bodyExtraSmall,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
-                        }
+                        }*/
                     }
                     null -> Unit
                 }
@@ -440,7 +550,8 @@ fun PageExercises(
                     is PageExercisesItem.RestPage -> {
                         RestPageContent(
                             restState = selectedPageItem.restState,
-                            upcomingExercise = selectedPageItem.representativeExercise,
+                            previousDisplayName = selectedPageItem.previousDisplayName,
+                            nextDisplayName = selectedPageItem.nextDisplayName,
                             progressState = progressState
                         )
                     }

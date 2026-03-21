@@ -44,9 +44,12 @@ import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
+import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
@@ -64,6 +67,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
@@ -908,12 +912,14 @@ suspend fun sendWorkoutHistoryStore(
             .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
             .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
             .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+            .registerTypeAdapter(Set::class.java, SetAdapter())
             .registerTypeAdapter(SetData::class.java, SetDataAdapter())
             .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
             .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+            .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
             .create()
     val jsonString = gson.toJson(workoutHistoryStore)
     val chunkSize = 50000 // Adjust the chunk size as needed
