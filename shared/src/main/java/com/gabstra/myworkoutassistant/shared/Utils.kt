@@ -6,12 +6,14 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -25,6 +27,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -37,6 +40,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
@@ -79,6 +83,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .create()
     return gson.toJson(workoutStore)
 }
@@ -169,6 +174,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
@@ -197,9 +203,11 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .setPrettyPrinting()
         .create()
 
@@ -272,10 +280,12 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)
 }
@@ -289,11 +299,11 @@ fun initializeSetData(set: Set): SetData = when (set) {
 }
 
 fun getNewSet(set: Set): Set = when (set) {
-    is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight,set.subCategory)
-    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.subCategory)
-    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
-    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop)
-    is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory)
+    is WeightSet -> WeightSet(UUID.randomUUID(),set.reps, set.weight,set.subCategory, set.shouldReapplyHistoryToSet)
+    is BodyWeightSet -> BodyWeightSet(UUID.randomUUID(),set.reps,set.additionalWeight,set.subCategory, set.shouldReapplyHistoryToSet)
+    is TimedDurationSet -> TimedDurationSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
+    is EnduranceSet -> EnduranceSet(UUID.randomUUID(),set.timeInMillis,set.autoStart,set.autoStop, set.shouldReapplyHistoryToSet)
+    is RestSet -> RestSet(UUID.randomUUID(),set.timeInSeconds,set.subCategory, set.shouldReapplyHistoryToSet)
 }
 
 fun copySetData(setData: SetData): SetData = when (setData) {
@@ -314,14 +324,18 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
     }
 }
 
-fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
+fun getNewSetFromSetHistory(
+    setHistory: SetHistory,
+    shouldReapplyHistoryToSet: Boolean? = null
+): Set {
     when (val setData = setHistory.setData) {
         is WeightSetData -> {
             return WeightSet(
                 id = setHistory.setId,
                 reps = setData.actualReps,
                 weight = setData.actualWeight,
-                subCategory = setData.subCategory
+                subCategory = setData.subCategory,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
             )
         }
 
@@ -330,7 +344,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
                 id = setHistory.setId,
                 reps = setData.actualReps,
                 additionalWeight = setData.additionalWeight,
-                subCategory = setData.subCategory
+                subCategory = setData.subCategory,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
             )
         }
 
@@ -339,7 +354,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
                 id = setHistory.setId,
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
-                autoStop = setData.autoStop
+                autoStop = setData.autoStop,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
             )
         }
 
@@ -348,7 +364,8 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
                 id = setHistory.setId,
                 timeInMillis = setData.startTimer,
                 autoStart = setData.autoStart,
-                autoStop = setData.autoStop
+                autoStop = setData.autoStop,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: true
             )
         }
 
@@ -356,10 +373,113 @@ fun getNewSetFromSetHistory(setHistory: SetHistory): Set {
             return RestSet(
                 id = setHistory.setId,
                 timeInSeconds = setData.startTimer,
-                subCategory = setData.subCategory
+                subCategory = setData.subCategory,
+                shouldReapplyHistoryToSet = shouldReapplyHistoryToSet ?: false
             )
         }
     }
+}
+
+fun applySetHistoryToProgrammedSet(set: Set, setHistory: SetHistory?): Set {
+    if (setHistory == null || !set.shouldReapplyHistoryToSet || !isSetDataValid(set, setHistory.setData)) {
+        return set
+    }
+    return getNewSetFromSetHistory(
+        setHistory = setHistory,
+        shouldReapplyHistoryToSet = set.shouldReapplyHistoryToSet
+    )
+}
+
+fun applyCompletedSetHistoryToSet(set: Set, setHistory: SetHistory?): Set {
+    if (setHistory == null || !isSetDataValid(set, setHistory.setData)) {
+        return set
+    }
+    return getNewSetFromSetHistory(
+        setHistory = setHistory,
+        shouldReapplyHistoryToSet = set.shouldReapplyHistoryToSet
+    )
+}
+
+fun ExerciseSessionSnapshot.toSets(): List<Set> = sets.map { it.set }
+
+fun ExerciseSessionSnapshot.toExecutedSimpleSets(): List<SimpleSet> = sets.mapNotNull { snapshot ->
+    snapshot.simpleSet?.takeIf { snapshot.wasExecuted && !snapshot.wasSkipped }
+}
+
+fun exerciseSessionSnapshotFromSets(sets: List<Set>): ExerciseSessionSnapshot =
+    ExerciseSessionSnapshot(
+        sets = sets.map { set ->
+            SessionSetSnapshot(setId = set.id, set = set)
+        }
+    )
+
+fun exerciseSessionSnapshotFromLegacySetHistories(setHistories: List<SetHistory>): ExerciseSessionSnapshot {
+    val latestSetHistoriesById = linkedMapOf<UUID, SetHistory>()
+    setHistories
+        .sortedBy { it.order.toInt() }
+        .forEach { setHistory ->
+            if (!isTemporarySessionOnlySetData(setHistory.setData)) {
+                latestSetHistoriesById[setHistory.setId] = setHistory
+            }
+        }
+
+    return ExerciseSessionSnapshot(
+        sets = latestSetHistoriesById.values.map { setHistory ->
+            SessionSetSnapshot(
+                setId = setHistory.setId,
+                set = getNewSetFromSetHistory(setHistory),
+                simpleSet = setHistory.toSimpleSetOrNull(),
+                wasExecuted = true,
+                wasSkipped = setHistory.skipped
+            )
+        }
+    )
+}
+
+fun buildExerciseSessionSnapshot(currentSets: List<Set>, setHistories: List<SetHistory>): ExerciseSessionSnapshot {
+    val latestSetHistoryById = linkedMapOf<UUID, SetHistory>()
+    setHistories
+        .sortedBy { it.order.toInt() }
+        .forEach { setHistory ->
+            if (!isTemporarySessionOnlySetData(setHistory.setData)) {
+                latestSetHistoryById[setHistory.setId] = setHistory
+            }
+        }
+
+    return ExerciseSessionSnapshot(
+        sets = currentSets
+            .filterNot(::isTemporarySessionOnlySet)
+            .map { set ->
+                val setHistory = latestSetHistoryById[set.id]
+                SessionSetSnapshot(
+                    setId = set.id,
+                    set = applyCompletedSetHistoryToSet(set, setHistory),
+                    simpleSet = setHistory?.toSimpleSetOrNull(),
+                    wasExecuted = setHistory != null,
+                    wasSkipped = setHistory?.skipped ?: false
+                )
+            }
+    )
+}
+
+fun isTemporarySessionOnlySet(set: Set): Boolean = when (set) {
+    is WeightSet -> set.subCategory == SetSubCategory.RestPauseSet || set.subCategory == SetSubCategory.CalibrationSet
+    is BodyWeightSet -> set.subCategory == SetSubCategory.RestPauseSet || set.subCategory == SetSubCategory.CalibrationSet
+    is RestSet -> set.subCategory == SetSubCategory.RestPauseSet || set.subCategory == SetSubCategory.CalibrationSet
+    else -> false
+}
+
+fun isTemporarySessionOnlySetData(setData: SetData): Boolean = when (setData) {
+    is WeightSetData -> setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet
+    is BodyWeightSetData -> setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet
+    is RestSetData -> setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet
+    else -> false
+}
+
+fun SetHistory.toSimpleSetOrNull(): SimpleSet? = when (val setData = setData) {
+    is WeightSetData -> SimpleSet(weight = setData.actualWeight, reps = setData.actualReps)
+    is BodyWeightSetData -> SimpleSet(weight = setData.getWeight(), reps = setData.actualReps)
+    else -> null
 }
 
 val colorsByZone = arrayOf(

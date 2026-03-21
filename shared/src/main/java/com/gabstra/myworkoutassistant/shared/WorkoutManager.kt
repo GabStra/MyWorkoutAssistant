@@ -134,17 +134,24 @@ class WorkoutManager {
         }
 
         /**
-         * Merges plan sets with set history: keeps RestSets from the plan, replaces work sets from history when a matching setId exists.
-         * Used when saving a completed workout so rest-between-sets is preserved.
+         * Merges plan sets with set history while respecting each set's reapply policy.
+         * Executed history order is authoritative for any set that appears in history so
+         * in-session inserted sets keep their position. Programmed-only sets that have no
+         * matching history are appended afterward in original order.
          */
         fun mergeExerciseSetsFromHistory(originalSets: List<Set>, setHistories: List<SetHistory>): List<Set> {
-            val setHistoryBySetId = setHistories.associateBy { it.setId }
-            return originalSets.map { set ->
-                when {
-                    set is RestSet -> set
-                    else -> setHistoryBySetId[set.id]?.let { getNewSetFromSetHistory(it) } ?: set
-                }
+            val orderedSetHistories = setHistories
+                .sortedBy { it.order.toInt() }
+                .distinctBy { it.setId }
+            val originalSetsById = originalSets.associateBy { it.id }
+            val mergedSets = orderedSetHistories.map { setHistory ->
+                originalSetsById[setHistory.setId]?.let { set ->
+                    applySetHistoryToProgrammedSet(set, setHistory)
+                } ?: getNewSetFromSetHistory(setHistory)
             }
+            val historicalSetIds = orderedSetHistories.map { it.setId }.toSet()
+            val originalOnlySets = originalSets.filter { it.id !in historicalSetIds }
+            return mergedSets + originalOnlySets
         }
 
         /**

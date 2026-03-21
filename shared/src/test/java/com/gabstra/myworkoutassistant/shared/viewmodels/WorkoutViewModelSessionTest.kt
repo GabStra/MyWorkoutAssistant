@@ -18,11 +18,13 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
+import com.gabstra.myworkoutassistant.shared.exerciseSessionSnapshotFromLegacySetHistories
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
@@ -238,8 +240,8 @@ class WorkoutViewModelSessionTest {
     ) {
         val exerciseInfo = ExerciseInfo(
             id = exerciseId,
-            bestSession = bestSession.ifEmpty { lastSuccessfulSession },
-            lastSuccessfulSession = lastSuccessfulSession,
+            bestSession = exerciseSessionSnapshotFromLegacySetHistories(bestSession.ifEmpty { lastSuccessfulSession }),
+            lastSuccessfulSession = exerciseSessionSnapshotFromLegacySetHistories(lastSuccessfulSession),
             successfulSessionCounter = successfulSessionCounter,
             sessionFailedCounter = sessionFailedCounter,
             lastSessionWasDeload = lastSessionWasDeload,
@@ -1328,12 +1330,7 @@ class WorkoutViewModelSessionTest {
         assertNotNull("ExerciseInfo should exist", exerciseInfo)
         
         // Verify best session was updated
-        val bestSessionSets = exerciseInfo?.bestSession?.mapNotNull { setHistory ->
-            when (val setData = setHistory.setData) {
-                is WeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
-                else -> null
-            }
-        } ?: emptyList()
+        val bestSessionSets = exerciseInfo?.bestSession?.toExecutedSimpleSets() ?: emptyList()
         
         val executedSets = viewModel.executedSetsHistory
             .filter { it.exerciseId == testExerciseId }
@@ -1978,7 +1975,7 @@ class WorkoutViewModelSessionTest {
         assertTrue("Should have 2 unilateral sets", exerciseStates.size >= 2)
         val unilateralSets = exerciseStates.filter { it.set.id == unilateralSetId }
         assertEquals("Should have 2 sets with same set.id for unilateral", 2, unilateralSets.size)
-        assertTrue("Both unilateral sets should be same reference", unilateralSets[0] === unilateralSets[1])
+        assertTrue("Both unilateral sets should wrap the same underlying set", unilateralSets[0].set === unilateralSets[1].set)
         
         // Test getAllExerciseWorkoutStates - should return both but distinctBy should give 1
         val allExerciseStates = viewModel.getAllExerciseWorkoutStates(testExerciseId)
@@ -2020,5 +2017,3 @@ class WorkoutViewModelSessionTest {
         assertEquals("Total unique sets should be 1 for unilateral exercise", 1, totalUnique)
     }
 }
-
-

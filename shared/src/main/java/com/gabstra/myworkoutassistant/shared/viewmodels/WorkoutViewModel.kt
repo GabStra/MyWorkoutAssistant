@@ -58,6 +58,9 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetStateFac
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAssemblyService
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
+import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutPersistenceCoordinator
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRecordService
 import com.gabstra.myworkoutassistant.shared.workout.progression.SessionDecision
@@ -170,6 +173,8 @@ open class WorkoutViewModel(
     /** CoroutineContext containing the optional exception handler; use when launching root coroutines. */
     protected open fun exceptionContext(): CoroutineContext =
         coroutineExceptionHandler ?: EmptyCoroutineContext
+
+    protected open fun activeSessionOwnerDevice(): SessionOwnerDevice = SessionOwnerDevice.PHONE
 
     fun launchMain(block: suspend CoroutineScope.() -> Unit): Job =
         viewModelScope.launch(exceptionContext() + dispatchers.main, block = block)
@@ -988,6 +993,8 @@ open class WorkoutViewModel(
         val selectedWorkoutIdSnapshot = selectedWorkout.value.id
         val workoutHistoryIdSnapshot = currentWorkoutHistory?.id
         val existingRecordSnapshot = _workoutRecord
+        val ownerDevice = activeSessionOwnerDevice()
+        val lastKnownSessionState = workoutState.value::class.simpleName
         launchIO {
             var updatedRecord: WorkoutRecord? = null
             workoutRecordMutex.withLock {
@@ -996,7 +1003,10 @@ open class WorkoutViewModel(
                     workoutId = selectedWorkoutIdSnapshot,
                     workoutHistoryId = workoutHistoryIdSnapshot,
                     exerciseId = exerciseId,
-                    setIndex = setIndex
+                    setIndex = setIndex,
+                    ownerDevice = ownerDevice,
+                    lastActiveSyncAt = LocalDateTime.now(),
+                    lastKnownSessionState = lastKnownSessionState,
                 )
             }
 
@@ -1007,7 +1017,12 @@ open class WorkoutViewModel(
                     _workoutResumeInfo.value = WorkoutResumeInfo(
                         exerciseName = exercisesById[exerciseId]?.name ?: "Current exercise",
                         setNumber = setIndex.toInt() + 1,
-                        startedAt = currentWorkoutHistory?.startTime
+                        startedAt = currentWorkoutHistory?.startTime,
+                        sessionStatus = when (ownerDevice) {
+                            SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
+                            SessionOwnerDevice.WEAR -> WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
+                        },
+                        lastActiveSyncAt = updatedRecord?.lastActiveSyncAt,
                     )
                 }
                 rebuildScreenState()
@@ -1058,11 +1073,16 @@ open class WorkoutViewModel(
             ?: "Current exercise"
 
         val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
+        val sessionStatus = workoutHistory?.let { history ->
+            resolveWorkoutSessionStatus(history, workoutRecord)
+        } ?: WorkoutSessionStatus.INTERRUPTED
 
         return WorkoutResumeInfo(
             exerciseName = resumeExerciseName,
             setNumber = workoutRecord.setIndex.toInt() + 1,
-            startedAt = workoutHistory?.startTime
+            startedAt = workoutHistory?.startTime,
+            sessionStatus = sessionStatus,
+            lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
         )
     }
 
@@ -1123,6 +1143,17 @@ open class WorkoutViewModel(
                         rebuildScreenState()
                     }
                     return@withContext
+                }
+
+                _workoutRecord?.let { existingRecord ->
+                    workoutRecordMutex.withLock {
+                        _workoutRecord = workoutRecordService.adoptWorkoutRecord(
+                            existingRecord = existingRecord,
+                            ownerDevice = activeSessionOwnerDevice(),
+                            lastActiveSyncAt = LocalDateTime.now(),
+                            lastKnownSessionState = "RESUMED"
+                        )
+                    }
                 }
 
                 val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)

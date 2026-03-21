@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.workout.progression
 
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -10,9 +11,10 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.shared.applySetHistoryToProgrammedSet
 import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.shared.toSets
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -32,7 +34,7 @@ import java.util.UUID
 data class SessionDecision(
     val progressionState: ProgressionState,
     val shouldLoadLastSuccessfulSession: Boolean,
-    val lastSuccessfulSession: List<SetHistory>
+    val lastSuccessfulSession: ExerciseSessionSnapshot
 )
 
 data class ProgressionGenerationResult(
@@ -70,7 +72,7 @@ class WorkoutProgressionService(
         return SessionDecision(
             progressionState = progressionState,
             shouldLoadLastSuccessfulSession = shouldLoadLastSuccessfulSession,
-            lastSuccessfulSession = exerciseInfo?.lastSuccessfulSession ?: emptyList()
+            lastSuccessfulSession = exerciseInfo?.lastSuccessfulSession ?: ExerciseSessionSnapshot()
         )
     }
 
@@ -177,11 +179,11 @@ class WorkoutProgressionService(
             exercise.sets
         } else {
             exercise.sets.map { set ->
-                latestSetHistoryByKey[exercise.id to set.id]?.let { getNewSetFromSetHistory(it) } ?: set
+                applySetHistoryToProgrammedSet(set, latestSetHistoryByKey[exercise.id to set.id])
             }
         }
         val historySets = if (sessionDecision.shouldLoadLastSuccessfulSession) {
-            sessionDecision.lastSuccessfulSession.map { getNewSetFromSetHistory(it) }
+            sessionDecision.lastSuccessfulSession.toSets()
         } else {
             emptyList()
         }
@@ -316,5 +318,3 @@ class WorkoutProgressionService(
         return exerciseProgression to progressionState
     }
 }
-
-

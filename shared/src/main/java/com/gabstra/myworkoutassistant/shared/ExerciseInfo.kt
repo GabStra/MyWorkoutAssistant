@@ -9,8 +9,8 @@ import java.util.UUID
 data class ExerciseInfo(
     @PrimaryKey(autoGenerate = false)
     val id: UUID,
-    val bestSession: List<SetHistory>,
-    val lastSuccessfulSession: List<SetHistory>,
+    val bestSession: ExerciseSessionSnapshot,
+    val lastSuccessfulSession: ExerciseSessionSnapshot,
     val successfulSessionCounter: UInt,
     val sessionFailedCounter: UInt,
     val lastSessionWasDeload: Boolean,

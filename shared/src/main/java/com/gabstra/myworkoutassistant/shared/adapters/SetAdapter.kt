@@ -30,6 +30,7 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
 
         jsonObject.addProperty("id", src.id.toString())
         jsonObject.addProperty("type", exerciseType)
+        jsonObject.addProperty("shouldReapplyHistoryToSet", src.shouldReapplyHistoryToSet)
 
         when (src) {
             is WeightSet -> {
@@ -86,7 +87,12 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                         else -> SetSubCategory.WorkSet
                     }
                 }
-                WeightSet(id,reps, weight,subCategory)
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    true
+                }
+                WeightSet(id,reps, weight,subCategory, shouldReapplyHistoryToSet)
             }
             "BodyWeightSet" -> {
                 val reps = jsonObject.get("reps").asInt
@@ -107,19 +113,34 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                         else -> SetSubCategory.WorkSet
                     }
                 }
-                BodyWeightSet(id,reps,additionalWeight,subCategory)
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    true
+                }
+                BodyWeightSet(id,reps,additionalWeight,subCategory, shouldReapplyHistoryToSet)
             }
             "TimedDurationSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                TimedDurationSet(id,timeInMillis,autoStart,autoStop)
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    true
+                }
+                TimedDurationSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet)
             }
             "EnduranceSet" -> {
                 val timeInMillis = jsonObject.get("timeInMillis").asInt
                 val autoStart = jsonObject.get("autoStart").asBoolean
                 val autoStop = jsonObject.get("autoStop").asBoolean
-                EnduranceSet(id,timeInMillis,autoStart,autoStop)
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    true
+                }
+                EnduranceSet(id,timeInMillis,autoStart,autoStop, shouldReapplyHistoryToSet)
             }
             "RestSet" -> {
                 val timeInSeconds = jsonObject.get("timeInSeconds").asInt
@@ -134,7 +155,12 @@ class SetAdapter: JsonSerializer<Set>, JsonDeserializer<Set> {
                     val isRestPause = if(jsonObject.has("isRestPause")) jsonObject.get("isRestPause").asBoolean else false
                     if (isRestPause) SetSubCategory.RestPauseSet else SetSubCategory.WorkSet
                 }
-                RestSet(id,timeInSeconds,subCategory)
+                val shouldReapplyHistoryToSet = if (jsonObject.has("shouldReapplyHistoryToSet")) {
+                    jsonObject.get("shouldReapplyHistoryToSet").asBoolean
+                } else {
+                    false
+                }
+                RestSet(id,timeInSeconds,subCategory, shouldReapplyHistoryToSet)
             }
 
             else -> throw RuntimeException("Unsupported set type")

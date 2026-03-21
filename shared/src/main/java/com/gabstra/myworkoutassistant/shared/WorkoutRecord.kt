@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import java.time.LocalDateTime
 import java.util.UUID
 
 @Entity(tableName = "workout_record")
@@ -12,4 +13,8 @@ data class WorkoutRecord (
     val workoutHistoryId: UUID,
     val setIndex: UInt,
     val exerciseId: UUID,
+    val ownerDevice: String = "PHONE",
+    val lastActiveSyncAt: LocalDateTime? = null,
+    val activeSessionRevision: UInt = 0u,
+    val lastKnownSessionState: String? = null,
 )

@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.workout.persistence
 
 import android.util.Log
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
@@ -10,13 +11,15 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.mergeExerciseSetsFromHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.buildExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
+import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
+import com.gabstra.myworkoutassistant.shared.toSets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -264,6 +267,10 @@ internal class WorkoutPersistenceCoordinator(
                             else -> true
                         }
                     }
+                val currentSessionSnapshot = buildExerciseSessionSnapshot(
+                    currentSets = exercise.sets,
+                    setHistories = currentSession
+                )
 
                 val exerciseId = entry.key ?: return@forEach
                 val exerciseInfo = exerciseInfoDaoRef.getExerciseInfoById(exerciseId)
@@ -339,8 +346,8 @@ internal class WorkoutPersistenceCoordinator(
                 if (exerciseInfo == null) {
                     val newExerciseInfo = com.gabstra.myworkoutassistant.shared.ExerciseInfo(
                         id = exerciseId,
-                        bestSession = currentSession,
-                        lastSuccessfulSession = currentSession,
+                        bestSession = currentSessionSnapshot,
+                        lastSuccessfulSession = currentSessionSnapshot,
                         successfulSessionCounter = 1u,
                         sessionFailedCounter = 0u,
                         timesCompletedInAWeek = weeklyCount,
@@ -360,22 +367,10 @@ internal class WorkoutPersistenceCoordinator(
                     } else {
                         updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
 
-                        val bestSessionSets = updatedInfo.bestSession.mapNotNull { setHistory ->
-                            when (val setData = setHistory.setData) {
-                                is WeightSetData -> {
-                                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                    SimpleSet(setData.getWeight(), setData.actualReps)
-                                }
-                                is BodyWeightSetData -> {
-                                    if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                    SimpleSet(setData.getWeight(), setData.actualReps)
-                                }
-                                else -> null
-                            }
-                        }
+                        val bestSessionSets = updatedInfo.bestSession.toExecutedSimpleSets()
 
                         if (compareSetListsUnordered(executedSets, bestSessionSets) == Ternary.ABOVE) {
-                            updatedInfo = updatedInfo.copy(bestSession = currentSession)
+                            updatedInfo = updatedInfo.copy(bestSession = currentSessionSnapshot)
                         }
 
                         if (progressionState != null) {
@@ -386,7 +381,7 @@ internal class WorkoutPersistenceCoordinator(
                                         (vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL)
                                     updatedInfo = if (isSuccess) {
                                         updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
+                                            lastSuccessfulSession = currentSessionSnapshot,
                                             successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
                                             sessionFailedCounter = 0u
                                         )
@@ -400,12 +395,12 @@ internal class WorkoutPersistenceCoordinator(
                                 ProgressionState.RETRY -> {
                                     updatedInfo = when (vsExpected) {
                                         Ternary.ABOVE -> updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
+                                            lastSuccessfulSession = currentSessionSnapshot,
                                             successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
                                             sessionFailedCounter = 0u
                                         )
                                         Ternary.EQUAL -> updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
+                                            lastSuccessfulSession = currentSessionSnapshot,
                                             successfulSessionCounter = 0u,
                                             sessionFailedCounter = 0u
                                         )
@@ -431,7 +426,7 @@ internal class WorkoutPersistenceCoordinator(
                                     }
                                     vsExpected == Ternary.ABOVE || vsExpected == Ternary.EQUAL -> {
                                         updatedInfo.copy(
-                                            lastSuccessfulSession = currentSession,
+                                            lastSuccessfulSession = currentSessionSnapshot,
                                             successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
                                             sessionFailedCounter = 0u
                                         )
@@ -439,27 +434,15 @@ internal class WorkoutPersistenceCoordinator(
                                     else -> updatedInfo
                                 }
                             } else {
-                                val lastSessionSets = updatedInfo.lastSuccessfulSession.mapNotNull { setHistory ->
-                                    when (val setData = setHistory.setData) {
-                                        is WeightSetData -> {
-                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                            SimpleSet(setData.getWeight(), setData.actualReps)
-                                        }
-                                        is BodyWeightSetData -> {
-                                            if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
-                                            SimpleSet(setData.getWeight(), setData.actualReps)
-                                        }
-                                        else -> null
-                                    }
-                                }
+                                val lastSessionSets = updatedInfo.lastSuccessfulSession.toExecutedSimpleSets()
                                 updatedInfo = when (compareSetListsUnordered(executedSets, lastSessionSets)) {
                                     Ternary.ABOVE -> updatedInfo.copy(
-                                        lastSuccessfulSession = currentSession,
+                                        lastSuccessfulSession = currentSessionSnapshot,
                                         successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
                                         sessionFailedCounter = 0u
                                     )
                                     Ternary.EQUAL -> updatedInfo.copy(
-                                        lastSuccessfulSession = currentSession,
+                                        lastSuccessfulSession = currentSessionSnapshot,
                                         successfulSessionCounter = 0u,
                                         sessionFailedCounter = 0u
                                     )
@@ -513,8 +496,8 @@ internal class WorkoutPersistenceCoordinator(
                             else -> true
                         }
                     }
-                val mergedSets = mergeExerciseSetsFromHistory(exercise.sets, validSetHistories)
-                workoutComponents = replaceSetsInExerciseRecursively(workoutComponents, exercise, mergedSets)
+                val sessionSnapshot = buildExerciseSessionSnapshot(exercise.sets, validSetHistories)
+                workoutComponents = replaceSetsInExerciseRecursively(workoutComponents, exercise, sessionSnapshot.toSets())
             }
 
             val currentWorkoutStore = workoutStoreRepositoryRef.getWorkoutStore()
@@ -625,4 +608,3 @@ internal class WorkoutPersistenceCoordinator(
         )
     }
 }
-

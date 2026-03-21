@@ -137,8 +137,8 @@ private suspend fun applySetIdRemaps(db: AppDatabase, remaps: List<SetIdRemap>) 
         .getAllExerciseInfos()
         .mapNotNull { exerciseInfo ->
             val remap = remapsByExercise[exerciseInfo.id] ?: return@mapNotNull null
-            val updatedBest = remapSetHistoryList(exerciseInfo.bestSession, remap)
-            val updatedLast = remapSetHistoryList(exerciseInfo.lastSuccessfulSession, remap)
+            val updatedBest = remapExerciseSessionSnapshot(exerciseInfo.bestSession, remap)
+            val updatedLast = remapExerciseSessionSnapshot(exerciseInfo.lastSuccessfulSession, remap)
             if (!updatedBest.second && !updatedLast.second) {
                 return@mapNotNull null
             }
@@ -154,19 +154,22 @@ private suspend fun applySetIdRemaps(db: AppDatabase, remaps: List<SetIdRemap>) 
     }
 }
 
-private fun remapSetHistoryList(
-    histories: List<SetHistory>,
+private fun remapExerciseSessionSnapshot(
+    snapshot: ExerciseSessionSnapshot,
     remap: Map<UUID, UUID>
-): Pair<List<SetHistory>, Boolean> {
+): Pair<ExerciseSessionSnapshot, Boolean> {
     var changed = false
-    val updated = histories.map { history ->
-        val newSetId = remap[history.setId]
+    val updated = snapshot.sets.map { sessionSetSnapshot ->
+        val newSetId = remap[sessionSetSnapshot.setId]
         if (newSetId == null) {
-            history
+            sessionSetSnapshot
         } else {
             changed = true
-            history.copy(setId = newSetId, version = history.version.inc())
+            sessionSetSnapshot.copy(
+                setId = newSetId,
+                set = replaceSetId(sessionSetSnapshot.set, newSetId)
+            )
         }
     }
-    return updated to changed
+    return ExerciseSessionSnapshot(updated) to changed
 }

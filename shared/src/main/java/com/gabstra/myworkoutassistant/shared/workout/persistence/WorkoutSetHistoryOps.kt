@@ -20,9 +20,12 @@ internal object WorkoutSetHistoryOps {
         exercisesById: Map<UUID, Exercise>
     ): Boolean {
         val currentSet = WorkoutStateQueries.stateSetObjectOrNull(state) ?: return true
-        if (currentSet is RestSet) return true
 
         if (state is WorkoutState.Rest && state.isIntraSetRest) {
+            return true
+        }
+
+        if (state is WorkoutState.Rest && state.exerciseId == null) {
             return true
         }
 
@@ -33,6 +36,14 @@ internal object WorkoutSetHistoryOps {
             val hasCalibrationRIR = hasCalibrationRIR(state.currentSetData)
 
             if (exercise.doNotStoreHistory || isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) {
+                return true
+            }
+        }
+
+        if (state is WorkoutState.Rest && currentSet is RestSet) {
+            val exerciseId = state.exerciseId ?: return true
+            val exercise = exercisesById[exerciseId] ?: return true
+            if (exercise.doNotStoreHistory) {
                 return true
             }
         }
