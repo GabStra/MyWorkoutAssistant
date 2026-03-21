@@ -34,11 +34,17 @@ class WearExerciseRestPageExercisesE2ETest : WearBaseE2ETest() {
         val onExercisesPage = workoutDriver.navigateToExercisesPage()
         require(onExercisesPage) { "Exercises page did not appear from inter-exercise rest" }
 
-        val restTitleVisible = device.wait(Until.hasObject(By.text("REST")), 3_000)
-        require(restTitleVisible) { "Standalone REST title was not visible on PageExercises" }
+        val restSummaryVisible = device.wait(Until.hasObject(By.textContains("REST")), 3_000)
+        require(restSummaryVisible) { "Standalone REST summary was not visible on PageExercises" }
 
-        val upNextVisible = device.wait(Until.hasObject(By.text("UP NEXT")), 3_000)
-        require(upNextVisible) { "Standalone inter-exercise rest page did not show UP NEXT context" }
+        val fromVisible = device.wait(Until.hasObject(By.text("FROM")), 3_000)
+        require(fromVisible) { "Standalone inter-exercise rest page did not show FROM context" }
+
+        val toVisible = device.wait(Until.hasObject(By.text("TO")), 3_000)
+        require(toVisible) { "Standalone inter-exercise rest page did not show TO context" }
+
+        val previousExerciseVisible = device.wait(Until.hasObject(By.text("Bench Press")), 3_000)
+        require(previousExerciseVisible) { "Previous exercise name was not visible on inter-exercise rest page" }
 
         val nextExerciseVisible = device.wait(Until.hasObject(By.text("Barbell Row")), 3_000)
         require(nextExerciseVisible) { "Next exercise name was not visible on inter-exercise rest page" }

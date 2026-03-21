@@ -343,8 +343,16 @@ if ($TestMethod) {
 } elseif (-not $IncludeCrossDeviceTests) {
     $excludedCrossDeviceClasses = @(
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceSetSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceInsertedSetSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceInsertedRestSyncProducerE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceRestPauseSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.PhoneToWearWorkoutHistorySyncVerificationE2ETest",
-        "com.gabstra.myworkoutassistant.e2e.PhoneToWearVsLastComparisonE2ETest"
+        "com.gabstra.myworkoutassistant.e2e.PhoneToWearVsLastComparisonE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.MinimalPhoneToWearWorkoutStoreSyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.MinimalInsertedSetPhoneToWearWorkoutStoreSyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.MinimalInsertedRestPhoneToWearWorkoutStoreSyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.MinimalRestPausePhoneToWearWorkoutStoreSyncVerificationE2ETest"
     )
     $notClassArgument = $excludedCrossDeviceClasses -join ","
     Write-Host "Excluding cross-device Wear E2E classes by default:" -ForegroundColor Yellow

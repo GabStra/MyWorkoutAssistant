@@ -4,11 +4,18 @@ import android.content.Context
 import com.gabstra.myworkoutassistant.e2e.fixtures.CrossDeviceSyncPhoneWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.isWorkoutRecordFresh
+import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
+import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -208,6 +215,31 @@ object CrossDeviceSyncAssertions {
         )
     }
 
+    suspend fun waitForWearOwnedActiveState(
+        context: Context,
+        checkpoint: Checkpoint,
+        timeoutMs: Long
+    ) {
+        val db = AppDatabase.getDatabase(context)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastFailure = "Wear-owned active state was not evaluated."
+
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                assertWearOwnedActiveState(db, checkpoint)
+                return
+            } catch (error: AssertionError) {
+                lastFailure = error.message ?: error.toString()
+            }
+            delay(500)
+        }
+
+        throw AssertionError(
+            "Wear-owned active state for checkpoint '${checkpoint.label}' did not materialize within " +
+                "${timeoutMs}ms. Last failure: $lastFailure"
+        )
+    }
+
     private suspend fun assertCheckpointState(
         db: AppDatabase,
         checkpoint: Checkpoint
@@ -275,6 +307,37 @@ object CrossDeviceSyncAssertions {
         }
     }
 
+    private suspend fun assertWearOwnedActiveState(
+        db: AppDatabase,
+        checkpoint: Checkpoint
+    ) {
+        val history = resolveHistory(db = db, requiresCompletedHistory = false)
+        if (history.isDone) {
+            fail("Checkpoint ${checkpoint.label} expected an unfinished active history, but found a completed one.")
+        }
+
+        val workoutRecord = db.workoutRecordDao()
+            .getWorkoutRecordByWorkoutId(CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID)
+            ?: fail("Checkpoint ${checkpoint.label} expected an active Wear-owned workout record.")
+
+        assertWearOwnedWorkoutRecord(
+            workoutRecord = workoutRecord,
+            workoutHistory = history,
+            checkpointLabel = checkpoint.label
+        )
+
+        val actualSetIds = db.setHistoryDao()
+            .getSetHistoriesByWorkoutHistoryIdOrdered(history.id)
+            .take(checkpoint.expectedSetIds.size)
+            .map { it.setId }
+        if (actualSetIds != checkpoint.expectedSetIds) {
+            fail(
+                "Checkpoint ${checkpoint.label} expected synced set ids=${checkpoint.expectedSetIds} " +
+                    "but found $actualSetIds."
+            )
+        }
+    }
+
     private suspend fun assertFinalDerivedState(context: Context) {
         val db = AppDatabase.getDatabase(context)
         val history = resolveHistory(db = db, requiresCompletedHistory = true)
@@ -311,6 +374,39 @@ object CrossDeviceSyncAssertions {
         db: AppDatabase,
         requiresCompletedHistory: Boolean
     ): WorkoutHistory {
+        val matchingHistories = resolveRecentMatchingHistories(db)
+
+        return if (requiresCompletedHistory) {
+            val completedHistories = matchingHistories.filter { it.isDone }
+            val unfinishedHistories = matchingHistories.filterNot { it.isDone }
+            if (completedHistories.size != 1) {
+                fail(
+                    "Expected exactly one recent completed workout history for " +
+                        "workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}, " +
+                        "but found completed=${completedHistories.map { it.id }} " +
+                        "all=${matchingHistories.map { "${it.id}:${it.isDone}" }}."
+                )
+            }
+            if (unfinishedHistories.isNotEmpty()) {
+                fail(
+                    "Expected no unfinished recent workout histories after completion sync, " +
+                        "but found ${unfinishedHistories.map { it.id }}."
+                )
+            }
+            completedHistories.single()
+        } else {
+            val unfinishedHistories = matchingHistories.filterNot { it.isDone }
+            if (unfinishedHistories.size != 1 || matchingHistories.size != 1) {
+                fail(
+                    "Expected exactly one recent unfinished workout history during live sync, " +
+                        "but found ${matchingHistories.map { "${it.id}:${it.isDone}" }}."
+                )
+            }
+            unfinishedHistories.single()
+        }
+    }
+
+    private suspend fun resolveRecentMatchingHistories(db: AppDatabase): List<WorkoutHistory> {
         val matchingHistories = db.workoutHistoryDao()
             .getAllWorkoutHistories()
             .filter {
@@ -320,16 +416,14 @@ object CrossDeviceSyncAssertions {
             }
             .sortedByDescending { it.version.toLong() }
 
-        val history = if (requiresCompletedHistory) {
-            matchingHistories.firstOrNull { it.isDone }
-        } else {
-            matchingHistories.firstOrNull { !it.isDone } ?: matchingHistories.firstOrNull()
+        if (matchingHistories.isEmpty()) {
+            fail(
+                "No recent workout histories found for " +
+                    "workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}."
+            )
         }
 
-        return history ?: fail(
-            "No ${if (requiresCompletedHistory) "completed" else "matching recent"} workout history " +
-                "found for workoutId=${CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID}."
-        )
+        return matchingHistories
     }
 
     private fun assertExerciseInfoMatches(
@@ -337,7 +431,7 @@ object CrossDeviceSyncAssertions {
         expectedSpecs: List<ExpectedSetSpec>,
         workoutHistoryId: UUID
     ) {
-        assertEmbeddedSetHistoryListMatches(
+        assertEmbeddedSessionSnapshotMatches(
             actual = exerciseInfo.lastSuccessfulSession,
             expected = expectedSpecs,
             workoutHistoryId = workoutHistoryId,
@@ -345,23 +439,30 @@ object CrossDeviceSyncAssertions {
         )
     }
 
-    private fun assertEmbeddedSetHistoryListMatches(
-        actual: List<SetHistory>,
+    private fun assertEmbeddedSessionSnapshotMatches(
+        actual: ExerciseSessionSnapshot,
         expected: List<ExpectedSetSpec>,
         workoutHistoryId: UUID,
         label: String
     ) {
-        if (actual.size != expected.size) {
-            fail("$label expected ${expected.size} sets but found ${actual.size}.")
+        if (actual.sets.size != expected.size) {
+            fail("$label expected ${expected.size} sets but found ${actual.sets.size}.")
         }
 
-        actual.zip(expected).forEach { (actualSet, expectedSet) ->
-            assertSetHistoryMatches(
-                actual = actualSet,
-                expected = expectedSet,
-                label = label,
-                expectedWorkoutHistoryId = workoutHistoryId
-            )
+        actual.sets.zip(expected).forEach { (actualSet, expectedSet) ->
+            val weightSet = actualSet.set as? WeightSet
+                ?: fail("$label expected WeightSet snapshot for ${expectedSet.setId}.")
+            if (actualSet.setId != expectedSet.setId) {
+                fail("$label expected setId=${expectedSet.setId} but found ${actualSet.setId}.")
+            }
+            if (weightSet.reps != expectedSet.expectedReps) {
+                fail("$label expected reps=${expectedSet.expectedReps} but found ${weightSet.reps}.")
+            }
+            if (abs(weightSet.weight - expectedSet.expectedWeight) >
+                CrossDeviceSyncPhoneWorkoutStoreFixture.WEIGHT_TOLERANCE
+            ) {
+                fail("$label expected weight=${expectedSet.expectedWeight} but found ${weightSet.weight}.")
+            }
         }
     }
 
@@ -452,6 +553,44 @@ object CrossDeviceSyncAssertions {
     private fun isHistoryRecent(workoutHistory: WorkoutHistory): Boolean {
         val ageMinutes = Duration.between(workoutHistory.startTime, LocalDateTime.now()).toMinutes()
         return ageMinutes in 0..HISTORY_RECENCY_MINUTES
+    }
+
+    private fun assertWearOwnedWorkoutRecord(
+        workoutRecord: WorkoutRecord,
+        workoutHistory: WorkoutHistory,
+        checkpointLabel: String
+    ) {
+        if (workoutRecord.workoutHistoryId != workoutHistory.id) {
+            fail(
+                "Checkpoint $checkpointLabel expected workoutRecord.workoutHistoryId=${workoutHistory.id} " +
+                    "but found ${workoutRecord.workoutHistoryId}."
+            )
+        }
+        if (workoutRecord.ownerDeviceOrDefault() != SessionOwnerDevice.WEAR) {
+            fail(
+                "Checkpoint $checkpointLabel expected a Wear-owned workout record, " +
+                    "but found owner=${workoutRecord.ownerDevice}."
+            )
+        }
+        if (workoutRecord.activeSessionRevision == 0u) {
+            fail("Checkpoint $checkpointLabel expected activeSessionRevision > 0.")
+        }
+        if (workoutRecord.lastActiveSyncAt == null) {
+            fail("Checkpoint $checkpointLabel expected lastActiveSyncAt to be populated.")
+        }
+        if (!isWorkoutRecordFresh(workoutRecord)) {
+            fail(
+                "Checkpoint $checkpointLabel expected the Wear workout record to be fresh, " +
+                    "but lastActiveSyncAt=${workoutRecord.lastActiveSyncAt}."
+            )
+        }
+        val sessionStatus = resolveWorkoutSessionStatus(workoutHistory, workoutRecord)
+        if (sessionStatus != WorkoutSessionStatus.IN_PROGRESS_ON_WEAR) {
+            fail(
+                "Checkpoint $checkpointLabel expected sessionStatus=${WorkoutSessionStatus.IN_PROGRESS_ON_WEAR} " +
+                    "but found $sessionStatus."
+            )
+        }
     }
 
     private fun fail(message: String): Nothing = throw AssertionError(message)

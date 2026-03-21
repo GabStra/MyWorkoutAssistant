@@ -143,6 +143,41 @@ class WearWorkoutDriver(
         return device.wait(Until.hasObject(exercisesPageSelector), 2_000)
     }
 
+    fun clickWorkoutActionOnPager(actionText: String, maxSwipes: Int = 4, timeoutMs: Long = 8_000) {
+        fun tryFindAction(): UiObject2? {
+            return device.wait(
+                Until.findObject(By.text(actionText)),
+                timeoutMs.coerceAtMost(1_500)
+            )
+        }
+
+        tryFindAction()?.let { action ->
+            clickObjectOrAncestorInternal(action)
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+            return
+        }
+
+        repeat(maxSwipes) {
+            navigateToPagerPage(Direction.RIGHT)
+            tryFindAction()?.let { action ->
+                clickObjectOrAncestorInternal(action)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return
+            }
+        }
+
+        repeat(maxSwipes * 2) {
+            navigateToPagerPage(Direction.LEFT)
+            tryFindAction()?.let { action ->
+                clickObjectOrAncestorInternal(action)
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                return
+            }
+        }
+
+        error("Could not find workout action '$actionText' within bidirectional pager scan.")
+    }
+
     /**
      * Finds an element, scrolling in the given directions if not immediately visible.
      * Use when content may be off-screen (e.g. in a scrollable list).

@@ -35,4 +35,19 @@ class WorkoutIntermediateSyncObservationTest {
             timeoutMs = resolvedCheckpointTimeoutMs()
         )
     }
+
+    @Test
+    fun crossDeviceSync_liveWearSessionIsWearOwnedAndNotInterrupted() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val activeCheckpoints = listOf(CrossDeviceSyncAssertions.startedCheckpoint) +
+            CrossDeviceSyncAssertions.intermediateCheckpoints.dropLast(1)
+
+        activeCheckpoints.forEach { checkpoint ->
+            CrossDeviceSyncAssertions.waitForWearOwnedActiveState(
+                context = context,
+                checkpoint = checkpoint,
+                timeoutMs = resolvedCheckpointTimeoutMs()
+            )
+        }
+    }
 }

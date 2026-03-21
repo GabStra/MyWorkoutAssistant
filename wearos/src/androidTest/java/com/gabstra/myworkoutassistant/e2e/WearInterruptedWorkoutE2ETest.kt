@@ -64,6 +64,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
+        forceActiveWorkoutIntoInterruptedState(db)
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -119,6 +120,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
+        forceActiveWorkoutIntoInterruptedState(AppDatabase.getDatabase(context))
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -285,5 +287,13 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
         return readRestTimerSecondsFromScreen()
+    }
+
+    private fun forceActiveWorkoutIntoInterruptedState(db: AppDatabase) = runBlocking {
+        val workoutRecords = db.workoutRecordDao().getAll()
+        require(workoutRecords.isNotEmpty()) { "Expected an active workout record before forcing interruption" }
+        workoutRecords.forEach { workoutRecord ->
+            db.workoutRecordDao().deleteById(workoutRecord.id)
+        }
     }
 }

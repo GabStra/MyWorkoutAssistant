@@ -1,9 +1,12 @@
 package com.gabstra.myworkoutassistant
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.text.AnnotatedString
 import com.gabstra.myworkoutassistant.composables.PageExercisesItem
 import com.gabstra.myworkoutassistant.composables.buildPageExercisesItems
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesActiveState
+import com.gabstra.myworkoutassistant.composables.resolvePageExercisesItemIndex
+import com.gabstra.myworkoutassistant.composables.resolvePageExercisesDisplayCounter
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesCurrentItemIndex
 import com.gabstra.myworkoutassistant.composables.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -117,6 +120,9 @@ class PageExercisesStateResolutionTest {
         assertEquals(PageExercisesItem.ExercisePage(firstExercise), items[0])
         assertTrue(items[1] is PageExercisesItem.RestPage)
         assertEquals(PageExercisesItem.ExercisePage(secondExercise), items[2])
+        val restPage = items[1] as PageExercisesItem.RestPage
+        assertEquals(AnnotatedString(firstExercise.name), restPage.previousDisplayName)
+        assertEquals(AnnotatedString(secondExercise.name), restPage.nextDisplayName)
     }
 
     @Test
@@ -157,15 +163,134 @@ class PageExercisesStateResolutionTest {
         assertEquals(1, index)
     }
 
+    @Test
+    fun `selected next exercise is reachable while inter exercise rest is active`() {
+        val firstExercise = createExercise(name = "Bench Press")
+        val secondExercise = createExercise(name = "Row")
+        val firstSet = createSetState(exerciseId = firstExercise.id)
+        val secondSet = createSetState(exerciseId = secondExercise.id)
+        val restState = createRestState(exerciseId = null, nextState = secondSet)
+        val viewModel = createViewModelWithSequence(
+            exercises = listOf(firstExercise, secondExercise),
+            sequence = listOf(
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = firstExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(firstSet))
+                    )
+                ),
+                WorkoutStateSequenceItem.RestBetweenExercises(restState),
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = secondExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(secondSet))
+                    )
+                )
+            ),
+            currentState = restState
+        )
+        val items = buildPageExercisesItems(viewModel)
+
+        val index = resolvePageExercisesItemIndex(
+            items = items,
+            selectedExercise = secondExercise,
+            viewModel = viewModel
+        )
+
+        assertEquals(2, index)
+    }
+
+    @Test
+    fun `display counter excludes inter exercise rest pages`() {
+        val firstExercise = createExercise(name = "Bench Press")
+        val secondExercise = createExercise(name = "Row")
+        val firstSet = createSetState(exerciseId = firstExercise.id)
+        val secondSet = createSetState(exerciseId = secondExercise.id)
+        val restState = createRestState(exerciseId = null, nextState = secondSet)
+        val viewModel = createViewModelWithSequence(
+            exercises = listOf(firstExercise, secondExercise),
+            sequence = listOf(
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = firstExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(firstSet))
+                    )
+                ),
+                WorkoutStateSequenceItem.RestBetweenExercises(restState),
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = secondExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(secondSet))
+                    )
+                )
+            ),
+            currentState = restState
+        )
+        val items = buildPageExercisesItems(viewModel)
+
+        val counter = resolvePageExercisesDisplayCounter(
+            items = items,
+            selectedPageIndex = 1
+        )
+
+        assertEquals("2/2", counter)
+    }
+
+    @Test
+    fun `rest page uses superset page naming for next container`() {
+        val firstExercise = createExercise(name = "Bench Press")
+        val supersetFirst = createExercise(name = "Curl")
+        val supersetSecond = createExercise(name = "Tricep Extension")
+        val firstSet = createSetState(exerciseId = firstExercise.id)
+        val supersetSet = createSetState(exerciseId = supersetFirst.id)
+        val restState = createRestState(exerciseId = null, nextState = supersetSet)
+        val supersetId = UUID.randomUUID()
+        val viewModel = createViewModelWithSequence(
+            exercises = listOf(firstExercise, supersetFirst, supersetSecond),
+            sequence = listOf(
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.ExerciseState(
+                        exerciseId = firstExercise.id,
+                        childItems = mutableListOf(ExerciseChildItem.Normal(firstSet))
+                    )
+                ),
+                WorkoutStateSequenceItem.RestBetweenExercises(restState),
+                WorkoutStateSequenceItem.Container(
+                    WorkoutStateContainer.SupersetState(
+                        supersetId = supersetId,
+                        childStates = mutableListOf(supersetSet)
+                    )
+                )
+            ),
+            currentState = restState,
+            supersetIdByExerciseId = mapOf(
+                supersetFirst.id to supersetId,
+                supersetSecond.id to supersetId
+            ),
+            exercisesBySupersetId = mapOf(supersetId to listOf(supersetFirst, supersetSecond))
+        )
+
+        val items = buildPageExercisesItems(viewModel)
+        val restPage = items[1] as PageExercisesItem.RestPage
+
+        assertEquals(AnnotatedString(firstExercise.name), restPage.previousDisplayName)
+        assertEquals(
+            AnnotatedString("Curl (A) ↔ Tricep Extension (B)"),
+            restPage.nextDisplayName
+        )
+    }
+
     private fun createViewModelWithSequence(
         exercises: List<Exercise>,
         sequence: List<WorkoutStateSequenceItem>,
         currentState: WorkoutState,
+        supersetIdByExerciseId: Map<UUID, UUID> = emptyMap(),
+        exercisesBySupersetId: Map<UUID, List<Exercise>> = emptyMap(),
     ): AppViewModel {
         val viewModel = AppViewModel()
         viewModel.exercisesById = exercises.associateBy { it.id }
-        viewModel.supersetIdByExerciseId = emptyMap()
-        viewModel.exercisesBySupersetId = emptyMap()
+        viewModel.supersetIdByExerciseId = supersetIdByExerciseId
+        viewModel.exercisesBySupersetId = exercisesBySupersetId
         val stateMachine = WorkoutStateMachine.fromSequence(sequence, startIndex = sequence
             .flatMap { item ->
                 when (item) {

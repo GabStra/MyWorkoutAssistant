@@ -8,6 +8,8 @@ import com.gabstra.myworkoutassistant.e2e.helpers.CrossDeviceSyncAssertions
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.Duration
@@ -62,6 +64,42 @@ class WorkoutSyncVerificationTest {
         CrossDeviceSyncAssertions.waitForFinalDerivedState(
             context = context,
             timeoutMs = resolvedSyncTimeoutMs()
+        )
+    }
+
+    @Test
+    fun crossDeviceSync_completionClearsActiveRecordAndUnfinishedHistory() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        assumeTrue(
+            "Requires a recent completed cross-device sync history. Run via run_cross_device_sync_e2e.ps1.",
+            hasRecentCompletedCrossDeviceHistory(context)
+        )
+
+        CrossDeviceSyncAssertions.waitForFinalDerivedState(
+            context = context,
+            timeoutMs = resolvedSyncTimeoutMs()
+        )
+
+        val db = AppDatabase.getDatabase(context)
+        val activeRecord = db.workoutRecordDao()
+            .getWorkoutRecordByWorkoutId(CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID)
+        assertNull(
+            "Expected the active Wear workout record to be cleared after completion sync.",
+            activeRecord
+        )
+
+        val unfinishedHistories = db.workoutHistoryDao()
+            .getAllWorkoutHistories()
+            .filter {
+                !it.isDone &&
+                    it.workoutId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_ID &&
+                    it.globalId == CrossDeviceSyncPhoneWorkoutStoreFixture.WORKOUT_GLOBAL_ID &&
+                    Duration.between(it.startTime, LocalDateTime.now()).toMinutes() in 0..HISTORY_RECENCY_MINUTES
+            }
+        assertTrue(
+            "Expected no recent unfinished histories to remain after completion sync, " +
+                "but found ${unfinishedHistories.map { it.id }}.",
+            unfinishedHistories.isEmpty()
         )
     }
 }

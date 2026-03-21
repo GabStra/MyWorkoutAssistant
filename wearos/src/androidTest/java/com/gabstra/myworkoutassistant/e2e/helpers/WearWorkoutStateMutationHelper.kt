@@ -15,6 +15,36 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.UUID
 
 object WearWorkoutStateMutationHelper {
+    fun addRestAfterCurrent(device: UiDevice, context: Context, timeoutMs: Long = 10_000): Boolean {
+        return mutateCurrentSetStructure(
+            device = device,
+            context = context,
+            timeoutMs = timeoutMs
+        ) { viewModel ->
+            viewModel.addNewRest()
+        }
+    }
+
+    fun addSetAfterCurrent(device: UiDevice, context: Context, timeoutMs: Long = 10_000): Boolean {
+        return mutateCurrentSetStructure(
+            device = device,
+            context = context,
+            timeoutMs = timeoutMs
+        ) { viewModel ->
+            viewModel.addNewSetStandard()
+        }
+    }
+
+    fun addRestPauseSetAfterCurrent(device: UiDevice, context: Context, timeoutMs: Long = 10_000): Boolean {
+        return mutateCurrentSetStructure(
+            device = device,
+            context = context,
+            timeoutMs = timeoutMs
+        ) { viewModel ->
+            viewModel.addNewRestPauseSet()
+        }
+    }
+
     fun incrementCurrentSetRepsByOne(device: UiDevice): Boolean {
         var updated = false
         withResumedViewModel { viewModel ->
@@ -119,10 +149,19 @@ object WearWorkoutStateMutationHelper {
             else -> return false
         }
         var invoked = false
+        val appContext = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
 
         withResumedViewModel { viewModel ->
             val currentState = viewModel.workoutState.value as? WorkoutState.Rest ?: return@withResumedViewModel
-            viewModel.goToNextState()
+            viewModel.storeSetData()
+            val isDone = viewModel.isNextStateCompleted()
+            viewModel.pushAndStoreWorkoutData(
+                isDone = isDone,
+                context = appContext,
+                forceNotSend = false
+            ) {
+                viewModel.goToNextState()
+            }
             invoked = true
         }
 
@@ -162,6 +201,71 @@ object WearWorkoutStateMutationHelper {
             CurrentStateSnapshot.Advanced,
             CurrentStateSnapshot.Unavailable -> null
         }
+    }
+
+    fun isWorkoutCompleted(): Boolean {
+        var completed = false
+        withResumedViewModel { viewModel ->
+            completed = viewModel.workoutState.value is WorkoutState.Completed
+        }
+        return completed
+    }
+
+    fun describeCurrentState(): String {
+        return when (val snapshot = readCurrentStateSnapshot()) {
+            is CurrentStateSnapshot.SetState -> "set:${snapshot.setId}"
+            is CurrentStateSnapshot.RestState -> "rest:${snapshot.setId}"
+            CurrentStateSnapshot.Advanced -> "advanced"
+            CurrentStateSnapshot.Unavailable -> "unavailable"
+        }
+    }
+
+    private fun mutateCurrentSetStructure(
+        device: UiDevice,
+        context: Context,
+        timeoutMs: Long,
+        mutation: (AppViewModel) -> Unit
+    ): Boolean {
+        val currentSetId = getCurrentSetId() ?: return false
+        var invoked = false
+
+        withResumedViewModel { viewModel ->
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@withResumedViewModel
+            viewModel.storeSetData()
+            viewModel.pushAndStoreWorkoutData(
+                isDone = false,
+                context = context.applicationContext,
+                forceNotSend = false
+            ) {
+                mutation(viewModel)
+            }
+            invoked = true
+        }
+
+        if (!invoked) {
+            return false
+        }
+
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            when (val snapshot = readCurrentStateSnapshot()) {
+                is CurrentStateSnapshot.RestState -> {
+                    device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                    return true
+                }
+                is CurrentStateSnapshot.SetState -> {
+                    if (snapshot.setId != currentSetId) {
+                        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                        return true
+                    }
+                }
+                CurrentStateSnapshot.Advanced,
+                CurrentStateSnapshot.Unavailable -> Unit
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+
+        return false
     }
 
     private fun withResumedViewModel(block: (AppViewModel) -> Unit) {

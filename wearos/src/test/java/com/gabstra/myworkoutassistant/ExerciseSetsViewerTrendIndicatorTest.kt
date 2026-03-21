@@ -99,7 +99,7 @@ class ExerciseSetsViewerTrendIndicatorTest {
     }
 
     @Test
-    fun `weight set reports user edits when reps change from programmed set`() {
+    fun `weight set reports user edits when reps change from previous set data`() {
         val state = createWeightSetState(
             previous = WeightSetData(actualReps = 8, actualWeight = 60.0, volume = 480.0),
             current = WeightSetData(actualReps = 9, actualWeight = 60.0, volume = 540.0)
@@ -109,9 +109,15 @@ class ExerciseSetsViewerTrendIndicatorTest {
     }
 
     @Test
-    fun `timed duration set reports user edits when duration changes from programmed set`() {
+    fun `timed duration set reports user edits when duration changes from previous set data`() {
         val state = createTimerSetState(
             set = TimedDurationSet(UUID.randomUUID(), timeInMillis = 60_000, autoStart = true, autoStop = true),
+            previous = TimedDurationSetData(
+                startTimer = 60_000,
+                endTimer = 60_000,
+                autoStart = true,
+                autoStop = true
+            ),
             current = TimedDurationSetData(
                 startTimer = 45_000,
                 endTimer = 45_000,
@@ -124,9 +130,15 @@ class ExerciseSetsViewerTrendIndicatorTest {
     }
 
     @Test
-    fun `endurance set returns no icon when duration matches programmed set`() {
+    fun `endurance set returns no icon when duration matches previous set data`() {
         val state = createTimerSetState(
             set = EnduranceSet(UUID.randomUUID(), timeInMillis = 60_000, autoStart = true, autoStop = false),
+            previous = EnduranceSetData(
+                startTimer = 60_000,
+                endTimer = 15_000,
+                autoStart = true,
+                autoStop = false
+            ),
             current = EnduranceSetData(
                 startTimer = 60_000,
                 endTimer = 15_000,
@@ -139,7 +151,7 @@ class ExerciseSetsViewerTrendIndicatorTest {
     }
 
     @Test
-    fun `bodyweight set shows lower icon when additional weight is reduced from programmed set`() {
+    fun `bodyweight set shows lower icon when additional weight is reduced from previous set data`() {
         val state = createBodyWeightSetState(
             previous = BodyWeightSetData(
                 actualReps = 10,
@@ -216,13 +228,14 @@ class ExerciseSetsViewerTrendIndicatorTest {
 
     private fun createTimerSetState(
         set: Set,
+        previous: SetData? = null,
         current: SetData,
     ): WorkoutState.Set {
         return WorkoutState.Set(
             exerciseId = UUID.randomUUID(),
             set = set,
             setIndex = 0u,
-            previousSetData = null,
+            previousSetData = previous,
             currentSetDataState = mutableStateOf(current),
             hasNoHistory = false,
             skipped = false,
