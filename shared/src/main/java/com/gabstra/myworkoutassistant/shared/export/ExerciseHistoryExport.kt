@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -16,6 +17,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
+import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -37,6 +40,7 @@ suspend fun buildExerciseHistoryMarkdown(
     exercise: Exercise,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
     workouts: List<Workout>,
     workoutStore: WorkoutStore
@@ -246,92 +250,108 @@ suspend fun buildExerciseHistoryMarkdown(
         var totalVolume = 0.0
         var totalDuration = 0
 
-        for ((setIndex, setHistory) in activeSetHistories.withIndex()) {
-            val setLine = StringBuilder("S${setIndex + 1}: ")
-            when (val setData = setHistory.setData) {
-                is WeightSetData -> {
-                    val (adjustedWeight, adjustedVolume) = adjustWeightAndVolume(
-                        setData.actualWeight,
-                        setData.actualReps,
-                        achievableWeights
-                    )
-                    setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                    totalVolume += adjustedVolume
+        val restsForSession =
+            restHistoryDao.getByWorkoutHistoryIdAndExerciseId(workoutHistory.id, exercise.id)
+        val timeline = mergeSessionTimeline(activeSetHistories, restsForSession)
+        var workSetOrdinal = 0
+        for (step in timeline) {
+            when (step) {
+                is SessionTimelineItem.RestStep -> {
+                    val rh = step.history
+                    val sd = rh.setData as? RestSetData
+                    val secs = sd?.startTimer?.coerceAtLeast(0) ?: 0
+                    markdown.append("Rest: ${formatDuration(secs)}\n")
                 }
-                is BodyWeightSetData -> {
-                    val totalWeight = setData.getWeight()
-                    setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                    if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                    totalVolume += setData.volume
-                }
-                is TimedDurationSetData -> {
-                    val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
-                    setLine.append("Dur:${formatDuration(durationSeconds)}")
-                    totalDuration += durationSeconds
-                }
-                is EnduranceSetData -> {
-                    val durationSeconds = setData.endTimer / 1000
-                    setLine.append("Dur:${formatDuration(durationSeconds)}")
-                    totalDuration += durationSeconds
-                }
-                else -> setLine.append("Rest/Other")
-            }
-
-            if (workoutHistory.heartBeatRecords.isNotEmpty() &&
-                setHistory.startTime != null &&
-                setHistory.endTime != null
-            ) {
-                val hrTimeOffset = Duration.between(
-                    workoutHistory.startTime,
-                    setHistory.startTime
-                ).seconds.toInt()
-
-                val setDuration = Duration.between(
-                    setHistory.startTime,
-                    setHistory.endTime
-                ).seconds.toInt()
-
-                val startSampleIndex = hrTimeOffset * 2
-                val endSampleIndex = (hrTimeOffset + setDuration) * 2
-
-                if (startSampleIndex >= 0 && endSampleIndex <= workoutHistory.heartBeatRecords.size) {
-                    val setHRRecords = workoutHistory.heartBeatRecords
-                        .subList(startSampleIndex, minOf(endSampleIndex, workoutHistory.heartBeatRecords.size))
-                        .filter { it > 0 }
-
-                    if (setHRRecords.isNotEmpty()) {
-                        val setAvgHR = setHRRecords.average().toInt()
-                        val setMinHR = setHRRecords.minOrNull() ?: 0
-                        val setMaxHR = setHRRecords.maxOrNull() ?: 0
-                        setLine.append(" HR:${setAvgHR}(${setMinHR}-${setMaxHR})")
-
-                        if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-                            val lowHr = getHeartRateFromPercentage(
-                                exercise.lowerBoundMaxHRPercent!!,
-                                userAge,
-                                workoutStore.measuredMaxHeartRate,
-                                workoutStore.restingHeartRate
+                is SessionTimelineItem.SetStep -> {
+                    workSetOrdinal += 1
+                    val setHistory = step.history
+                    val setLine = StringBuilder("S$workSetOrdinal: ")
+                    when (val setData = setHistory.setData) {
+                        is WeightSetData -> {
+                            val (adjustedWeight, adjustedVolume) = adjustWeightAndVolume(
+                                setData.actualWeight,
+                                setData.actualReps,
+                                achievableWeights
                             )
-                            val highHr = getHeartRateFromPercentage(
-                                exercise.upperBoundMaxHRPercent!!,
-                                userAge,
-                                workoutStore.measuredMaxHeartRate,
-                                workoutStore.restingHeartRate
-                            )
+                            setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
+                            totalVolume += adjustedVolume
+                        }
+                        is BodyWeightSetData -> {
+                            val totalWeight = setData.getWeight()
+                            setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
+                            if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
+                            totalVolume += setData.volume
+                        }
+                        is TimedDurationSetData -> {
+                            val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
+                            setLine.append("Dur:${formatDuration(durationSeconds)}")
+                            totalDuration += durationSeconds
+                        }
+                        is EnduranceSetData -> {
+                            val durationSeconds = setData.endTimer / 1000
+                            setLine.append("Dur:${formatDuration(durationSeconds)}")
+                            totalDuration += durationSeconds
+                        }
+                        else -> setLine.append("Rest/Other")
+                    }
 
-                            val hrInZoneCount = setHRRecords.count { it in lowHr..highHr }
-                            val zonePercentage = if (setHRRecords.isNotEmpty()) {
-                                (hrInZoneCount.toFloat() / setHRRecords.size * 100).toInt()
-                            } else 0
+                    if (workoutHistory.heartBeatRecords.isNotEmpty() &&
+                        setHistory.startTime != null &&
+                        setHistory.endTime != null
+                    ) {
+                        val hrTimeOffset = Duration.between(
+                            workoutHistory.startTime,
+                            setHistory.startTime
+                        ).seconds.toInt()
 
-                            setLine.append(" Zone:${zonePercentage}%")
+                        val setDuration = Duration.between(
+                            setHistory.startTime,
+                            setHistory.endTime
+                        ).seconds.toInt()
+
+                        val startSampleIndex = hrTimeOffset * 2
+                        val endSampleIndex = (hrTimeOffset + setDuration) * 2
+
+                        if (startSampleIndex >= 0 && endSampleIndex <= workoutHistory.heartBeatRecords.size) {
+                            val setHRRecords = workoutHistory.heartBeatRecords
+                                .subList(startSampleIndex, minOf(endSampleIndex, workoutHistory.heartBeatRecords.size))
+                                .filter { it > 0 }
+
+                            if (setHRRecords.isNotEmpty()) {
+                                val setAvgHR = setHRRecords.average().toInt()
+                                val setMinHR = setHRRecords.minOrNull() ?: 0
+                                val setMaxHR = setHRRecords.maxOrNull() ?: 0
+                                setLine.append(" HR:${setAvgHR}(${setMinHR}-${setMaxHR})")
+
+                                if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
+                                    val lowHr = getHeartRateFromPercentage(
+                                        exercise.lowerBoundMaxHRPercent!!,
+                                        userAge,
+                                        workoutStore.measuredMaxHeartRate,
+                                        workoutStore.restingHeartRate
+                                    )
+                                    val highHr = getHeartRateFromPercentage(
+                                        exercise.upperBoundMaxHRPercent!!,
+                                        userAge,
+                                        workoutStore.measuredMaxHeartRate,
+                                        workoutStore.restingHeartRate
+                                    )
+
+                                    val hrInZoneCount = setHRRecords.count { it in lowHr..highHr }
+                                    val zonePercentage = if (setHRRecords.isNotEmpty()) {
+                                        (hrInZoneCount.toFloat() / setHRRecords.size * 100).toInt()
+                                    } else 0
+
+                                    setLine.append(" Zone:${zonePercentage}%")
+                                }
+                            }
                         }
                     }
+
+                    markdown.append(setLine.toString()).append("\n")
                 }
             }
-
-            markdown.append(setLine.toString()).append("\n")
         }
 
         val totalsLine = StringBuilder()

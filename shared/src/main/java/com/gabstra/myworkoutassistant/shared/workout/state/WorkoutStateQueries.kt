@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workout.state
 
+import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import java.util.UUID
 
@@ -69,6 +70,20 @@ internal object WorkoutStateQueries {
         return setHistory.exerciseId == null ||
             exerciseId == null ||
             setHistory.exerciseId == exerciseId
+    }
+
+    fun matchesRestHistory(
+        restHistory: RestHistory,
+        restSetId: UUID,
+        order: UInt,
+        exerciseId: UUID?
+    ): Boolean {
+        if (restHistory.restSetId != restSetId || restHistory.order != order) {
+            return false
+        }
+        return restHistory.exerciseId == null ||
+            exerciseId == null ||
+            restHistory.exerciseId == exerciseId
     }
 
     fun orderedUniqueSetIds(states: List<WorkoutState>): List<UUID> {

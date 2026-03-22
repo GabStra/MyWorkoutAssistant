@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -51,7 +52,9 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
+import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetPreparationService
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetStateFactory
@@ -158,7 +161,8 @@ internal fun resetTimeSetProgressForNewSession(setData: SetData): SetData = when
 
 open class WorkoutViewModel(
     internal val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
-    private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore()
+    private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore(),
+    private val executedRestStore: ExecutedRestStore = DefaultExecutedRestStore()
 ) : ViewModel() {
     companion object {
         private const val TAG = "WorkoutViewModel"
@@ -190,8 +194,10 @@ open class WorkoutViewModel(
     private val workoutPersistenceCoordinator by lazy {
         WorkoutPersistenceCoordinator(
             executedSetStore = executedSetStore,
+            executedRestStore = executedRestStore,
             workoutHistoryDao = { workoutHistoryDao },
             setHistoryDao = { setHistoryDao },
+            restHistoryDao = { restHistoryDao },
             exerciseInfoDao = { exerciseInfoDao },
             exerciseSessionProgressionDao = { exerciseSessionProgressionDao },
             workoutStoreRepository = { workoutStoreRepository }
@@ -208,7 +214,9 @@ open class WorkoutViewModel(
     private val workoutSessionLifecycleService by lazy {
         WorkoutSessionLifecycleService(
             executedSetStore = executedSetStore,
+            executedRestStore = executedRestStore,
             setHistoryDao = { setHistoryDao },
+            restHistoryDao = { restHistoryDao },
             workoutHistoryDao = { workoutHistoryDao }
         )
     }
@@ -234,7 +242,7 @@ open class WorkoutViewModel(
     suspend fun flushTimerState() {
         // Wait for any pending storeSetData job to complete first.
         storeSetDataJob?.join()
-        val snapshot = withContext(dispatchers.main) {
+        val setSnapshot = withContext(dispatchers.main) {
             workoutPersistenceCoordinator.captureSetHistorySnapshot(
                 currentState = _workoutState.value,
                 exercisesById = exercisesById,
@@ -242,8 +250,15 @@ open class WorkoutViewModel(
                 exercisesBySupersetId = exercisesBySupersetId
             )
         }
+        val restSnapshot = withContext(dispatchers.main) {
+            workoutPersistenceCoordinator.captureRestHistorySnapshot(
+                currentState = _workoutState.value,
+                exercisesById = exercisesById
+            )
+        }
         withContext(dispatchers.io) {
-            snapshot?.let { workoutPersistenceCoordinator.upsertSetHistorySnapshot(it) }
+            setSnapshot?.let { workoutPersistenceCoordinator.upsertSetHistorySnapshot(it) }
+            restSnapshot?.let { workoutPersistenceCoordinator.upsertRestHistorySnapshot(it) }
             Log.d(TAG, "Timer state flushed to database")
         }
     }
@@ -508,6 +523,11 @@ open class WorkoutViewModel(
         setHistoryDao = db.setHistoryDao()
     }
 
+    fun initRestHistoryDao(context: Context) {
+        val db = AppDatabase.getDatabase(context)
+        restHistoryDao = db.restHistoryDao()
+    }
+
     fun initWorkoutHistoryDao(context: Context) {
         val db = AppDatabase.getDatabase(context)
         workoutHistoryDao = db.workoutHistoryDao()
@@ -559,6 +579,8 @@ open class WorkoutViewModel(
     protected lateinit var workoutScheduleDao: WorkoutScheduleDao
 
     protected lateinit var setHistoryDao: SetHistoryDao
+
+    protected lateinit var restHistoryDao: RestHistoryDao
 
     internal lateinit var exerciseInfoDao: ExerciseInfoDao
 
@@ -969,6 +991,7 @@ open class WorkoutViewModel(
             withContext(dispatchers.io) {
                 workoutHistoryDao.deleteAll()
                 setHistoryDao.deleteAll()
+                restHistoryDao.deleteAll()
                 exerciseInfoDao.deleteAll()
                 workoutRecordDao.deleteAll()
                 workoutScheduleDao.deleteAll()
@@ -1600,6 +1623,7 @@ open class WorkoutViewModel(
         setStates.clear()
         weightsByEquipment.clear()
         executedSetStore.clear()
+        executedRestStore.clear()
         heartBeatHistory.clear()
         startWorkoutTime = null
         currentWorkoutHistory = null
@@ -1965,10 +1989,15 @@ open class WorkoutViewModel(
             supersetIdByExerciseId = supersetIdByExerciseId,
             exercisesBySupersetId = exercisesBySupersetId
         )
+        val restSnapshot = workoutPersistenceCoordinator.captureRestHistorySnapshot(
+            currentState = _workoutState.value,
+            exercisesById = exercisesById
+        )
         val previousJob = storeSetDataJob
         val newJob = launchIO {
             previousJob?.join()
             snapshot?.let { workoutPersistenceCoordinator.upsertSetHistorySnapshot(it) }
+            restSnapshot?.let { workoutPersistenceCoordinator.upsertRestHistorySnapshot(it) }
         }
         storeSetDataJob = newJob
         newJob.invokeOnCompletion {
@@ -2874,6 +2903,14 @@ open class WorkoutViewModel(
             
             if (filteredList.size < currentList.size) {
                 executedSetStore.replaceAll(filteredList)
+            }
+
+            val currentRestList = executedRestStore.executedRests.value.toMutableList()
+            val filteredRests = currentRestList.filterNot { restHistory ->
+                restHistory.restSetId in setIdsToRemove
+            }
+            if (filteredRests.size < currentRestList.size) {
+                executedRestStore.replaceAll(filteredRests)
             }
         }
     }

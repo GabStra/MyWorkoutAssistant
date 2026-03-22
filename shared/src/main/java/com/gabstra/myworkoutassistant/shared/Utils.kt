@@ -324,6 +324,21 @@ fun isSetDataValid(set: Set, setData: SetData): Boolean {
     }
 }
 
+fun getNewSetFromRestHistory(restHistory: RestHistory): Set {
+    val setData = restHistory.setData as? RestSetData ?: return RestSet(
+        id = restHistory.restSetId,
+        timeInSeconds = 0,
+        subCategory = SetSubCategory.WorkSet,
+        shouldReapplyHistoryToSet = false
+    )
+    return RestSet(
+        id = restHistory.restSetId,
+        timeInSeconds = setData.startTimer,
+        subCategory = setData.subCategory,
+        shouldReapplyHistoryToSet = false
+    )
+}
+
 fun getNewSetFromSetHistory(
     setHistory: SetHistory,
     shouldReapplyHistoryToSet: Boolean? = null

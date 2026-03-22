@@ -106,6 +106,10 @@ class WorkoutViewModelSessionTest {
         val setHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("setHistoryDao")
         setHistoryDaoField.isAccessible = true
         setHistoryDaoField.set(viewModel, database.setHistoryDao())
+
+        val restHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("restHistoryDao")
+        restHistoryDaoField.isAccessible = true
+        restHistoryDaoField.set(viewModel, database.restHistoryDao())
         
         val workoutHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("workoutHistoryDao")
         workoutHistoryDaoField.isAccessible = true

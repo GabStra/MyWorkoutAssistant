@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workout.session
 
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -10,6 +11,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -18,7 +20,9 @@ import java.util.UUID
 
 internal class WorkoutSessionLifecycleService(
     private val executedSetStore: ExecutedSetStore,
+    private val executedRestStore: ExecutedRestStore,
     private val setHistoryDao: () -> SetHistoryDao,
+    private val restHistoryDao: () -> RestHistoryDao,
     private val workoutHistoryDao: () -> WorkoutHistoryDao
 ) {
     data class LoadedWorkoutHistory(
@@ -45,6 +49,8 @@ internal class WorkoutSessionLifecycleService(
         }
 
         executedSetStore.replaceAll(allSetHistories)
+        val rests = restHistoryDao().getByWorkoutHistoryIdOrdered(workoutHistoryId)
+        executedRestStore.replaceAll(rests)
     }
 
     suspend fun loadWorkoutHistory(workout: Workout): LoadedWorkoutHistory {
@@ -162,4 +168,3 @@ internal class WorkoutSessionLifecycleService(
             workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
     }
 }
-

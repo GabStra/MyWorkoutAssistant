@@ -9,4 +9,6 @@ data class AppBackup(
     val WorkoutRecords: List<WorkoutRecord>,
     val ExerciseSessionProgressions: List<ExerciseSessionProgression>,
     val ErrorLogs: List<ErrorLog>? = null,
+    /** Session rest intervals; omitted in older backup JSON. */
+    val RestHistories: List<RestHistory>? = null,
 )

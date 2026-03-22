@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.DefaultExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDate
@@ -50,7 +51,9 @@ class WorkoutSessionLifecycleServiceTest {
             .build()
         service = WorkoutSessionLifecycleService(
             executedSetStore = DefaultExecutedSetStore(),
+            executedRestStore = DefaultExecutedRestStore(),
             setHistoryDao = { database.setHistoryDao() },
+            restHistoryDao = { database.restHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() }
         )
     }

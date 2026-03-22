@@ -105,6 +105,10 @@ class WorkoutViewModelDatabaseTest {
         val setHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("setHistoryDao")
         setHistoryDaoField.isAccessible = true
         setHistoryDaoField.set(viewModel, database.setHistoryDao())
+
+        val restHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("restHistoryDao")
+        restHistoryDaoField.isAccessible = true
+        restHistoryDaoField.set(viewModel, database.restHistoryDao())
         
         val workoutHistoryDaoField = WorkoutViewModel::class.java.getDeclaredField("workoutHistoryDao")
         workoutHistoryDaoField.isAccessible = true
@@ -567,6 +571,7 @@ class WorkoutViewModelDatabaseTest {
             exercise = benchPress,
             workoutHistoryDao = database.workoutHistoryDao(),
             setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
             exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
             workouts = listOf(testWorkout),
             workoutStore = workoutStore
@@ -584,6 +589,7 @@ class WorkoutViewModelDatabaseTest {
             exercise = squats,
             workoutHistoryDao = database.workoutHistoryDao(),
             setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
             exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
             workouts = listOf(testWorkout),
             workoutStore = workoutStore

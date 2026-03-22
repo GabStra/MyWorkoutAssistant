@@ -5,7 +5,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -19,15 +18,11 @@ internal object WorkoutSetHistoryOps {
         state: WorkoutState,
         exercisesById: Map<UUID, Exercise>
     ): Boolean {
+        if (state is WorkoutState.Rest) {
+            return true
+        }
+
         val currentSet = WorkoutStateQueries.stateSetObjectOrNull(state) ?: return true
-
-        if (state is WorkoutState.Rest && state.isIntraSetRest) {
-            return true
-        }
-
-        if (state is WorkoutState.Rest && state.exerciseId == null) {
-            return true
-        }
 
         if (state is WorkoutState.Set) {
             val exercise = exercisesById[state.exerciseId] ?: return true
@@ -36,14 +31,6 @@ internal object WorkoutSetHistoryOps {
             val hasCalibrationRIR = hasCalibrationRIR(state.currentSetData)
 
             if (exercise.doNotStoreHistory || isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) {
-                return true
-            }
-        }
-
-        if (state is WorkoutState.Rest && currentSet is RestSet) {
-            val exerciseId = state.exerciseId ?: return true
-            val exercise = exercisesById[exerciseId] ?: return true
-            if (exercise.doNotStoreHistory) {
                 return true
             }
         }
@@ -57,12 +44,10 @@ internal object WorkoutSetHistoryOps {
     ): SetHistory? {
         val setData = when (state) {
             is WorkoutState.Set -> state.currentSetData
-            is WorkoutState.Rest -> state.currentSetData
             else -> return null
         }
         val startTime = when (state) {
             is WorkoutState.Set -> state.startTime ?: LocalDateTime.now()
-            is WorkoutState.Rest -> state.startTime ?: LocalDateTime.now()
             else -> return null
         }
         val skipped = (state as? WorkoutState.Set)?.skipped ?: false
@@ -97,4 +82,3 @@ internal object WorkoutSetHistoryOps {
         else -> false
     }
 }
-

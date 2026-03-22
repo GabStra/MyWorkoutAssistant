@@ -6,6 +6,9 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
+import com.gabstra.myworkoutassistant.shared.RestHistoryScope
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -26,12 +29,14 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
+import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRestHistoryOps
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutSetHistoryOps
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
@@ -46,8 +51,10 @@ import java.time.temporal.TemporalAdjusters
 
 internal class WorkoutPersistenceCoordinator(
     private val executedSetStore: ExecutedSetStore,
+    private val executedRestStore: ExecutedRestStore,
     private val workoutHistoryDao: () -> WorkoutHistoryDao,
     private val setHistoryDao: () -> SetHistoryDao,
+    private val restHistoryDao: () -> RestHistoryDao,
     private val exerciseInfoDao: () -> ExerciseInfoDao,
     private val exerciseSessionProgressionDao: () -> ExerciseSessionProgressionDao,
     private val workoutStoreRepository: () -> WorkoutStoreRepository,
@@ -60,12 +67,20 @@ internal class WorkoutPersistenceCoordinator(
         val exerciseId: UUID?
     )
 
+    data class RestHistorySnapshot(
+        val restHistory: RestHistory,
+        val restSetId: UUID,
+        val order: UInt,
+        val exerciseId: UUID?
+    )
+
     data class PushWorkoutDataSnapshot(
         val startWorkoutTime: LocalDateTime,
         val selectedWorkout: Workout,
         val currentWorkoutHistory: WorkoutHistory?,
         val heartBeatRecords: List<Int>,
         val executedSetsHistory: List<SetHistory>,
+        val executedRestHistories: List<RestHistory>,
         val progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
         val capturedAt: LocalDateTime
     )
@@ -81,13 +96,11 @@ internal class WorkoutPersistenceCoordinator(
 
         val setData = when (currentState) {
             is WorkoutState.Set -> currentState.currentSetData
-            is WorkoutState.Rest -> currentState.currentSetData
             else -> return null
         }
         val setDataSnapshot = copySetData(setData)
         val startTime = when (currentState) {
             is WorkoutState.Set -> currentState.startTime ?: LocalDateTime.now()
-            is WorkoutState.Rest -> currentState.startTime ?: LocalDateTime.now()
             else -> return null
         }
 
@@ -107,9 +120,7 @@ internal class WorkoutPersistenceCoordinator(
             supersetIdByExerciseId = supersetIdByExerciseId,
             exercisesBySupersetId = exercisesBySupersetId
         )
-        val nextExecutionSequence = (
-            executedSetStore.executedSets.value.maxOfOrNull { it.executionSequence?.toLong() ?: 0L } ?: 0L
-        ) + 1L
+        val nextExecutionSequence = nextExecutionSequenceValue()
 
         // Resolve equipment snapshot at record time so later equipment edits do not
         // change how this historical set is labeled or interpreted.
@@ -146,6 +157,50 @@ internal class WorkoutPersistenceCoordinator(
         )
     }
 
+    fun captureRestHistorySnapshot(
+        currentState: WorkoutState,
+        exercisesById: Map<UUID, Exercise>
+    ): RestHistorySnapshot? {
+        if (currentState !is WorkoutState.Rest) return null
+        if (WorkoutRestHistoryOps.shouldSkipPersistingRest(currentState, exercisesById)) return null
+        val historyIdentity = WorkoutStateQueries.stateHistoryIdentity(currentState) ?: return null
+        val setDataSnapshot = copySetData(currentState.currentSetData)
+        val startTime = currentState.startTime ?: LocalDateTime.now()
+        val scope = if (currentState.isIntraSetRest) {
+            RestHistoryScope.INTRA_EXERCISE
+        } else {
+            RestHistoryScope.BETWEEN_WORKOUT_COMPONENTS
+        }
+        val workoutComponentId =
+            if (scope == RestHistoryScope.BETWEEN_WORKOUT_COMPONENTS) currentState.set.id else null
+        val nextExecutionSequence = nextExecutionSequenceValue()
+        val newRestHistory = RestHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = null,
+            scope = scope,
+            executionSequence = nextExecutionSequence.toUInt(),
+            setData = setDataSnapshot,
+            startTime = startTime,
+            endTime = LocalDateTime.now(),
+            workoutComponentId = workoutComponentId,
+            exerciseId = historyIdentity.exerciseId,
+            restSetId = historyIdentity.setId,
+            order = historyIdentity.order
+        )
+        return RestHistorySnapshot(
+            restHistory = newRestHistory,
+            restSetId = historyIdentity.setId,
+            order = historyIdentity.order,
+            exerciseId = historyIdentity.exerciseId
+        )
+    }
+
+    private fun nextExecutionSequenceValue(): Long {
+        val setMax = executedSetStore.executedSets.value.maxOfOrNull { it.executionSequence?.toLong() ?: 0L } ?: 0L
+        val restMax = executedRestStore.executedRests.value.maxOfOrNull { it.executionSequence?.toLong() ?: 0L } ?: 0L
+        return maxOf(setMax, restMax) + 1L
+    }
+
     suspend fun upsertSetHistorySnapshot(snapshot: SetHistorySnapshot) {
         val key: (SetHistory) -> Boolean = { history ->
             WorkoutStateQueries.matchesSetHistory(
@@ -164,6 +219,24 @@ internal class WorkoutPersistenceCoordinator(
         executedSetStore.upsert(normalizedSnapshot, key)
     }
 
+    suspend fun upsertRestHistorySnapshot(snapshot: RestHistorySnapshot) {
+        val key: (RestHistory) -> Boolean = { history ->
+            WorkoutStateQueries.matchesRestHistory(
+                history,
+                snapshot.restSetId,
+                snapshot.order,
+                snapshot.exerciseId
+            )
+        }
+        val existing = executedRestStore.executedRests.value.firstOrNull(key)
+        val normalizedSnapshot = if (existing?.executionSequence != null) {
+            snapshot.restHistory.copy(executionSequence = existing.executionSequence)
+        } else {
+            snapshot.restHistory
+        }
+        executedRestStore.upsert(normalizedSnapshot, key)
+    }
+
     fun capturePushWorkoutDataSnapshot(
         startWorkoutTime: LocalDateTime?,
         selectedWorkout: Workout,
@@ -173,12 +246,14 @@ internal class WorkoutPersistenceCoordinator(
     ): PushWorkoutDataSnapshot? {
         val startTime = startWorkoutTime ?: return null
         val executedSetsSnapshot = cloneSetHistories(executedSetStore.executedSets.value)
+        val executedRestSnapshot = cloneRestHistories(executedRestStore.executedRests.value)
         return PushWorkoutDataSnapshot(
             startWorkoutTime = startTime,
             selectedWorkout = selectedWorkout,
             currentWorkoutHistory = currentWorkoutHistory,
             heartBeatRecords = heartBeatRecords,
             executedSetsHistory = executedSetsSnapshot,
+            executedRestHistories = executedRestSnapshot,
             progressionByExerciseId = progressionByExerciseId,
             capturedAt = LocalDateTime.now()
         )
@@ -194,6 +269,7 @@ internal class WorkoutPersistenceCoordinator(
         val duration = Duration.between(snapshot.startWorkoutTime, snapshot.capturedAt)
         val workoutHistoryDaoRef = workoutHistoryDao()
         val setHistoryDaoRef = setHistoryDao()
+        val restHistoryDaoRef = restHistoryDao()
         val exerciseInfoDaoRef = exerciseInfoDao()
         val exerciseSessionProgressionDaoRef = exerciseSessionProgressionDao()
         val workoutStoreRepositoryRef = workoutStoreRepository()
@@ -232,10 +308,20 @@ internal class WorkoutPersistenceCoordinator(
             )
         }
 
+        val newExecutedRestHistories = snapshot.executedRestHistories.map {
+            it.copy(
+                workoutHistoryId = workoutHistoryForThisPush.id,
+                setData = copySetData(it.setData)
+            )
+        }
+
         executedSetStore.replaceAll(newExecutedSetsHistory)
+        executedRestStore.replaceAll(newExecutedRestHistories)
         workoutHistoryDaoRef.insertWithVersionCheck(workoutHistoryForThisPush)
         setHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
         setHistoryDaoRef.insertAllWithVersionCheck(*newExecutedSetsHistory.toTypedArray())
+        restHistoryDaoRef.deleteByWorkoutHistoryId(workoutHistoryForThisPush.id)
+        restHistoryDaoRef.insertAllWithVersionCheck(*newExecutedRestHistories.toTypedArray())
 
         if (isDone) {
             val executedSetsHistoryByExerciseId = newExecutedSetsHistory.groupBy { it.exerciseId }
@@ -575,6 +661,10 @@ internal class WorkoutPersistenceCoordinator(
 
     private fun cloneSetHistories(setHistories: List<SetHistory>): List<SetHistory> {
         return setHistories.map { history -> history.copy(setData = copySetData(history.setData)) }
+    }
+
+    private fun cloneRestHistories(restHistories: List<RestHistory>): List<RestHistory> {
+        return restHistories.map { history -> history.copy(setData = copySetData(history.setData)) }
     }
 
     private fun flattenExercises(workout: Workout): List<Exercise> {

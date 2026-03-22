@@ -5,12 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnapshotTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.DateTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ListSimpleSetTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.ProgressionStateTypeConverter
+import com.gabstra.myworkoutassistant.shared.typeconverters.RestHistoryScopeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.SetDataTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
@@ -18,8 +20,17 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 @Database(
-    entities = [SetHistory::class, WorkoutHistory::class,WorkoutRecord::class, ExerciseInfo::class, WorkoutSchedule::class, ExerciseSessionProgression::class, ErrorLog::class],
-    version = 57,
+    entities = [
+        SetHistory::class,
+        RestHistory::class,
+        WorkoutHistory::class,
+        WorkoutRecord::class,
+        ExerciseInfo::class,
+        WorkoutSchedule::class,
+        ExerciseSessionProgression::class,
+        ErrorLog::class
+    ],
+    version = 58,
     exportSchema = false
 )
 @TypeConverters(
@@ -27,6 +38,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
     DateTypeConverter::class,
     TimeTypeConverter::class,
     SetDataTypeConverter::class,
+    RestHistoryScopeTypeConverter::class,
     UUIDConverter::class,
     UIntConverter::class,
     ListIntConverter::class,
@@ -38,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
 
 abstract class AppDatabase : RoomDatabase() {
     abstract fun setHistoryDao(): SetHistoryDao
+    abstract fun restHistoryDao(): RestHistoryDao
     abstract fun workoutHistoryDao(): WorkoutHistoryDao
     abstract fun workoutRecordDao(): WorkoutRecordDao
     abstract fun exerciseInfoDao(): ExerciseInfoDao
