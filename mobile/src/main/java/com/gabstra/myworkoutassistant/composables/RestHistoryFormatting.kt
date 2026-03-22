@@ -1,21 +1,41 @@
 package com.gabstra.myworkoutassistant.composables
 
 import com.gabstra.myworkoutassistant.formatTime
+import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import java.time.Duration
+import com.gabstra.myworkoutassistant.shared.workout.history.elapsedSecondsFromHistoryBounds
+import java.time.LocalDateTime
 
-internal fun formatHistoricalRestValue(history: SetHistory): String {
-    val setData = history.setData as? RestSetData ?: return ""
-    val elapsedSeconds = history.startTime
-        ?.let { startTime ->
-            history.endTime?.let { endTime ->
-                Duration.between(startTime, endTime).seconds
-                    .takeIf { it >= 0L }
-                    ?.coerceAtMost(Int.MAX_VALUE.toLong())
-                    ?.toInt()
+/**
+ * [SetHistory] rows whose [SetHistory.setData] is [RestSetData] (e.g. when rest was stored on
+ * `set_history`). Prefer [formatRestHistoryDisplayLine] for rows from [rest_history].
+ */
+fun formatHistoricalRestValue(setHistory: SetHistory): String {
+    val sd = setHistory.setData as? RestSetData ?: return "Rest"
+    return formatRestIntervalForDisplay(sd, setHistory.startTime, setHistory.endTime)
+}
+
+/** Any persisted [RestHistory] row (intra-exercise or between components). */
+fun formatRestHistoryDisplayLine(history: RestHistory): String {
+    val sd = history.setData as? RestSetData ?: return "Rest"
+    return formatRestIntervalForDisplay(sd, history.startTime, history.endTime)
+}
+
+private fun formatRestIntervalForDisplay(
+    restSetData: RestSetData,
+    startTime: LocalDateTime?,
+    endTime: LocalDateTime?,
+): String {
+    val plannedSec = restSetData.startTimer.coerceAtLeast(0)
+    val elapsedSec = elapsedSecondsFromHistoryBounds(startTime, endTime)
+    return when {
+        elapsedSec != null -> buildString {
+            append("Rest ${formatTime(elapsedSec)} elapsed")
+            if (plannedSec > 0 && plannedSec != elapsedSec) {
+                append(" (${formatTime(plannedSec)} planned)")
             }
         }
-        ?: (setData.startTimer - setData.endTimer).coerceAtLeast(0)
-    return "REST ${formatTime(elapsedSeconds)}"
+        else -> "Rest ${formatTime(plannedSec)}"
+    }
 }

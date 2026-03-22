@@ -89,7 +89,9 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -102,6 +104,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -111,7 +114,9 @@ import java.util.UUID
 @Composable
 fun Menu(
     onEditWorkout: () -> Unit,
-    onClearHistory: () -> Unit,
+    onDeleteSelectedSession: () -> Unit,
+    deleteSelectedSessionEnabled: Boolean,
+    onClearAllHistories: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -140,9 +145,17 @@ fun Menu(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
             )
             AppDropdownMenuItem(
-                text = { Text(text = "Clear history", fontWeight = FontWeight.Normal) },
+                text = { Text(text = "Delete selected session", fontWeight = FontWeight.Normal) },
                 onClick = {
-                    onClearHistory()
+                    onDeleteSelectedSession()
+                    expanded = false
+                },
+                enabled = deleteSelectedSessionEnabled
+            )
+            AppDropdownMenuItem(
+                text = { Text(text = "Clear all histories", fontWeight = FontWeight.Normal) },
+                onClick = {
+                    onClearAllHistories()
                     expanded = false
                 }
             )
@@ -177,7 +190,7 @@ fun WorkoutComponentRenderer(
             SetRestRowCard(
                 modifier = titleModifier,
                 enabled = workoutComponent.enabled,
-                restText = "Rest ${formatTime(workoutComponent.timeInSeconds)}"
+                restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
             )
         }
 
@@ -216,6 +229,8 @@ fun WorkoutDetailScreen(
     workoutHistoryDao: WorkoutHistoryDao,
     workoutRecordDao: WorkoutRecordDao,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
+    exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
     exerciseInfoDao: ExerciseInfoDao,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     workout: Workout,
@@ -237,7 +252,19 @@ fun WorkoutDetailScreen(
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
-    var showClearHistoryDialog by remember { mutableStateOf(false) }
+    var showClearAllHistoriesDialog by remember { mutableStateOf(false) }
+    var showDeleteSelectedSessionDialog by remember { mutableStateOf(false) }
+
+    var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
+        mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
+    }
+    var displayedWorkoutHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
+
+    LaunchedEffect(selectedTopTab) {
+        if (selectedTopTab == 0) {
+            displayedWorkoutHistoryId = null
+        }
+    }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
     val startWorkoutDirectly = {
@@ -978,8 +1005,13 @@ fun WorkoutDetailScreen(
                             onEditWorkout = {
                                 appViewModel.setScreenData(ScreenData.EditWorkout(workout.id));
                             },
-                            onClearHistory = {
-                                showClearHistoryDialog = true
+                            onDeleteSelectedSession = {
+                                showDeleteSelectedSessionDialog = true
+                            },
+                            deleteSelectedSessionEnabled = displayedWorkoutHistoryId != null &&
+                                selectedTopTab in 1..2,
+                            onClearAllHistories = {
+                                showClearAllHistoriesDialog = true
                             }
                         )
                     }
@@ -1001,10 +1033,6 @@ fun WorkoutDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
-                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
-                }
-                val isWorkoutGraphHistoryTabSelected = selectedTopTab == 1
                 SwipeableTabs(
                     tabTitles = listOf("Overview", "Charts", "Set history"),
                     selectedTabIndex = selectedTopTab,
@@ -1063,8 +1091,14 @@ fun WorkoutDetailScreen(
                             workoutRecordDao = workoutRecordDao,
                             workoutHistoryId = initialWorkoutHistoryId,
                             setHistoryDao = setHistoryDao,
+                            restHistoryDao = restHistoryDao,
                             workout = workout,
                             selectedHistoryMode = pageIndex - 1,
+                            pageIndex = pageIndex,
+                            selectedTopTab = selectedTopTab,
+                            onDisplayedWorkoutHistoryIdChange = { id ->
+                                displayedWorkoutHistoryId = id
+                            },
                             onGoBack = onGoBack
                         )
                     }
@@ -1149,27 +1183,130 @@ fun WorkoutDetailScreen(
                 }
             )
             ConfirmationDialog(
-                show = showClearHistoryDialog,
-                title = "Clear workout history",
-                message = "Delete all saved history for this workout? This can't be undone.",
+                show = showClearAllHistoriesDialog,
+                title = "Clear all histories",
+                message = "Delete all saved sessions for this workout? This can't be undone.",
                 confirmText = "Delete",
                 isDestructive = true,
                 onConfirm = {
                     scope.launch {
-                        withContext(Dispatchers.Main) {
-                            workoutHistoryDao.deleteAllByWorkoutId(workout.id)
-                            workoutRecordDao.deleteByWorkoutId(workout.id)
-                            Toast.makeText(
-                                context,
-                                "Workout history cleared.",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                        try {
+                            withContext(Dispatchers.IO) {
+                                val histories =
+                                    workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
+                                try {
+                                    deleteWorkoutHistoriesFromHealthConnect(
+                                        histories,
+                                        healthConnectClient
+                                    )
+                                } catch (_: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(
+                                            context,
+                                            "Couldn't remove workout history from Health Connect.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                                for (h in histories) {
+                                    setHistoryDao.deleteByWorkoutHistoryId(h.id)
+                                    restHistoryDao.deleteByWorkoutHistoryId(h.id)
+                                    exerciseSessionProgressionDao.deleteByWorkoutHistoryId(h.id)
+                                    workoutRecordDao.deleteByWorkoutHistoryId(h.id)
+                                }
+                                workoutHistoryDao.deleteAllByWorkoutId(workout.id)
+                                workoutRecordDao.deleteByWorkoutId(workout.id)
+                            }
+                            withContext(Dispatchers.Main) {
+                                appViewModel.triggerUpdate()
+                                workoutViewModel.setSelectedWorkoutId(workout.id)
+                                displayedWorkoutHistoryId = null
+                                Toast.makeText(
+                                    context,
+                                    "All workout histories cleared.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showClearAllHistoriesDialog = false
+                            }
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Couldn't clear workout histories.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showClearAllHistoriesDialog = false
+                            }
                         }
                     }
-                    showClearHistoryDialog = false
                 },
                 onDismiss = {
-                    showClearHistoryDialog = false
+                    showClearAllHistoriesDialog = false
+                }
+            )
+            ConfirmationDialog(
+                show = showDeleteSelectedSessionDialog,
+                title = "Delete selected session",
+                message = "Remove this session from your history? This can't be undone.",
+                confirmText = "Delete",
+                isDestructive = true,
+                onConfirm = {
+                    val historyId = displayedWorkoutHistoryId
+                    if (historyId == null) {
+                        showDeleteSelectedSessionDialog = false
+                        return@ConfirmationDialog
+                    }
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                val history = workoutHistoryDao.getWorkoutHistoryById(historyId)
+                                if (history != null) {
+                                    try {
+                                        deleteWorkoutHistoriesFromHealthConnect(
+                                            listOf(history),
+                                            healthConnectClient
+                                        )
+                                    } catch (_: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(
+                                                context,
+                                                "Couldn't remove session from Health Connect.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                }
+                                setHistoryDao.deleteByWorkoutHistoryId(historyId)
+                                restHistoryDao.deleteByWorkoutHistoryId(historyId)
+                                exerciseSessionProgressionDao.deleteByWorkoutHistoryId(historyId)
+                                workoutRecordDao.deleteByWorkoutHistoryId(historyId)
+                                workoutHistoryDao.deleteById(historyId)
+                            }
+                            withContext(Dispatchers.Main) {
+                                appViewModel.triggerUpdate()
+                                workoutViewModel.setSelectedWorkoutId(workout.id)
+                                displayedWorkoutHistoryId = null
+                                Toast.makeText(
+                                    context,
+                                    "Session deleted.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showDeleteSelectedSessionDialog = false
+                            }
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(
+                                    context,
+                                    "Couldn't delete session.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                showDeleteSelectedSessionDialog = false
+                            }
+                        }
+                    }
+                },
+                onDismiss = {
+                    showDeleteSelectedSessionDialog = false
                 }
             )
             LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving changes...")

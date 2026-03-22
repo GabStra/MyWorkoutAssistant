@@ -15,8 +15,10 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -35,7 +37,9 @@ fun ExerciseRenderer(
     appViewModel: AppViewModel,
     titleModifier: Modifier = Modifier,
     customTitle: (@Composable (Modifier) -> Unit)? = null,
-    setHistories: List<SetHistory>? = null
+    setHistories: List<SetHistory>? = null,
+    /** Intra-exercise rests from [rest_history]; keyed by [RestHistory.restSetId] == [RestSet.id]. */
+    intraExerciseRestHistories: List<RestHistory>? = null,
 ) {
     var sets = exercise.sets
 
@@ -110,8 +114,15 @@ fun ExerciseRenderer(
                     sets.forEach { set ->
                         when (set) {
                             is RestSet -> {
+                                val restText = intraExerciseRestHistories
+                                    ?.firstOrNull { it.restSetId == set.id }
+                                    ?.let { formatRestHistoryDisplayLine(it) }
+                                    ?: setHistories
+                                        ?.firstOrNull { it.setId == set.id && it.setData is RestSetData }
+                                        ?.let { formatHistoricalRestValue(it) }
+                                    ?: "REST ${formatTime(set.timeInSeconds)}"
                                 rows += SetTableRowUiModel.Rest(
-                                    text = "REST ${formatTime(set.timeInSeconds)}",
+                                    text = restText,
                                 )
                             }
 

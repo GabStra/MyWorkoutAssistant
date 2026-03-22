@@ -10,7 +10,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -182,24 +181,21 @@ private fun SetTableDataRow(
             Text(
                 text = row.identifier,
                 modifier = Modifier.weight(SetColumnWeight),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.bodyMedium,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = row.primaryValue,
                 modifier = Modifier.weight(primaryColumnWeight),
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = if (row.monospacePrimary) FontFamily.Monospace else null,
-                ),
+                style = MaterialTheme.typography.bodyMedium,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
             Text(
                 text = row.secondaryValue.orEmpty(),
                 modifier = Modifier.weight(RepsColumnWeight),
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.bodyMedium,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
@@ -218,7 +214,7 @@ private fun SetTableRestRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 9.dp),
-        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+        style = MaterialTheme.typography.bodyMedium,
         color = textColor,
         textAlign = TextAlign.Center,
     )

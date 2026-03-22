@@ -279,6 +279,7 @@ fun ComponentRenderer(
 
         is RestSet -> {
             SetRestRowCard(
+                modifier = modifier,
                 enabled = exercise.enabled,
                 restText = "REST ${formatTime(set.timeInSeconds)}"
             )
@@ -350,6 +351,7 @@ fun ExerciseDetailScreen(
                     exercise = exercise,
                     workoutHistoryDao = workoutHistoryDao,
                     setHistoryDao = setHistoryDao,
+                    restHistoryDao = db.restHistoryDao(),
                     exerciseSessionProgressionDao = exerciseSessionProgressionDao,
                     workouts = workouts,
                     workoutStore = appViewModel.workoutStore

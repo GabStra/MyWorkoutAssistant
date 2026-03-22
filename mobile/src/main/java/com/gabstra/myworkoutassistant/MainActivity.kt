@@ -92,6 +92,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -414,6 +415,7 @@ fun MyWorkoutAssistantNavHost(
     LaunchedEffect(Unit) {
         appViewModel.loadWorkoutStore()
         workoutViewModel.initExerciseHistoryDao(context)
+        workoutViewModel.initRestHistoryDao(context)
         workoutViewModel.initWorkoutHistoryDao(context)
         workoutViewModel.initWorkoutScheduleDao(context)
         workoutViewModel.initWorkoutRecordDao(context)
@@ -423,11 +425,13 @@ fun MyWorkoutAssistantNavHost(
     }
 
     val setHistoryDao = db.setHistoryDao()
+    val restHistoryDao = db.restHistoryDao()
     val workoutHistoryDao = db.workoutHistoryDao()
     val workoutScheduleDao = db.workoutScheduleDao()
     val workoutRecordDao = db.workoutRecordDao()
 
     val exerciseInfoDao = db.exerciseInfoDao()
+    val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
 
     val updateMobileFlow = appViewModel.updateMobileFlow
     val updateMobileSignal by updateMobileFlow.collectAsState()
@@ -768,6 +772,7 @@ fun MyWorkoutAssistantNavHost(
         db: AppDatabase,
         workoutHistoryDao: WorkoutHistoryDao,
         setHistoryDao: SetHistoryDao,
+        restHistoryDao: RestHistoryDao,
         exerciseInfoDao: ExerciseInfoDao,
         workoutScheduleDao: WorkoutScheduleDao,
         workoutRecordDao: WorkoutRecordDao,
@@ -808,6 +813,7 @@ fun MyWorkoutAssistantNavHost(
 
                         workoutHistoryDao.deleteAll()
                         setHistoryDao.deleteAll()
+                        restHistoryDao.deleteAll()
                         exerciseInfoDao.deleteAll()
                         workoutScheduleDao.deleteAll()
                         workoutRecordDao.deleteAll()
@@ -831,6 +837,14 @@ fun MyWorkoutAssistantNavHost(
 
                         validSetHistories.chunked(BATCH_SIZE).forEach { chunk ->
                             setHistoryDao.insertAll(*chunk.toTypedArray())
+                        }
+
+                        val validRestHistories = (appBackup.RestHistories ?: emptyList()).filter { rest ->
+                            rest.workoutHistoryId != null &&
+                                validWorkoutHistories.any { wh -> wh.id == rest.workoutHistoryId }
+                        }
+                        validRestHistories.chunked(BATCH_SIZE).forEach { chunk ->
+                            restHistoryDao.insertAll(*chunk.toTypedArray())
                         }
 
                         val allExercises = allowedWorkouts.flatMap { workout ->
@@ -1004,6 +1018,7 @@ fun MyWorkoutAssistantNavHost(
             db = db,
             workoutHistoryDao = workoutHistoryDao,
             setHistoryDao = setHistoryDao,
+            restHistoryDao = restHistoryDao,
             exerciseInfoDao = exerciseInfoDao,
             workoutScheduleDao = workoutScheduleDao,
             workoutRecordDao = workoutRecordDao,
@@ -1073,6 +1088,7 @@ fun MyWorkoutAssistantNavHost(
                                 db = db,
                                 workoutHistoryDao = workoutHistoryDao,
                                 setHistoryDao = setHistoryDao,
+                                restHistoryDao = restHistoryDao,
                                 exerciseInfoDao = exerciseInfoDao,
                                 workoutScheduleDao = workoutScheduleDao,
                                 workoutRecordDao = workoutRecordDao,
@@ -1661,6 +1677,8 @@ fun MyWorkoutAssistantNavHost(
                                 workoutHistoryDao,
                                 workoutRecordDao,
                                 setHistoryDao,
+                                restHistoryDao,
+                                exerciseSessionProgressionDao,
                                 exerciseInfoDao,
                                 workoutScheduleDao,
                                 selectedWorkout,
@@ -1685,6 +1703,8 @@ fun MyWorkoutAssistantNavHost(
                             workoutHistoryDao = workoutHistoryDao,
                             workoutRecordDao = workoutRecordDao,
                             setHistoryDao = setHistoryDao,
+                            restHistoryDao = restHistoryDao,
+                            exerciseSessionProgressionDao = exerciseSessionProgressionDao,
                             exerciseInfoDao = exerciseInfoDao,
                             workoutScheduleDao = workoutScheduleDao,
                             workout = selectedWorkout,

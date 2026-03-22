@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -677,6 +678,7 @@ suspend fun exportExerciseHistoryToMarkdown(
     exercise: Exercise,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
     workouts: List<Workout>,
     workoutStore: WorkoutStore
@@ -686,6 +688,7 @@ suspend fun exportExerciseHistoryToMarkdown(
             exercise = exercise,
             workoutHistoryDao = workoutHistoryDao,
             setHistoryDao = setHistoryDao,
+            restHistoryDao = restHistoryDao,
             exerciseSessionProgressionDao = exerciseSessionProgressionDao,
             workouts = workouts,
             workoutStore = workoutStore

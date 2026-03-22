@@ -719,6 +719,7 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
             // Get all DAOs
             val workoutHistoryDao = db.workoutHistoryDao()
             val setHistoryDao = db.setHistoryDao()
+            val restHistoryDao = db.restHistoryDao()
             val exerciseInfoDao = db.exerciseInfoDao()
             val workoutScheduleDao = db.workoutScheduleDao()
             val workoutRecordDao = db.workoutRecordDao()
@@ -737,6 +738,10 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
             val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
                 setHistory.workoutHistoryId != null &&
                     setHistory.workoutHistoryId in validWorkoutHistoryIds
+            }
+
+            val restHistories = restHistoryDao.getAll().filter { rest ->
+                rest.workoutHistoryId != null && rest.workoutHistoryId in validWorkoutHistoryIds
             }
 
             // Get all exercise infos, workout schedules, workout records
@@ -761,13 +766,15 @@ suspend fun createAppBackup(workoutStore: WorkoutStore, db: AppDatabase): AppBac
                 workoutSchedules,
                 workoutRecords,
                 exerciseSessionProgressions,
-                errorLogs.takeIf { it.isNotEmpty() }
+                errorLogs.takeIf { it.isNotEmpty() },
+                restHistories
             )
 
             // Check if AppBackup has any data before returning
             val hasData = appBackup.WorkoutStore.workouts.isNotEmpty() ||
                     appBackup.WorkoutHistories.isNotEmpty() ||
                     appBackup.SetHistories.isNotEmpty() ||
+                    appBackup.RestHistories.orEmpty().isNotEmpty() ||
                     appBackup.ExerciseInfos.isNotEmpty() ||
                     appBackup.WorkoutSchedules.isNotEmpty() ||
                     appBackup.WorkoutRecords.isNotEmpty() ||
@@ -1280,6 +1287,7 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
             // Get all DAOs
             val workoutHistoryDao = db.workoutHistoryDao()
             val setHistoryDao = db.setHistoryDao()
+            val restHistoryDao = db.restHistoryDao()
             val exerciseInfoDao = db.exerciseInfoDao()
             val workoutScheduleDao = db.workoutScheduleDao()
             val workoutRecordDao = db.workoutRecordDao()
@@ -1296,6 +1304,10 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
             val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
                 setHistory.workoutHistoryId != null &&
                     setHistory.workoutHistoryId in validWorkoutHistoryIds
+            }
+
+            val restHistories = restHistoryDao.getAll().filter { rest ->
+                rest.workoutHistoryId != null && rest.workoutHistoryId in validWorkoutHistoryIds
             }
 
             // Get all exercise infos, workout schedules, workout records
@@ -1320,13 +1332,15 @@ suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutS
                 workoutSchedules,
                 workoutRecords,
                 exerciseSessionProgressions,
-                errorLogs.takeIf { it.isNotEmpty() }
+                errorLogs.takeIf { it.isNotEmpty() },
+                restHistories
             )
 
             // Check if AppBackup has any data before saving
             val hasData = appBackup.WorkoutStore.workouts.isNotEmpty() ||
                     appBackup.WorkoutHistories.isNotEmpty() ||
                     appBackup.SetHistories.isNotEmpty() ||
+                    appBackup.RestHistories.orEmpty().isNotEmpty() ||
                     appBackup.ExerciseInfos.isNotEmpty() ||
                     appBackup.WorkoutSchedules.isNotEmpty() ||
                     appBackup.WorkoutRecords.isNotEmpty() ||

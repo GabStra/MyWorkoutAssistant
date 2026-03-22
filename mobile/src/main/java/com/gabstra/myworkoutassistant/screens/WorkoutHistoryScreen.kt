@@ -59,11 +59,14 @@ import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.formatTimeHourMinutes
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -74,12 +77,17 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
+import com.gabstra.myworkoutassistant.shared.getNewSetFromRestHistory
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
+import com.gabstra.myworkoutassistant.shared.workout.history.WorkoutHistoryLayoutItem
+import com.gabstra.myworkoutassistant.shared.workout.history.buildWorkoutHistoryLayout
+import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -94,7 +102,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.Duration
-import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
@@ -110,6 +117,27 @@ private data class HeartRateZoneSegment(
 
 private fun roundXToSupportedPrecision(value: Double): Double {
     return (value * 10_000.0).roundToLong() / 10_000.0
+}
+
+@Composable
+private fun RestBetweenWorkoutComponentsBlock(
+    history: RestHistory
+) {
+    PrimarySurface {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = formatRestHistoryDisplayLine(history),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
 }
 
 private fun getHeartRateZoneGuideValues(
@@ -298,9 +326,11 @@ fun WorkoutHistoryScreen(
     workoutRecordDao: WorkoutRecordDao,
     workoutHistoryId: UUID? = null,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
     workout: Workout,
     selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
+    onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
 ) {
 
     val context = LocalContext.current
@@ -332,6 +362,8 @@ fun WorkoutHistoryScreen(
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
 
     var setHistoriesByExerciseId by remember { mutableStateOf<Map<UUID, List<SetHistory>>>(emptyMap()) }
+
+    var sessionRestHistories by remember { mutableStateOf<List<RestHistory>>(emptyList()) }
 
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
@@ -535,6 +567,7 @@ fun WorkoutHistoryScreen(
             }
 
             if (workoutHistories.isEmpty()) {
+                selectedWorkoutHistory = null
                 delay(500)
                 isLoading = false
                 return@withContext
@@ -551,6 +584,7 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
+        onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
         if (selectedWorkoutHistory == null) return@LaunchedEffect
 
         isLoading = true
@@ -604,6 +638,7 @@ fun WorkoutHistoryScreen(
 
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistory!!.id)
+            sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(selectedWorkoutHistory!!.id)
             val sectionMap = linkedMapOf<UUID, List<SetHistory>>()
             val consumedHistoryIds = mutableSetOf<UUID>()
 
@@ -1015,6 +1050,18 @@ fun WorkoutHistoryScreen(
                 }
             }
             Column {
+                val historyLayout = remember(
+                    selectedWorkout,
+                    setHistoriesByExerciseId,
+                    sessionRestHistories
+                ) {
+                    buildWorkoutHistoryLayout(
+                        selectedWorkout,
+                        setHistoriesByExerciseId,
+                        sessionRestHistories
+                    )
+                }
+
                 ContentTitle(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1024,17 +1071,17 @@ fun WorkoutHistoryScreen(
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    setHistoriesByExerciseId.keys.toList()
-                        .sortedBy { exerciseId ->
-                            val setHistories = setHistoriesByExerciseId[exerciseId]!!
-                            setHistories
-                                .mapNotNull { it.startTime }
-                                .minOrNull() ?: LocalDateTime.MAX
-                        }
-                        .forEach() { key ->
-                            val setHistories = setHistoriesByExerciseId[key]!!
-                            val superset = supersetsById[key]
-                            if (superset != null) {
+                    historyLayout.forEach { layoutItem ->
+                        when (layoutItem) {
+                            is WorkoutHistoryLayoutItem.SupersetSection -> {
+                                val key = layoutItem.supersetId
+                                val setHistories = setHistoriesByExerciseId[key]!!
+                                val superset = supersetsById[key] ?: return@forEach
+                                val supersetExerciseIds =
+                                    superset.exercises.map { it.id }.toSet()
+                                val restsForSuperset = sessionRestHistories.filter { rh ->
+                                    rh.exerciseId != null && rh.exerciseId in supersetExerciseIds
+                                }
                                 PrimarySurface {
                                     Column(
                                         modifier = Modifier
@@ -1049,22 +1096,38 @@ fun WorkoutHistoryScreen(
                                         )
                                         SupersetSetHistoriesRenderer(
                                             setHistories = setHistories,
+                                            restHistories = restsForSuperset,
                                             workout = selectedWorkout,
                                             getEquipmentById = { appViewModel.getEquipmentById(it) }
                                         )
                                     }
                                 }
-                                return@forEach
                             }
 
+                            is WorkoutHistoryLayoutItem.ExerciseSection -> {
+                            val key = layoutItem.exerciseId
+                            val setHistories = setHistoriesByExerciseId[key]!!
                             val exercise = exerciseById[key] ?: return@forEach
+
+                            val restsForExercise =
+                                sessionRestHistories.filter { it.exerciseId == key }
+                            val timeline = mergeSessionTimeline(setHistories, restsForExercise)
+                            val setHistoriesForRenderer = timeline.mapNotNull { step ->
+                                (step as? SessionTimelineItem.SetStep)?.history
+                            }
+                            val orderedSets = timeline.map { item ->
+                                when (item) {
+                                    is SessionTimelineItem.SetStep -> getNewSetFromSetHistory(item.history)
+                                    is SessionTimelineItem.RestStep -> getNewSetFromRestHistory(item.history)
+                                }
+                            }
 
                             val hasTarget =
                                 exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
 
                             val (targetCounter, targetTotal) = remember(
                                 hasTarget,
-                                setHistories,
+                                setHistoriesForRenderer,
                                 selectedWorkoutHistory?.id,
                                 selectedWorkoutHistory?.heartBeatRecords,
                                 exercise.lowerBoundMaxHRPercent,
@@ -1078,7 +1141,7 @@ fun WorkoutHistoryScreen(
                                 } else {
                                     var counter = 0
                                     var total = 0
-                                    setHistories
+                                    setHistoriesForRenderer
                                         .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
                                         .forEach { setHistory ->
                                             val hrTimeOffset = Duration.between(
@@ -1115,14 +1178,9 @@ fun WorkoutHistoryScreen(
                                 }
                             }
 
-                            // Convert SetHistory to Set objects, sorted by order
-                            val sets = setHistories
-                                .sortedBy { it.order }
-                                .map { getNewSetFromSetHistory(it) }
-
-                            // Create an exercise with the historical sets
+                            // Create an exercise with the historical sets (work + intra-exercise rests)
                             val exerciseWithHistorySets = exercise.copy(
-                                sets = sets,
+                                sets = orderedSets,
                                 requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
                                     ?: emptyList()
                             )
@@ -1198,7 +1256,8 @@ fun WorkoutHistoryScreen(
                                             exercise = exerciseWithHistorySets,
                                             showRest = true,
                                             appViewModel = appViewModel,
-                                            setHistories = setHistories,
+                                            setHistories = setHistoriesForRenderer,
+                                            intraExerciseRestHistories = restsForExercise,
                                             customTitle = { m ->
                                                 Row(
                                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1240,7 +1299,8 @@ fun WorkoutHistoryScreen(
                                         exercise = exerciseWithHistorySets,
                                         showRest = true,
                                         appViewModel = appViewModel,
-                                        setHistories = setHistories,
+                                        setHistories = setHistoriesForRenderer,
+                                        intraExerciseRestHistories = restsForExercise,
                                         customTitle = { m ->
                                             Row(
                                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1278,7 +1338,14 @@ fun WorkoutHistoryScreen(
                                     )
                                 }
                             }
+                            }
+                            is WorkoutHistoryLayoutItem.RestSection -> {
+                                RestBetweenWorkoutComponentsBlock(
+                                    history = layoutItem.history,
+                                )
+                            }
                         }
+                    }
                 }
             }
         }

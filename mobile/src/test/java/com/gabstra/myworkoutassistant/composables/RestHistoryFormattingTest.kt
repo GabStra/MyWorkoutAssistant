@@ -20,11 +20,11 @@ class RestHistoryFormattingTest {
             endTime = end
         )
 
-        assertEquals("REST 01:15", formatHistoricalRestValue(history))
+        assertEquals("01:15 elapsed (01:30 planned)", formatHistoricalRestValue(history))
     }
 
     @Test
-    fun `formatHistoricalRestValue falls back to timer delta when timestamps are missing`() {
+    fun `formatHistoricalRestValue falls back to planned rest when timestamps are missing`() {
         val history = restHistory(
             startTimer = 90,
             endTimer = 35,
@@ -32,7 +32,7 @@ class RestHistoryFormattingTest {
             endTime = null
         )
 
-        assertEquals("REST 00:55", formatHistoricalRestValue(history))
+        assertEquals("REST 01:30", formatHistoricalRestValue(history))
     }
 
     private fun restHistory(

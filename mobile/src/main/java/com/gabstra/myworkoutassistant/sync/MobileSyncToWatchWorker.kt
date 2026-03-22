@@ -38,6 +38,7 @@ class MobileSyncToWatchWorker(
 
             val workoutHistoryDao = db.workoutHistoryDao()
             val setHistoryDao = db.setHistoryDao()
+            val restHistoryDao = db.restHistoryDao()
             val workoutRecordDao = db.workoutRecordDao()
             val exerciseInfoDao = db.exerciseInfoDao()
             val workoutScheduleDao = db.workoutScheduleDao()
@@ -106,6 +107,9 @@ class MobileSyncToWatchWorker(
                 setHistory.workoutHistoryId != null &&
                     setHistory.workoutHistoryId in validWorkoutHistoryIds
             }
+            val restHistories = restHistoryDao.getAll().filter { rest ->
+                rest.workoutHistoryId != null && rest.workoutHistoryId in validWorkoutHistoryIds
+            }
             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
             val workoutSchedules = workoutScheduleDao.getAllSchedules()
             val exerciseSessionProgressions = exerciseSessionProgressionDao
@@ -121,7 +125,8 @@ class MobileSyncToWatchWorker(
                 workoutSchedules,
                 workoutRecords,
                 exerciseSessionProgressions,
-                errorLogs.takeIf { it.isNotEmpty() }
+                errorLogs.takeIf { it.isNotEmpty() },
+                restHistories
             )
 
             workerSyncMutex.withLock {
