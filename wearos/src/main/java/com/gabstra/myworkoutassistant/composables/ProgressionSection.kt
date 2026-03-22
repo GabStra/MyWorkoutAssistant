@@ -177,11 +177,7 @@ fun ProgressionSection(
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
-                // Compare against the pre-session snapshot to avoid including the current session.
-                val lastSessionSets = viewModel.latestSetHistoriesByExerciseId[exerciseId]
-                    ?.filterNot { it.isExcludedFromProgressionComparison() }
-                    ?.mapNotNull { it.toSimpleSetOrNull() }
-                    ?.takeIf { it.isNotEmpty() }
+                val lastSessionSets = viewModel.getLastCompletedWorkoutExecutedSets(exerciseId)
 
                 val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
                 val vsLast = if (lastSessionSets != null) {
