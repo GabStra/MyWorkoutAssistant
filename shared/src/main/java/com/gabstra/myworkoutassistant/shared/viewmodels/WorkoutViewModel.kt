@@ -797,6 +797,12 @@ open class WorkoutViewModel(
         }
     }
 
+    protected fun setRefreshing(isRefreshing: Boolean) {
+        if (_isRefreshing.value == isRefreshing) return
+        _isRefreshing.value = isRefreshing
+        rebuildScreenState()
+    }
+
     private data class SetKey(val exerciseId: UUID, val setId: UUID)
     private val latestSetHistoryMap: MutableMap<SetKey, SetHistory> = mutableMapOf()
 
@@ -1682,7 +1688,9 @@ open class WorkoutViewModel(
             currentExercise,
             updatedExercise
         )
-        _selectedWorkout.value = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
+        val updatedWorkout = _selectedWorkout.value.copy(workoutComponents = updatedComponents)
+        _selectedWorkout.value = updatedWorkout
+        initializeExercisesMaps(updatedWorkout)
         rebuildScreenState()
     }
 
@@ -1729,7 +1737,7 @@ open class WorkoutViewModel(
         val preservedStartTime = currentState.startTime
         val preservedSkipped = currentState.skipped
 
-        _isRefreshing.value = true
+        setRefreshing(true)
         try {
             val updatedExercise = currentExercise.copy(equipmentId = equipmentId)
             val updatedWorkoutComponents = updateWorkoutComponentsRecursively(
@@ -1805,7 +1813,7 @@ open class WorkoutViewModel(
             onWorkoutDefinitionChanged(updatedWorkoutStore)
             return true
         } finally {
-            _isRefreshing.value = false
+            setRefreshing(false)
         }
     }
 
@@ -1881,7 +1889,7 @@ open class WorkoutViewModel(
         ) ?: return
 
         launchIO {
-            _isRefreshing.value = true
+            setRefreshing(true)
 
             try {
                 val workoutSequence = generateWorkoutStates()
@@ -1911,7 +1919,7 @@ open class WorkoutViewModel(
 
                 rebuildScreenState()
             } finally {
-                _isRefreshing.value = false
+                setRefreshing(false)
             }
         }
     }

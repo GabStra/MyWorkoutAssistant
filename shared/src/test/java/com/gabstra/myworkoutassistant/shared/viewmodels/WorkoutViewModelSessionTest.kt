@@ -21,6 +21,7 @@ import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.exerciseSessionSnapshotFromLegacySetHistories
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -43,6 +44,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -488,6 +490,86 @@ class WorkoutViewModelSessionTest {
         assertNotNull("Start workout time should be set", viewModel.startWorkoutTime)
         
         executeSetsOnly(setModifier)
+    }
+
+    @Test
+    fun addNewRestPauseSet_clearsRefreshingAndAdvancesToInsertedRestState() = runTest(testDispatcher) {
+        val initialSetId = UUID.randomUUID()
+        val exercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(initialSetId, 8, 95.0))
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        repeat(100) {
+            advanceUntilIdle()
+            joinViewModelJobs()
+            delay(10)
+            advanceUntilIdle()
+            joinViewModelJobs()
+
+            val workoutState = viewModel.workoutState.value
+            if (workoutState is WorkoutState.Preparing && workoutState.dataLoaded) {
+                viewModel.goToNextState()
+            }
+            if (viewModel.workoutState.value is WorkoutState.Set) {
+                return@repeat
+            }
+        }
+
+        val currentSetState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Workout should start on the initial set", currentSetState)
+        assertEquals(initialSetId, currentSetState?.set?.id)
+
+        viewModel.addNewRestPauseSet()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val restState = viewModel.workoutState.value as? WorkoutState.Rest
+        assertNotNull("Rest-pause insertion should advance to the inserted rest state", restState)
+        assertEquals(
+            "Inserted rest should be tagged as a rest-pause rest.",
+            SetSubCategory.RestPauseSet,
+            (restState?.set as? RestSet)?.subCategory
+        )
+
+        val nextSetState = restState?.nextState as? WorkoutState.Set
+        assertNotNull("Inserted rest should point to the temporary rest-pause set", nextSetState)
+        assertEquals(
+            "Inserted set should be tagged as a rest-pause set.",
+            SetSubCategory.RestPauseSet,
+            (nextSetState?.set as? WeightSet)?.subCategory
+        )
+        assertEquals(3, (nextSetState?.set as? WeightSet)?.reps)
+
+        val selectedWorkoutExercise = viewModel.selectedWorkout.value.workoutComponents
+            .filterIsInstance<Exercise>()
+            .single()
+        val selectedSetIds = selectedWorkoutExercise.sets.map { it.id }
+        val derivedSetIds = viewModel.exercisesById[testExerciseId]?.sets?.map { it.id }
+
+        assertEquals(
+            "Selected workout should contain the original set followed by the temporary rest-pause pair.",
+            listOf(initialSetId, restState!!.set.id, nextSetState!!.set.id),
+            selectedSetIds
+        )
+        assertEquals(
+            "Derived exercise maps should stay in sync with temporary session mutations.",
+            selectedSetIds,
+            derivedSetIds
+        )
+        assertFalse(
+            "WorkoutScreenState should clear the refreshing flag once the mutation finishes.",
+            viewModel.screenState.value.isRefreshing
+        )
     }
 
     // Test 1: First Session (No ExerciseInfo)
