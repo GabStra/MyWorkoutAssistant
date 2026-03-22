@@ -2816,12 +2816,12 @@ open class WorkoutViewModel(
     }
 
     /**
-     * Navigates to the previous Set state, skipping Rest states and calibration states.
-     * 
-     * Handles calibration states correctly:
-     * - When called from CalibrationLoadSelection, finds the previous non-calibration Set state
-     * - Skips calibration sets (isCalibrationSet) to avoid re-entering calibration flow
-     * - Calibration context will be cleared when navigating to a non-calibration Set
+     * Navigates to the previous logical Set state.
+     *
+     * Normal flow skips Rest states and calibration sets so "go back one set" returns to the last
+     * completed work set. The exception is Rest immediately after a calibration set: in that case
+     * the previous logical set is the calibration set itself, so we return to it instead of skipping
+     * past the calibration flow.
      */
     fun goToPreviousSet() {
         val machine = stateMachine ?: return
@@ -2837,10 +2837,25 @@ open class WorkoutViewModel(
         // Get current set.id (works for Set, Rest, and calibration states)
         val currentSetId = WorkoutStateQueries.stateSetId(currentState) ?: return
 
-        // Search backwards through allStates to find the previous Set state with different set.id
-        // Start from currentIndex - 1 (the state before current) and go backwards to 0
-        // Skip calibration states (CalibrationLoadSelection, CalibrationRIRSelection) and Rest states
-        val targetIndex = machine.findPreviousSetIndex(excludedSetId = currentSetId) ?: return
+        val previousNonRestIndex = machine.findPreviousNonRestIndex()
+        val previousNonRestState = previousNonRestIndex
+            ?.takeIf { it in machine.allStates.indices }
+            ?.let { machine.allStates[it] }
+
+        // Rest immediately after a calibration set should go back to that calibration set,
+        // not skip over it or jump to an earlier exercise.
+        val targetIndex = if (
+            currentState is WorkoutState.Rest &&
+            previousNonRestState is WorkoutState.Set &&
+            previousNonRestState.isCalibrationSet
+        ) {
+            previousNonRestIndex
+        } else {
+            // Search backwards through allStates to find the previous Set state with different set.id
+            // Start from currentIndex - 1 (the state before current) and go backwards to 0
+            // Skip calibration states (CalibrationLoadSelection, CalibrationRIRSelection) and Rest states
+            machine.findPreviousSetIndex(excludedSetId = currentSetId)
+        } ?: return
 
         // Navigate directly to the target Set state
         stateMachine = machine.withCurrentIndex(targetIndex)

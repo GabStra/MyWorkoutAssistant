@@ -216,6 +216,8 @@ fun WorkoutViewModel.applyCalibrationRIR(rir: Double, formBreaks: Boolean = fals
                 // Temporarily set current state to calibration Set execution to store it
                 val tempMachine = machine.withCurrentIndex(calibrationSetIndex)
                 stateMachine = tempMachine
+                // storeSetData() snapshots _workoutState; sync flows so identity is WorkoutState.Set with calibrationRIR
+                updateStateFlowsFromMachine()
                 storeSetData()
             }
             
