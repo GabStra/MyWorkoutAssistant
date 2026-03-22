@@ -99,14 +99,18 @@ class MobileSyncToWatchWorker(
 
             val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
             val validWorkoutHistories = filteredWorkoutHistories.filter { it.id in requiredWorkoutHistoryIds }
+            val validWorkoutHistoryIds = validWorkoutHistories
+                .map { it.id }
+                .toHashSet()
             val setHistories = setHistoryDao.getAllSetHistories().filter { setHistory ->
-                validWorkoutHistories.any { it.id == setHistory.workoutHistoryId }
+                setHistory.workoutHistoryId != null &&
+                    setHistory.workoutHistoryId in validWorkoutHistoryIds
             }
             val exerciseInfos = exerciseInfoDao.getAllExerciseInfos()
             val workoutSchedules = workoutScheduleDao.getAllSchedules()
             val exerciseSessionProgressions = exerciseSessionProgressionDao
                 .getAllExerciseSessionProgressions()
-                .filter { progression -> validWorkoutHistories.any { it.id == progression.workoutHistoryId } }
+                .filter { progression -> progression.workoutHistoryId in validWorkoutHistoryIds }
             val errorLogs = errorLogDao.getAllErrorLogs().first()
 
             val appBackup = AppBackup(

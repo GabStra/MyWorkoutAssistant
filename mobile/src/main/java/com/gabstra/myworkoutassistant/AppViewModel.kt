@@ -377,14 +377,14 @@ class AppViewModel(
     private val _workoutByIdForHistories = MutableStateFlow<Map<UUID, Workout>?>(null)
     val workoutByIdForHistories: StateFlow<Map<UUID, Workout>?> = _workoutByIdForHistories.asStateFlow()
 
-    fun loadWorkoutHistories(enabledWorkouts: List<Workout>) {
+    fun loadWorkoutHistories(workoutsForHistory: List<Workout>) {
         // #region agent log
-        Log.d(DEBUG_TAG, "loadWorkoutHistories entry H1 enabledCount=${enabledWorkouts.size}")
+        Log.d(DEBUG_TAG, "loadWorkoutHistories entry H1 workoutCount=${workoutsForHistory.size}")
         // #endregion
-        refreshWorkoutHistories(enabledWorkouts)
+        refreshWorkoutHistories(workoutsForHistory)
     }
 
-    private fun refreshWorkoutHistories(enabledWorkouts: List<Workout>) {
+    private fun refreshWorkoutHistories(workoutsForHistory: List<Workout>) {
         val viewModelId = System.identityHashCode(this)
         viewModelScope.launch {
             // #region agent log
@@ -396,7 +396,7 @@ class AppViewModel(
                     val workoutHistoryDao = db.workoutHistoryDao()
                     val setHistoryDao = db.setHistoryDao()
                     val all = workoutHistoryDao.getAllWorkoutHistories()
-                    val preferredEnabledWorkoutByGlobalId = enabledWorkouts
+                    val preferredWorkoutByGlobalId = workoutsForHistory
                         .groupBy { it.globalId }
                         .mapValues { (_, workoutsForGlobalId) ->
                             workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
@@ -406,16 +406,16 @@ class AppViewModel(
                         .toSet()
                     val filtered = all.filter { history ->
                         workoutHistoryIdsWithSets.contains(history.id) &&
-                            history.globalId in preferredEnabledWorkoutByGlobalId
+                            history.globalId in preferredWorkoutByGlobalId
                     }
                     val groupedMap = filtered.groupBy { it.date }
                 // #region agent log
-                Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} enabledCount=${enabledWorkouts.size} groupedSize=${groupedMap.size}")
+                Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} workoutCount=${workoutsForHistory.size} groupedSize=${groupedMap.size}")
                 // #endregion
                     groupedMap
                 }
-                val byId = enabledWorkouts.associateBy { it.id }.toMutableMap()
-                val preferredEnabledWorkoutByGlobalId = enabledWorkouts
+                val byId = workoutsForHistory.associateBy { it.id }.toMutableMap()
+                val preferredWorkoutByGlobalId = workoutsForHistory
                     .groupBy { it.globalId }
                     .mapValues { (_, workoutsForGlobalId) ->
                         workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
@@ -424,7 +424,7 @@ class AppViewModel(
                 grouped.values.asSequence()
                     .flatten()
                     .forEach { history ->
-                        val resolvedWorkout = preferredEnabledWorkoutByGlobalId[history.globalId]
+                        val resolvedWorkout = preferredWorkoutByGlobalId[history.globalId]
                         if (resolvedWorkout != null) {
                             byId.putIfAbsent(history.workoutId, resolvedWorkout)
                         }

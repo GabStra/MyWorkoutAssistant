@@ -88,13 +88,23 @@ fun StandardDialog(
                             val confirmLabel = requireNotNull(confirmText)
                             val confirmAction = requireNotNull(onConfirm)
                             if (isConfirmDestructive) {
-                                AppDestructiveButton(
-                                    text = confirmLabel,
-                                    onClick = confirmAction,
-                                    enabled = confirmEnabled,
-                                    modifier = Modifier.heightIn(min = 48.dp),
-                                    minHeight = 48.dp
-                                )
+                                if (confirmLabel.equals("Delete", ignoreCase = true)) {
+                                    AppDeleteButton(
+                                        text = confirmLabel,
+                                        onClick = confirmAction,
+                                        enabled = confirmEnabled,
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                        minHeight = 48.dp
+                                    )
+                                } else {
+                                    AppDestructiveButton(
+                                        text = confirmLabel,
+                                        onClick = confirmAction,
+                                        enabled = confirmEnabled,
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                        minHeight = 48.dp
+                                    )
+                                }
                             } else {
                                 AppPrimaryButton(
                                     text = confirmLabel,

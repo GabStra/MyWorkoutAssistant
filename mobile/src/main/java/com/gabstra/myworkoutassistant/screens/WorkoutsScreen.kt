@@ -331,18 +331,18 @@ fun WorkoutsScreen(
         }
     }
 
-    LaunchedEffect(allEnabledWorkouts.map { it.id }.toSet()) {
+    LaunchedEffect(workouts.map { it.id }.toSet()) {
         // #region agent log
-        Log.d(TAG, "LaunchedEffect H3 effect run enabledCount=${allEnabledWorkouts.size}")
+        Log.d(TAG, "LaunchedEffect H3 effect run workoutCount=${workouts.size}")
         // #endregion
-        if (allEnabledWorkouts.isNotEmpty()) {
-            appViewModel.loadWorkoutHistories(allEnabledWorkouts)
+        if (workouts.isNotEmpty()) {
+            appViewModel.loadWorkoutHistories(workouts)
         }
     }
 
-    LaunchedEffect(updateMessage, allEnabledWorkouts.map { it.id }.toSet()) {
-        if (updateMessage != null && allEnabledWorkouts.isNotEmpty()) {
-            appViewModel.loadWorkoutHistories(allEnabledWorkouts)
+    LaunchedEffect(updateMessage, workouts.map { it.id }.toSet()) {
+        if (updateMessage != null && workouts.isNotEmpty()) {
+            appViewModel.loadWorkoutHistories(workouts)
         }
     }
 
@@ -539,7 +539,7 @@ fun WorkoutsScreen(
                                     enabled
                                 )
                             },
-                            onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(allEnabledWorkouts) },
+                            onGroupedWorkoutsHistoriesChange = { appViewModel.loadWorkoutHistories(workouts) },
                             onMoveWorkoutUp = { onMoveWorkoutUp() },
                             onMoveWorkoutDown = { onMoveWorkoutDown() },
                             isSelectionModeActive = isWorkoutSelectionModeActive

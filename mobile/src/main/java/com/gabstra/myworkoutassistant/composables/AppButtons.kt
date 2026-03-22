@@ -121,6 +121,24 @@ fun AppDestructiveButton(
 }
 
 @Composable
+fun AppDeleteButton(
+    modifier: Modifier = Modifier,
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    minHeight: Dp = 48.dp
+) {
+    AppPrimaryOutlinedButton(
+        modifier = modifier,
+        text = text,
+        onClick = onClick,
+        enabled = enabled,
+        color = Red,
+        minHeight = minHeight
+    )
+}
+
+@Composable
 private fun AppFilledButton(
     text: String,
     onClick: () -> Unit,
