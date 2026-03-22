@@ -342,8 +342,6 @@ fun BodyWeightSetScreen(
                 text = repsText,
                 style = style,
                 color = textColor,
-                fadeInMillis = 0,
-                hideUntilMeasuredOnTextChange = true,
             )
         }
     }
@@ -418,8 +416,6 @@ fun BodyWeightSetScreen(
                 text = weightText,
                 style = style,
                 color =  textColor,
-                fadeInMillis = 0,
-                hideUntilMeasuredOnTextChange = true,
             )
         }
     }
