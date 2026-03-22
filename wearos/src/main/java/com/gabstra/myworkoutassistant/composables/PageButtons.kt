@@ -2,10 +2,10 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -116,8 +116,8 @@ fun PageButtons(
         }
     ) { _ ->
         TransformingLazyColumn(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            state = state,
+            contentPadding = PaddingValues(horizontal = 10.dp),
+            state = state
         ) {
             item {
                     ButtonWithText(
@@ -184,12 +184,8 @@ fun PageButtons(
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
-                        if (isSwitchEnabled) {
-                            hapticsViewModel.doGentleVibration()
-                            viewModel.toggleKeepScreenOn()
-                        } else {
-                            hapticsViewModel.doGentleVibration()
-                        }
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.toggleKeepScreenOn()
                     }
                 ) {
                     Row(
@@ -216,9 +212,8 @@ fun PageButtons(
                         Switch(
                             checked = switchChecked,
                             onCheckedChange = {
-                                if (isSwitchEnabled) {
-                                    viewModel.toggleKeepScreenOn()
-                                }
+                                hapticsViewModel.doGentleVibration()
+                                viewModel.toggleKeepScreenOn()
                             },
                             enabled = isSwitchEnabled,
                             colors = SwitchDefaults.colors(

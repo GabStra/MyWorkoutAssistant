@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -354,7 +352,7 @@ private fun UpcomingSetPreview(
         ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
         val rowModifier = Modifier
             .height(25.dp)
-            .border(BorderStroke(1.dp, borderColor), rowShape)
+            //.border(BorderStroke(1.dp, borderColor), rowShape)
 
         SetTableRow(
             modifier = rowModifier,

@@ -699,6 +699,7 @@ private fun CenteredLabelRow(
     val itemStyle = MaterialTheme.typography.numeralSmall
     Box(
         modifier = modifier
+            .fillMaxWidth()
             .padding(vertical = 2.5.dp, horizontal = 5.dp),
         contentAlignment = Alignment.Center
     ) {

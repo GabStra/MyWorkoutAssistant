@@ -150,7 +150,7 @@ fun ResumeWorkoutDialog(
                             }
                         }
                         item {
-                            ButtonWithText(
+                            OutlinedButtonWithText(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec).animateItem(),

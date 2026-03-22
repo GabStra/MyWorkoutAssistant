@@ -23,7 +23,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -210,10 +209,10 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoveryChoiceButton(
-                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                                modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer continue option",
-                                text = "Continue timer",
+                                text = "Continue",
                                 colors = selectedRecoveryButtonColors(
                                     selected = timerChoice == TimerRecoveryChoice.CONTINUE
                                 ),
@@ -225,10 +224,10 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoveryChoiceButton(
-                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                                modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery timer restart option",
-                                text = "Restart timer",
+                                text = "Restart",
                                 colors = selectedRecoveryButtonColors(
                                     selected = timerChoice == TimerRecoveryChoice.RESTART
                                 ),
@@ -252,10 +251,10 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoveryChoiceButton(
-                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                                modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration continue option",
-                                text =  "Continue calibration",
+                                text =  "Continue",
                                 colors = selectedRecoveryButtonColors(
                                     selected = calibrationChoice == CalibrationRecoveryChoice.CONTINUE
                                 ),
@@ -267,10 +266,10 @@ internal fun RecoveryDialog(
                         }
                         item {
                             RecoveryChoiceButton(
-                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                                modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration restart option",
-                                text = "Restart calibration",
+                                text = "Restart",
                                 colors = selectedRecoveryButtonColors(
                                     selected = calibrationChoice == CalibrationRecoveryChoice.RESTART
                                 ),
@@ -285,11 +284,11 @@ internal fun RecoveryDialog(
                     if (showResumeButton) {
                         item {
                             RecoveryChoiceButton(
-                                modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                                modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery resume action",
                                 text = "Resume",
-                                colors = ButtonDefaults.buttonColors(),
+                                colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(),
                                 onClick = {
                                     resumeWithChoices(timerChoice, calibrationChoice)
                                 }
@@ -299,25 +298,21 @@ internal fun RecoveryDialog(
 
                     item {
                         RecoveryChoiceButton(
-                            modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
-                            transformation = SurfaceTransformation(spec),
-                            contentDescription = "Recovery discard action",
-                            text = "Discard",
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = MaterialTheme.colorScheme.error,
-                                contentColor = MaterialTheme.colorScheme.onError
-                            ),
-                            onClick = { onDiscard(workout) }
-                        )
-                    }
-
-                    item {
-                        RecoveryChoiceButton(
-                            modifier = Modifier.transformedHeight(this, spec) .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } },
+                            modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = "Recovery dismiss action",
                             text = "Dismiss",
                             onClick = onDismiss
+                        )
+                    }
+
+                    item {
+                        CancelRecoveryChoiceButton(
+                            modifier = Modifier.transformedHeight(this, spec),
+                            transformation = SurfaceTransformation(spec),
+                            contentDescription = "Recovery discard action",
+                            text = "Discard",
+                            onClick = { onDiscard(workout) }
                         )
                     }
                 }
@@ -403,7 +398,7 @@ private fun RecoveryChoiceButton(
     transformation: SurfaceTransformation? = null,
     contentDescription: String,
     text: String,
-    colors: androidx.wear.compose.material3.ButtonColors = ButtonDefaults.filledTonalButtonColors(),
+    colors: androidx.wear.compose.material3.ButtonColors = androidx.wear.compose.material3.ButtonDefaults.filledTonalButtonColors(),
     onClick: () -> Unit
 ) {
     ButtonWithText(
@@ -418,11 +413,47 @@ private fun RecoveryChoiceButton(
 }
 
 @Composable
+private fun OutlinedRecoveryChoiceButton(
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
+    contentDescription: String,
+    text: String,
+    onClick: () -> Unit
+) {
+    OutlinedButtonWithText(
+        modifier = modifier
+            .semantics { this.contentDescription = contentDescription }
+            .fillMaxWidth(),
+        transformation = transformation,
+        text = text,
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun CancelRecoveryChoiceButton(
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
+    contentDescription: String,
+    text: String,
+    onClick: () -> Unit
+) {
+    CancelButtonWithText(
+        modifier = modifier
+            .semantics { this.contentDescription = contentDescription }
+            .fillMaxWidth(),
+        transformation = transformation,
+        text = text,
+        onClick = onClick
+    )
+}
+
+@Composable
 private fun selectedRecoveryButtonColors(selected: Boolean): androidx.wear.compose.material3.ButtonColors {
     return if (selected){
-        ButtonDefaults.buttonColors()
+        androidx.wear.compose.material3.ButtonDefaults.buttonColors()
     } else {
-        ButtonDefaults.filledTonalButtonColors()
+        androidx.wear.compose.material3.ButtonDefaults.filledTonalButtonColors()
     }
 }
 

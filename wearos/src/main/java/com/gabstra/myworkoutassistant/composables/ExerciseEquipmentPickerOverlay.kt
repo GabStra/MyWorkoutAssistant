@@ -97,7 +97,7 @@ fun ExerciseEquipmentPickerOverlay(
                     )
                 }
                 item {
-                    ButtonWithText(
+                    CancelButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp),

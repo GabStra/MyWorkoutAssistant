@@ -48,11 +48,13 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
+import com.gabstra.myworkoutassistant.composables.OutlinedButtonWithText
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
+import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import kotlinx.coroutines.delay
 
@@ -259,12 +261,14 @@ fun WorkoutDetailScreen(
                         }
 
                         item {
-                            ButtonWithText(
+                            OutlinedButtonWithText(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 text = InterruptedWorkoutCopy.DELETE_BUTTON,
+                                borderColor = Red,
+                                textColor = Red,
                                 onClick = {
                                     showDeleteDialog = true
                                 }
