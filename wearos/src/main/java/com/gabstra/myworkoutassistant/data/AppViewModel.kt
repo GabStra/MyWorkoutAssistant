@@ -34,6 +34,7 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -80,8 +81,6 @@ open class AppViewModel : WorkoutViewModel() {
     companion object {
         private const val TAG = "AppViewModel"
         private const val WORKOUT_SYNC_LOG_TAG = "WorkoutSync"
-        private const val SYNCED_WORKOUT_HISTORY_IDS_PREFS = "synced_workout_history_ids"
-        private const val SYNCED_IDS_KEY = "ids"
         private const val SYNC_TIMEOUT_MS = 10_000L
     }
 
@@ -107,31 +106,34 @@ open class AppViewModel : WorkoutViewModel() {
         return WorkoutRecoveryCheckpointStore(context)
     }
 
-    private fun getSyncedWorkoutHistoryIds(context: Context): Set<UUID> {
-        val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
-        val ids = prefs.getStringSet(SYNCED_IDS_KEY, null) ?: emptySet()
-        return ids.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }.toSet()
+    private fun getPendingWorkoutHistoryIds(context: Context): Set<UUID> {
+        return PendingWorkoutHistorySyncTracker.getPendingIds(context)
     }
 
-    private fun addSyncedWorkoutHistoryId(context: Context, id: UUID) {
-        val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
-        val current = prefs.getStringSet(SYNCED_IDS_KEY, null)?.toMutableSet() ?: mutableSetOf()
-        current.add(id.toString())
-        prefs.edit().putStringSet(SYNCED_IDS_KEY, current).apply()
+    private fun enqueuePendingWorkoutHistoryId(context: Context, id: UUID) {
+        PendingWorkoutHistorySyncTracker.enqueue(context, id)
     }
 
-    /** Call before sending a store so SYNC_COMPLETE can mark that history as synced. */
+    private fun dequeuePendingWorkoutHistoryId(context: Context, id: UUID) {
+        PendingWorkoutHistorySyncTracker.dequeue(context, id)
+    }
+
+    private fun retainPendingWorkoutHistoryIds(context: Context, validIds: Set<UUID>) {
+        PendingWorkoutHistorySyncTracker.retain(context, validIds)
+    }
+
+    /** Call before sending a completed history so SYNC_COMPLETE can clear it from the pending queue. */
     private fun registerPendingSyncTransaction(transactionId: String, workoutHistoryId: UUID) {
         pendingSyncTransactions[transactionId] = workoutHistoryId
     }
 
-    /** Called when SYNC_COMPLETE broadcast is received; marks the corresponding history as synced. */
+    /** Called when SYNC_COMPLETE broadcast is received; clears the corresponding pending outbound history. */
     fun markHistorySyncedForTransaction(transactionId: String?) {
         if (transactionId == null) return
         val historyId = pendingSyncTransactions.remove(transactionId) ?: return
         val ctx = applicationContext ?: return
-        addSyncedWorkoutHistoryId(ctx, historyId)
-        Log.d("AppViewModel", "Marked workout history $historyId as synced for transaction $transactionId")
+        dequeuePendingWorkoutHistoryId(ctx, historyId)
+        Log.d("AppViewModel", "Cleared pending workout history $historyId for transaction $transactionId")
     }
     
     private var dataClient: DataClient? = null
@@ -692,23 +694,35 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     /**
-     * Sends only workout histories that have not yet been confirmed synced (additive catch-up at start).
-     * Call when app is initialized and phone is connected.
+     * Re-sends only completed workout histories that were produced on Wear and are still pending
+     * confirmation from the phone.
      */
     fun sendUnsyncedHistories(context: Context) {
         launchMain {
             try {
                 withContext(Dispatchers.IO) {
                     val client = dataClient ?: return@withContext
-                    val syncedIds = getSyncedWorkoutHistoryIds(context)
+                    val pendingIds = getPendingWorkoutHistoryIds(context)
+                    if (pendingIds.isEmpty()) return@withContext
+
                     val allCompleted = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
-                    val unsynced = allCompleted.filter { it.id !in syncedIds }
+                    val validPendingIds = allCompleted.map { it.id }.toSet().intersect(pendingIds)
+                    retainPendingWorkoutHistoryIds(context, validPendingIds)
+                    if (validPendingIds.isEmpty()) return@withContext
+
+                    val unsynced = allCompleted.filter { it.id in validPendingIds }
                     if (unsynced.isEmpty()) return@withContext
 
-                    Log.d("DataLayerSync", "sendUnsyncedHistories: sending ${unsynced.size} unsynced histories")
+                    Log.d(
+                        "DataLayerSync",
+                        "sendUnsyncedHistories: re-sending ${unsynced.size} pending Wear history item(s)"
+                    )
                     unsynced.forEachIndexed { index, workoutHistory ->
                         try {
-                            Log.d("DataLayerSync", "Sending unsynced history id=${workoutHistory.id} (${index + 1} of ${unsynced.size})")
+                            Log.d(
+                                "DataLayerSync",
+                                "Sending pending Wear history id=${workoutHistory.id} (${index + 1} of ${unsynced.size})"
+                            )
                             val workout = workoutStore.findWorkoutForHistory(workoutHistory)
                                 ?: return@forEachIndexed
                             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
@@ -738,6 +752,9 @@ open class AppViewModel : WorkoutViewModel() {
                                     context,
                                     transactionId
                                 )
+                            }
+                            if (success) {
+                                dequeuePendingWorkoutHistoryId(context, workoutHistory.id)
                             }
                             if (success && errorLogs.isNotEmpty()) {
                                 try {
@@ -792,6 +809,10 @@ open class AppViewModel : WorkoutViewModel() {
                         )
                     }
                 } ?: Pair(false, "")
+
+                if (success && workoutHistory.isDone) {
+                    dequeuePendingWorkoutHistoryId(context, workoutHistory.id)
+                }
 
                 withContext(Dispatchers.Main) {
                     finishPhoneSync(success = success, onEnd = onEnd)
@@ -1168,6 +1189,13 @@ open class AppViewModel : WorkoutViewModel() {
         Log.d(WORKOUT_SYNC_LOG_TAG, "pushAndStoreWorkoutData called: isDone=$isDone, forceNotSend=$forceNotSend")
         super.pushAndStoreWorkoutData(isDone, context, forceNotSend) {
             val currentState = workoutState.value
+            if (isDone) {
+                val syncContext = resolveSyncContext(context)
+                val completedHistoryId = currentWorkoutHistory?.takeIf { it.isDone }?.id
+                if (syncContext != null && completedHistoryId != null) {
+                    enqueuePendingWorkoutHistoryId(syncContext, completedHistoryId)
+                }
+            }
             if (currentState is WorkoutState.Set) {
                 upsertWorkoutRecord(currentState.exerciseId, currentState.setIndex)
             }

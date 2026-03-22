@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.e2e.helpers
 import android.content.Context
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -15,26 +16,21 @@ object CrossDeviceWearSyncStateHelper {
         db.workoutRecordDao().deleteAll()
         db.exerciseSessionProgressionDao().deleteAll()
         db.exerciseInfoDao().deleteAll()
-        context.getSharedPreferences("synced_workout_history_ids", Context.MODE_PRIVATE)
-            .edit()
-            .remove("ids")
-            .apply()
+        PendingWorkoutHistorySyncTracker.clear(context)
     }
 
     fun waitForWearSyncMarker(
         context: Context,
         timeoutMs: Long = E2ETestTimings.CROSS_DEVICE_SYNC_TIMEOUT_MS
     ) = runBlocking {
-        val prefs = context.getSharedPreferences("synced_workout_history_ids", Context.MODE_PRIVATE)
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val ids = prefs.getStringSet("ids", emptySet()) ?: emptySet()
-            if (ids.isNotEmpty()) {
+            if (PendingWorkoutHistorySyncTracker.getPendingIds(context).isEmpty()) {
                 return@runBlocking
             }
             delay(500)
         }
-        error("Workout sync marker was not written on Wear within ${timeoutMs}ms.")
+        error("Pending Wear workout history sync queue did not drain within ${timeoutMs}ms.")
     }
 
     fun waitForCompletedHistoryAndEnqueueSync(

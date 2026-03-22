@@ -1251,12 +1251,12 @@ class DataLayerListenerService : WearableListenerService() {
                                                     )
 
                                                     // Clean up workout histories that are no longer needed
-                                                    cleanupUnusedWorkoutHistories(
-                                                        appBackup.WorkoutStore.workouts,
-                                                        appBackup.WorkoutHistories.map { it.id }
-                                                            .toSet()
-                                                    )
-                                                }
+                                                        cleanupUnusedWorkoutHistories(
+                                                            appBackup.WorkoutStore.workouts,
+                                                            appBackup.WorkoutHistories.map { it.id }
+                                                                .toSet()
+                                                        )
+                                                    }
 
                                                 val intent = Intent(INTENT_ID).apply {
                                                     putExtra(

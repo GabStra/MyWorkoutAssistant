@@ -36,17 +36,18 @@ class WorkoutHistorySyncWorker(
             val workoutStore = WorkoutStoreRepository(context.filesDir).getWorkoutStore()
             val dataClient = Wearable.getDataClient(context)
 
-            val syncedIds = getSyncedWorkoutHistoryIds(context)
-            val allCompleted = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
-            val unsyncedCompleted = allCompleted.filter { it.id !in syncedIds }
-            val latestUnfinishedByWorkout = workoutHistoryDao
-                .getAllUnfinishedWorkoutHistories(false)
-                .groupBy { it.workoutId }
-                .mapNotNull { (_, histories) -> histories.maxByOrNull { it.version.toLong() } }
+            val pendingIds = PendingWorkoutHistorySyncTracker.getPendingIds(context)
+            if (pendingIds.isEmpty()) {
+                Log.d(TAG, "No pending Wear-originated workout histories to sync")
+                return Result.success()
+            }
 
-            val historiesToSync = (latestUnfinishedByWorkout + unsyncedCompleted).distinctBy { it.id }
+            val allCompleted = workoutHistoryDao.getAllWorkoutHistoriesByIsDone(true)
+            val validPendingIds = allCompleted.map { it.id }.toSet().intersect(pendingIds)
+            PendingWorkoutHistorySyncTracker.retain(context, validPendingIds)
+            val historiesToSync = allCompleted.filter { it.id in validPendingIds }
             if (historiesToSync.isEmpty()) {
-                Log.d(TAG, "No workout histories pending sync")
+                Log.d(TAG, "No completed pending Wear-originated workout histories to sync")
                 return Result.success()
             }
 
@@ -88,9 +89,7 @@ class WorkoutHistorySyncWorker(
                     )
 
                     if (success) {
-                        if (workoutHistory.isDone) {
-                            addSyncedWorkoutHistoryId(context, workoutHistory.id)
-                        }
+                        PendingWorkoutHistorySyncTracker.dequeue(context, workoutHistory.id)
                         if (errorLogs.isNotEmpty()) {
                             runCatching {
                                 (context.applicationContext as? MyApplication)?.clearErrorLogs()
@@ -116,8 +115,6 @@ class WorkoutHistorySyncWorker(
     companion object {
         private const val TAG = "WorkoutHistorySyncWorker"
         private const val UNIQUE_WORK_NAME = "wear_workout_history_sync"
-        private const val SYNCED_WORKOUT_HISTORY_IDS_PREFS = "synced_workout_history_ids"
-        private const val SYNCED_IDS_KEY = "ids"
 
         fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<WorkoutHistorySyncWorker>()
@@ -128,19 +125,6 @@ class WorkoutHistorySyncWorker(
                 ExistingWorkPolicy.APPEND_OR_REPLACE,
                 request
             )
-        }
-
-        private fun getSyncedWorkoutHistoryIds(context: Context): Set<UUID> {
-            val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
-            val ids = prefs.getStringSet(SYNCED_IDS_KEY, null) ?: emptySet()
-            return ids.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }.toSet()
-        }
-
-        private fun addSyncedWorkoutHistoryId(context: Context, id: UUID) {
-            val prefs = context.getSharedPreferences(SYNCED_WORKOUT_HISTORY_IDS_PREFS, Context.MODE_PRIVATE)
-            val current = prefs.getStringSet(SYNCED_IDS_KEY, null)?.toMutableSet() ?: mutableSetOf()
-            current.add(id.toString())
-            prefs.edit().putStringSet(SYNCED_IDS_KEY, current).apply()
         }
     }
 }

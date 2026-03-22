@@ -68,6 +68,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.sync.WorkoutHistoryTransferCoordinator
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
@@ -91,6 +92,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -879,6 +881,28 @@ suspend fun sendWorkoutHistoryStore(
     transactionId: String? = null
 ): Pair<Boolean, String> {
     val usedTransactionId = transactionId ?: UUID.randomUUID().toString()
+    if (WorkoutHistoryTransferCoordinator.sendMutex.isLocked) {
+        Log.d(
+            "DataLayerSync",
+            "Queued workout history transaction behind an active send: $usedTransactionId"
+        )
+    }
+    return WorkoutHistoryTransferCoordinator.sendMutex.withLock {
+        sendWorkoutHistoryStoreInternal(
+            dataClient = dataClient,
+            workoutHistoryStore = workoutHistoryStore,
+            context = context,
+            usedTransactionId = usedTransactionId
+        )
+    }
+}
+
+private suspend fun sendWorkoutHistoryStoreInternal(
+    dataClient: DataClient,
+    workoutHistoryStore: WorkoutHistoryStore,
+    context: android.content.Context?,
+    usedTransactionId: String
+): Pair<Boolean, String> {
     try {
         // Check if phone is connected before attempting sync
         // This prevents sync attempts when phone is not available

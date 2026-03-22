@@ -1049,7 +1049,7 @@ class WearWorkoutDriver(
     fun waitForSyncedIds(
         context: Context,
         timeoutMs: Long,
-        prefsName: String = "synced_workout_history_ids",
+        prefsName: String = "pending_outbound_workout_history_ids",
         key: String = "ids"
     ): Boolean {
         val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
