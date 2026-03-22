@@ -19,6 +19,8 @@ Param(
 )
 
 $ErrorActionPreference = "Stop"
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
 $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [ordered]@{}
 $timings["startedAtUtc"] = (Get-Date).ToUniversalTime().ToString("o")
@@ -219,8 +221,14 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     }
 }
 
-function Run-MobileInstrumentationClass([string]$phoneSerial, [string]$className, [string]$appPackage, [switch]$fastTimeoutProfile) {
-    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile.IsPresent
+function Run-MobileInstrumentationClass(
+    [string]$phoneSerial,
+    [string]$className,
+    [string]$appPackage,
+    [switch]$fastTimeoutProfile,
+    [string[]]$extraInstrumentationArgs = @()
+) {
+    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile.IsPresent -extraInstrumentationArgs $extraInstrumentationArgs
     Write-Host "Running mobile instrumentation class: $className" -ForegroundColor Cyan
     Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
     $instrumentOutput = & adb $instrumentArgs 2>&1
@@ -231,12 +239,16 @@ function Get-MobileInstrumentationArguments(
     [string]$phoneSerial,
     [string]$className,
     [string]$appPackage,
-    [bool]$fastTimeoutProfile
+    [bool]$fastTimeoutProfile,
+    [string[]]$extraInstrumentationArgs = @()
 ) {
     $runner = "$appPackage.test/androidx.test.runner.AndroidJUnitRunner"
     $instrumentArgs = @("-s", $phoneSerial, "shell", "am", "instrument", "-w", "-r", "-e", "class", $className)
     if ($fastTimeoutProfile) {
         $instrumentArgs += @("-e", "e2e_profile", "fast")
+    }
+    if ($extraInstrumentationArgs.Count -gt 0) {
+        $instrumentArgs += $extraInstrumentationArgs
     }
     $instrumentArgs += $runner
     return $instrumentArgs
@@ -264,9 +276,10 @@ function Start-MobileInstrumentationClass(
     [string]$appPackage,
     [bool]$fastTimeoutProfile,
     [string]$stdoutPath,
-    [string]$stderrPath
+    [string]$stderrPath,
+    [string[]]$extraInstrumentationArgs = @()
 ) {
-    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile
+    $instrumentArgs = Get-MobileInstrumentationArguments -phoneSerial $phoneSerial -className $className -appPackage $appPackage -fastTimeoutProfile $fastTimeoutProfile -extraInstrumentationArgs $extraInstrumentationArgs
     Write-Host "Starting mobile instrumentation class: $className" -ForegroundColor Cyan
     Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
     return Start-Process -FilePath "adb" -ArgumentList $instrumentArgs -NoNewWindow -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
@@ -359,7 +372,7 @@ function Invoke-WearRunnerClass {
     $args = @(
         "-NoProfile",
         "-File",
-        "./scripts/run_wear_e2e.ps1",
+        (Join-Path $scriptRoot "run_wear_e2e.ps1"),
         "-TestClass",
         $className,
         "-WearEmulatorSerial",
@@ -484,7 +497,8 @@ try {
             -appPackage $AppPackage `
             -fastTimeoutProfile $FastTimeoutProfile.IsPresent `
             -stdoutPath $observerStdoutPath `
-            -stderrPath $observerStderrPath
+            -stderrPath $observerStderrPath `
+            -extraInstrumentationArgs @("-e", "cross_device_sync_mode", "observe_live")
         Start-Sleep -Seconds 3
     }
 
@@ -493,7 +507,7 @@ try {
     $wearArgs = @(
         "-NoProfile",
         "-File",
-        "./scripts/run_wear_e2e.ps1",
+        (Join-Path $scriptRoot "run_wear_e2e.ps1"),
         "-TestClass",
         $WearTestClass,
         "-WearEmulatorSerial",
@@ -506,7 +520,7 @@ try {
     if ($skipInstall) { $wearArgs += "-SkipInstall" }
     if ($FastTimeoutProfile) { $wearArgs += "-FastTimeoutProfile" }
 
-    $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru
+    $wearProcess = Start-Process -FilePath "pwsh" -ArgumentList $wearArgs -NoNewWindow -PassThru -WorkingDirectory $repoRoot
     $lastParityCheck = Get-Date
     while ((-not $wearProcess.HasExited) -or ($observerProcess -and -not $observerProcess.HasExited)) {
         if (((Get-Date) - $lastParityCheck).TotalSeconds -ge 15) {

@@ -15,6 +15,17 @@ Param(
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptRoot
+$gradlewPath = Join-Path $repoRoot "gradlew.bat"
+
+function Resolve-RepoPath([string]$path) {
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        return $path
+    }
+    if ([System.IO.Path]::IsPathRooted($path)) {
+        return $path
+    }
+    return Join-Path $repoRoot $path
+}
 
 function Get-AndroidSdkRoot {
     $candidates = @()
@@ -294,13 +305,15 @@ $timings["resolveDeviceSeconds"] = [math]::Round($resolvePhase.Elapsed.TotalSeco
 Write-Host "Using Wear emulator: $targetWearSerial" -ForegroundColor Green
 Write-Host "Running Wear OS E2E tests..." -ForegroundColor Cyan
 
-$logsDir = "wearos/build/e2e-logs"
+$logsDir = Resolve-RepoPath "wearos/build/e2e-logs"
 if (-not (Test-Path $logsDir)) {
     New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
 }
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 if (-not $TimingOutputPath) {
     $TimingOutputPath = Join-Path $logsDir "timings_$timestamp.json"
+} else {
+    $TimingOutputPath = Resolve-RepoPath $TimingOutputPath
 }
 $timings["timingOutputPath"] = $TimingOutputPath
 
@@ -367,7 +380,7 @@ function Stop-TestExecution {
     Write-Host "`n$reason - Stopping test execution..." -ForegroundColor Yellow
 
     try {
-        & .\gradlew --stop 2>&1 | Out-Null
+        & $gradlewPath --stop 2>&1 | Out-Null
     } catch {
     }
 
@@ -388,16 +401,16 @@ trap {
 }
 
 try {
-    $appApk = "wearos/build/outputs/apk/debug/wearos-debug.apk"
-    $testApk = "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk"
+    $appApk = Resolve-RepoPath "wearos/build/outputs/apk/debug/wearos-debug.apk"
+    $testApk = Resolve-RepoPath "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk"
 
     if (-not $SkipAssemble) {
         $assemblePhase = [System.Diagnostics.Stopwatch]::StartNew()
         $gradleArgs = @(":wearos:assembleDebug", ":wearos:assembleDebugAndroidTest")
-        $cmdDisplay = ".\gradlew " + ($gradleArgs -join " ")
+        $cmdDisplay = "$gradlewPath " + ($gradleArgs -join " ")
         Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
         Write-Host "Press Ctrl+C to cancel the test execution" -ForegroundColor Gray
-        & .\gradlew $gradleArgs 2>&1
+        & $gradlewPath $gradleArgs 2>&1
         $exitCode = $LASTEXITCODE
         $assemblePhase.Stop()
         $timings["assembleSeconds"] = [math]::Round($assemblePhase.Elapsed.TotalSeconds, 3)
