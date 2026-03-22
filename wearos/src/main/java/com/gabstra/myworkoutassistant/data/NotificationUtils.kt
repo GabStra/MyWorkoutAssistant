@@ -42,7 +42,7 @@ fun showWorkoutInProgressNotification(context: Context) {
 
     // Build the notification builder
     val notificationBuilder = NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(R.drawable.ic_workout_icon) // The icon to show on the watch face
+        .setSmallIcon(R.drawable.ic_workout_icon) // Notification small icon; OngoingActivity supplies the watch-face badge.
         .setContentTitle("Workout in Progress")
         .setContentText("Tap to open the app.")
         .setContentIntent(pendingIntent)
@@ -59,8 +59,10 @@ fun showWorkoutInProgressNotification(context: Context) {
         .build()
 
     OngoingActivity.Builder(context, notificationId, notificationBuilder)
-        .setAnimatedIcon(R.drawable.avd_anim)
-        .setStaticIcon(R.drawable.ic_workout_icon)
+        // The watch face ongoing button does not inherit notification colorization,
+        // so the ongoing icons carry their own contrast and occupy most of the viewport.
+        .setAnimatedIcon(R.drawable.avd_ongoing_workout_badge)
+        .setStaticIcon(R.drawable.ic_ongoing_workout_badge)
         .setTouchIntent(pendingIntent)
         .setStatus(ongoingActivityStatus)
         .build()
