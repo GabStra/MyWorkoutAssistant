@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import android.widget.Toast
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
@@ -61,16 +60,14 @@ internal class WearDataLayerReceiver(
         }
         appViewModel.resetWorkoutStore()
         appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
-        if (workoutStoreJson != null) {
+/*        if (workoutStoreJson != null) {
             Toast.makeText(activity, "Workouts updated on your watch.", Toast.LENGTH_SHORT).show()
-        }
+        }*/
     }
 
     private fun handleBackupEnd(intent: Intent) {
-        val appBackupEndJson = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON)
-        if (appBackupEndJson == null) {
-            return
-        }
+        val appBackupEndJson =
+            intent.getStringExtra(DataLayerListenerService.APP_BACKUP_END_JSON) ?: return
         Log.d("DataLayerSync", "Received APP_BACKUP_END_JSON - dismissing loading screen")
         val currentRoute = navController.currentBackStackEntry?.destination?.route
         if (currentRoute != Screen.Workout.route) {
@@ -89,25 +86,20 @@ internal class WearDataLayerReceiver(
     }
 
     private fun handleSyncComplete(intent: Intent, context: Context) {
-        val syncComplete = intent.getStringExtra(DataLayerListenerService.SYNC_COMPLETE)
-        if (syncComplete == null) {
-            return
-        }
+        val syncComplete = intent.getStringExtra(DataLayerListenerService.SYNC_COMPLETE) ?: return
         val transactionId = intent.getStringExtra(DataLayerListenerService.TRANSACTION_ID)
         appViewModel.markHistorySyncedForTransaction(transactionId)
         Log.d("DataLayerSync", "Received SYNC_COMPLETE - checking syncStatus before showing toast")
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
-        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
+/*        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
             Toast.makeText(context, "Sync finished successfully.", Toast.LENGTH_SHORT).show()
-        }
+        }*/
     }
 
     private fun handleBackupFailed(intent: Intent, context: Context) {
-        val appBackupFailed = intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED)
-        if (appBackupFailed == null) {
-            return
-        }
+        val appBackupFailed =
+            intent.getStringExtra(DataLayerListenerService.APP_BACKUP_FAILED) ?: return
         Log.d("DataLayerSync", "Received APP_BACKUP_FAILED - sync failed")
         appViewModel.setBackupProgress(0f)
         appViewModel.resetSyncStatus()
@@ -121,8 +113,8 @@ internal class WearDataLayerReceiver(
 
         val workoutState = appViewModel.workoutState.value
         val isWorkoutActive = workoutState !is WorkoutState.Completed
-        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
+/*        if (appViewModel.syncStatus.value != AppViewModel.SyncStatus.Syncing && !isWorkoutActive) {
             Toast.makeText(context, "Couldn't finish syncing. Try again.", Toast.LENGTH_SHORT).show()
-        }
+        }*/
     }
 }
