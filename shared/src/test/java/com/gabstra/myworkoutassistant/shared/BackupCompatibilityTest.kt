@@ -242,4 +242,125 @@ class BackupCompatibilityTest {
         assertEquals(1, exerciseInfo.lastSuccessfulSession.sets.size)
         assertTrue(exerciseInfo.lastSuccessfulSession.sets.single().set is RestSet)
     }
+
+    @Test
+    fun `legacy exercise session snapshot falls back to simple set when concrete set payload is too old`() {
+        val backupJson = """
+            {
+              "WorkoutStore": {
+                "workouts": [],
+                "polarDeviceId": null,
+                "birthDateYear": 1990,
+                "weightKg": 80.0,
+                "equipments": [],
+                "workoutPlans": [],
+                "progressionPercentageAmount": 0.0,
+                "measuredMaxHeartRate": null,
+                "restingHeartRate": null
+              },
+              "WorkoutHistories": [],
+              "SetHistories": [],
+              "ExerciseInfos": [
+                {
+                  "id": "11111111-1111-1111-1111-111111111111",
+                  "bestSession": {
+                    "sets": [
+                      {
+                        "setId": "33333333-3333-3333-3333-333333333333",
+                        "set": {
+                          "id": "33333333-3333-3333-3333-333333333333",
+                          "subCategory": "WorkSet",
+                          "shouldReapplyHistoryToSet": true
+                        },
+                        "simpleSet": {
+                          "weight": 100.0,
+                          "reps": 8
+                        },
+                        "wasExecuted": true,
+                        "wasSkipped": false
+                      }
+                    ]
+                  },
+                  "lastSuccessfulSession": {
+                    "sets": []
+                  },
+                  "successfulSessionCounter": 1,
+                  "sessionFailedCounter": 0,
+                  "lastSessionWasDeload": false,
+                  "timesCompletedInAWeek": 1,
+                  "weeklyCompletionUpdateDate": "2026-01-01",
+                  "version": 0
+                }
+              ],
+              "WorkoutSchedules": [],
+              "WorkoutRecords": [],
+              "ExerciseSessionProgressions": []
+            }
+        """.trimIndent()
+
+        val backup = fromJSONtoAppBackup(backupJson)
+        val set = backup.ExerciseInfos.single().bestSession.sets.single().set as WeightSet
+
+        assertEquals(8, set.reps)
+        assertEquals(100.0, set.weight, 0.0)
+        assertTrue(set.shouldReapplyHistoryToSet)
+    }
+
+    @Test
+    fun `legacy exercise session snapshot infers rest set from id and no reapply flag only`() {
+        val backupJson = """
+            {
+              "WorkoutStore": {
+                "workouts": [],
+                "polarDeviceId": null,
+                "birthDateYear": 1990,
+                "weightKg": 80.0,
+                "equipments": [],
+                "workoutPlans": [],
+                "progressionPercentageAmount": 0.0,
+                "measuredMaxHeartRate": null,
+                "restingHeartRate": null
+              },
+              "WorkoutHistories": [],
+              "SetHistories": [],
+              "ExerciseInfos": [
+                {
+                  "id": "11111111-1111-1111-1111-111111111111",
+                  "bestSession": {
+                    "sets": []
+                  },
+                  "lastSuccessfulSession": {
+                    "sets": [
+                      {
+                        "setId": "ce763d5f-45d6-4b82-a32e-d913a4ccbdab",
+                        "set": {
+                          "id": "ce763d5f-45d6-4b82-a32e-d913a4ccbdab",
+                          "shouldReapplyHistoryToSet": false
+                        },
+                        "simpleSet": null,
+                        "wasExecuted": true,
+                        "wasSkipped": false
+                      }
+                    ]
+                  },
+                  "successfulSessionCounter": 1,
+                  "sessionFailedCounter": 0,
+                  "lastSessionWasDeload": false,
+                  "timesCompletedInAWeek": 1,
+                  "weeklyCompletionUpdateDate": "2026-01-01",
+                  "version": 0
+                }
+              ],
+              "WorkoutSchedules": [],
+              "WorkoutRecords": [],
+              "ExerciseSessionProgressions": []
+            }
+        """.trimIndent()
+
+        val backup = fromJSONtoAppBackup(backupJson)
+        val set = backup.ExerciseInfos.single().lastSuccessfulSession.sets.single().set as RestSet
+
+        assertFalse(set.shouldReapplyHistoryToSet)
+        assertEquals(0, set.timeInSeconds)
+    }
 }
