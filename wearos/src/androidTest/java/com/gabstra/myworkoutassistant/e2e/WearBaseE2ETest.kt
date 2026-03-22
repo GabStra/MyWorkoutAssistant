@@ -484,7 +484,7 @@ abstract class WearBaseE2ETest {
         }
     }
 
-    private fun ensureWorkoutSelectionVisible(workoutName: String): Boolean {
+    protected fun ensureWorkoutSelectionVisible(workoutName: String): Boolean {
         if (waitForWorkoutSelectionVisible(workoutName, E2ETestTimings.APP_LAUNCH_CONTENT_READY_MS * 2)) {
             return true
         }

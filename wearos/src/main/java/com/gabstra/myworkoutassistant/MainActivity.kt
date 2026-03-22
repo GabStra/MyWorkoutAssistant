@@ -277,6 +277,7 @@ fun WearApp(
         }
 
         appViewModel.initExerciseHistoryDao(localContext)
+        appViewModel.initRestHistoryDao(localContext)
         appViewModel.initWorkoutHistoryDao(localContext)
         appViewModel.initWorkoutScheduleDao(localContext)
         appViewModel.initWorkoutRecordDao(localContext)

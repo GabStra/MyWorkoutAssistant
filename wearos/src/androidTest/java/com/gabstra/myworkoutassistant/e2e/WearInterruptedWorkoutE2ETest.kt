@@ -129,7 +129,9 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         workoutDriver.clickRecoveryDismiss(5_000)
         device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
 
-        val selectionVisible = device.wait(Until.hasObject(By.text("My Workout Assistant")), 5_000)
+        dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
+        val selectionVisible =
+            ensureWorkoutSelectionVisible(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
         require(selectionVisible) { "Selection screen not visible after dismiss" }
         require(!workoutDriver.isRecoveryDialogVisible()) { "Recovery dialog should be closed after dismiss" }
 

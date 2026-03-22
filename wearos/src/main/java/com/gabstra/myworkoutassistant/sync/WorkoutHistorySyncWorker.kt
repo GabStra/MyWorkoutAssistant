@@ -30,6 +30,7 @@ class WorkoutHistorySyncWorker(
             val db = AppDatabase.getDatabase(context)
             val workoutHistoryDao = db.workoutHistoryDao()
             val setHistoryDao = db.setHistoryDao()
+            val restHistoryDao = db.restHistoryDao()
             val workoutRecordDao = db.workoutRecordDao()
             val exerciseInfoDao = db.exerciseInfoDao()
             val exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
@@ -61,6 +62,7 @@ class WorkoutHistorySyncWorker(
                     }
 
                     val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+                    val restHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistory.id)
                     val exercises = workout.workoutComponents.filterIsInstance<Exercise>() +
                         workout.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
                     val exerciseInfos = exercises.mapNotNull { exerciseInfoDao.getExerciseInfoById(it.id) }
@@ -82,7 +84,8 @@ class WorkoutHistorySyncWorker(
                             ExerciseInfos = exerciseInfos,
                             WorkoutRecord = workoutRecord,
                             ExerciseSessionProgressions = progressions,
-                            ErrorLogs = errorLogs
+                            ErrorLogs = errorLogs,
+                            RestHistories = restHistories
                         ),
                         context = context,
                         transactionId = tx

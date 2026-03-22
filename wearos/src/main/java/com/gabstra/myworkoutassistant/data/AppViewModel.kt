@@ -310,6 +310,7 @@ open class AppViewModel : WorkoutViewModel() {
     fun discardInterruptedWorkout(interruptedWorkout: InterruptedWorkout) {
         launchIO {
             setHistoryDao.deleteByWorkoutHistoryId(interruptedWorkout.workoutHistory.id)
+            restHistoryDao.deleteByWorkoutHistoryId(interruptedWorkout.workoutHistory.id)
             workoutRecordDao.deleteByWorkoutId(interruptedWorkout.workoutId)
             workoutHistoryDao.deleteById(interruptedWorkout.workoutHistory.id)
             sendDiscardInterruptedWorkoutToPhone(
@@ -657,7 +658,8 @@ open class AppViewModel : WorkoutViewModel() {
                                         ExerciseInfos = exerciseInfos,
                                         WorkoutRecord = workoutRecord,
                                         ExerciseSessionProgressions = exerciseSessionProgressions,
-                                        ErrorLogs = errorLogs
+                                        ErrorLogs = errorLogs,
+                                        RestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistory.id)
                                     ),
                                     context
                                 )
@@ -747,7 +749,8 @@ open class AppViewModel : WorkoutViewModel() {
                                         ExerciseInfos = exerciseInfos,
                                         WorkoutRecord = workoutRecord,
                                         ExerciseSessionProgressions = exerciseSessionProgressions,
-                                        ErrorLogs = errorLogs
+                                        ErrorLogs = errorLogs,
+                                        RestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistory.id)
                                     ),
                                     context,
                                     transactionId
@@ -874,7 +877,8 @@ open class AppViewModel : WorkoutViewModel() {
             SetHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id),
             ExerciseInfos = loadExerciseInfos(selectedWorkoutSnapshot),
             WorkoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(selectedWorkoutSnapshot.id),
-            ExerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(workoutHistory.id)
+            ExerciseSessionProgressions = exerciseSessionProgressionDao.getByWorkoutHistoryId(workoutHistory.id),
+            RestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistory.id)
         )
     }
 

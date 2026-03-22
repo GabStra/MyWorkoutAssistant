@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -56,6 +57,7 @@ class DataLayerListenerService : WearableListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + appCeh)
     private lateinit var workoutHistoryDao: WorkoutHistoryDao
     private lateinit var setHistoryDao: SetHistoryDao
+    private lateinit var restHistoryDao: RestHistoryDao
     private lateinit var exerciseInfoDao: ExerciseInfoDao
     private lateinit var workoutRecordDao: WorkoutRecordDao
     private lateinit var exerciseSessionProgressionDao: ExerciseSessionProgressionDao
@@ -206,6 +208,7 @@ class DataLayerListenerService : WearableListenerService() {
         val db = AppDatabase.getDatabase(this)
         context = this
         setHistoryDao = db.setHistoryDao()
+        restHistoryDao = db.restHistoryDao()
         workoutHistoryDao = db.workoutHistoryDao()
         exerciseInfoDao = db.exerciseInfoDao()
         workoutScheduleDao = db.workoutScheduleDao()
@@ -1203,6 +1206,18 @@ class DataLayerListenerService : WearableListenerService() {
                                                             }
                                                         }
 
+                                                    val insertRestHistoriesJob =
+                                                        scope.launch(start = CoroutineStart.LAZY) {
+                                                            withContext(NonCancellable) {
+                                                                val rests = appBackup.RestHistories.orEmpty()
+                                                                if (rests.isNotEmpty()) {
+                                                                    restHistoryDao.insertAllWithVersionCheck(
+                                                                        *rests.toTypedArray()
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+
                                                     val insertExerciseInfosJob =
                                                         scope.launch(start = CoroutineStart.LAZY) {
                                                             withContext(NonCancellable) {
@@ -1244,6 +1259,7 @@ class DataLayerListenerService : WearableListenerService() {
                                                     joinAll(
                                                         insertWorkoutHistoriesJob,
                                                         insertSetHistoriesJob,
+                                                        insertRestHistoriesJob,
                                                         insertExerciseInfosJob,
                                                         insertWorkoutSchedulesJob,
                                                         insertWorkoutRecordsJob,
