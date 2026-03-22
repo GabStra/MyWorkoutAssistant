@@ -17,6 +17,7 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -116,6 +117,7 @@ fun ExerciseRenderer(
 
                             is WeightSet -> {
                                 index += 1
+                                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                                     exercise = exercise,
                                     set = set
@@ -125,15 +127,29 @@ fun ExerciseRenderer(
                                 } else {
                                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                                 }
+                                val rirFromHistory = if (isCalibrationSet && setHistories != null) {
+                                    when (val d = setHistories.firstOrNull { it.setId == set.id }?.setData) {
+                                        is WeightSetData -> d.calibrationRIR
+                                        else -> null
+                                    }
+                                } else {
+                                    null
+                                }
+                                val secondaryReps = if (rirFromHistory != null) {
+                                    "${set.reps} (RIR $rirFromHistory)"
+                                } else {
+                                    "${set.reps}"
+                                }
                                 rows += SetTableRowUiModel.Data(
-                                    identifier = index.toString(),
+                                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
                                     primaryValue = weightText,
-                                    secondaryValue = "${set.reps}",
+                                    secondaryValue = secondaryReps,
                                 )
                             }
 
                             is BodyWeightSet -> {
                                 index += 1
+                                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                                     exercise = exercise,
                                     set = set
@@ -158,10 +174,23 @@ fun ExerciseRenderer(
                                         ?: "${set.additionalWeight} kg"
                                     else -> "-"
                                 }
+                                val rirFromHistory = if (isCalibrationSet && setHistories != null) {
+                                    when (val d = setHistories.firstOrNull { it.setId == set.id }?.setData) {
+                                        is BodyWeightSetData -> d.calibrationRIR
+                                        else -> null
+                                    }
+                                } else {
+                                    null
+                                }
+                                val secondaryReps = if (rirFromHistory != null) {
+                                    "${set.reps} (RIR $rirFromHistory)"
+                                } else {
+                                    "${set.reps}"
+                                }
                                 rows += SetTableRowUiModel.Data(
-                                    identifier = index.toString(),
+                                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
                                     primaryValue = weightText,
-                                    secondaryValue = "${set.reps}",
+                                    secondaryValue = secondaryReps,
                                 )
                             }
 

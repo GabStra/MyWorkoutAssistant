@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -54,9 +55,16 @@ fun SupersetSetHistoriesRenderer(
             val exerciseName = history.exerciseId?.let { exerciseNameById[it] } ?: "Exercise"
             val equipment = history.equipmentIdSnapshot?.let(getEquipmentById)
             val value = formatSetValue(history, equipment)
+            val calibrationPrefix = history.setData.let { sd ->
+                when (sd) {
+                    is WeightSetData -> sd.subCategory == SetSubCategory.CalibrationSet
+                    is BodyWeightSetData -> sd.subCategory == SetSubCategory.CalibrationSet
+                    else -> false
+                }
+            }.let { if (it) "Calibration • " else "" }
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "R$round • $exerciseName: $value",
+                text = "R$round • $exerciseName: $calibrationPrefix$value",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -68,16 +76,27 @@ private fun formatSetValue(history: SetHistory, equipment: WeightLoadedEquipment
     return when (val setData = history.setData) {
         is WeightSetData -> {
             val weightStr = equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg"
-            "$weightStr x ${setData.actualReps}"
+            val base = "$weightStr x ${setData.actualReps}"
+            if (setData.subCategory == SetSubCategory.CalibrationSet && setData.calibrationRIR != null) {
+                "$base, RIR ${setData.calibrationRIR}"
+            } else {
+                base
+            }
         }
         is BodyWeightSetData -> {
-            "${formatHistoricalBodyWeightSetValue(setData, equipment)} x ${setData.actualReps}"
+            val base =
+                "${formatHistoricalBodyWeightSetValue(setData, equipment)} x ${setData.actualReps}"
+            if (setData.subCategory == SetSubCategory.CalibrationSet && setData.calibrationRIR != null) {
+                "$base, RIR ${setData.calibrationRIR}"
+            } else {
+                base
+            }
         }
         is TimedDurationSetData -> {
             val elapsedSec = (setData.startTimer - setData.endTimer).coerceAtLeast(0) / 1000
             formatTime(elapsedSec)
         }
         is EnduranceSetData -> formatTime((setData.endTimer / 1000).coerceAtLeast(0))
-        is RestSetData -> "REST ${formatTime(setData.startTimer)}"
+        is RestSetData -> formatHistoricalRestValue(history)
     }
 }

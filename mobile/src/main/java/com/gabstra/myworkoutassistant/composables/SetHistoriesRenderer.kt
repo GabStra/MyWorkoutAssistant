@@ -18,6 +18,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 
@@ -72,7 +73,7 @@ fun SetHistoriesRenderer(
             val setData = set.setData
             if (setData is RestSetData) {
                 rows += SetTableRowUiModel.Rest(
-                    text = "REST ${formatTime(setData.startTimer)}"
+                    text = formatHistoricalRestValue(set)
                 )
                 return@forEach
             }
@@ -80,21 +81,33 @@ fun SetHistoriesRenderer(
             index += 1
             when (setData) {
                 is WeightSetData -> {
+                    val isCal = setData.subCategory == SetSubCategory.CalibrationSet
+                    val secondary = if (isCal && setData.calibrationRIR != null) {
+                        "${setData.actualReps} (RIR ${setData.calibrationRIR})"
+                    } else {
+                        "${setData.actualReps}"
+                    }
                     rows += SetTableRowUiModel.Data(
-                        identifier = index.toString(),
+                        identifier = if (isCal) "Cal" else index.toString(),
                         primaryValue = equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg",
-                        secondaryValue = "${setData.actualReps}",
+                        secondaryValue = secondary,
                     )
                 }
 
                 is BodyWeightSetData -> {
+                    val isCal = setData.subCategory == SetSubCategory.CalibrationSet
+                    val secondary = if (isCal && setData.calibrationRIR != null) {
+                        "${setData.actualReps} (RIR ${setData.calibrationRIR})"
+                    } else {
+                        "${setData.actualReps}"
+                    }
                     rows += SetTableRowUiModel.Data(
-                        identifier = index.toString(),
+                        identifier = if (isCal) "Cal" else index.toString(),
                         primaryValue = formatHistoricalBodyWeightSetValue(
                             setData = setData,
                             equipment = equipment
                         ),
-                        secondaryValue = "${setData.actualReps}",
+                        secondaryValue = secondary,
                     )
                 }
 
