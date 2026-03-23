@@ -5,30 +5,29 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
+import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.TransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -711,16 +710,16 @@ private fun CenteredLabelRow(
     }
 }
 
-@Composable
-fun ExerciseSetsViewer(
-    modifier: Modifier = Modifier,
+fun TransformingLazyColumnScope.ExerciseSetsViewer(
     viewModel: AppViewModel,
     hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
+    transformationSpec: TransformationSpec,
+    columnState: TransformingLazyColumnState,
+    firstSetListItemIndex: Int,
+    stateToMatch: WorkoutState?,
     progressState: ProgressState = ProgressState.CURRENT,
-    customBackgroundColor: Color? = null,
-    currentWorkoutStateOverride: WorkoutState? = null,
 ){
     val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
     val displayRows = if (supersetId != null) {
@@ -729,19 +728,14 @@ fun ExerciseSetsViewer(
         buildExerciseSetDisplayRows(viewModel = viewModel, exerciseId = exercise.id)
     }
 
-    val currentWorkoutState by viewModel.workoutState.collectAsState()
+    val setIndex = stateToMatch?.let {
+        findDisplayRowIndex(
+            displayRows = displayRows,
+            stateToMatch = it,
+            fallbackSetId = currentSet.id
+        )
+    } ?: 0
 
-    val stateToMatch = currentWorkoutStateOverride ?: currentWorkoutState
-    val setIndex = findDisplayRowIndex(
-        displayRows = displayRows,
-        stateToMatch = stateToMatch,
-        fallbackSetId = currentSet.id
-    )
-
-    val scrollState = rememberScrollState()
-    val density = LocalDensity.current
-
-    val itemHeightDp = 27.5.dp
     val unilateralSideBadgeByRowIndex = displayRows.mapIndexedNotNull { rowIndex, displayRow ->
         val setRow = displayRow as? ExerciseSetDisplayRow.SetRow ?: return@mapIndexedNotNull null
         val intraSetTotal = setRow.state.intraSetTotal?.toInt() ?: return@mapIndexedNotNull null
@@ -759,22 +753,7 @@ fun ExerciseSetsViewer(
         rowIndex to sideBadge
     }.toMap()
 
-    val scrollKey = if (supersetId != null) supersetId else exercise.id
-
-    // Reset scroll position immediately when exercise/superset changes
-    LaunchedEffect(scrollKey) {
-        scrollState.animateScrollTo(0)
-    }
-
-    // Scroll to current set when it changes
-    LaunchedEffect(setIndex, scrollKey) {
-        if (setIndex in displayRows.indices) {
-            val scrollPosition = with(density) { (setIndex * itemHeightDp.toPx()).toInt() }
-            scrollState.animateScrollTo(scrollPosition)
-        } else {
-            scrollState.animateScrollTo(0)
-        }
-    }
+    val scrollKey = supersetId ?: exercise.id
 
     @Composable
     fun MeasuredSetTableRow(
@@ -797,7 +776,7 @@ fun ExerciseSetsViewer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(27.5.dp),
+                .height(25.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -805,7 +784,7 @@ fun ExerciseSetsViewer(
 
             val rowModifier = Modifier
                 .height(25.dp)
-                .padding(bottom = 2.5.dp)
+                //.padding(bottom = 2.5.dp)
                 .border(BorderStroke(1.dp, borderColor), shape)
                 //.background(backgroundColor, shape)
 
@@ -848,13 +827,6 @@ fun ExerciseSetsViewer(
         }
     }
 
-    val prototypeItem = @Composable {
-        val firstRow = displayRows.firstOrNull()
-        if (firstRow != null) {
-            MeasuredSetTableRow(displayRow = firstRow, rowIndex = 0)
-        }
-    }
-
     val hasWeightRows = displayRows.any { row ->
         (row as? ExerciseSetDisplayRow.SetRow)?.state?.currentSetData?.let { data ->
             data is WeightSetData || data is BodyWeightSetData
@@ -862,28 +834,54 @@ fun ExerciseSetsViewer(
     }
     val useWeightHeader = if (supersetId != null) hasWeightRows else (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
 
-    Column(
-        modifier = modifier.semantics { contentDescription = "Exercise sets viewer" },
-        verticalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
-
-        DynamicHeightColumn(
+    item {
+        LaunchedEffect(setIndex, scrollKey, firstSetListItemIndex) {
+            if (displayRows.isEmpty()) return@LaunchedEffect
+            val targetIndex = (firstSetListItemIndex + setIndex)
+                .coerceAtLeast(firstSetListItemIndex)
+            columnState.scrollToItem(targetIndex)
+        }
+        Box(
             modifier = Modifier
-                .height(100.dp) // Fills remaining vertical space
                 .fillMaxWidth()
-                .clipToBounds(), // Still need to fill width
-            prototypeItem = { prototypeItem() } // Pass the item for measurement
+                .semantics { contentDescription = "Exercise sets viewer" }
+                .transformedHeight(this, transformationSpec)
+                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    //.verticalColumnScrollbar(scrollState = scrollState)
-                    .verticalScroll(scrollState)
-            ) {
-                displayRows.forEachIndexed { index, setState ->
-                    MeasuredSetTableRow(setState, index)
+            ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
+        }
+    }
+
+    items(
+        items = displayRows.withIndex().toList(),
+        key = { indexedRow ->
+            val row = indexedRow.value
+            buildString {
+                append(row::class.simpleName ?: "row")
+                append(":")
+                append(row.setLikeIdOrNull()?.toString() ?: "no-set")
+                append(":")
+                append(indexedRow.index)
+            }
+        }
+    ) { indexedRow ->
+        val rowIndex = indexedRow.index
+        val displayRow = indexedRow.value
+        val rowModifier = Modifier
+            .fillMaxWidth()
+            .transformedHeight(this, transformationSpec)
+            .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } }
+
+        Box(
+            modifier = rowModifier,
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier.graphicsLayer {
+                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
                 }
+            ) {
+                MeasuredSetTableRow(displayRow = displayRow, rowIndex = rowIndex)
             }
         }
     }

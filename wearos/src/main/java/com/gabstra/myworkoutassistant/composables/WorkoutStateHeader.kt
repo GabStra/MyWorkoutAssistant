@@ -129,7 +129,7 @@ fun WorkoutStateHeader(
                 Text(
                     modifier = Modifier.alignByBaseline(),
                     text = " | ",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Normal),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                     color = MediumLighterGray
                 )
                 CurrentTime()

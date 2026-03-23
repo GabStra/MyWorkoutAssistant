@@ -216,8 +216,8 @@ private fun PagePlatesContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 30.dp),
-            text = "Loading guide",
-            style =  MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+            text = "Barbell guide",
+            style =  MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center
         )
 
@@ -270,10 +270,6 @@ private fun PagePlatesContent(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
                         color = MediumLighterGray,
-                        modifier = Modifier
-                            .clickable {
-                                onHeaderTap()
-                            }
                     )
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
@@ -293,11 +289,7 @@ private fun PagePlatesContent(
                     ScalableFadingText(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
-                        color = MediumLighterGray,
-                        modifier = Modifier
-                            .clickable {
-                                onHeaderTap()
-                            }
+                        color = MediumLighterGray
                     )
                 }
             }
@@ -758,7 +750,7 @@ private fun BarbellVisualization(
         }
     }
 
-    val labelTextSize = MaterialTheme.typography.bodySmall.fontSize
+    val labelTextSize = MaterialTheme.typography.labelMedium.fontSize
 
     Canvas(modifier = modifier) {
         val canvasWidth = size.width
@@ -902,7 +894,7 @@ private fun BarbellVisualization(
                 .coerceAtLeast(4.dp.toPx())
                 .coerceAtMost(sleeveX + sleeveWidth - currentX)
 
-            val minHeightRatio = 0.2f
+            val minHeightRatio = 0.3f
             val weightRatio = sqrt(
                 (plateInfo.weight.toFloat() / maxPlateWeight.toFloat()).coerceIn(0f, 1f)
             )

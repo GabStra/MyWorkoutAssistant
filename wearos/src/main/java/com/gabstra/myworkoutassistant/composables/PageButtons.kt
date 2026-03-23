@@ -2,10 +2,10 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -42,6 +42,7 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.shared.DarkOrange
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
@@ -116,54 +117,65 @@ fun PageButtons(
         }
     ) { _ ->
         TransformingLazyColumn(
-            contentPadding = PaddingValues(horizontal = 10.dp),
+            modifier = Modifier.padding(horizontal = 20.dp),
+            contentPadding = WorkoutPagerPageSafeAreaPadding,
             state = state
         ) {
-            item {
+            if (!isHistoryEmpty) {
+                item {
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                         text = "Back",
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        // Handle go back for calibration flow:
-                        // CalibrationRIRSelection → Set(isCalibrationSet) → CalibrationLoadSelection → previous non-Rest state
-                        // Use undo() for CalibrationRIRSelection and Set(isCalibrationSet) to maintain proper state sequence
-                        // Use goToPreviousNonRestState() for CalibrationLoadSelection to skip Rest states
-                        when (currentWorkoutState) {
-                            is WorkoutState.CalibrationRIRSelection -> {
-                                // Go back one step to calibration Set execution
-                                // undo() will move to Set(isCalibrationSet=true), calibration context updates to EXECUTING
-                                viewModel.undo()
-                                viewModel.lightScreenUp()
-                            }
-                            is WorkoutState.Set -> {
-                                if (currentWorkoutState.isCalibrationSet) {
-                                    // Go back one step to CalibrationLoadSelection
-                                    // undo() will move to CalibrationLoadSelection, calibration context updates to LOAD_SELECTION
+                        onClick = {
+                            hapticsViewModel.doGentleVibration()
+                            // Handle go back for calibration flow:
+                            // CalibrationRIRSelection → Set(isCalibrationSet) → CalibrationLoadSelection → previous non-Rest state
+                            // Use undo() for CalibrationRIRSelection and Set(isCalibrationSet) to maintain proper state sequence
+                            // Use goToPreviousNonRestState() for CalibrationLoadSelection to skip Rest states
+                            when (currentWorkoutState) {
+                                is WorkoutState.CalibrationRIRSelection -> {
+                                    // Go back one step to calibration Set execution
+                                    // undo() will move to Set(isCalibrationSet=true), calibration context updates to EXECUTING
                                     viewModel.undo()
                                     viewModel.lightScreenUp()
-                                } else {
-                                    // Show dialog for non-calibration sets
+                                }
+
+                                is WorkoutState.Set -> {
+                                    if (currentWorkoutState.isCalibrationSet) {
+                                        // Go back one step to CalibrationLoadSelection
+                                        // undo() will move to CalibrationLoadSelection, calibration context updates to LOAD_SELECTION
+                                        viewModel.undo()
+                                        viewModel.lightScreenUp()
+                                    } else {
+                                        // Show dialog for non-calibration sets
+                                        showGoBackDialog = true
+                                    }
+                                }
+
+                                is WorkoutState.CalibrationLoadSelection -> {
+                                    // Go back to previous non-Rest state (skipping Rest states)
+                                    // This will typically be a Set from the previous exercise
+                                    viewModel.goToPreviousNonRestStateWear()
+                                    viewModel.lightScreenUp()
+                                }
+
+                                else -> {
+                                    // Show dialog for other states
                                     showGoBackDialog = true
                                 }
                             }
-                            is WorkoutState.CalibrationLoadSelection -> {
-                                // Go back to previous non-Rest state (skipping Rest states)
-                                // This will typically be a Set from the previous exercise
-                                viewModel.goToPreviousNonRestStateWear()
-                                viewModel.lightScreenUp()
-                            }
-                            else -> {
-                                // Show dialog for other states
-                                showGoBackDialog = true
-                            }
-                        }
-                    },
-                    enabled = !isHistoryEmpty,
-                )
+                        },
+                        enabled = true,
+                    )
+                }
             }
             item {
                 val exerciseDefaultKeepOn = exercise.keepScreenOn
@@ -180,7 +192,12 @@ fun PageButtons(
                     modifier = Modifier
                         .fillMaxWidth()
                         //.heightIn(min = 80.dp)
-                        .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     onClick = {
@@ -224,8 +241,8 @@ fun PageButtons(
                                 uncheckedTrackColor = MediumLightGray,
                                 uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
                                 disabledCheckedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                disabledCheckedTrackColor = MaterialTheme.colorScheme.primary,
-                                disabledCheckedBorderColor = MaterialTheme.colorScheme.primary,
+                                disabledCheckedTrackColor = DarkOrange,
+                                disabledCheckedBorderColor = DarkOrange,
                             ),
                             modifier = Modifier
                         )
@@ -236,13 +253,18 @@ fun PageButtons(
             if (
                 isMovementSet &&
                 (exercise.exerciseType == ExerciseType.WEIGHT ||
-                    exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+                        exercise.exerciseType == ExerciseType.BODY_WEIGHT)
             ) {
                 item {
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                         text = "Change equipment",
                         enabled = canChangeEquipment,
@@ -255,13 +277,18 @@ fun PageButtons(
             }
 
             if (isMovementSet && isLastSet) {
-                item{
+                item {
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add Rest-Pause set",
+                        text = "Add rest-pause set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()
@@ -274,13 +301,18 @@ fun PageButtons(
 
             }
             if (isMovementSet) {
-                item{
+                item {
                     ButtonWithText(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                            .then(
+                                if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                    this,
+                                    spec
+                                )
+                            ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                        text = "Add Set",
+                        text = "Add set",
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             viewModel.storeSetData()
@@ -291,40 +323,48 @@ fun PageButtons(
                     )
                 }
             }
-/*            item{
-                ButtonWithText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .transformedHeight(this, spec),
-                    transformation = SurfaceTransformation(spec),
-                    text = "Next exercise",
-                    onClick = {
-                        hapticsViewModel.doGentleVibration()
-                        viewModel.goToNextExercise()
-                    }
-                )
-            }*/
+            /*            item{
+                            ButtonWithText(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec),
+                                transformation = SurfaceTransformation(spec),
+                                text = "Next exercise",
+                                onClick = {
+                                    hapticsViewModel.doGentleVibration()
+                                    viewModel.goToNextExercise()
+                                }
+                            )
+                        }*/
             item {
                 ButtonWithText(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (isInspectionMode) Modifier else Modifier.transformedHeight(this, spec)),
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                     text = "Return home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
                         // Save workout record (updatedState is already WorkoutState.Set)
-                        viewModel.upsertWorkoutRecord(updatedState.exerciseId, updatedState.setIndex)
-                        
+                        viewModel.upsertWorkoutRecord(
+                            updatedState.exerciseId,
+                            updatedState.setIndex
+                        )
+
                         // Clear ongoing workout notification/icon
                         cancelWorkoutInProgressNotification(context)
-                        
+
                         // Flush any pending sync before navigating away
                         scope.launch {
                             viewModel.flushWorkoutSync()
                         }
-                        
+
                         navController.navigate(Screen.WorkoutSelection.route) {
                             popUpTo(0) { inclusive = true }
                         }

@@ -233,7 +233,7 @@ private fun RestTimerBlock(
         }
     }
 
-    val timerTextStyle = MaterialTheme.typography.numeralSmall
+    val timerTextStyle = MaterialTheme.typography.numeralExtraSmall
     val timerHeaderStyle = MaterialTheme.typography.bodyExtraSmall
 
     @Composable
@@ -530,9 +530,7 @@ fun RestScreen(
             when (horizontalPageTypes[pageIndex]) {
                 RestHorizontalPage.BUTTONS -> {
                     if (setStateForPages != null) {
-                        Box(modifier = pageModifier) {
-                            PageButtons(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
-                        }
+                        PageButtons(setStateForPages, viewModel, hapticsViewModel, navController, onBeforeGoHome)
                     }
                 }
 
@@ -590,20 +588,18 @@ fun RestScreen(
 
                 RestHorizontalPage.EXERCISES -> {
                     if (nextState != null) {
-                        Box(modifier = pageModifier) {
-                            PageExercises(
-                                selectedExercise = selectedExercise,
-                                selectedRestPageId = selectedRestPageId,
-                                workoutState = state,
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                currentExercise = exerciseForPages,
-                                onPageSelected = { exercise, restPageId ->
-                                    selectedExercise = exercise
-                                    selectedRestPageId = restPageId
-                                }
-                            )
-                        }
+                        PageExercises(
+                            selectedExercise = selectedExercise,
+                            selectedRestPageId = selectedRestPageId,
+                            workoutState = state,
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            currentExercise = exerciseForPages,
+                            onPageSelected = { exercise, restPageId ->
+                                selectedExercise = exercise
+                                selectedRestPageId = restPageId
+                            }
+                        )
                     }
                 }
             }

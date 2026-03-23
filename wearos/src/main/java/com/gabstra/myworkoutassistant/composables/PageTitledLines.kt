@@ -1,24 +1,28 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.ScrollInfoProvider
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import java.util.Locale.getDefault
 
@@ -62,46 +66,23 @@ fun PageTitledLines(
     sections: List<TitledLinesSection>,
     modifier: Modifier = Modifier
 ) {
-    val state = rememberLazyListState()
-    val scrollInfoProvider = remember(state) {
-        object : ScrollInfoProvider {
-            override val isScrollAwayValid: Boolean
-                get() = state.layoutInfo.totalItemsCount > 0
-
-            override val isScrollable: Boolean
-                get() = state.canScrollBackward || state.canScrollForward
-
-            override val isScrollInProgress: Boolean
-                get() = state.isScrollInProgress
-
-            override val anchorItemOffset: Float
-                get() = state.layoutInfo.visibleItemsInfo.firstOrNull()?.let {
-                    if (it.index != 0) {
-                        Float.NaN
-                    } else {
-                        -it.offset.toFloat()
-                    }
-                } ?: Float.NaN
-
-            override val lastItemOffset: Float
-                get() {
-                    val layoutInfo = state.layoutInfo
-                    val viewportHeight = layoutInfo.viewportSize.height
-                    return layoutInfo.visibleItemsInfo.lastOrNull()?.let { item ->
-                        if (item.index != layoutInfo.totalItemsCount - 1) {
-                            0f
-                        } else {
-                            val bottomEdge = item.offset + item.size - layoutInfo.viewportStartOffset
-                            (viewportHeight - bottomEdge).toFloat().coerceAtLeast(0f)
-                        }
-                    } ?: 0f
-                }
-        }
-    }
+    val state = rememberTransformingLazyColumnState()
+    val spec = rememberTransformationSpec(
+        ResponsiveTransformationSpec.smallScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.75f)
+        ),
+        ResponsiveTransformationSpec.largeScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.6f)
+        )
+    )
 
     ScreenScaffold(
         modifier = modifier,
-        scrollInfoProvider = scrollInfoProvider,
+        scrollState = state,
         scrollIndicator = {
             ScrollIndicator(
                 state = state,
@@ -111,17 +92,31 @@ fun PageTitledLines(
                 )
             )
         }
-    ) { _ ->
-        LazyColumn(
-            modifier = Modifier.padding(horizontal = 10.dp),
+    ) { contentPadding ->
+        TransformingLazyColumn(
             state = state,
+            modifier = Modifier.padding(horizontal = 25.dp),
+            contentPadding = WorkoutPagerPageSafeAreaPadding,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(sections) { section ->
-                TitledLinesSectionItem(
-                    section = section,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .transformedHeight(this, spec)
+                        .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
+                ) {
+                    Column(
+                        modifier = Modifier.graphicsLayer {
+                            with(spec) { applyContentTransformation(scrollProgress) }
+                        }
+                    ) {
+                        TitledLinesSectionItem(
+                            section = section,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
         }
     }

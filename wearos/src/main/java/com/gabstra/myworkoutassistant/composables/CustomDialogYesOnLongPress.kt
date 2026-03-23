@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -177,10 +177,8 @@ fun CustomDialogYesOnLongPress(
                             .fillMaxSize()
                             .padding(top = contentPadding.calculateTopPadding())
                             .padding(horizontal = 30.dp)
-                            .padding(top = 10.dp)
-                            .verticalScroll(scrollState),
+                            .padding(top = 5.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
                             text = title,
@@ -188,24 +186,28 @@ fun CustomDialogYesOnLongPress(
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 5.dp)
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                        Text(
-                            text = message,
-                            textAlign = TextAlign.Center,
-                            color = MediumLighterGray,
-                            style = MaterialTheme.typography.bodyLarge,
+                        Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 40.dp)
-                                .padding(horizontal = 5.dp)
-                        )
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(scrollState)
+                        ){
+                            Text(
+                                text = message,
+                                textAlign = TextAlign.Center,
+                                color = MediumLighterGray,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
 
                         val contentColor = MaterialTheme.colorScheme.onSurface
                         Row(
                             horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 15.dp)
                         ) {
                             EnhancedIconButton(
                                 buttonSize = 50.dp,

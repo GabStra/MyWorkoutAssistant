@@ -224,13 +224,13 @@ fun HrStatusBadge(
                 Box(
                     modifier = Modifier
                         .background(
-                            color = MaterialTheme.colorScheme.background,
+                            color = Red,
                             shape = RoundedCornerShape(12.dp)
                         )
-                        .border(
+/*                        .border(
                             BorderStroke(1.dp, Red),
                             shape = RoundedCornerShape(12.dp)
-                        )
+                        )*/
                         .padding(10.dp)
                 ) {
                     Row(
@@ -240,13 +240,13 @@ fun HrStatusBadge(
                             imageVector = icon,
                             contentDescription = "HR Status",
                             modifier = Modifier.size(15.dp),
-                            tint = Red
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                         Spacer(modifier = Modifier.size(5.dp))
                         Text(
                             text = message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = Red,
+                            color = MaterialTheme.colorScheme.onBackground,
                             textAlign = TextAlign.Center
                         )
                     }

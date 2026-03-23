@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,12 +15,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -31,8 +34,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
+import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
@@ -42,6 +55,7 @@ import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.screens.setCurrentWorkoutState
 import com.gabstra.myworkoutassistant.screens.setFieldValue
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -326,86 +340,113 @@ private fun buildSupersetDisplayName(exercises: List<Exercise>): AnnotatedString
     }
 }
 
-@Composable
-private fun RestPageContent(
+private fun TransformingLazyColumnScope.RestPageContent(
     restState: WorkoutState.Rest,
     previousDisplayName: AnnotatedString,
     nextDisplayName: AnnotatedString,
     progressState: ProgressState,
+    transformationSpec: androidx.wear.compose.material3.lazy.TransformationSpec,
 ) {
-    val borderColor: Color = when (progressState) {
-        ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
-        ProgressState.CURRENT -> Orange
-        ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-    val textColor = borderColor
     val restSeconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
-    val shape = RoundedCornerShape(25)
 
-    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 22.5.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
-        ) {
-            Text(
-                text = "FROM",
-                style = MaterialTheme.typography.bodyExtraSmall,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-            ExerciseNameText(
-                text = previousDisplayName,
-                modifier = Modifier.fillMaxWidth(),
-                style = titleStyle,
-                textAlign = TextAlign.Center
-            )
-        }
-
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
-        ) {
-            Text(
-                text = "TO",
-                style = MaterialTheme.typography.bodyExtraSmall,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-            ExerciseNameText(
-                text = nextDisplayName,
-                modifier = Modifier.fillMaxWidth(),
-                style = titleStyle,
-                textAlign = TextAlign.Center
-            )
-        }
-
+    item {
         Box(
             modifier = Modifier
-                .height(25.dp)
-                .border(BorderStroke(1.dp, borderColor), shape),
+                .fillMaxWidth()
+                .transformedHeight(this, transformationSpec)
+                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
             contentAlignment = Alignment.Center
         ) {
-            ScalableText(
-                modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
-                text = "REST ${FormatTime(restSeconds)}",
-                style = MaterialTheme.typography.numeralMedium,
-                color = textColor,
-            )
+            Column(
+                modifier = Modifier.graphicsLayer {
+                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
+                },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            ) {
+                val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "FROM",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
+                )
+                ExerciseNameText(
+                    text = previousDisplayName,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = titleStyle,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+
+    item {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp)
+                .transformedHeight(this, transformationSpec)
+                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
+            contentAlignment = Alignment.Center
+        ) {
+            val borderColor: Color = when (progressState) {
+                ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+                ProgressState.CURRENT -> Orange
+                ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+            val shape = RoundedCornerShape(25)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer { with(transformationSpec) { applyContentTransformation(scrollProgress) } }
+                    .height(25.dp)
+                    .border(BorderStroke(1.dp, borderColor), shape),
+                contentAlignment = Alignment.Center
+            ) {
+                ScalableText(
+                    modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
+                    text = "REST ${FormatTime(restSeconds)}",
+                    style = MaterialTheme.typography.numeralMedium,
+                    color = borderColor,
+                )
+            }
+        }
+    }
+
+    item {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .transformedHeight(this, transformationSpec)
+                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier.graphicsLayer {
+                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
+                },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            ) {
+                val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "TO",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
+                )
+                ExerciseNameText(
+                    text = nextDisplayName,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = titleStyle,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PageExercises(
     selectedExercise: Exercise,
@@ -453,6 +494,7 @@ fun PageExercises(
     }
 
     val selectedPageItem = pageItems.getOrNull(selectedPageIndex.value)
+    val liveWorkoutState by viewModel.workoutState.collectAsState()
     val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
     val pageCount = pageItems.size
     val displayCounter = remember(pageItems, selectedPageIndex.value) {
@@ -461,113 +503,150 @@ fun PageExercises(
             selectedPageIndex = selectedPageIndex.value
         )
     }
+    val transformingLazyColumnState = rememberTransformingLazyColumnState()
+    val transformationSpec = rememberTransformationSpec(
+        ResponsiveTransformationSpec.smallScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.75f)
+        ),
+        ResponsiveTransformationSpec.largeScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.6f)
+        )
+    )
+
+    LaunchedEffect(selectedPageIndex.value, selectedRestPageId) {
+        transformingLazyColumnState.scrollToItem(0)
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .semantics { contentDescription = "Exercise sets viewer" }
     ) {
-        Column(
+        ScreenScaffold(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if(selectedPageItem !is PageExercisesItem.RestPage){
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when (selectedPageItem) {
-                        is PageExercisesItem.SupersetPage -> {
-                            ExerciseNameText(
-                                text = buildSupersetDisplayName(selectedPageItem.exercises),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(25.dp)
-                                    .padding(horizontal = 22.5.dp),
-                                style = titleStyle,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                        is PageExercisesItem.ExercisePage -> {
-                            ExerciseNameText(
-                                text = AnnotatedString(selectedPageItem.exercise.name),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(25.dp)
-                                    .padding(horizontal = 22.5.dp),
-                                style = titleStyle,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                        null -> Unit
-                    }
-                }
+            scrollState = transformingLazyColumnState,
+            scrollIndicator = {
+                ScrollIndicator(
+                    state = transformingLazyColumnState,
+                    colors = ScrollIndicatorDefaults.colors(
+                        indicatorColor = MaterialTheme.colorScheme.onBackground,
+                        trackColor = MediumDarkGray
+                    )
+                )
             }
-
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) { contentPadding ->
+            TransformingLazyColumn(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                state = transformingLazyColumnState,
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                contentPadding = WorkoutPagerPageSafeAreaPadding
+                //contentPadding = contentPadding,
             ) {
-                when (selectedPageItem) {
-                    is PageExercisesItem.SupersetPage -> {
-                        SupersetMetadataStrip(
-                            containerLabel = displayCounter
-                        )
+                if (selectedPageItem !is PageExercisesItem.RestPage) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .transformedHeight(this, transformationSpec)
+                                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
+                        ) {
+                            when (selectedPageItem) {
+                                is PageExercisesItem.SupersetPage -> ExerciseNameText(
+                                    text = buildSupersetDisplayName(selectedPageItem.exercises),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(25.dp),
+                                    style = titleStyle,
+                                    textAlign = TextAlign.Center
+                                )
+                                is PageExercisesItem.ExercisePage -> ExerciseNameText(
+                                    text = AnnotatedString(selectedPageItem.exercise.name),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(25.dp),
+                                    style = titleStyle,
+                                    textAlign = TextAlign.Center
+                                )
+                                else -> Unit
+                            }
+                        }
                     }
-                    is PageExercisesItem.ExercisePage -> {
-                        ExerciseMetadataStrip(
-                            exerciseLabel = displayCounter,
-                            supersetExerciseIndex = null,
-                            supersetExerciseTotal = null,
-                            sideIndicator = null,
-                            currentSideIndex = null
-                        )
-                    }
-                    is PageExercisesItem.RestPage -> {
-/*                        if (displayCounter != null) {
-                            Text(
-                                text = displayCounter,
-                                style = MaterialTheme.typography.bodyExtraSmall,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                        }*/
-                    }
-                    null -> Unit
                 }
-            }
 
-            if (selectedPageItem != null) {
-                val progressState = when {
-                    selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
-                    selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
-                    else -> ProgressState.CURRENT
-                }
-                when (selectedPageItem) {
-                    is PageExercisesItem.RestPage -> {
-                        RestPageContent(
-                            restState = selectedPageItem.restState,
-                            previousDisplayName = selectedPageItem.previousDisplayName,
-                            nextDisplayName = selectedPageItem.nextDisplayName,
-                            progressState = progressState
-                        )
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .transformedHeight(this, transformationSpec)
+                            .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier.graphicsLayer {
+                                with(transformationSpec) { applyContentTransformation(scrollProgress) }
+                            }
+                        ) {
+                            when (selectedPageItem) {
+                                is PageExercisesItem.SupersetPage -> {
+                                    SupersetMetadataStrip(containerLabel = displayCounter)
+                                }
+                                is PageExercisesItem.ExercisePage -> {
+                                    ExerciseMetadataStrip(
+                                        exerciseLabel = displayCounter,
+                                        supersetExerciseIndex = null,
+                                        supersetExerciseTotal = null,
+                                        sideIndicator = null,
+                                        currentSideIndex = null
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        }
                     }
-                    else -> {
-                        val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
-                        if (currentSet != null) {
-                            val isSelectedCurrentPage = progressState == ProgressState.CURRENT
-                            ExerciseSetsViewer(
-                                modifier = Modifier.padding(horizontal = 22.5.dp),
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                exercise = selectedPageItem.representativeExercise,
-                                currentSet = currentSet,
+                }
+
+                if (selectedPageItem != null) {
+                    val progressState = when {
+                        selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
+                        selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
+                        else -> ProgressState.CURRENT
+                    }
+                    when (selectedPageItem) {
+                        is PageExercisesItem.RestPage -> {
+                            RestPageContent(
+                                restState = selectedPageItem.restState,
+                                previousDisplayName = selectedPageItem.previousDisplayName,
+                                nextDisplayName = selectedPageItem.nextDisplayName,
                                 progressState = progressState,
-                                currentWorkoutStateOverride = if (isSelectedCurrentPage) workoutState else null
+                                transformationSpec = transformationSpec
                             )
+                        }
+                        else -> {
+                            val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
+                            if (currentSet != null) {
+                                val isSelectedCurrentPage = progressState == ProgressState.CURRENT
+                                // First set row starts after title + metadata items.
+                                val firstSetListItemIndex = 2
+                                ExerciseSetsViewer(
+                                    viewModel = viewModel,
+                                    hapticsViewModel = hapticsViewModel,
+                                    exercise = selectedPageItem.representativeExercise,
+                                    currentSet = currentSet,
+                                    transformationSpec = transformationSpec,
+                                    columnState = transformingLazyColumnState,
+                                    firstSetListItemIndex = firstSetListItemIndex,
+                                    stateToMatch = if (isSelectedCurrentPage) {
+                                        workoutState ?: liveWorkoutState
+                                    } else {
+                                        liveWorkoutState
+                                    },
+                                    progressState = progressState,
+                                )
+                            }
                         }
                     }
                 }
@@ -624,9 +703,11 @@ fun PageExercises(
 private data class PageExercisesPreviewFixture(
     val viewModel: AppViewModel,
     val firstExercise: Exercise,
+    val supersetExercise: Exercise,
     val selectedExercise: Exercise,
     val currentExercise: Exercise,
     val firstSetState: WorkoutState.Set,
+    val supersetSetState: WorkoutState.Set,
     val restState: WorkoutState.Rest,
 )
 
@@ -647,6 +728,17 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
             RestSet(
                 id = UUID.fromString("72000000-0000-0000-0000-000000000004"),
                 timeInSeconds = 120,
+                subCategory = SetSubCategory.WorkSet
+            ),
+            WeightSet(
+                id = UUID.fromString("72000000-0000-0000-0000-000000000005"),
+                reps = 6,
+                weight = 82.5,
+                subCategory = SetSubCategory.WorkSet
+            ),
+            RestSet(
+                id = UUID.fromString("72000000-0000-0000-0000-000000000004"),
+                timeInSeconds = 160,
                 subCategory = SetSubCategory.WorkSet
             ),
             WeightSet(
@@ -688,6 +780,60 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         maxLoadPercent = 100.0,
         minReps = 6,
         maxReps = 12,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        generateWarmUpSets = false,
+        keepScreenOn = false,
+        showCountDownTimer = false,
+        requiresLoadCalibration = false
+    )
+    val supersetExerciseA = Exercise(
+        id = UUID.fromString("71000000-0000-0000-0000-000000000003"),
+        enabled = true,
+        name = "Incline Dumbbell Press",
+        notes = "",
+        sets = listOf(
+            WeightSet(
+                id = UUID.fromString("72000000-0000-0000-0000-000000000006"),
+                reps = 12,
+                weight = 24.0,
+                subCategory = SetSubCategory.WorkSet
+            )
+        ),
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 100.0,
+        minReps = 8,
+        maxReps = 15,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        generateWarmUpSets = false,
+        keepScreenOn = false,
+        showCountDownTimer = false,
+        requiresLoadCalibration = false
+    )
+    val supersetExerciseB = Exercise(
+        id = UUID.fromString("71000000-0000-0000-0000-000000000004"),
+        enabled = true,
+        name = "One-arm Row",
+        notes = "",
+        sets = listOf(
+            WeightSet(
+                id = UUID.fromString("72000000-0000-0000-0000-000000000007"),
+                reps = 12,
+                weight = 22.0,
+                subCategory = SetSubCategory.WorkSet
+            )
+        ),
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 100.0,
+        minReps = 8,
+        maxReps = 15,
         lowerBoundMaxHRPercent = null,
         upperBoundMaxHRPercent = null,
         equipmentId = null,
@@ -767,6 +913,39 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         exerciseId = null,
         nextState = secondSetState
     )
+    val supersetSetState = WorkoutState.Set(
+        exerciseId = supersetExerciseA.id,
+        set = supersetExerciseA.sets.first(),
+        setIndex = 1u,
+        previousSetData = WeightSetData(actualReps = 10, actualWeight = 22.0, volume = 220.0),
+        currentSetDataState = androidx.compose.runtime.mutableStateOf(
+            WeightSetData(actualReps = 12, actualWeight = 24.0, volume = 288.0)
+        ),
+        hasNoHistory = false,
+        skipped = false,
+        currentBodyWeight = 0.0,
+        streak = 1,
+        progressionState = null,
+        isWarmupSet = false,
+        equipmentId = null
+    )
+    val supersetPartnerSetState = WorkoutState.Set(
+        exerciseId = supersetExerciseB.id,
+        set = supersetExerciseB.sets.first(),
+        setIndex = 1u,
+        previousSetData = WeightSetData(actualReps = 10, actualWeight = 20.0, volume = 200.0),
+        currentSetDataState = androidx.compose.runtime.mutableStateOf(
+            WeightSetData(actualReps = 12, actualWeight = 22.0, volume = 264.0)
+        ),
+        hasNoHistory = false,
+        skipped = false,
+        currentBodyWeight = 0.0,
+        streak = 1,
+        progressionState = null,
+        isWarmupSet = false,
+        equipmentId = null
+    )
+    val supersetId = UUID.fromString("73000000-0000-0000-0000-000000000001")
 
     val sequence = listOf(
         WorkoutStateSequenceItem.Container(
@@ -774,6 +953,8 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
                 exerciseId = firstExercise.id,
                 childItems = mutableListOf(
                     ExerciseChildItem.Normal(firstSetState),
+                    ExerciseChildItem.Normal(firstExerciseRestState),
+                    ExerciseChildItem.Normal(firstExerciseSecondSetState),
                     ExerciseChildItem.Normal(firstExerciseRestState),
                     ExerciseChildItem.Normal(firstExerciseSecondSetState)
                 )
@@ -785,25 +966,40 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
                 exerciseId = secondExercise.id,
                 childItems = mutableListOf(ExerciseChildItem.Normal(secondSetState))
             )
+        ),
+        WorkoutStateSequenceItem.Container(
+            WorkoutStateContainer.SupersetState(
+                supersetId = supersetId,
+                childStates = mutableListOf(supersetSetState, supersetPartnerSetState)
+            )
         )
     )
     val stateMachine = WorkoutStateMachine.fromSequence(sequence, startIndex = 1)
 
     viewModel.exercisesById = mapOf(
         firstExercise.id to firstExercise,
-        secondExercise.id to secondExercise
+        secondExercise.id to secondExercise,
+        supersetExerciseA.id to supersetExerciseA,
+        supersetExerciseB.id to supersetExerciseB
     )
-    viewModel.supersetIdByExerciseId = emptyMap()
-    viewModel.exercisesBySupersetId = emptyMap()
+    viewModel.supersetIdByExerciseId = mapOf(
+        supersetExerciseA.id to supersetId,
+        supersetExerciseB.id to supersetId
+    )
+    viewModel.exercisesBySupersetId = mapOf(
+        supersetId to listOf(supersetExerciseA, supersetExerciseB)
+    )
     setFieldValue(viewModel, "stateMachine", stateMachine)
     setCurrentWorkoutState(viewModel, restState)
 
     return PageExercisesPreviewFixture(
         viewModel = viewModel,
         firstExercise = firstExercise,
+        supersetExercise = supersetExerciseA,
         selectedExercise = secondExercise,
         currentExercise = firstExercise,
         firstSetState = firstSetState,
+        supersetSetState = supersetSetState,
         restState = restState
     )
 }
@@ -853,6 +1049,31 @@ private fun PageExercisesExercisePagePreview() {
             viewModel = fixture.viewModel,
             hapticsViewModel = hapticsViewModel,
             currentExercise = fixture.firstExercise,
+            onPageSelected = { _, _ -> }
+        )
+    }
+}
+
+@Preview(
+    name = "Superset Exercise Page",
+    group = "PageExercises",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun PageExercisesSupersetPagePreview() {
+    val fixture = remember { buildPageExercisesPreviewFixture() }
+    val context = LocalContext.current
+    val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
+
+    MyWorkoutAssistantTheme {
+        PageExercises(
+            selectedExercise = fixture.supersetExercise,
+            selectedRestPageId = null,
+            workoutState = fixture.supersetSetState,
+            viewModel = fixture.viewModel,
+            hapticsViewModel = hapticsViewModel,
+            currentExercise = fixture.supersetExercise,
             onPageSelected = { _, _ -> }
         )
     }

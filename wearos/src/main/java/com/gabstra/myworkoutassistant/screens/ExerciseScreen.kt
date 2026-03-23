@@ -56,8 +56,8 @@ import com.gabstra.myworkoutassistant.composables.PageTitledLines
 import com.gabstra.myworkoutassistant.composables.TitledLinesSection
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerLayoutTokens
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerPageSafeAreaPadding
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
+import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
@@ -328,19 +328,17 @@ fun ExerciseScreen(
                     .clipToBounds()
                 when (pageTypes[pageIndex]) {
                     ExerciseHorizontalPage.BUTTONS -> {
-                        Box(modifier = pageModifier) {
-                            PageButtons(
-                                updatedState = state,
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                navController = navController,
-                                onBeforeGoHome = onBeforeGoHome,
-                                canChangeEquipment = canChangeEquipment,
-                                onChangeEquipmentClick = {
-                                    showEquipmentPicker = true
-                                }
-                            )
-                        }
+                        PageButtons(
+                            updatedState = state,
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            navController = navController,
+                            onBeforeGoHome = onBeforeGoHome,
+                            canChangeEquipment = canChangeEquipment,
+                            onChangeEquipmentClick = {
+                                showEquipmentPicker = true
+                            }
+                        )
                     }
 
                     ExerciseHorizontalPage.PLATES -> {
@@ -384,9 +382,7 @@ fun ExerciseScreen(
                             }
                             sections
                         }
-                        Box(modifier = pageModifier) {
-                            PageTitledLines(sections = titledLinesSections)
-                        }
+                        PageTitledLines(modifier = Modifier.fillMaxSize(), sections = titledLinesSections)
                     }
 
                     ExerciseHorizontalPage.MUSCLES -> {
@@ -417,20 +413,18 @@ fun ExerciseScreen(
                     }
 
                     ExerciseHorizontalPage.EXERCISES -> {
-                        Box(modifier = pageModifier) {
-                            PageExercises(
-                                selectedExercise = selectedExercise,
-                                selectedRestPageId = selectedRestPageId,
-                                workoutState = state,
-                                viewModel = viewModel,
-                                hapticsViewModel = hapticsViewModel,
-                                currentExercise = exercise,
-                                onPageSelected = { exerciseSelection, restPageId ->
-                                    selectedExercise = exerciseSelection
-                                    selectedRestPageId = restPageId
-                                }
-                            )
-                        }
+                        PageExercises(
+                            selectedExercise = selectedExercise,
+                            selectedRestPageId = selectedRestPageId,
+                            workoutState = state,
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            currentExercise = exercise,
+                            onPageSelected = { exerciseSelection, restPageId ->
+                                selectedExercise = exerciseSelection
+                                selectedRestPageId = restPageId
+                            }
+                        )
                     }
                 }
             }
