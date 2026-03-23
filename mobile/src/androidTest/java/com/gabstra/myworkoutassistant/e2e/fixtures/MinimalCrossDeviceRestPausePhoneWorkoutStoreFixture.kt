@@ -21,7 +21,6 @@ object MinimalCrossDeviceRestPausePhoneWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Rest Pause Sync Press",
-            doNotStoreHistory = false,
             notes = "Phone-side rest-pause sync fixture",
             sets = listOf(WeightSet(id = SET_1_ID, reps = 6, weight = 50.0)),
             exerciseType = ExerciseType.WEIGHT,

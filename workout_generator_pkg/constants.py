@@ -172,7 +172,6 @@ JSON_SCHEMA = {
                 "type",                                                                                                                                                                                                                          
                 "enabled",                                                                                                                                                                                                                       
                 "name",                                                                                                                                                                                                                          
-                "doNotStoreHistory",                                                                                                                                                                                                             
                 "notes",                                                                                                                                                                                                                         
                 "sets",                                                                                                                                                                                                                          
                 "exerciseType",                                                                                                                                                                                                                  
@@ -191,7 +190,6 @@ JSON_SCHEMA = {
                 "type": {"const": "Exercise"},                                                                                                                                                                                                   
                 "enabled": {"type": "boolean"},                                                                                                                                                                                                  
                 "name": {"type": "string"},                                                                                                                                                                                                      
-                "doNotStoreHistory": {"type": "boolean"},                                                                                                                                                                                        
                 "notes": {"type": "string", "maxLength": 500},                                                                                                                                                                                                     
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
                 "exerciseType": {"$ref": "#/$defs/ExerciseType"},                                                                                                                                                                                
@@ -494,7 +492,6 @@ EXAMPLE_JSON = {
                     "type": "Exercise",                                                                                                                                                                                                          
                     "enabled": True,                                                                                                                                                                                                             
                     "name": "Back Squat",                                                                                                                                                                                                        
-                    "doNotStoreHistory": False,                                                                                                                                                                                                  
                     "notes": "",
                     "sets": [                                                                                                                                                                                                                    
                         {                                                                                                                                                                                                                        
@@ -641,7 +638,6 @@ JSON_SYSTEM_PROMPT = (
     "- exercise.notes max 500 chars, concise.\n\n"
     "Optional advanced fields:\n"
     "- HR target fields and load jump tuning fields should be set only when explicitly requested; otherwise null.\n"
-    "- If doNotStoreHistory=true, set progressionMode=\"OFF\".\n\n"
     "JSON Schema:\n"
     f"{json.dumps(JSON_SCHEMA, indent=2)}\n\n"
     "Example JSON Output:\n"
@@ -813,7 +809,6 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Warm Up",
-            "doNotStoreHistory": True,
             "notes": "",
             "sets": [
                 {
@@ -847,7 +842,6 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Back Squat",
-            "doNotStoreHistory": False,
             "notes": "",
             "sets": [
                 {
@@ -887,7 +881,6 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Single-Arm Dumbbell Row",
-            "doNotStoreHistory": False,
             "notes": "Focus on controlled movement",
             "sets": [
                 {
@@ -927,7 +920,6 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Push-ups",
-            "doNotStoreHistory": False,
             "notes": "Keep core tight, full range of motion",
             "sets": [
                 {
@@ -974,7 +966,6 @@ EXERCISE_EXAMPLE = {
             "type": "Exercise",
             "enabled": True,
             "name": "Pull-Ups",
-            "doNotStoreHistory": False,
             "notes": "Full range of motion, controlled descent",
             "sets": [
                 {
@@ -1048,7 +1039,7 @@ EXERCISE_SYSTEM_PROMPT = (
     "- BODY_WEIGHT exercises must include bodyWeightPercentage; WEIGHT/COUNTUP/COUNTDOWN set it to null.\n"
     "- Set weights/additionalWeight must be valid for equipment combinations.\n\n"
     "Warm-up rule:\n"
-    "- For COUNTDOWN warm-up entry, emit exactly one TimedDurationSet of 300000 ms, no RestSet, doNotStoreHistory=true, showCountDownTimer=true, equipmentId=null.\n\n"
+    "- For COUNTDOWN warm-up entry, emit exactly one TimedDurationSet of 300000 ms, no RestSet, showCountDownTimer=true, equipmentId=null.\n\n"
     "Other required behavior:\n"
     "- Use notes as concise string (max 500 chars).\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"

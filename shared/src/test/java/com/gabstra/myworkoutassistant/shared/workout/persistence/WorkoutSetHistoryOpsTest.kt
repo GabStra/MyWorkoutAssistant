@@ -1,12 +1,18 @@
 package com.gabstra.myworkoutassistant.shared.workout.persistence
 
 import androidx.compose.runtime.mutableStateOf
+import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,6 +35,65 @@ class WorkoutSetHistoryOpsTest {
             WorkoutSetHistoryOps.shouldSkipPersistingState(
                 restState,
                 emptyMap()
+            )
+        )
+    }
+
+    @Test
+    fun shouldSkipPersistingState_doesNotSkipWeightWorkSet() {
+        val setId = UUID.randomUUID()
+        val exId = UUID.randomUUID()
+        val equipmentId = UUID.randomUUID()
+        val exercise = Exercise(
+            id = exId,
+            enabled = true,
+            name = "Squat",
+            notes = "",
+            sets = listOf(WeightSet(setId, 5, 100.0)),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 5,
+            maxReps = 10,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = equipmentId,
+            bodyWeightPercentage = null,
+            generateWarmUpSets = false,
+            progressionMode = ProgressionMode.OFF,
+            keepScreenOn = false,
+            showCountDownTimer = false,
+            intraSetRestInSeconds = null,
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null
+        )
+        val setState = WorkoutState.Set(
+            exerciseId = exId,
+            set = WeightSet(setId, 5, 100.0),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(WeightSetData(5, 100.0, 500.0)),
+            hasNoHistory = false,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 75.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = equipmentId,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u,
+            isCalibrationSet = false
+        )
+        assertFalse(
+            WorkoutSetHistoryOps.shouldSkipPersistingState(
+                setState,
+                mapOf(exId to exercise)
             )
         )
     }

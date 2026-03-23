@@ -107,7 +107,6 @@ class ApplyCalibrationRIRPersistedSetHistoryTest {
             id = exerciseId,
             enabled = true,
             name = "Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(calibrationSetId, reps = 8, weight = calibrationWeight, subCategory = SetSubCategory.CalibrationSet),

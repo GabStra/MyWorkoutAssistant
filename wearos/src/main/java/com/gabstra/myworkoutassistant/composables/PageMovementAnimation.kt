@@ -138,7 +138,6 @@ private fun PageMovementAnimationPreview() {
             id = UUID.randomUUID(),
             enabled = true,
             name = "Squat",
-            doNotStoreHistory = false,
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,

@@ -47,7 +47,6 @@ class WarmupPlannerTest {
             id = UUID.randomUUID(),
             enabled = true,
             name = name,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(UUID.randomUUID(), 5, 100.0)),
             exerciseType = ExerciseType.WEIGHT,

@@ -230,7 +230,6 @@ class ApplyCalibrationRIRPlateRecalculationTest {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = initialWorkSetWeight),

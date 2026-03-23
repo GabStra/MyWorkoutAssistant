@@ -87,7 +87,6 @@ private fun PageMusclesPreview() {
             id = UUID.randomUUID(),
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,

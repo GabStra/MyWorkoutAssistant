@@ -90,7 +90,6 @@ object TestWorkoutStoreSeeder {
             id = exercise1Id,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 10, 100.0),
@@ -120,7 +119,6 @@ object TestWorkoutStoreSeeder {
             id = exercise2Id,
             enabled = true,
             name = "Squats",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set3Id, 12, 80.0)

@@ -43,7 +43,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
             is Exercise -> {
                 jsonObject.addProperty("enabled", src.enabled)
                 jsonObject.addProperty("name", src.name)
-                jsonObject.addProperty("doNotStoreHistory", src.doNotStoreHistory)
                 jsonObject.addProperty("notes", src.notes)
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
@@ -120,14 +119,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
         val jsonObject = json.asJsonObject
         val id = UUID.fromString(jsonObject.get("id").asString)
         val type = jsonObject.get("type").asString
-
-
-
-        val doNotStoreHistory = if (jsonObject.has("doNotStoreHistory")) {
-            jsonObject.get("doNotStoreHistory").asBoolean
-        } else {
-            false
-        }
 
         return when (type) {
             "Exercise" -> {
@@ -312,7 +303,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     id,
                     enabled,
                     name,
-                    doNotStoreHistory,
                     notes,
                     sets,
                     exerciseType,

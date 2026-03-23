@@ -181,7 +181,6 @@ class WorkoutViewModelDatabaseTest {
             id = testExercise1Id,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(testSet1Id, 10, 100.0),
@@ -211,7 +210,6 @@ class WorkoutViewModelDatabaseTest {
             id = testExercise2Id,
             enabled = true,
             name = "Squats",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(testSet3Id, 12, 80.0)
@@ -760,7 +758,6 @@ class WorkoutViewModelDatabaseTest {
             id = testExercise1Id,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,

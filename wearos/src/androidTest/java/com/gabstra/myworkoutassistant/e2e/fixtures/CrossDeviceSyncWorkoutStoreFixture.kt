@@ -53,7 +53,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
             id = EXERCISE_A_ID,
             enabled = true,
             name = "Complex A",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(id = SET_A1_ID, reps = 7, weight = 40.0),
@@ -82,7 +81,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
             id = EXERCISE_B_ID,
             enabled = true,
             name = "Complex B",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(id = SET_B1_ID, reps = 12, weight = 30.0)),
             exerciseType = ExerciseType.WEIGHT,
@@ -108,7 +106,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
             id = EXERCISE_C_ID,
             enabled = true,
             name = "Complex C",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(id = SET_C1_ID, reps = 10, weight = 20.0)),
             exerciseType = ExerciseType.WEIGHT,
@@ -134,7 +131,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
             id = EXERCISE_D_ID,
             enabled = true,
             name = "Complex D",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(id = SET_D1_ID, reps = 8, weight = 60.0),
@@ -180,7 +176,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
             id = CALIBRATION_EXERCISE_ID,
             enabled = true,
             name = CALIBRATION_EXERCISE_NAME,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(id = CALIBRATION_SET_ID, reps = 8, weight = 45.0)

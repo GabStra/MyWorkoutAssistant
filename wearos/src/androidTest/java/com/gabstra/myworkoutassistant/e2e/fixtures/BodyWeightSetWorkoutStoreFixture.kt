@@ -25,7 +25,6 @@ object BodyWeightSetWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Pull Ups",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 BodyWeightSet(setId, 8, 0.0)

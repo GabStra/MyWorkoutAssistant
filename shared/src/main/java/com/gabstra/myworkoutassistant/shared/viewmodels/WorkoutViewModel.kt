@@ -1422,8 +1422,7 @@ open class WorkoutViewModel(
         val exercises =
             selectedWorkout.value.workoutComponents.filterIsInstance<Exercise>() + selectedWorkout.value.workoutComponents.filterIsInstance<Superset>().flatMap { it.exercises }
         val validExercises = exercises.filter { exercise ->
-            !exercise.doNotStoreHistory &&
-                exercise.progressionMode != ProgressionMode.OFF &&
+            exercise.progressionMode != ProgressionMode.OFF &&
                 !exercise.requiresLoadCalibration
         }
         val latestSetHistoryByKey = latestSetHistoryMap.entries.associate { (key, value) ->
@@ -1454,7 +1453,6 @@ open class WorkoutViewModel(
             exercise.enabled &&
                 exercise.progressionMode != ProgressionMode.OFF &&
                 !exercise.requiresLoadCalibration &&
-                !exercise.doNotStoreHistory &&
                 exerciseProgressionByExerciseId.containsKey(exercise.id)
         }
         validExercises.forEach { exercise ->
@@ -2020,10 +2018,7 @@ open class WorkoutViewModel(
     }
 
     inline fun <reified T : SetData> getHistoricalSetsDataByExerciseId(exerciseId: UUID): List<T> {
-        if (exercisesById[exerciseId]!!.doNotStoreHistory || !latestSetHistoriesByExerciseId.containsKey(
-                exerciseId
-            )
-        ) return emptyList()
+        if (!latestSetHistoriesByExerciseId.containsKey(exerciseId)) return emptyList()
         return latestSetHistoriesByExerciseId[exerciseId]!!.filter { it.setData is T }
             .map { it.setData as T }
     }
@@ -2286,8 +2281,7 @@ open class WorkoutViewModel(
 
                 var previousSetData = copySetData(currentSetData)
 
-                val historySet =
-                    if (exercise.doNotStoreHistory) null else latestSetHistoryMap[SetKey(exercise.id, set.id)]
+                val historySet = latestSetHistoryMap[SetKey(exercise.id, set.id)]
 
                 if (historySet != null) {
                     val historySetData = historySet.setData

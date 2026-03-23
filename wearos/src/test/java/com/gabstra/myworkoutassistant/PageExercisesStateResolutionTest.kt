@@ -321,7 +321,6 @@ class PageExercisesStateResolutionTest {
             id = id,
             enabled = true,
             name = name,
-            doNotStoreHistory = false,
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,

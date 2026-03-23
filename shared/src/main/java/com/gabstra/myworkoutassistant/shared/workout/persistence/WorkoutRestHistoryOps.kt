@@ -21,8 +21,7 @@ internal object WorkoutRestHistoryOps {
 
         if (scope == RestHistoryScope.INTRA_EXERCISE) {
             val exerciseId = state.exerciseId ?: return true
-            val exercise = exercisesById[exerciseId] ?: return true
-            if (exercise.doNotStoreHistory) return true
+            exercisesById[exerciseId] ?: return true
         }
 
         return false

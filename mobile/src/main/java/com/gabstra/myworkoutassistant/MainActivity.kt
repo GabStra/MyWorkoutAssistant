@@ -1846,7 +1846,6 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 }
                             },
-                            allowSettingDoNotStoreHistory = true,
                             isSaving = isSaving
                         )
                     }
@@ -1991,7 +1990,6 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 },
                                 exercise = selectedExercise,
-                                allowSettingDoNotStoreHistory = true,
                                 isSaving = isSaving
                             )
                         }

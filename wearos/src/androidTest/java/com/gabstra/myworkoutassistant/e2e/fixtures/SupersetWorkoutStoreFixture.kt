@@ -38,7 +38,6 @@ object SupersetWorkoutStoreFixture {
             id = exerciseAId,
             enabled = true,
             name = EXERCISE_A_NAME,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(setA1Id, 10, 60.0),
@@ -68,7 +67,6 @@ object SupersetWorkoutStoreFixture {
             id = exerciseBId,
             enabled = true,
             name = EXERCISE_B_NAME,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(setB1Id, 12, 40.0),

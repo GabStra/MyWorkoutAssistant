@@ -179,7 +179,6 @@ class WorkoutViewModelSessionTest {
             id = testExerciseId,
             enabled = true,
             name = name,
-            doNotStoreHistory = false,
             notes = "",
             sets = sets,
             exerciseType = ExerciseType.WEIGHT,
@@ -718,7 +717,7 @@ class WorkoutViewModelSessionTest {
         
         val progressionData = exerciseProgressionMap[testExerciseId]
         assertNotNull("Progression should be generated", progressionData)
-        val expectedSets = progressionData!!.first.sets.sortedByDescending { it.weight * it.reps }
+        val expectedSets = progressionData!!.first.sets
         
         viewModel.setWorkoutStart()
         advanceUntilIdle()
@@ -1191,7 +1190,6 @@ class WorkoutViewModelSessionTest {
             id = testExerciseId,
             enabled = true,
             name = "Test Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
@@ -1316,7 +1314,6 @@ class WorkoutViewModelSessionTest {
             id = testExerciseId,
             enabled = true,
             name = "Test Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 createWeightSetWithValidatedWeight(UUID.randomUUID(), 10, 95.0),
@@ -2010,7 +2007,6 @@ class WorkoutViewModelSessionTest {
             id = testExerciseId,
             enabled = true,
             name = "Unilateral Dumbbell Curl",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 createWeightSetWithValidatedWeight(unilateralSetId, 10, 20.0)

@@ -154,7 +154,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet),
@@ -323,7 +322,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = programmedReps, weight = initialWeight, subCategory = SetSubCategory.WorkSet),
@@ -488,7 +486,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet),
@@ -637,7 +634,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = programmedWeight, subCategory = SetSubCategory.WorkSet),
@@ -775,7 +771,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = programmedWeight, subCategory = SetSubCategory.WorkSet),
@@ -908,7 +903,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet),
@@ -1069,7 +1063,6 @@ class AutoRegulationProgressionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSet1Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet),

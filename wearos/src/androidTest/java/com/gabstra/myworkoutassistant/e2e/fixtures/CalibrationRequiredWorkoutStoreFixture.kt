@@ -25,7 +25,6 @@ object CalibrationRequiredWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Calibrated Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(setId, 8, 80.0)

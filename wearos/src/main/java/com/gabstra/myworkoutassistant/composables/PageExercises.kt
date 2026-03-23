@@ -636,7 +636,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         id = UUID.fromString("71000000-0000-0000-0000-000000000001"),
         enabled = true,
         name = "Bench Press",
-        doNotStoreHistory = false,
         notes = "",
         sets = listOf(
             WeightSet(
@@ -675,7 +674,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
         id = UUID.fromString("71000000-0000-0000-0000-000000000002"),
         enabled = true,
         name = "Barbell Row",
-        doNotStoreHistory = false,
         notes = "",
         sets = listOf(
             WeightSet(

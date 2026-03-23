@@ -31,7 +31,6 @@ object MinimalCrossDeviceSyncWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Minimal Sync Press",
-            doNotStoreHistory = false,
             notes = "Includes appended trailing rest + set for cross-device loss verification",
             sets = listOf(
                 WeightSet(id = SET_1_ID, reps = 5, weight = 40.0),

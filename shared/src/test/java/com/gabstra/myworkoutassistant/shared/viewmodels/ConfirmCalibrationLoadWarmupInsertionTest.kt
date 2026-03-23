@@ -93,7 +93,6 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(UUID.randomUUID(), reps = 8, weight = 80.0)
@@ -153,7 +152,6 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSetId, reps = 8, weight = 80.0)
@@ -369,7 +367,6 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(workSetId, reps = 8, weight = 80.0)),
             exerciseType = ExerciseType.WEIGHT,
@@ -525,7 +522,6 @@ class ConfirmCalibrationLoadWarmupInsertionTest {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(workSetId, reps = 8, weight = 80.0)),
             exerciseType = ExerciseType.WEIGHT,

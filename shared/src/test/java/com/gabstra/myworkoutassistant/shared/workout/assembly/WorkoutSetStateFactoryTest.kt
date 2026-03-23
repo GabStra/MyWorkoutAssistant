@@ -24,7 +24,6 @@ class WorkoutSetStateFactoryTest {
             id = UUID.randomUUID(),
             enabled = true,
             name = "Dumbbell Curl",
-            doNotStoreHistory = false,
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,

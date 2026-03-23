@@ -712,8 +712,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         // Verify RestSets are excluded
         verifyRestSetsExcluded(setHistories, workout)
 
-        // Verify doNotStoreHistory exercises are excluded
-        verifyDoNotStoreHistoryExcluded(setHistories, workout)
     }
 
     @Test
@@ -2053,7 +2051,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     private fun verifyModifiedValuesAreStored(setHistories: List<SetHistory>) {
         modifications.values.forEach { modification ->
             val setHistory = setHistories.firstOrNull { it.setId == modification.setId }
-                ?: return@forEach // Set might not be in history if doNotStoreHistory is true
+                ?: return@forEach // Set may be skipped (e.g. warmup) or not completed in flow
 
             when (val setData = setHistory.setData) {
                 is WeightSetData -> {
@@ -2155,7 +2153,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     ) {
         // Get all exercises from workout
         val allExercises = workout.workoutComponents.filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
-            .filter { !it.doNotStoreHistory }
 
         allExercises.forEach { exercise ->
             val exerciseSetHistories = setHistories.filter { it.exerciseId == exercise.id }
@@ -2245,25 +2242,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 require(!restSetInHistory) {
                     "RestSet with id $restSetId should not be in history"
                 }
-            }
-        }
-    }
-
-    /**
-     * Verifies that exercises with doNotStoreHistory=true are excluded from history.
-     */
-    private fun verifyDoNotStoreHistoryExcluded(
-        setHistories: List<SetHistory>,
-        workout: com.gabstra.myworkoutassistant.shared.Workout
-    ) {
-        val doNotStoreExercises = workout.workoutComponents
-            .filterIsInstance<com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise>()
-            .filter { it.doNotStoreHistory }
-
-        doNotStoreExercises.forEach { exercise ->
-            val exerciseSetHistories = setHistories.filter { it.exerciseId == exercise.id }
-            require(exerciseSetHistories.isEmpty()) {
-                "Exercise ${exercise.name} with doNotStoreHistory=true should have no SetHistory entries, but found ${exerciseSetHistories.size}"
             }
         }
     }

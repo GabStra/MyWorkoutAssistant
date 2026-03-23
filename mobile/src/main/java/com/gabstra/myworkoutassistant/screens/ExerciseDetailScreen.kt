@@ -406,7 +406,7 @@ fun ExerciseDetailScreen(
                                 )
                             },
                             onExportExerciseHistory = { exportExerciseHistory() },
-                            isExportEnabled = !exercise.doNotStoreHistory
+                            isExportEnabled = true
                         )
                     }
                 )
@@ -708,36 +708,16 @@ fun ExerciseDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                val isHistoryEnabled = !exercise.doNotStoreHistory
-                val tabTitles = remember(isHistoryEnabled) {
-                    if (isHistoryEnabled) {
-                        listOf("Overview", "Graph History", "Set History")
-                    } else {
-                        listOf("Overview")
-                    }
-                }
+                val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
 
-                var selectedTopTab by remember(exercise.id, initialSelectedTabIndex, isHistoryEnabled) {
-                    mutableIntStateOf(
-                        if (isHistoryEnabled) {
-                            initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex)
-                        } else {
-                            0
-                        }
-                    )
-                }
-
-                LaunchedEffect(isHistoryEnabled, selectedTopTab) {
-                    if (!isHistoryEnabled && selectedTopTab > 0) {
-                        selectedTopTab = 0
-                    }
+                var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
+                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
                 }
 
                 SwipeableTabs(
                     tabTitles = tabTitles,
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
-                        if (index > 0 && exercise.doNotStoreHistory) return@SwipeableTabs
                         selectedTopTab = index
                         val targetScreenData = ScreenData.ExerciseDetail(
                             workoutId = workout.id,
@@ -748,12 +728,8 @@ fun ExerciseDetailScreen(
                             appViewModel.updateScreenData(targetScreenData)
                         }
                     },
-                    tabEnabled = { index -> index == 0 || isHistoryEnabled },
-                    unselectedContentColor = if (isHistoryEnabled) {
-                        MaterialTheme.colorScheme.onBackground
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    tabEnabled = { true },
+                    unselectedContentColor = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.fillMaxSize(),
                     pagerModifier = Modifier.fillMaxSize(),
                 ) { pageIndex ->

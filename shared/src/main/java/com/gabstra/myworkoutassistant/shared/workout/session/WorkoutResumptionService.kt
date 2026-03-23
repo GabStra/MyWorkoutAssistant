@@ -45,25 +45,23 @@ internal class WorkoutResumptionService {
 
         allWorkoutStates.forEachIndexed { index, state ->
             val identity = WorkoutStateQueries.stateHistoryIdentity(state) ?: return@forEachIndexed
-            val exercise = identity.exerciseId?.let { exercisesById[it] } ?: return@forEachIndexed
+            identity.exerciseId?.let { exercisesById[it] } ?: return@forEachIndexed
 
-            if (!exercise.doNotStoreHistory) {
-                if (firstSetWithHistoryIndex == null && state is WorkoutState.Set) {
-                    firstSetWithHistoryIndex = index
-                }
+            if (firstSetWithHistoryIndex == null && state is WorkoutState.Set) {
+                firstSetWithHistoryIndex = index
+            }
 
-                val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
-                    WorkoutStateQueries.matchesSetHistory(
-                        setHistory,
-                        identity.setId,
-                        identity.order,
-                        identity.exerciseId
-                    )
-                }
+            val matchingSetHistory = executedSetsHistorySnapshot.firstOrNull { setHistory ->
+                WorkoutStateQueries.matchesSetHistory(
+                    setHistory,
+                    identity.setId,
+                    identity.order,
+                    identity.exerciseId
+                )
+            }
 
-                if (matchingSetHistory == null) {
-                    return index
-                }
+            if (matchingSetHistory == null) {
+                return index
             }
         }
 

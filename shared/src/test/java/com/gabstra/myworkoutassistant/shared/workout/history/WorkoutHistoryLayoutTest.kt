@@ -109,7 +109,6 @@ class WorkoutHistoryLayoutTest {
             id = id,
             enabled = true,
             name = name,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(setId, 5, 50.0)),
             exerciseType = ExerciseType.WEIGHT,

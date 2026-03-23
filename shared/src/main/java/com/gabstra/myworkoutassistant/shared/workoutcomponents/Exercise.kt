@@ -11,7 +11,6 @@ data class Exercise (
     override val id: UUID,
     override val enabled: Boolean,
     val name: String,
-    val doNotStoreHistory: Boolean,
     val notes: String,
     val sets: List<Set>,
     val exerciseType: ExerciseType,
@@ -46,7 +45,6 @@ data class Exercise (
         var result = id.hashCode()
         result = 31 * result + enabled.hashCode()
         result = 31 * result + name.hashCode()
-        result = 31 * result + doNotStoreHistory.hashCode()
         result = 31 * result + notes.hashCode()
         result = 31 * result + sets.hashCode()
         result = 31 * result + exerciseType.hashCode()
@@ -81,7 +79,6 @@ data class Exercise (
         if (id != other.id) return false
         if (enabled != other.enabled) return false
         if (name != other.name) return false
-        if (doNotStoreHistory != other.doNotStoreHistory) return false
         if (notes != other.notes) return false
         if (sets != other.sets) return false
         if (exerciseType != other.exerciseType) return false

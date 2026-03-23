@@ -29,7 +29,6 @@ object WarmupSetWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(workSetId, 10, 100.0) // Work set - warmups will be generated before this

@@ -138,15 +138,11 @@ fun ExerciseForm(
     onExerciseUpsert: (Exercise) -> Unit,
     onCancel: () -> Unit,
     exercise: Exercise? = null,
-    allowSettingDoNotStoreHistory: Boolean = true,
     isSaving: Boolean = false
 ) {
     // ----- state -----
     val nameState = rememberSaveable { mutableStateOf(exercise?.name ?: "") }
     val notesState = rememberSaveable { mutableStateOf(exercise?.notes ?: "") }
-    val doNotStoreHistory = rememberSaveable {
-        mutableStateOf(exercise?.doNotStoreHistory ?: !allowSettingDoNotStoreHistory)
-    }
 
     val hms = rememberSaveable {
         mutableStateOf(TimeConverter.secondsToHms(exercise?.intraSetRestInSeconds ?: 0))
@@ -288,7 +284,6 @@ fun ExerciseForm(
 
     var expandedWarmupProgression by rememberSaveable { mutableStateOf(false) }
     var expandedCalibration by rememberSaveable { mutableStateOf(false) }
-    var expandedHistoryNotes by rememberSaveable { mutableStateOf(false) }
     var expandedEquipment by rememberSaveable { mutableStateOf(false) }
     var expandedTargetMuscles by rememberSaveable { mutableStateOf(false) }
 
@@ -903,26 +898,6 @@ fun ExerciseForm(
                     }
                     Spacer(Modifier.height(Spacing.md))
                 }
-
-                // ----- History -----
-                val historyNotesSummary = remember(doNotStoreHistory.value) {
-                    "History tracking: ${if (doNotStoreHistory.value) "Off" else "On"}"
-                }
-                CollapsibleSection(
-                    title = "History",
-                    summary = historyNotesSummary,
-                    expanded = expandedHistoryNotes,
-                    onToggle = { expandedHistoryNotes = !expandedHistoryNotes }
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                        SwitchSettingRow(
-                            title = "Skip exercise history tracking",
-                            checked = doNotStoreHistory.value,
-                            onCheckedChange = { doNotStoreHistory.value = it },
-                            enabled = allowSettingDoNotStoreHistory
-                        )
-                    }
-                }
             } // end gating: nameState.value.isNotBlank()
 
             if (!nameState.value.isNotBlank()) {
@@ -991,16 +966,15 @@ fun ExerciseForm(
                         }
                         val newExercise = Exercise(
                             id = exercise?.id ?: UUID.randomUUID(),
-                            name = nameState.value.trim(),
-                            doNotStoreHistory = doNotStoreHistory.value,
                             enabled = exercise?.enabled ?: true,
+                            name = nameState.value.trim(),
+                            notes = notesState.value.trim(),
                             sets = normalizedSets,
                             exerciseType = selectedExerciseType.value,
                             minLoadPercent = minLoadPercent.floatValue.toDouble().round(2),
                             maxLoadPercent = maxLoadPercent.floatValue.toDouble().round(2),
                             minReps = minReps.floatValue.toInt(),
                             maxReps = maxReps.floatValue.toInt(),
-                            notes = notesState.value.trim(),
                             lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value?.round(2),
                             upperBoundMaxHRPercent = selectedUpperBoundMaxHRPercent.value?.round(2),
                             equipmentId = selectedEquipmentId.value,

@@ -13,7 +13,7 @@ This document summarizes core workout business logic (from `shared/`) and how th
   - Sub-categories: `WorkSet`, `WarmupSet`, `RestPauseSet`, `BackOffSet`.
 - History storage
   - `storeSetData()` persists `SetHistory` using `currentSetData` and `skipped`.
-  - Rest sets are not stored; warmup sets and exercises with `doNotStoreHistory` are excluded.
+  - Rest sets are not stored; warmup sets are excluded from set history.
   - `WorkoutHistory` includes duration, heart beat records, and done state.
 - Workout progression / metadata
   - `ExerciseSessionProgression`, `ExerciseInfo`, progression state (deload/retry/progress/failed).
@@ -43,7 +43,7 @@ Covered:
 - Timed duration (manual start): start/stop early, assert stored timers.
 - Endurance (manual start): start/stop early, assert stored timers.
 - Skipped set flag stored as `skipped=true`.
-- Comprehensive workout: completes all sets; verifies ordering, start/end times present, rest sets excluded, exercises with `doNotStoreHistory` excluded, and volume calculations for weight/body-weight sets.
+- Comprehensive workout: completes all sets; verifies ordering, start/end times present, rest sets excluded, and volume calculations for weight/body-weight sets.
 - Warmup sets excluded: verifies that warmup sets (with `SetSubCategory.WarmupSet`) are excluded from `SetHistory` storage.
 
 ## Gaps / Not Yet Covered by E2E

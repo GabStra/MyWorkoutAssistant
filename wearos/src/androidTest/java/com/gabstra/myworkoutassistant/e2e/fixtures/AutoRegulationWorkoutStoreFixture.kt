@@ -32,7 +32,6 @@ object AutoRegulationWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = EXERCISE_NAME,
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 8, 80.0),

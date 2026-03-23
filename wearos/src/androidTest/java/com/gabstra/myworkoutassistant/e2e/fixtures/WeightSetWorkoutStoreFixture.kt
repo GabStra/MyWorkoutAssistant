@@ -26,7 +26,6 @@ object WeightSetWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(setId, 10, 100.0)

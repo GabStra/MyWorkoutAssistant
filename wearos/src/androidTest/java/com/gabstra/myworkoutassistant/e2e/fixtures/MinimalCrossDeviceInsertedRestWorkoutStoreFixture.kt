@@ -27,7 +27,6 @@ object MinimalCrossDeviceInsertedRestWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Inserted Rest Sync Press",
-            doNotStoreHistory = false,
             notes = "Base two-set workout for in-session inserted rest sync coverage",
             sets = listOf(
                 WeightSet(id = SET_1_ID, reps = 5, weight = 40.0),

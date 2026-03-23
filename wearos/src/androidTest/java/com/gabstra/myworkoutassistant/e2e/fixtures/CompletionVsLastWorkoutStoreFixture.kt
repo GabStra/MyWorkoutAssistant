@@ -60,7 +60,6 @@ object CompletionVsLastWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = EXERCISE_NAME,
-            doNotStoreHistory = false,
             notes = "",
             sets = setTemplates.map { template ->
                 WeightSet(id = template.id, reps = template.reps, weight = template.weight)

@@ -623,7 +623,6 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         id = mainExerciseId,
         enabled = true,
         name = "Preview Exercise LONG EXTREMELY LONG ",
-        doNotStoreHistory = false,
         notes = if (scenario.includeTitledLinesPage) "Keep elbows tucked and brace core." else "",
         sets = listOf(mainSet),
         exerciseType = when (scenario.setType) {
@@ -655,7 +654,6 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         id = altExerciseId,
         enabled = true,
         name = "Next Exercise",
-        doNotStoreHistory = false,
         notes = "",
         sets = listOf(WeightSet(UUID.fromString("20000000-0000-0000-0000-000000000009"), reps = 10, weight = 50.0)),
         exerciseType = ExerciseType.WEIGHT,

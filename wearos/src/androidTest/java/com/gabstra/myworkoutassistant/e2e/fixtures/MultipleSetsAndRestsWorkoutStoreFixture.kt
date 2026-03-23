@@ -28,7 +28,6 @@ object MultipleSetsAndRestsWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 10, 100.0),

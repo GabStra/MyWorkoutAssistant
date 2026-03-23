@@ -142,7 +142,6 @@ class WorkoutSessionLifecycleServiceTest {
             id = exerciseId,
             enabled = true,
             name = "Vs Last Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(WeightSet(id = currentSetId, reps = 10, weight = 100.0)),
             exerciseType = ExerciseType.WEIGHT,

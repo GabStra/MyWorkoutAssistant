@@ -36,7 +36,7 @@ internal class WorkoutSessionLifecycleService(
     ) {
         if (workoutHistoryId == null) return
 
-        val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
+        val exercises = flattenExercises(workout)
         val allSetHistories = mutableListOf<SetHistory>()
         exercises.forEach { exercise ->
             val setHistories = sanitizeRestPlacementInSetHistories(
@@ -64,7 +64,7 @@ internal class WorkoutSessionLifecycleService(
 
         val latestByExerciseId = mutableMapOf<UUID, List<SetHistory>>()
         val latestByExerciseAndSet = mutableMapOf<Pair<UUID, UUID>, SetHistory>()
-        val exercises = flattenExercises(workout).filter { !it.doNotStoreHistory }
+        val exercises = flattenExercises(workout)
 
         exercises.forEach { exercise ->
             var selectedSetHistories: List<SetHistory> = emptyList()

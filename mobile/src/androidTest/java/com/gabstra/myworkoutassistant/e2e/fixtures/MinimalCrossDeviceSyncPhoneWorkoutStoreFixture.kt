@@ -28,7 +28,6 @@ object MinimalCrossDeviceSyncPhoneWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Minimal Sync Press",
-            doNotStoreHistory = false,
             notes = "Phone-side minimal cross-device sync fixture",
             sets = listOf(
                 WeightSet(id = SET_1_ID, reps = 5, weight = 40.0),

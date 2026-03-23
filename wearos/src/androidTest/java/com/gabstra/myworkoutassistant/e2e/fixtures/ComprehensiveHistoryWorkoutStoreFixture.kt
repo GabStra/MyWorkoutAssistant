@@ -73,8 +73,8 @@ object ComprehensiveHistoryWorkoutStoreFixture {
         // Exercise 10: COUNTUP - 1 EnduranceSet
         exercises.add(createCountupExercise())
 
-        // Exercise 11: WEIGHT, BARBELL, doNotStoreHistory=true
-        exercises.add(createDoNotStoreHistoryExercise(equipments[0].id))
+        // Exercise 11: WEIGHT, BARBELL — additional exercise (history always stored)
+        exercises.add(createExtraBarbellExercise(equipments[0].id))
 
         val workout = Workout(
             id = UUID.randomUUID(),
@@ -204,7 +204,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Barbell Bench Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(warmupSetId, 10, 40.0, SetSubCategory.WarmupSet), // 20kg bar + 20kg plates
@@ -243,7 +242,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Dumbbell Shoulder Press",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 12, 20.0), // 2x10kg
@@ -279,7 +277,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Single Dumbbell Row",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 15, 10.0), // Single 10kg
@@ -315,7 +312,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Cable Fly",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 12, 10.0), // 10kg plate
@@ -351,7 +347,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Weighted Pull-ups",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 10, 10.0), // 10kg vest
@@ -387,7 +382,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Leg Press Machine",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 15, 20.0), // 20kg base
@@ -423,7 +417,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Generic Weight Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(set1Id, 12, 25.0), // Any valid weight
@@ -459,7 +452,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Push-ups",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 BodyWeightSet(set1Id, 15, 0.0), // Body weight only
@@ -494,7 +486,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Plank Hold",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 TimedDurationSet(setId, 60_000, autoStart = true, autoStop = true) // 60 seconds
@@ -527,7 +518,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Running",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 EnduranceSet(setId, 120_000, autoStart = false, autoStop = false) // 2 minutes
@@ -552,15 +542,14 @@ object ComprehensiveHistoryWorkoutStoreFixture {
         )
     }
 
-    private fun createDoNotStoreHistoryExercise(equipmentId: UUID): Exercise {
+    private fun createExtraBarbellExercise(equipmentId: UUID): Exercise {
         val exerciseId = UUID.randomUUID()
         val setId = UUID.randomUUID()
 
         return Exercise(
             id = exerciseId,
             enabled = true,
-            name = "Warm-up Jog",
-            doNotStoreHistory = true, // Should not appear in history
+            name = "Barbell Finisher",
             notes = "",
             sets = listOf(
                 WeightSet(setId, 5, 40.0)

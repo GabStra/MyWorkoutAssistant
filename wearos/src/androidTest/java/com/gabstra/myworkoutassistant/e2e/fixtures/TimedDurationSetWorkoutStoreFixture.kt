@@ -27,7 +27,6 @@ object TimedDurationSetWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Timed Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 TimedDurationSet(setId, 60_000, autoStart = true, autoStop = false) // 60 seconds

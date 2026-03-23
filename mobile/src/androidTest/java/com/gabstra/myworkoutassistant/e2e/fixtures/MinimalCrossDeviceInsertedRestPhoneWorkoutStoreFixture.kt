@@ -24,7 +24,6 @@ object MinimalCrossDeviceInsertedRestPhoneWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Inserted Rest Sync Press",
-            doNotStoreHistory = false,
             notes = "Phone-side inserted-rest sync fixture",
             sets = listOf(
                 WeightSet(id = SET_1_ID, reps = 5, weight = 40.0),

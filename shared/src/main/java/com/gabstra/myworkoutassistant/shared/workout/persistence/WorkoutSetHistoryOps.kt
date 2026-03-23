@@ -30,7 +30,7 @@ internal object WorkoutSetHistoryOps {
             val isCalibrationSet = isCalibrationSet(state.set)
             val hasCalibrationRIR = hasCalibrationRIR(state.currentSetData)
 
-            if (exercise.doNotStoreHistory || isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) {
+            if (isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) {
                 return true
             }
         }

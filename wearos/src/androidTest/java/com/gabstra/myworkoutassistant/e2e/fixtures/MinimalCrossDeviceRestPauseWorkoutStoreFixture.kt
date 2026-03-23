@@ -24,7 +24,6 @@ object MinimalCrossDeviceRestPauseWorkoutStoreFixture {
             id = EXERCISE_ID,
             enabled = true,
             name = "Rest Pause Sync Press",
-            doNotStoreHistory = false,
             notes = "Single-set workout for temporary rest-pause sync coverage",
             sets = listOf(
                 WeightSet(id = SET_1_ID, reps = 6, weight = 50.0)

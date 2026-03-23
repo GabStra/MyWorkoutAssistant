@@ -26,7 +26,6 @@ object EnduranceSetManualStartWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Endurance Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 EnduranceSet(setId, 60_000, autoStart = false, autoStop = false)

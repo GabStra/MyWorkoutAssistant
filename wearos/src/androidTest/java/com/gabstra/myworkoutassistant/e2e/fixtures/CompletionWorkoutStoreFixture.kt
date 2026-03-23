@@ -25,7 +25,6 @@ object CompletionWorkoutStoreFixture {
             id = exerciseId,
             enabled = true,
             name = "Simple Exercise",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 WeightSet(setId, 10, 100.0)
