@@ -76,7 +76,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
-import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.ExerciseTemplateRenderer
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.SetRestRowCard
@@ -84,6 +84,7 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
@@ -104,7 +105,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -176,7 +176,7 @@ fun WorkoutComponentRenderer(
     when (workoutComponent) {
         is Exercise -> {
             StyledCard(enabled = workoutComponent.enabled) {
-                ExerciseRenderer(
+                ExerciseTemplateRenderer(
                     modifier = modifier,
                     exercise = workoutComponent,
                     showRest = showRest,
@@ -188,7 +188,7 @@ fun WorkoutComponentRenderer(
 
         is Rest -> {
             SetRestRowCard(
-                modifier = titleModifier,
+                modifier = Modifier.fillMaxWidth().then(titleModifier),
                 enabled = workoutComponent.enabled,
                 restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
             )

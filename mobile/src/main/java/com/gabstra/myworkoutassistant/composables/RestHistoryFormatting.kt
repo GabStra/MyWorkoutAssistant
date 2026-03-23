@@ -31,11 +31,11 @@ private fun formatRestIntervalForDisplay(
     val elapsedSec = elapsedSecondsFromHistoryBounds(startTime, endTime)
     return when {
         elapsedSec != null -> buildString {
-            append("Rest ${formatTime(elapsedSec)} elapsed")
+            append("REST ${formatTime(elapsedSec)} elapsed")
             if (plannedSec > 0 && plannedSec != elapsedSec) {
                 append(" (${formatTime(plannedSec)} planned)")
             }
         }
-        else -> "Rest ${formatTime(plannedSec)}"
+        else -> "REST ${formatTime(plannedSec)}"
     }
 }

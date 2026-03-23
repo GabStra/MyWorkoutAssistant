@@ -50,7 +50,7 @@ import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ContentTitle
-import com.gabstra.myworkoutassistant.composables.ExerciseRenderer
+import com.gabstra.myworkoutassistant.composables.ExerciseHistoryRenderer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
@@ -1252,7 +1252,7 @@ fun WorkoutHistoryScreen(
                                                 ),
                                             )
                                         }
-                                        ExerciseRenderer(
+                                        ExerciseHistoryRenderer(
                                             exercise = exerciseWithHistorySets,
                                             showRest = true,
                                             appViewModel = appViewModel,
@@ -1295,7 +1295,7 @@ fun WorkoutHistoryScreen(
                                         )
                                     }
                                 } else {
-                                    ExerciseRenderer(
+                                    ExerciseHistoryRenderer(
                                         exercise = exerciseWithHistorySets,
                                         showRest = true,
                                         appViewModel = appViewModel,
