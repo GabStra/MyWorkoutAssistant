@@ -451,7 +451,11 @@ fun exerciseSessionSnapshotFromLegacySetHistories(setHistories: List<SetHistory>
     )
 }
 
-fun buildExerciseSessionSnapshot(currentSets: List<Set>, setHistories: List<SetHistory>): ExerciseSessionSnapshot {
+fun buildExerciseSessionSnapshot(
+    currentSets: List<Set>,
+    setHistories: List<SetHistory>,
+    restHistories: List<RestHistory> = emptyList()
+): ExerciseSessionSnapshot {
     val latestSetHistoryById = linkedMapOf<UUID, SetHistory>()
     setHistories
         .sortedBy { it.order.toInt() }
@@ -461,16 +465,45 @@ fun buildExerciseSessionSnapshot(currentSets: List<Set>, setHistories: List<SetH
             }
         }
 
+    val latestRestHistoryByRestSetId = linkedMapOf<UUID, RestHistory>()
+    restHistories
+        .sortedBy { it.order.toInt() }
+        .forEach { restHistory ->
+            val sd = restHistory.setData
+            if (sd is RestSetData && !isTemporarySessionOnlySetData(sd)) {
+                latestRestHistoryByRestSetId[restHistory.restSetId] = restHistory
+            }
+        }
+
     return ExerciseSessionSnapshot(
         sets = currentSets
             .filterNot(::isTemporarySessionOnlySet)
             .map { set ->
                 val setHistory = latestSetHistoryById[set.id]
+                val resolvedSet = when {
+                    setHistory != null && isSetDataValid(set, setHistory.setData) ->
+                        applyCompletedSetHistoryToSet(set, setHistory)
+                    set is RestSet -> {
+                        val rh = latestRestHistoryByRestSetId[set.id]
+                        if (rh != null) {
+                            val fromRest = getNewSetFromRestHistory(rh)
+                            if (fromRest is RestSet) {
+                                fromRest.copy(shouldReapplyHistoryToSet = set.shouldReapplyHistoryToSet)
+                            } else {
+                                set
+                            }
+                        } else {
+                            set
+                        }
+                    }
+                    else -> set
+                }
+                val restOnlyExecuted = set is RestSet && latestRestHistoryByRestSetId[set.id] != null
                 SessionSetSnapshot(
                     setId = set.id,
-                    set = applyCompletedSetHistoryToSet(set, setHistory),
+                    set = resolvedSet,
                     simpleSet = setHistory?.toSimpleSetOrNull(),
-                    wasExecuted = setHistory != null,
+                    wasExecuted = setHistory != null || restOnlyExecuted,
                     wasSkipped = setHistory?.skipped ?: false
                 )
             }

@@ -99,8 +99,7 @@ class WorkoutProgressionService(
             .filter {
                 it.enabled &&
                     it.progressionMode != ProgressionMode.OFF &&
-                    !it.requiresLoadCalibration &&
-                    !it.doNotStoreHistory
+                    !it.requiresLoadCalibration
             }
             .filter { it.exerciseType == ExerciseType.WEIGHT || it.exerciseType == ExerciseType.BODY_WEIGHT }
 
@@ -175,25 +174,43 @@ class WorkoutProgressionService(
         latestSetHistoryByKey: Map<Pair<UUID, UUID>, SetHistory>,
         sessionDecision: SessionDecision
     ): List<WorkoutSet> {
-        val derivedSets = if (exercise.doNotStoreHistory) {
-            exercise.sets
-        } else {
-            exercise.sets.map { set ->
-                applySetHistoryToProgrammedSet(set, latestSetHistoryByKey[exercise.id to set.id])
+        val derivedSets = exercise.sets.map { set ->
+            applySetHistoryToProgrammedSet(set, latestSetHistoryByKey[exercise.id to set.id])
+        }
+        if (!sessionDecision.shouldLoadLastSuccessfulSession) {
+            return derivedSets
+        }
+        val historySets = sessionDecision.lastSuccessfulSession.toSets()
+        if (historySets.isEmpty()) {
+            return derivedSets
+        }
+        return mergeLastSuccessfulSessionIntoTemplate(derivedSets, historySets)
+    }
+
+    /**
+     * Overlays last-successful work-set targets onto the programmed template by set id.
+     * Template structure (including every [RestSet] position and duration) is preserved; extra
+     * snapshot-only work sets are ignored; template work sets missing from the snapshot are unchanged.
+     */
+    private fun mergeLastSuccessfulSessionIntoTemplate(
+        templateDerivedSets: List<WorkoutSet>,
+        snapshotSets: List<WorkoutSet>
+    ): List<WorkoutSet> {
+        val snapshotWorkById = snapshotSets
+            .filter { it !is RestSet }
+            .associateBy { it.id }
+        return templateDerivedSets.map { set ->
+            when (set) {
+                is RestSet -> set
+                else -> {
+                    val replacement = snapshotWorkById[set.id]
+                    when {
+                        replacement != null && replacement !is RestSet -> replacement
+                        else -> set
+                    }
+                }
             }
         }
-        val historySets = if (sessionDecision.shouldLoadLastSuccessfulSession) {
-            sessionDecision.lastSuccessfulSession.toSets()
-        } else {
-            emptyList()
-        }
-        val setsToUse = if (sessionDecision.shouldLoadLastSuccessfulSession) {
-            historySets.ifEmpty { derivedSets }
-        } else {
-            derivedSets
-        }
-
-        return setsToUse.dropWhile { it is RestSet }.dropLastWhile { it is RestSet }
     }
 
     private suspend fun processExercise(

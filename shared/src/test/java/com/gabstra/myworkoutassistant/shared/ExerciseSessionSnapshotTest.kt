@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.shared
 
+import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.RestHistoryScope
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -101,6 +103,39 @@ class ExerciseSessionSnapshotTest {
 
         assertEquals(listOf(set1Id, set2Id), snapshot.sets.map { it.setId })
         assertFalse(snapshot.toSets().any { isTemporarySessionOnlySet(it) })
+    }
+
+    @Test
+    fun `buildExerciseSessionSnapshot applies RestHistory when SetHistory missing for RestSet`() {
+        val workId = UUID.randomUUID()
+        val restId = UUID.randomUUID()
+        val currentSets: List<Set> = listOf(
+            WeightSet(id = workId, reps = 5, weight = 80.0),
+            RestSet(id = restId, timeInSeconds = 90, shouldReapplyHistoryToSet = false)
+        )
+        val setHistories = listOf(
+            setHistory(workId, 0u, WeightSetData(actualReps = 5, actualWeight = 82.5, volume = 412.5))
+        )
+        val restHistories = listOf(
+            RestHistory(
+                id = UUID.randomUUID(),
+                workoutHistoryId = null,
+                scope = RestHistoryScope.INTRA_EXERCISE,
+                executionSequence = 1u,
+                setData = RestSetData(startTimer = 45, endTimer = 30),
+                startTime = LocalDateTime.now(),
+                endTime = LocalDateTime.now(),
+                workoutComponentId = null,
+                exerciseId = UUID.randomUUID(),
+                restSetId = restId,
+                order = 1u
+            )
+        )
+        val snapshot = buildExerciseSessionSnapshot(currentSets, setHistories, restHistories)
+        assertEquals(listOf(workId, restId), snapshot.sets.map { it.setId })
+        val rest = snapshot.sets[1].set as RestSet
+        assertEquals(45, rest.timeInSeconds)
+        assertTrue(snapshot.sets[1].wasExecuted)
     }
 
     @Test

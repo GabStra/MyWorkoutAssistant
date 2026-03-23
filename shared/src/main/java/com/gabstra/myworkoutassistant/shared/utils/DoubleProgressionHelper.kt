@@ -110,7 +110,7 @@ object DoubleProgressionHelper {
         val newVolume = nextSets.sumOf { it.weight * it.reps }
 
         return Plan(
-            sets = nextSets.sortedByDescending { it.weight * it.reps },
+            sets = nextSets,
             newVolume = newVolume,
             previousVolume = previousVolume
         )
@@ -185,7 +185,7 @@ object DoubleProgressionHelper {
         val newVolume = nextSets.sumOf { it.weight * it.reps }
 
         return Plan(
-            sets = nextSets.sortedByDescending { it.weight * it.reps },
+            sets = nextSets,
             newVolume = newVolume,
             previousVolume = previousVolume
         )

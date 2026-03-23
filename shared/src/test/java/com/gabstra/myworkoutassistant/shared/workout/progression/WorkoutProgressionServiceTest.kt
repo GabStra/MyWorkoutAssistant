@@ -9,10 +9,20 @@ import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
+import com.gabstra.myworkoutassistant.shared.buildExerciseSessionSnapshot
+import com.gabstra.myworkoutassistant.shared.exerciseSessionSnapshotFromSets
+import com.gabstra.myworkoutassistant.shared.toSets
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
+import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -56,7 +66,6 @@ class WorkoutProgressionServiceTest {
             id = UUID.randomUUID(),
             enabled = true,
             name = "Pull-up",
-            doNotStoreHistory = false,
             notes = "",
             sets = listOf(
                 BodyWeightSet(
@@ -125,5 +134,189 @@ class WorkoutProgressionServiceTest {
             progressedSet.additionalWeight,
             0.0001
         )
+    }
+
+    @Test
+    fun buildPreProcessedSets_preservesRestSets_whenLoadingLastSuccessfulSession() {
+        val w1 = UUID.randomUUID()
+        val w2 = UUID.randomUUID()
+        val restId = UUID.randomUUID()
+        val exercise = Exercise(
+            id = UUID.randomUUID(),
+            enabled = true,
+            name = "Squat",
+            notes = "",
+            sets = listOf(
+                WeightSet(w1, 10, 50.0),
+                RestSet(restId, 90),
+                WeightSet(w2, 8, 50.0)
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = UUID.randomUUID(),
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            loadJumpDefaultPct = 0.025,
+            loadJumpMaxPct = 0.5,
+            loadJumpOvercapUntil = 2
+        )
+        val service = WorkoutProgressionService(
+            exerciseInfoDao = { database.exerciseInfoDao() },
+            setHistoryDao = { database.setHistoryDao() },
+            workoutHistoryDao = { database.workoutHistoryDao() },
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+        )
+        val snapshotOnlyWorkSets = exerciseSessionSnapshotFromSets(
+            listOf(
+                WeightSet(w1, 10, 52.5),
+                WeightSet(w2, 8, 52.5)
+            )
+        )
+        val sessionDecision = SessionDecision(
+            progressionState = ProgressionState.RETRY,
+            shouldLoadLastSuccessfulSession = true,
+            lastSuccessfulSession = snapshotOnlyWorkSets
+        )
+        val result = service.buildPreProcessedSets(exercise, emptyMap(), sessionDecision)
+        assertEquals(3, result.size)
+        assertTrue(result[1] is RestSet)
+        assertEquals(90, (result[1] as RestSet).timeInSeconds)
+        assertEquals(52.5, (result[0] as WeightSet).weight, 0.001)
+        assertEquals(52.5, (result[2] as WeightSet).weight, 0.001)
+    }
+
+    @Test
+    fun buildExerciseWithProgression_preservesRestBetweenWorkSets_matchingTemplateOrder() {
+        val w1 = UUID.randomUUID()
+        val w2 = UUID.randomUUID()
+        val w3 = UUID.randomUUID()
+        val r1 = UUID.randomUUID()
+        val r2 = UUID.randomUUID()
+        val exercise = Exercise(
+            id = UUID.randomUUID(),
+            enabled = true,
+            name = "Ramp",
+            notes = "",
+            sets = listOf(
+                WeightSet(w1, 8, 40.0),
+                RestSet(r1, 60),
+                WeightSet(w2, 10, 40.0),
+                RestSet(r2, 60),
+                WeightSet(w3, 12, 40.0)
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 6,
+            maxReps = 15,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = UUID.randomUUID(),
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            loadJumpDefaultPct = 0.025,
+            loadJumpMaxPct = 0.5,
+            loadJumpOvercapUntil = 2
+        )
+        val service = WorkoutProgressionService(
+            exerciseInfoDao = { database.exerciseInfoDao() },
+            setHistoryDao = { database.setHistoryDao() },
+            workoutHistoryDao = { database.workoutHistoryDao() },
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+        )
+        val plan = DoubleProgressionHelper.Plan(
+            sets = listOf(
+                SimpleSet(42.0, 8),
+                SimpleSet(42.0, 10),
+                SimpleSet(42.0, 12)
+            ),
+            newVolume = 1.0,
+            previousVolume = 1.0
+        )
+        val progressed = service.buildExerciseWithProgression(exercise, plan, bodyWeightKg = 80.0)
+        assertEquals(5, progressed.sets.size)
+        assertEquals(w1, (progressed.sets[0] as WeightSet).id)
+        assertTrue(progressed.sets[1] is RestSet)
+        assertEquals(r1, (progressed.sets[1] as RestSet).id)
+        assertEquals(w2, (progressed.sets[2] as WeightSet).id)
+        assertTrue(progressed.sets[3] is RestSet)
+        assertEquals(r2, (progressed.sets[3] as RestSet).id)
+        assertEquals(w3, (progressed.sets[4] as WeightSet).id)
+    }
+
+    @Test
+    fun buildExerciseSessionSnapshot_roundTrip_preservesRestSetCount() {
+        val w1 = UUID.randomUUID()
+        val w2 = UUID.randomUUID()
+        val restId = UUID.randomUUID()
+        val sets = listOf(
+            WeightSet(w1, 10, 50.0),
+            RestSet(restId, 90),
+            WeightSet(w2, 8, 50.0)
+        )
+        val snapshot = buildExerciseSessionSnapshot(sets, emptyList())
+        val roundTrip = snapshot.toSets()
+        assertEquals(3, roundTrip.size)
+        assertTrue(roundTrip[1] is RestSet)
+        assertEquals(90, (roundTrip[1] as RestSet).timeInSeconds)
+    }
+
+    @Test
+    fun completion_replaceSetsFromSessionSnapshot_preservesRestSets_whenExerciseTemplateHasRests() {
+        val w1 = UUID.randomUUID()
+        val w2 = UUID.randomUUID()
+        val restId = UUID.randomUUID()
+        val exercise = Exercise(
+            id = UUID.randomUUID(),
+            enabled = true,
+            name = "Bench",
+            notes = "",
+            sets = listOf(
+                WeightSet(w1, 10, 60.0),
+                RestSet(restId, 90),
+                WeightSet(w2, 8, 60.0)
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = UUID.randomUUID(),
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.OFF,
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null
+        )
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "W",
+            description = "",
+            workoutComponents = listOf(exercise),
+            order = 0,
+            creationDate = LocalDate.now(),
+            globalId = UUID.randomUUID(),
+            type = 0
+        )
+        val newSets = buildExerciseSessionSnapshot(exercise.sets, emptyList()).toSets()
+        assertEquals(3, newSets.size)
+        assertTrue(newSets[1] is RestSet)
+        assertEquals(90, (newSets[1] as RestSet).timeInSeconds)
+        val updated = WorkoutManager.replaceSetsInExerciseRecursively(
+            workout.workoutComponents,
+            exercise,
+            newSets
+        )
+        val updatedExercise = updated.filterIsInstance<Exercise>().single()
+        assertEquals(3, updatedExercise.sets.size)
+        assertNotNull(updatedExercise.sets[1] as? RestSet)
+        assertEquals(90, (updatedExercise.sets[1] as RestSet).timeInSeconds)
     }
 }

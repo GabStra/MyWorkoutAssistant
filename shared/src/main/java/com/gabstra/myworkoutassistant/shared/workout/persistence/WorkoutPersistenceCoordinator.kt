@@ -18,11 +18,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSet
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.buildExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.copySetData
-import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
+import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
 import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
-import com.gabstra.myworkoutassistant.shared.toSets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -324,41 +322,42 @@ internal class WorkoutPersistenceCoordinator(
         restHistoryDaoRef.insertAllWithVersionCheck(*newExecutedRestHistories.toTypedArray())
 
         if (isDone) {
-            val executedSetsHistoryByExerciseId = newExecutedSetsHistory.groupBy { it.exerciseId }
+            val setHistoriesByExerciseId = newExecutedSetsHistory
+                .filter { it.exerciseId != null }
+                .groupBy { it.exerciseId!! }
+
             val exercises = flattenExercises(selectedWorkoutSnapshot)
 
-            executedSetsHistoryByExerciseId.forEach { entry ->
+            val mergeByExerciseId = exercises
+                .associate { exercise ->
+                    exercise.id to ExerciseSessionReconstruction.mergeCompletedSession(
+                        templateSets = exercise.sets,
+                        rawSetHistoriesForExercise = setHistoriesByExerciseId[exercise.id].orEmpty(),
+                        allRestHistories = newExecutedRestHistories,
+                        exerciseId = exercise.id,
+                    )
+                }
+
+            setHistoriesByExerciseId.forEach { entry ->
                 val exercise = exercises.firstOrNull { item -> item.id == entry.key }
                 if (exercise == null) {
                     Log.e(tag, "Exercise with id ${entry.key} not found")
                     return@forEach
                 }
 
-                val isTrackableExercise = !exercise.doNotStoreHistory &&
-                    (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+                val isTrackableExercise =
+                    exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT
                 if (!isTrackableExercise) return@forEach
 
                 val progressionData = progressionByExerciseIdSnapshot[entry.key]
                 val exerciseProgression = progressionData?.first
                 val progressionState = progressionData?.second
                 val isDeloadSession = progressionState == ProgressionState.DELOAD
-                val exerciseHistories = entry.value
+                val sessionMerge = mergeByExerciseId.getValue(exercise.id)
+                val currentSessionSnapshot = sessionMerge.snapshot
+                val preparedSetHistories = sessionMerge.preparedSetHistories
 
-                val currentSession = sanitizeRestPlacementInSetHistories(exerciseHistories)
-                    .filter {
-                        when (val sd = it.setData) {
-                            is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            is WeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            is RestSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            else -> true
-                        }
-                    }
-                val currentSessionSnapshot = buildExerciseSessionSnapshot(
-                    currentSets = exercise.sets,
-                    setHistories = currentSession
-                )
-
-                val exerciseId = entry.key ?: return@forEach
+                val exerciseId = entry.key
                 val exerciseInfo = exerciseInfoDaoRef.getExerciseInfoById(exerciseId)
                 val today = LocalDate.now()
 
@@ -375,16 +374,10 @@ internal class WorkoutPersistenceCoordinator(
                 }
                 weeklyCount++
 
-                val executedSets = currentSession.mapNotNull { setHistory ->
+                val executedSets = preparedSetHistories.mapNotNull { setHistory ->
                     when (val setData = setHistory.setData) {
-                        is WeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet) return@mapNotNull null
-                            SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
-                        is BodyWeightSetData -> {
-                            if (setData.subCategory == SetSubCategory.RestPauseSet || setData.subCategory == SetSubCategory.CalibrationSet) return@mapNotNull null
-                            SimpleSet(setData.getWeight(), setData.actualReps)
-                        }
+                        is WeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
+                        is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
                         else -> null
                     }
                 }
@@ -565,25 +558,14 @@ internal class WorkoutPersistenceCoordinator(
                 }
             }
 
-            val setHistoriesByExerciseId = newExecutedSetsHistory
-                .filter { it.exerciseId != null }
-                .groupBy { it.exerciseId }
-
             var workoutComponents = selectedWorkoutSnapshot.workoutComponents
             for (exercise in exercises) {
-                if (exercise.doNotStoreHistory) continue
-                val setHistories = setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order } ?: emptyList()
-                val validSetHistories = sanitizeRestPlacementInSetHistories(setHistories)
-                    .filter {
-                        when (val setData = it.setData) {
-                            is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
-                            is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
-                            is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet && setData.subCategory != SetSubCategory.CalibrationSet
-                            else -> true
-                        }
-                    }
-                val sessionSnapshot = buildExerciseSessionSnapshot(exercise.sets, validSetHistories)
-                workoutComponents = replaceSetsInExerciseRecursively(workoutComponents, exercise, sessionSnapshot.toSets())
+                val merge = mergeByExerciseId.getValue(exercise.id)
+                workoutComponents = replaceSetsInExerciseRecursively(
+                    workoutComponents,
+                    exercise,
+                    merge.mergedSets(),
+                )
             }
 
             val currentWorkoutStore = workoutStoreRepositoryRef.getWorkoutStore()
@@ -640,16 +622,8 @@ internal class WorkoutPersistenceCoordinator(
             )
 
             if (setHistories.isNotEmpty()) {
-                val processedSession = sanitizeRestPlacementInSetHistories(setHistories)
-                    .filter {
-                        when (val sd = it.setData) {
-                            is BodyWeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            is WeightSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            is RestSetData -> sd.subCategory != SetSubCategory.RestPauseSet && sd.subCategory != SetSubCategory.CalibrationSet
-                            else -> true
-                        }
-                    }
-
+                val processedSession =
+                    ExerciseSessionReconstruction.prepareSetHistoriesForSnapshot(setHistories)
                 if (processedSession.isNotEmpty()) {
                     return processedSession
                 }

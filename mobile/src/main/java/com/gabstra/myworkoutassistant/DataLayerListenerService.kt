@@ -16,8 +16,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.addSetToExerciseRecursively
-import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.removeSetsFromExerciseRecursively
+import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutOld
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
@@ -33,8 +32,7 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
-import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
-import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
+import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -1097,7 +1095,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                         workout.workoutComponents
 
                                                     for (exercise in exercises) {
-                                                        if (exercise.doNotStoreHistory) continue
                                                         val setHistories =
                                                             setHistoriesByExerciseId[exercise.id]?.sortedBy { it.order }
                                                                 ?: continue
@@ -1127,33 +1124,19 @@ class DataLayerListenerService : WearableListenerService() {
                                                             )
                                                         }
 
-                                                        workoutComponents =
-                                                            removeSetsFromExerciseRecursively(
-                                                                workoutComponents,
-                                                                updatedExercise
+                                                        val sessionMerge =
+                                                            ExerciseSessionReconstruction.mergeCompletedSession(
+                                                                templateSets = updatedExercise.sets,
+                                                                rawSetHistoriesForExercise = setHistories,
+                                                                allRestHistories = workoutHistoryStore.RestHistories,
+                                                                exerciseId = updatedExercise.id,
                                                             )
-
-                                                        val validSetHistories = sanitizeRestPlacementInSetHistories(setHistories)
-                                                            .filter { it ->
-                                                                when (val setData = it.setData) {
-                                                                    is BodyWeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                                    is WeightSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                                    is RestSetData -> setData.subCategory != SetSubCategory.RestPauseSet
-                                                                    else -> true
-                                                                }
-                                                            }
-
-                                                        for (setHistory in validSetHistories) {
-                                                            val newSet =
-                                                                getNewSetFromSetHistory(setHistory)
-                                                            workoutComponents =
-                                                                addSetToExerciseRecursively(
-                                                                    workoutComponents,
-                                                                    updatedExercise,
-                                                                    newSet,
-                                                                    setHistory.order
-                                                                )
-                                                        }
+                                                        workoutComponents =
+                                                            replaceSetsInExerciseRecursively(
+                                                                workoutComponents,
+                                                                updatedExercise,
+                                                                sessionMerge.mergedSets()
+                                                            )
                                                     }
 
                                                     // Ensure rest sets are properly positioned after rebuilding from history
