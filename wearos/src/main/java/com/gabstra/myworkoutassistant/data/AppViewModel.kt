@@ -454,6 +454,7 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     override fun rebuildScreenState() {
+        refreshEnableDimmingState()
         val newState = WorkoutScreenState(
             workoutState = workoutState.value,
             sessionPhase = sessionPhase.value,
