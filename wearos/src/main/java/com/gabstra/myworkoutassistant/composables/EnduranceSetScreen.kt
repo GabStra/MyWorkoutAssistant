@@ -616,6 +616,7 @@ fun EnduranceSetScreen (
             onVisibilityChange = { isVisible ->
                 if (isVisible) {
                     viewModel.setDimming(false)
+                    viewModel.lightScreenUp()
                 } else {
                     viewModel.reEvaluateDimmingForCurrentState()
                 }

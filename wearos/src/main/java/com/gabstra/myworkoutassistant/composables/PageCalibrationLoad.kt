@@ -316,7 +316,11 @@ fun PageCalibrationLoad(
             showConfirmDialog = false
         },
         onVisibilityChange = { isVisible ->
-            // Dialog visibility change handling if needed
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
         }
     )
 }

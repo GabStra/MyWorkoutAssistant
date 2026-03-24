@@ -270,7 +270,11 @@ fun PageCalibrationRIR(
             showConfirmDialog = false
         },
         onVisibilityChange = { isVisible ->
-            // Dialog visibility change handling if needed
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
         }
     )
 }
@@ -459,6 +463,12 @@ fun PageCalibrationRIR(
         },
         closeTimerInMillis = 5000,
         handleOnAutomaticClose = { showConfirmDialog = false },
-        onVisibilityChange = { }
+        onVisibilityChange = { isVisible ->
+            if (isVisible) {
+                viewModel.setDimming(false)
+            } else {
+                viewModel.reEvaluateDimmingForCurrentState()
+            }
+        }
     )
 }

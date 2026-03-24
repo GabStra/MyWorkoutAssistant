@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -262,6 +263,15 @@ fun WorkoutSelectionScreen(
     var showClearData by remember { mutableStateOf(false) }
     var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
     val scope = rememberWearCoroutineScope()
+
+    LaunchedEffect(showOpenOnPhoneDialog) {
+        if (showOpenOnPhoneDialog) {
+            viewModel.setDimming(false)
+            viewModel.lightScreenUp()
+        } else {
+            viewModel.reEvaluateDimmingForCurrentState()
+        }
+    }
 
     val state: TransformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec(

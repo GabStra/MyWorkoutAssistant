@@ -24,6 +24,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -492,9 +494,20 @@ fun WearApp(
                         userSwipeEnabled = userSwipeEnabled
                     ) {
                         composable(Screen.WorkoutSelection.route) {
-                            if (showWorkoutSelectionTutorial) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                WorkoutSelectionScreen(
+                                    alarmManager,
+                                    dataClient,
+                                    navController,
+                                    appViewModel,
+                                    hapticsViewModel,
+                                    appHelper,
+                                )
                                 TutorialOverlay(
-                                    visible = true,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .zIndex(1f),
+                                    visible = showWorkoutSelectionTutorial,
                                     steps = listOf(
                                         TutorialStep("Welcome!", "Tap any workout to see details and start."),
                                         TutorialStep("Quick tips", "Long-press the header for app info.\nDouble-tap the header for sync tools.")
@@ -516,15 +529,6 @@ fun WearApp(
                                             appViewModel.reEvaluateDimmingForCurrentState()
                                         }
                                     }
-                                )
-                            } else {
-                                WorkoutSelectionScreen(
-                                    alarmManager,
-                                    dataClient,
-                                    navController,
-                                    appViewModel,
-                                    hapticsViewModel,
-                                    appHelper,
                                 )
                             }
                         }
@@ -650,6 +654,15 @@ fun WearApp(
                 if (!showRecoveredNotice) return@LaunchedEffect
                 //Toast.makeText(localContext, "Recovered your workout.", Toast.LENGTH_SHORT).show()
                 appViewModel.consumeRecoveredWorkoutNotice()
+            }
+
+            LaunchedEffect(showRecoveryPrompt, recoveryWorkout) {
+                if (showRecoveryPrompt && recoveryWorkout != null) {
+                    appViewModel.setDimming(false)
+                    appViewModel.lightScreenUp()
+                } else {
+                    appViewModel.reEvaluateDimmingForCurrentState()
+                }
             }
 
             RecoveryDialog(
