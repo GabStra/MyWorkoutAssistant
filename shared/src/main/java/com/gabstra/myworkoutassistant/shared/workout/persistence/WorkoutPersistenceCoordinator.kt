@@ -20,13 +20,14 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
-import com.gabstra.myworkoutassistant.shared.toExecutedSimpleSets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
@@ -375,6 +376,7 @@ internal class WorkoutPersistenceCoordinator(
                 weeklyCount++
 
                 val executedSets = preparedSetHistories.mapNotNull { setHistory ->
+                    if (isWarmupSetData(setHistory.setData)) return@mapNotNull null
                     when (val setData = setHistory.setData) {
                         is WeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
                         is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
@@ -398,11 +400,11 @@ internal class WorkoutPersistenceCoordinator(
                     lastSessionFromHistory.mapNotNull { setHistory ->
                         when (val setData = setHistory.setData) {
                             is WeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                if (isNonWorkSetData(setData)) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             is BodyWeightSetData -> {
-                                if (setData.subCategory == SetSubCategory.RestPauseSet) return@mapNotNull null
+                                if (isNonWorkSetData(setData)) return@mapNotNull null
                                 SimpleSet(setData.getWeight(), setData.actualReps)
                             }
                             else -> null
@@ -446,7 +448,7 @@ internal class WorkoutPersistenceCoordinator(
                     } else {
                         updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
 
-                        val bestSessionSets = updatedInfo.bestSession.toExecutedSimpleSets()
+                        val bestSessionSets = toExecutedWorkSets(updatedInfo.bestSession)
 
                         if (compareSetListsUnordered(executedSets, bestSessionSets) == Ternary.ABOVE) {
                             updatedInfo = updatedInfo.copy(bestSession = currentSessionSnapshot)
@@ -513,7 +515,7 @@ internal class WorkoutPersistenceCoordinator(
                                     else -> updatedInfo
                                 }
                             } else {
-                                val lastSessionSets = updatedInfo.lastSuccessfulSession.toExecutedSimpleSets()
+                                val lastSessionSets = toExecutedWorkSets(updatedInfo.lastSuccessfulSession)
                                 updatedInfo = when (compareSetListsUnordered(executedSets, lastSessionSets)) {
                                     Ternary.ABOVE -> updatedInfo.copy(
                                         lastSuccessfulSession = currentSessionSnapshot,
@@ -639,6 +641,44 @@ internal class WorkoutPersistenceCoordinator(
 
     private fun cloneRestHistories(restHistories: List<RestHistory>): List<RestHistory> {
         return restHistories.map { history -> history.copy(setData = copySetData(history.setData)) }
+    }
+
+    private fun isWarmupSetData(setData: com.gabstra.myworkoutassistant.shared.setdata.SetData): Boolean = when (setData) {
+        is WeightSetData -> setData.subCategory == SetSubCategory.WarmupSet
+        is BodyWeightSetData -> setData.subCategory == SetSubCategory.WarmupSet
+        else -> false
+    }
+
+    private fun isNonWorkSetData(setData: com.gabstra.myworkoutassistant.shared.setdata.SetData): Boolean = when (setData) {
+        is WeightSetData -> setData.subCategory == SetSubCategory.RestPauseSet ||
+            setData.subCategory == SetSubCategory.CalibrationSet ||
+            setData.subCategory == SetSubCategory.WarmupSet
+        is BodyWeightSetData -> setData.subCategory == SetSubCategory.RestPauseSet ||
+            setData.subCategory == SetSubCategory.CalibrationSet ||
+            setData.subCategory == SetSubCategory.WarmupSet
+        else -> false
+    }
+
+    private fun toExecutedWorkSets(snapshot: ExerciseSessionSnapshot): List<SimpleSet> {
+        return snapshot.sets.mapNotNull { setSnapshot ->
+            val isNonWorkSet = when (val set = setSnapshot.set) {
+                is WeightSet -> {
+                    set.subCategory == SetSubCategory.RestPauseSet ||
+                        set.subCategory == SetSubCategory.CalibrationSet ||
+                        set.subCategory == SetSubCategory.WarmupSet
+                }
+                is BodyWeightSet -> {
+                    set.subCategory == SetSubCategory.RestPauseSet ||
+                        set.subCategory == SetSubCategory.CalibrationSet ||
+                        set.subCategory == SetSubCategory.WarmupSet
+                }
+                else -> true
+            }
+            if (isNonWorkSet || !setSnapshot.wasExecuted || setSnapshot.wasSkipped) {
+                return@mapNotNull null
+            }
+            setSnapshot.simpleSet
+        }
     }
 
     private fun flattenExercises(workout: Workout): List<Exercise> {

@@ -103,11 +103,7 @@ class WorkoutTimerService(
             baseElapsedMs = initialElapsedMs
         )
         publishTimerUiState(state.set.id)
-
-        // Start update loop if not already running
-        if (updateJob?.isActive != true) {
-            startUpdateLoop()
-        }
+        ensureUpdateLoopRunning()
 
         // Call onTimerEnabled when registering
         callbacks.onTimerEnabled()
@@ -137,10 +133,7 @@ class WorkoutTimerService(
             baseElapsedMs = initialElapsedMs
         )
         publishTimerUiState(state.set.id)
-
-        if (updateJob?.isActive != true) {
-            startUpdateLoop()
-        }
+        ensureUpdateLoopRunning()
 
         callbacks.onTimerEnabled()
     }
@@ -154,11 +147,7 @@ class WorkoutTimerService(
         clearTimerUiState(setId)
         timer?.callbacks?.onTimerDisabled()
 
-        // Stop update loop if no active timers
-        if (activeTimers.isEmpty()) {
-            updateJob?.cancel()
-            updateJob = null
-        }
+        stopUpdateLoopIfIdle()
     }
 
     /**
@@ -262,6 +251,19 @@ class WorkoutTimerService(
                     break
                 }
             }
+        }
+    }
+
+    private fun ensureUpdateLoopRunning() {
+        if (updateJob?.isActive != true) {
+            startUpdateLoop()
+        }
+    }
+
+    private fun stopUpdateLoopIfIdle() {
+        if (activeTimers.isEmpty()) {
+            updateJob?.cancel()
+            updateJob = null
         }
     }
 

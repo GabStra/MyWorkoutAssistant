@@ -261,13 +261,14 @@ private fun ExerciseExpandableSetTableBody(
     exercise: Exercise,
     modifier: Modifier,
     titleModifier: Modifier,
+    initiallyExpanded: Boolean,
     equipment: WeightLoadedEquipment?,
     appViewModel: AppViewModel,
     title: @Composable (Modifier) -> Unit,
     rows: List<SetTableRowUiModel>,
 ) {
     ExpandableContainer(
-        isOpen = false,
+        isOpen = initiallyExpanded,
         modifier = modifier.fillMaxWidth(),
         isExpandable = true,
         titleModifier = titleModifier,
@@ -335,6 +336,7 @@ fun ExerciseTemplateRenderer(
         exercise = exercise,
         modifier = modifier,
         titleModifier = titleModifier,
+        initiallyExpanded = false,
         equipment = equipment,
         appViewModel = appViewModel,
         title = { m ->
@@ -399,6 +401,7 @@ fun ExerciseHistoryRenderer(
         exercise = exercise,
         modifier = modifier,
         titleModifier = titleModifier,
+        initiallyExpanded = true,
         equipment = equipment,
         appViewModel = appViewModel,
         title = { m ->

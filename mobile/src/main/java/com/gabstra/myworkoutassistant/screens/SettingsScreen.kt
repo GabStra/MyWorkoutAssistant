@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -56,6 +57,7 @@ import java.util.Calendar
 @Composable
 fun SettingsScreen(
     onSave: (WorkoutStore) -> Unit,
+    onClearWorkoutRecords: () -> Unit,
     onCancel: () -> Unit,
     workoutStore: WorkoutStore,
     healthConnectClient: HealthConnectClient,
@@ -74,6 +76,7 @@ fun SettingsScreen(
     }
     
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
+    var showClearWorkoutRecordsDialog by remember { mutableStateOf(false) }
 
     suspend fun loadRestingHeartRateWithMinimumLoadingTime(): Int? {
         val startedAt = System.currentTimeMillis()
@@ -232,6 +235,18 @@ fun SettingsScreen(
             )
 
             AppPrimaryOutlinedButton(
+                text = "Clean workout records",
+                onClick = {
+                    if (!isSaving) {
+                        showClearWorkoutRecordsDialog = true
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            AppPrimaryOutlinedButton(
                 text = if (isLoadingRestingHeartRate) {
                     "Loading Resting HR..."
                 } else {
@@ -336,6 +351,25 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+
+    if (showClearWorkoutRecordsDialog) {
+        StandardDialog(
+            onDismissRequest = { showClearWorkoutRecordsDialog = false },
+            title = "Clean workout records?",
+            body = {
+                Text(
+                    "This removes all active workout progress records. Workout history will be kept."
+                )
+            },
+            confirmText = "Clean",
+            onConfirm = {
+                showClearWorkoutRecordsDialog = false
+                onClearWorkoutRecords()
+            },
+            dismissText = "Cancel",
+            onDismissButton = { showClearWorkoutRecordsDialog = false }
+        )
     }
 
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")

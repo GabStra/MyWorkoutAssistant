@@ -330,7 +330,13 @@ fun ExerciseHistoryScreen(
         val loadedWorkoutHistories = withContext(Dispatchers.IO) {
             workouts.flatMap { workout ->
                 workoutHistoryDao.getWorkoutsByWorkoutId(workout.id)
-            }.filter { it.isDone }.sortedBy { it.date }
+            }.sortedWith(
+                compareBy<WorkoutHistory>(
+                    { it.date },
+                    { it.time },
+                    { it.version.toLong() }
+                )
+            )
         }
         workoutHistories = loadedWorkoutHistories
         hasLoadedWorkoutHistories = true

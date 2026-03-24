@@ -1351,6 +1351,16 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.triggerUpdate()
                                 }
                             },
+                            onCleanWorkoutRecords = {
+                                workoutViewModel.clearAllWorkoutRecords {
+                                    appViewModel.triggerUpdate()
+                                    Toast.makeText(
+                                        context,
+                                        "Workout records cleaned.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
                             onSyncToHealthConnectClick = {
                                 scope.launch {
                                     try {
@@ -1429,6 +1439,16 @@ fun MyWorkoutAssistantNavHost(
                                     } finally {
                                         isSaving = false
                                     }
+                                }
+                            },
+                            onClearWorkoutRecords = {
+                                workoutViewModel.clearAllWorkoutRecords {
+                                    appViewModel.triggerUpdate()
+                                    Toast.makeText(
+                                        context,
+                                        "Workout records cleaned.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                             },
                             onCancel = {

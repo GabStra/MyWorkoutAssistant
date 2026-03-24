@@ -40,9 +40,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
-import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
-import com.gabstra.myworkoutassistant.shared.workout.model.isWorkoutRecordFresh
-import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
+import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIngest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -349,60 +347,26 @@ class DataLayerListenerService : WearableListenerService() {
         val existingHistory =
             workoutHistoryDao.getWorkoutHistoryById(existingRecord.workoutHistoryId) ?: return true
 
-        if (incomingRecord.activeSessionRevision > existingRecord.activeSessionRevision) {
-            return true
-        }
-        if (incomingRecord.activeSessionRevision < existingRecord.activeSessionRevision) {
+        val decision = decideWorkoutRecordIngest(
+            incomingHistory = incomingHistory,
+            incomingRecord = incomingRecord,
+            existingHistory = existingHistory,
+            existingRecord = existingRecord
+        )
+        if (!decision.shouldApplyIncoming) {
             Log.w(
                 "WorkoutSync",
-                "Ignoring stale workout record revision for workoutId=$workoutId " +
+                "Ignoring incoming workout record for workoutId=$workoutId " +
                     "incomingRevision=${incomingRecord.activeSessionRevision} " +
-                    "existingRevision=${existingRecord.activeSessionRevision}"
-            )
-            return false
-        }
-        val incomingOwner = incomingRecord.ownerDeviceOrDefault()
-        val existingOwner = existingRecord.ownerDeviceOrDefault()
-        if (existingOwner == SessionOwnerDevice.PHONE && incomingOwner == SessionOwnerDevice.WEAR) {
-            Log.w(
-                "WorkoutSync",
-                "Ignoring Wear-owned update because phone already owns workoutId=$workoutId " +
-                    "at revision=${existingRecord.activeSessionRevision}"
-            )
-            return false
-        }
-        if (
-            incomingOwner == SessionOwnerDevice.WEAR &&
-            existingOwner == SessionOwnerDevice.WEAR &&
-            !isWorkoutRecordFresh(incomingRecord) &&
-            isWorkoutRecordFresh(existingRecord)
-        ) {
-            Log.w(
-                "WorkoutSync",
-                "Ignoring stale Wear workout record for workoutId=$workoutId"
-            )
-            return false
-        }
-        if (incomingHistory.version > existingHistory.version) {
-            return true
-        }
-        if (incomingHistory.version < existingHistory.version) {
-            Log.w(
-                "WorkoutSync",
-                "Ignoring stale workout record for workoutId=$workoutId " +
+                    "existingRevision=${existingRecord.activeSessionRevision} " +
                     "incomingVersion=${incomingHistory.version} existingVersion=${existingHistory.version}"
             )
             return false
         }
-        if (incomingHistory.id == existingHistory.id && incomingRecord.setIndex < existingRecord.setIndex) {
-            Log.w(
-                "WorkoutSync",
-                "Ignoring stale workout record for workoutId=$workoutId " +
-                    "incomingSetIndex=${incomingRecord.setIndex} existingSetIndex=${existingRecord.setIndex}"
-            )
-            return false
-        }
 
+        if (decision.shouldPruneExisting && existingRecord.id != incomingRecord.id) {
+            workoutRecordDao.deleteById(existingRecord.id)
+        }
         return true
     }
     

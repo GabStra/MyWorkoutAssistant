@@ -44,7 +44,7 @@ class WorkoutRecordAdapter : JsonSerializer<WorkoutRecord>, JsonDeserializer<Wor
             workoutHistoryId = UUID.fromString(obj.requiredString("workoutHistoryId")),
             setIndex = obj.optionalUInt("setIndex"),
             exerciseId = UUID.fromString(obj.requiredString("exerciseId")),
-            ownerDevice = obj.optionalString("ownerDevice") ?: "WEAR",
+            ownerDevice = obj.optionalString("ownerDevice") ?: "PHONE",
             lastActiveSyncAt = obj.get("lastActiveSyncAt")?.let { element ->
                 context.deserialize<LocalDateTime?>(element, LocalDateTime::class.java)
             },

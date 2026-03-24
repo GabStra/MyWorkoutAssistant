@@ -12,6 +12,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
@@ -65,6 +66,78 @@ class WorkoutHistoryLayoutTest {
         assertEquals(restMid, b.restComponentId)
         assertEquals(betweenH.id, b.history.id)
         assertEquals(ex2, c.exerciseId)
+    }
+
+    @Test
+    fun buildWorkoutHistoryLayout_includesActiveExerciseWithoutSetHistory() {
+        val ex1 = UUID.fromString("20000000-0000-0000-0000-000000000001")
+        val ex2 = UUID.fromString("20000000-0000-0000-0000-000000000002")
+
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "w",
+            description = "",
+            workoutComponents = listOf(
+                minimalExercise(ex1, "Ex1"),
+                minimalExercise(ex2, "Ex2")
+            ),
+            order = 0,
+            creationDate = LocalDate.of(2026, 3, 22),
+            globalId = UUID.randomUUID(),
+            type = 0
+        )
+
+        val layout = buildWorkoutHistoryLayout(
+            workout = workout,
+            setHistoriesByExerciseId = mapOf(
+                ex1 to listOf(sampleSetHistory(exerciseId = ex1, id = 1, seq = 1u))
+            ),
+            sessionRestHistories = emptyList(),
+            activeExerciseId = ex2
+        )
+
+        assertEquals(2, layout.size)
+        assertEquals(ex1, (layout[0] as WorkoutHistoryLayoutItem.ExerciseSection).exerciseId)
+        assertEquals(ex2, (layout[1] as WorkoutHistoryLayoutItem.ExerciseSection).exerciseId)
+    }
+
+    @Test
+    fun buildWorkoutHistoryLayout_includesSupersetWhenActiveExerciseHasNoSetHistory() {
+        val leadExerciseId = UUID.fromString("30000000-0000-0000-0000-000000000001")
+        val supersetId = UUID.fromString("30000000-0000-0000-0000-000000000002")
+        val supersetExerciseA = UUID.fromString("30000000-0000-0000-0000-000000000003")
+        val supersetExerciseB = UUID.fromString("30000000-0000-0000-0000-000000000004")
+
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "w",
+            description = "",
+            workoutComponents = listOf(
+                minimalExercise(leadExerciseId, "Lead"),
+                minimalSuperset(
+                    id = supersetId,
+                    exerciseAId = supersetExerciseA,
+                    exerciseBId = supersetExerciseB
+                )
+            ),
+            order = 0,
+            creationDate = LocalDate.of(2026, 3, 22),
+            globalId = UUID.randomUUID(),
+            type = 0
+        )
+
+        val layout = buildWorkoutHistoryLayout(
+            workout = workout,
+            setHistoriesByExerciseId = mapOf(
+                leadExerciseId to listOf(sampleSetHistory(exerciseId = leadExerciseId, id = 1, seq = 1u))
+            ),
+            sessionRestHistories = emptyList(),
+            activeExerciseId = supersetExerciseB
+        )
+
+        assertEquals(2, layout.size)
+        assertEquals(leadExerciseId, (layout[0] as WorkoutHistoryLayoutItem.ExerciseSection).exerciseId)
+        assertEquals(supersetId, (layout[1] as WorkoutHistoryLayoutItem.SupersetSection).supersetId)
     }
 
     @Test
@@ -133,6 +206,22 @@ class WorkoutHistoryLayoutTest {
             requiredAccessoryEquipmentIds = null,
             requiresLoadCalibration = false,
             exerciseCategory = null
+        )
+    }
+
+    private fun minimalSuperset(
+        id: UUID,
+        exerciseAId: UUID,
+        exerciseBId: UUID,
+    ): Superset {
+        return Superset(
+            id = id,
+            enabled = true,
+            exercises = listOf(
+                minimalExercise(exerciseAId, "A"),
+                minimalExercise(exerciseBId, "B")
+            ),
+            restSecondsByExercise = emptyMap()
         )
     }
 

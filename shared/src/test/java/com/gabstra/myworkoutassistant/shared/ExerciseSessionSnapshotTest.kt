@@ -106,6 +106,91 @@ class ExerciseSessionSnapshotTest {
     }
 
     @Test
+    fun `buildExerciseSessionSnapshot ignores runtime-only warmup history IDs not in template`() {
+        val workId = UUID.randomUUID()
+        val templateSets: List<Set> = listOf(
+            WeightSet(id = workId, reps = 5, weight = 80.0)
+        )
+        val runtimeWarmupId = UUID.randomUUID()
+        val setHistories = listOf(
+            setHistory(
+                runtimeWarmupId,
+                0u,
+                WeightSetData(
+                    actualReps = 8,
+                    actualWeight = 40.0,
+                    volume = 320.0,
+                    subCategory = SetSubCategory.WarmupSet
+                )
+            ),
+            setHistory(workId, 1u, WeightSetData(actualReps = 6, actualWeight = 82.5, volume = 495.0))
+        )
+
+        val snapshot = buildExerciseSessionSnapshot(templateSets, setHistories)
+
+        assertEquals(listOf(workId), snapshot.sets.map { it.setId })
+        val work = snapshot.sets.single().set as WeightSet
+        assertEquals(82.5, work.weight, 0.0)
+        assertEquals(6, work.reps)
+    }
+
+    @Test
+    fun `buildExerciseSessionSnapshot reapplies matching template warmup history`() {
+        val warmupId = UUID.randomUUID()
+        val templateSets: List<Set> = listOf(
+            WeightSet(id = warmupId, reps = 8, weight = 40.0, subCategory = SetSubCategory.WarmupSet)
+        )
+        val setHistories = listOf(
+            setHistory(
+                warmupId,
+                0u,
+                WeightSetData(
+                    actualReps = 10,
+                    actualWeight = 45.0,
+                    volume = 450.0,
+                    subCategory = SetSubCategory.WarmupSet
+                )
+            )
+        )
+
+        val snapshot = buildExerciseSessionSnapshot(templateSets, setHistories)
+
+        assertEquals(listOf(warmupId), snapshot.sets.map { it.setId })
+        val warmup = snapshot.sets.single().set as WeightSet
+        assertEquals(45.0, warmup.weight, 0.0)
+        assertEquals(10, warmup.reps)
+        assertEquals(SetSubCategory.WarmupSet, warmup.subCategory)
+    }
+
+    @Test
+    fun `buildExerciseSessionSnapshot keeps unexecuted programmed sets during partial progress`() {
+        val set1Id = UUID.randomUUID()
+        val restId = UUID.randomUUID()
+        val set2Id = UUID.randomUUID()
+
+        val currentSets: List<Set> = listOf(
+            WeightSet(id = set1Id, reps = 5, weight = 80.0),
+            RestSet(id = restId, timeInSeconds = 90, shouldReapplyHistoryToSet = false),
+            WeightSet(id = set2Id, reps = 5, weight = 85.0)
+        )
+        val setHistories = listOf(
+            setHistory(set1Id, 0u, WeightSetData(actualReps = 6, actualWeight = 82.5, volume = 495.0))
+        )
+
+        val snapshot = buildExerciseSessionSnapshot(currentSets, setHistories)
+
+        assertEquals(listOf(set1Id, restId, set2Id), snapshot.sets.map { it.setId })
+        assertTrue(snapshot.sets[0].wasExecuted)
+        assertFalse(snapshot.sets[1].wasExecuted)
+        assertFalse(snapshot.sets[2].wasExecuted)
+        assertEquals(82.5, (snapshot.sets[0].set as WeightSet).weight, 0.0)
+        assertEquals(6, (snapshot.sets[0].set as WeightSet).reps)
+        assertEquals(90, (snapshot.sets[1].set as RestSet).timeInSeconds)
+        assertEquals(85.0, (snapshot.sets[2].set as WeightSet).weight, 0.0)
+        assertEquals(5, (snapshot.sets[2].set as WeightSet).reps)
+    }
+
+    @Test
     fun `buildExerciseSessionSnapshot applies RestHistory when SetHistory missing for RestSet`() {
         val workId = UUID.randomUUID()
         val restId = UUID.randomUUID()

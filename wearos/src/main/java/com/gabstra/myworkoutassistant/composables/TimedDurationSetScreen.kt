@@ -98,15 +98,25 @@ fun TimedDurationSetScreen(
     var hasBeenStartedOnce by remember { mutableStateOf(false) }
     var showRepeatButton by remember(set.id) { mutableStateOf(false) }
 
+    fun clampTimedDurationData(data: TimedDurationSetData): TimedDurationSetData {
+        val normalizedStart = data.startTimer.coerceAtLeast(0)
+        val normalizedEnd = data.endTimer.coerceIn(0, normalizedStart)
+        return if (normalizedStart == data.startTimer && normalizedEnd == data.endTimer) {
+            data
+        } else {
+            data.copy(startTimer = normalizedStart, endTimer = normalizedEnd)
+        }
+    }
+
     fun markSetExecuted() {
         val setData = state.currentSetData as? TimedDurationSetData ?: return
-        state.currentSetData = setData.copy(hasBeenExecuted = true)
+        state.currentSetData = clampTimedDurationData(setData.copy(hasBeenExecuted = true))
         state.hasBeenExecuted = true
     }
 
     fun clearExecutedFlag() {
         val setData = state.currentSetData as? TimedDurationSetData ?: return
-        state.currentSetData = setData.copy(hasBeenExecuted = false)
+        state.currentSetData = clampTimedDurationData(setData.copy(hasBeenExecuted = false))
         state.hasBeenExecuted = false
     }
 
@@ -140,7 +150,7 @@ fun TimedDurationSetScreen(
             applyFrozenProgressMillis = { progressMillis ->
                 val setData = state.currentSetData as? TimedDurationSetData
                 if (setData != null) {
-                    state.currentSetData = setData.copy(endTimer = progressMillis)
+                    state.currentSetData = clampTimedDurationData(setData.copy(endTimer = progressMillis))
                 }
             },
             applyStartTimeFromElapsedMillis = { elapsedMillis ->
@@ -182,7 +192,7 @@ fun TimedDurationSetScreen(
     LaunchedEffect(currentSet.startTimer) {
         val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
         if (setData.startTimer != currentSet.startTimer) {
-            state.currentSetData = setData.copy(startTimer = currentSet.startTimer)
+            state.currentSetData = clampTimedDurationData(setData.copy(startTimer = currentSet.startTimer))
         }
     }
 
@@ -323,7 +333,7 @@ fun TimedDurationSetScreen(
                 } else {
                     timedData
                 }
-                state.currentSetData = normalizedData
+                state.currentSetData = clampTimedDurationData(normalizedData)
                 currentSet = normalizedData
                 currentMillis = normalizedData.startTimer
             }
@@ -505,11 +515,11 @@ fun TimedDurationSetScreen(
                         val setData = state.currentSetData as? TimedDurationSetData
                         if (setData != null) {
                             val resetStartTimer = currentSet.startTimer.coerceAtLeast(0)
-                            state.currentSetData = setData.copy(
+                            state.currentSetData = clampTimedDurationData(setData.copy(
                                 startTimer = resetStartTimer,
                                 endTimer = resetStartTimer,
                                 hasBeenExecuted = false
-                            )
+                            ))
                             currentSet = state.currentSetData as TimedDurationSetData
                             currentMillis = currentSet.startTimer
                             state.startTime = null

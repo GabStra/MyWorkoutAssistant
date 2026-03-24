@@ -31,6 +31,7 @@ data class WorkoutScreenState(
     val headerDisplayMode: Int = 0,
     val hrDisplayMode: Int = 0,
     val isRestTimerPageVisible: Boolean = true,
+    val isExerciseDetailPageVisible: Boolean = true,
 ) {
     companion object {
         /**
@@ -69,6 +70,7 @@ data class WorkoutScreenState(
                 headerDisplayMode = 0,
                 hrDisplayMode = 0,
                 isRestTimerPageVisible = true,
+                isExerciseDetailPageVisible = true,
             )
         }
     }

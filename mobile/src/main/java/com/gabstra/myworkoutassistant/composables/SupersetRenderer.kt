@@ -39,7 +39,8 @@ fun SupersetRenderer(
     showRest: Boolean,
     appViewModel: AppViewModel,
     titleModifier: Modifier = Modifier,
-    onExerciseClick: ((java.util.UUID) -> Unit)? = null
+    onExerciseClick: ((java.util.UUID) -> Unit)? = null,
+    initiallyExpanded: Boolean = false
 ) {
     val executionSteps = rememberExecutionOrder(superset, showRest)
     val textColor = if (superset.enabled) {
@@ -53,7 +54,7 @@ fun SupersetRenderer(
         enabled = superset.enabled
     ) {
         ExpandableContainer(
-            isOpen = false,
+            isOpen = initiallyExpanded,
             modifier = Modifier.fillMaxWidth(),
             isExpandable = true,
             titleModifier = titleModifier,

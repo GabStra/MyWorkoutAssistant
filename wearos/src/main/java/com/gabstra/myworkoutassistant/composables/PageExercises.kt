@@ -19,7 +19,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -520,6 +522,52 @@ fun PageExercises(
     LaunchedEffect(selectedPageIndex.value, selectedRestPageId) {
         transformingLazyColumnState.scrollToItem(0)
     }
+    val firstSetListItemIndex = 2
+    val selectedProgressState = when {
+        selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
+        selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
+        else -> ProgressState.CURRENT
+    }
+    val selectedSetStateToMatch = if (selectedProgressState == ProgressState.CURRENT) {
+        workoutState ?: liveWorkoutState
+    } else {
+        liveWorkoutState
+    }
+    val selectedPageCurrentSet = selectedPageItem?.let { page ->
+        if (page is PageExercisesItem.RestPage) null else resolvePageCurrentSet(page, activeWorkoutState)
+    }
+    val targetItemIndex = remember(
+        selectedPageItem,
+        selectedPageCurrentSet?.id,
+        selectedSetStateToMatch,
+        firstSetListItemIndex,
+        viewModel.allWorkoutStates.size
+    ) {
+        if (selectedPageItem == null || selectedPageItem is PageExercisesItem.RestPage || selectedPageCurrentSet == null) {
+            null
+        } else {
+            resolveExerciseSetsScrollTargetIndex(
+                viewModel = viewModel,
+                exercise = selectedPageItem.representativeExercise,
+                currentSet = selectedPageCurrentSet,
+                stateToMatch = selectedSetStateToMatch,
+                firstSetListItemIndex = firstSetListItemIndex
+            )
+        }
+    }
+    var isAutoScrolling by remember { mutableStateOf(false) }
+    LaunchedEffect(targetItemIndex, selectedPageIndex.value) {
+        val targetIndex = targetItemIndex ?: return@LaunchedEffect
+        if (isAutoScrolling) return@LaunchedEffect
+        isAutoScrolling = true
+        try {
+            transformingLazyColumnState.animateScrollToItem(targetIndex)
+        } finally {
+            isAutoScrolling = false
+        }
+    }
+
+    val customAlignment = if (selectedPageItem is PageExercisesItem.RestPage){ Alignment.CenterVertically} else { Alignment.Top }
 
     Box(
         modifier = Modifier
@@ -542,7 +590,8 @@ fun PageExercises(
             TransformingLazyColumn(
                 modifier = Modifier.padding(horizontal = 20.dp),
                 state = transformingLazyColumnState,
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                userScrollEnabled = !isAutoScrolling,
+                verticalArrangement = Arrangement.spacedBy(5.dp, customAlignment),
                 contentPadding = WorkoutPagerPageSafeAreaPadding
                 //contentPadding = contentPadding,
             ) {
@@ -610,11 +659,7 @@ fun PageExercises(
                 }
 
                 if (selectedPageItem != null) {
-                    val progressState = when {
-                        selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
-                        selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
-                        else -> ProgressState.CURRENT
-                    }
+                    val progressState = selectedProgressState
                     when (selectedPageItem) {
                         is PageExercisesItem.RestPage -> {
                             RestPageContent(
@@ -628,9 +673,6 @@ fun PageExercises(
                         else -> {
                             val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
                             if (currentSet != null) {
-                                val isSelectedCurrentPage = progressState == ProgressState.CURRENT
-                                // First set row starts after title + metadata items.
-                                val firstSetListItemIndex = 2
                                 ExerciseSetsViewer(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -639,11 +681,7 @@ fun PageExercises(
                                     transformationSpec = transformationSpec,
                                     columnState = transformingLazyColumnState,
                                     firstSetListItemIndex = firstSetListItemIndex,
-                                    stateToMatch = if (isSelectedCurrentPage) {
-                                        workoutState ?: liveWorkoutState
-                                    } else {
-                                        liveWorkoutState
-                                    },
+                                    stateToMatch = selectedSetStateToMatch,
                                     progressState = progressState,
                                 )
                             }

@@ -63,6 +63,7 @@ import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDe
 import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutPersistenceCoordinator
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRecordService
@@ -479,7 +480,12 @@ open class WorkoutViewModel(
             )
         }
 
-        if (recordState.hasWorkoutRecord && hadActiveSession) {
+        val shouldAutoResumeRecord =
+            recordState.hasWorkoutRecord &&
+                hadActiveSession &&
+                recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
+
+        if (shouldAutoResumeRecord) {
             resumeWorkoutFromRecord {
                 resumeLastState()
             }
@@ -1073,6 +1079,21 @@ open class WorkoutViewModel(
                     _workoutResumeInfo.value = null
                     rebuildScreenState()
                 }
+            }
+        }
+    }
+
+    fun clearAllWorkoutRecords(onComplete: (() -> Unit)? = null) {
+        launchIO {
+            workoutRecordMutex.withLock {
+                workoutRecordDao.deleteAll()
+            }
+            withContext(dispatchers.main) {
+                _workoutRecord = null
+                _hasWorkoutRecord.value = false
+                _workoutResumeInfo.value = null
+                rebuildScreenState()
+                onComplete?.invoke()
             }
         }
     }

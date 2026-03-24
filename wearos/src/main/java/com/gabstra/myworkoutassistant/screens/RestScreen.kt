@@ -108,6 +108,16 @@ private fun RestTimerBlock(
     nextExercise: Exercise,
     nextSetState: WorkoutState.Set?,
 ) {
+    fun clampRestData(data: RestSetData): RestSetData {
+        val normalizedStart = data.startTimer.coerceAtLeast(0)
+        val normalizedEnd = data.endTimer.coerceIn(0, normalizedStart)
+        return if (normalizedStart == data.startTimer && normalizedEnd == data.endTimer) {
+            data
+        } else {
+            data.copy(startTimer = normalizedStart, endTimer = normalizedEnd)
+        }
+    }
+
     var currentSetData by remember(set.id) { mutableStateOf(state.currentSetData as RestSetData) }
     var currentSeconds by remember(set.id) { mutableIntStateOf(currentSetData.endTimer) }
     var amountToWait by remember(set.id) { mutableIntStateOf(currentSetData.startTimer) }
@@ -175,12 +185,12 @@ private fun RestTimerBlock(
             val syncedSeconds = timerUiState?.displaySeconds ?: currentSetData.endTimer
             currentSeconds = syncedSeconds.coerceAtLeast(0)
             amountToWait = currentSetData.startTimer
-            currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            currentSetData = clampRestData(currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds))
             state.currentSetData = currentSetData
             unregisterRestTimer()
             updateInteractionTime()
         } else if (!isPaused && wasTimerRunningBeforeEditMode && currentSeconds > 0) {
-            currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            currentSetData = clampRestData(currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds))
             state.currentSetData = currentSetData
             state.startTime = LocalDateTime.now()
                 .minusSeconds((amountToWait - currentSeconds).coerceAtLeast(0).toLong())
@@ -191,7 +201,7 @@ private fun RestTimerBlock(
 
     skipConfirmAction.value = {
         unregisterRestTimer()
-        state.currentSetData = currentSetData.copy(endTimer = currentSeconds)
+        state.currentSetData = clampRestData(currentSetData.copy(endTimer = currentSeconds))
         viewModel.closeCustomDialog()
         onTimerEnd()
     }
@@ -228,7 +238,9 @@ private fun RestTimerBlock(
         if (isPaused || isTimerInEditMode || currentSeconds <= 0) {
             unregisterRestTimer()
         } else {
-            state.currentSetData = currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            state.currentSetData = clampRestData(
+                currentSetData.copy(startTimer = amountToWait, endTimer = currentSeconds)
+            )
             registerRestTimer()
         }
     }

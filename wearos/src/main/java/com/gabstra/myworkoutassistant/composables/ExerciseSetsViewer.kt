@@ -160,6 +160,31 @@ internal fun findDisplayRowIndex(
     return 0
 }
 
+internal fun resolveExerciseSetsScrollTargetIndex(
+    viewModel: AppViewModel,
+    exercise: Exercise,
+    currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
+    stateToMatch: WorkoutState?,
+    firstSetListItemIndex: Int,
+): Int? {
+    val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
+    val displayRows = if (supersetId != null) {
+        buildSupersetSetDisplayRows(viewModel = viewModel, supersetId = supersetId)
+    } else {
+        buildExerciseSetDisplayRows(viewModel = viewModel, exerciseId = exercise.id)
+    }
+    if (displayRows.isEmpty()) return null
+
+    val setIndex = stateToMatch?.let {
+        findDisplayRowIndex(
+            displayRows = displayRows,
+            stateToMatch = it,
+            fallbackSetId = currentSet.id
+        )
+    } ?: 0
+    return (firstSetListItemIndex + setIndex).coerceAtLeast(firstSetListItemIndex)
+}
+
 private fun toSupersetLetter(index: Int): String {
     if (index < 0) return ""
     var value = index
@@ -835,12 +860,6 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
     val useWeightHeader = if (supersetId != null) hasWeightRows else (exercise.exerciseType == ExerciseType.WEIGHT || exercise.exerciseType == ExerciseType.BODY_WEIGHT)
 
     item {
-        LaunchedEffect(setIndex, scrollKey, firstSetListItemIndex) {
-            if (displayRows.isEmpty()) return@LaunchedEffect
-            val targetIndex = (firstSetListItemIndex + setIndex)
-                .coerceAtLeast(firstSetListItemIndex)
-            columnState.scrollToItem(targetIndex)
-        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()

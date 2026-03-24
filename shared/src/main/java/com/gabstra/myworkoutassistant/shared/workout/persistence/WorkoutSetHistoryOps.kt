@@ -5,7 +5,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
@@ -22,15 +21,14 @@ internal object WorkoutSetHistoryOps {
             return true
         }
 
-        val currentSet = WorkoutStateQueries.stateSetObjectOrNull(state) ?: return true
+        WorkoutStateQueries.stateSetObjectOrNull(state) ?: return true
 
         if (state is WorkoutState.Set) {
-            val exercise = exercisesById[state.exerciseId] ?: return true
-            val isWarmupSet = isWarmupSet(state.set)
+            exercisesById[state.exerciseId] ?: return true
             val isCalibrationSet = isCalibrationSet(state.set)
             val hasCalibrationRIR = hasCalibrationRIR(state.currentSetData)
 
-            if (isWarmupSet || (isCalibrationSet && !hasCalibrationRIR)) {
+            if (isCalibrationSet && !hasCalibrationRIR) {
                 return true
             }
         }
@@ -64,13 +62,7 @@ internal object WorkoutSetHistoryOps {
         )
     }
 
-    private fun isWarmupSet(set: Set): Boolean = when (set) {
-        is BodyWeightSet -> set.subCategory == SetSubCategory.WarmupSet
-        is WeightSet -> set.subCategory == SetSubCategory.WarmupSet
-        else -> false
-    }
-
-    private fun isCalibrationSet(set: Set): Boolean = when (set) {
+    private fun isCalibrationSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
         is BodyWeightSet -> set.subCategory == SetSubCategory.CalibrationSet
         is WeightSet -> set.subCategory == SetSubCategory.CalibrationSet
         else -> false

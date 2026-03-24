@@ -72,7 +72,8 @@ internal fun resolveWorkoutHistorySyncRequestMode(
     isDone: Boolean
 ): WorkoutHistorySyncRequestMode? = when {
     isDone -> WorkoutHistorySyncRequestMode.Immediate
-    currentState is WorkoutState.Set -> WorkoutHistorySyncRequestMode.Debounced
+    currentState is WorkoutState.Set || currentState is WorkoutState.Rest ->
+        WorkoutHistorySyncRequestMode.Debounced
     else -> null
 }
 
@@ -358,6 +359,8 @@ open class AppViewModel : WorkoutViewModel() {
     val headerDisplayMode: State<Int> = _headerDisplayMode.asIntState()
     private val _isRestTimerPageVisible = mutableStateOf(true)
     val isRestTimerPageVisible: State<Boolean> = _isRestTimerPageVisible
+    private val _isExerciseDetailPageVisible = mutableStateOf(true)
+    val isExerciseDetailPageVisible: State<Boolean> = _isExerciseDetailPageVisible
 
     private val _isSyncingToPhone = mutableStateOf(false)
     val isSyncingToPhone: State<Boolean> = _isSyncingToPhone
@@ -436,6 +439,12 @@ open class AppViewModel : WorkoutViewModel() {
         rebuildScreenState()
     }
 
+    fun setExerciseDetailPageVisibility(isVisible: Boolean) {
+        if (_isExerciseDetailPageVisible.value == isVisible) return
+        _isExerciseDetailPageVisible.value = isVisible
+        rebuildScreenState()
+    }
+
     fun onPhoneConnectionChanged(isConnected: Boolean) {
         if (!isConnected || !pendingSyncAfterReconnect) return
         pendingSyncAfterReconnect = false
@@ -466,6 +475,7 @@ open class AppViewModel : WorkoutViewModel() {
             headerDisplayMode = headerDisplayMode.value,
             hrDisplayMode = hrDisplayMode.value,
             isRestTimerPageVisible = isRestTimerPageVisible.value,
+            isExerciseDetailPageVisible = isExerciseDetailPageVisible.value,
         )
         
         // Only emit if state actually changed
@@ -965,7 +975,11 @@ open class AppViewModel : WorkoutViewModel() {
 
     private fun restartCurrentRestStateForManualNavigation() {
         val currentState = workoutState.value as? WorkoutState.Rest ?: return
-        val setData = currentState.currentSetData as? RestSetData ?: return
+        val originalSetData = currentState.currentSetData as? RestSetData ?: return
+        val setData = normalizeRestTimerBounds(originalSetData)
+        if (setData != originalSetData) {
+            currentState.currentSetData = setData
+        }
         if (setData.endTimer == setData.startTimer && currentState.startTime == null) return
 
         workoutTimerService.unregisterTimer(currentState.set.id)
@@ -1102,12 +1116,16 @@ open class AppViewModel : WorkoutViewModel() {
             is WorkoutState.Set -> {
                 when (val setData = state.currentSetData) {
                     is TimedDurationSetData -> {
+                        val normalizedSetData = normalizeTimedDurationTimerBounds(setData)
+                        if (normalizedSetData != setData) {
+                            state.currentSetData = normalizedSetData
+                        }
                         if (choice == TimerRecoveryChoice.RESTART) {
-                            state.currentSetData = setData.copy(endTimer = setData.startTimer)
+                            state.currentSetData = normalizedSetData.copy(endTimer = normalizedSetData.startTimer)
                             state.startTime = null
                             workoutTimerService.unregisterTimer(state.set.id)
                         } else {
-                            reanchorTimedDurationStartTime(state, setData)
+                            reanchorTimedDurationStartTime(state, normalizedSetData)
                         }
                     }
 
@@ -1125,7 +1143,10 @@ open class AppViewModel : WorkoutViewModel() {
             }
 
             is WorkoutState.Rest -> {
-                val setData = state.currentSetData as? RestSetData ?: return
+                val setData = normalizeRestTimerBounds(state.currentSetData as? RestSetData ?: return)
+                if (setData != state.currentSetData) {
+                    state.currentSetData = setData
+                }
                 if (choice == TimerRecoveryChoice.RESTART) {
                     state.currentSetData = setData.copy(endTimer = setData.startTimer)
                     state.startTime = null
@@ -1146,12 +1167,15 @@ open class AppViewModel : WorkoutViewModel() {
 
         when (val state = workoutState.value) {
             is WorkoutState.Set -> when (val setData = state.currentSetData) {
-                is TimedDurationSetData -> reanchorTimedDurationStartTime(state, setData)
+                is TimedDurationSetData -> reanchorTimedDurationStartTime(
+                    state,
+                    normalizeTimedDurationTimerBounds(setData)
+                )
                 is EnduranceSetData -> reanchorEnduranceStartTime(state, setData)
                 else -> Unit
             }
             is WorkoutState.Rest -> {
-                val setData = state.currentSetData as? RestSetData ?: return
+                val setData = normalizeRestTimerBounds(state.currentSetData as? RestSetData ?: return)
                 reanchorRestStartTime(state, setData)
             }
             else -> Unit
@@ -1159,7 +1183,8 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private fun reanchorTimedDurationStartTime(state: WorkoutState.Set, setData: TimedDurationSetData) {
-        val elapsedMillis = (setData.startTimer - setData.endTimer).coerceAtLeast(0)
+        val normalizedSetData = normalizeTimedDurationTimerBounds(setData)
+        val elapsedMillis = (normalizedSetData.startTimer - normalizedSetData.endTimer).coerceAtLeast(0)
         state.startTime = LocalDateTime.now()
             .minusNanos(elapsedMillis.toLong() * 1_000_000L)
     }
@@ -1171,8 +1196,29 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private fun reanchorRestStartTime(state: WorkoutState.Rest, setData: RestSetData) {
-        val elapsedSeconds = (setData.startTimer - setData.endTimer).coerceAtLeast(0)
+        val normalizedSetData = normalizeRestTimerBounds(setData)
+        val elapsedSeconds = (normalizedSetData.startTimer - normalizedSetData.endTimer).coerceAtLeast(0)
         state.startTime = LocalDateTime.now().minusSeconds(elapsedSeconds.toLong())
+    }
+
+    private fun normalizeRestTimerBounds(data: RestSetData): RestSetData {
+        val normalizedStart = data.startTimer.coerceAtLeast(0)
+        val normalizedEnd = data.endTimer.coerceIn(0, normalizedStart)
+        return if (normalizedStart == data.startTimer && normalizedEnd == data.endTimer) {
+            data
+        } else {
+            data.copy(startTimer = normalizedStart, endTimer = normalizedEnd)
+        }
+    }
+
+    private fun normalizeTimedDurationTimerBounds(data: TimedDurationSetData): TimedDurationSetData {
+        val normalizedStart = data.startTimer.coerceAtLeast(0)
+        val normalizedEnd = data.endTimer.coerceIn(0, normalizedStart)
+        return if (normalizedStart == data.startTimer && normalizedEnd == data.endTimer) {
+            data
+        } else {
+            data.copy(startTimer = normalizedStart, endTimer = normalizedEnd)
+        }
     }
 
     private fun resetCurrentCalibrationLoadSelectionState() {

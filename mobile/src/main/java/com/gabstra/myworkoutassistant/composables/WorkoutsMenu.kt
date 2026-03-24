@@ -32,6 +32,7 @@ fun WorkoutsMenu(
     onOpenSettingsClick: () -> Unit,
     onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
+    onCleanWorkoutRecords: () -> Unit,
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
@@ -42,6 +43,7 @@ fun WorkoutsMenu(
 ) {
     var showClearIncompleteDialog by remember { mutableStateOf(false) }
     var showClearHistoryDialog by remember { mutableStateOf(false) }
+    var showCleanWorkoutRecordsDialog by remember { mutableStateOf(false) }
     var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
@@ -138,6 +140,13 @@ fun WorkoutsMenu(
                 onMenuItemClick()
             }
         )
+        WorkoutsMenuItem(
+            label = "Clean workout records",
+            onClick = {
+                showCleanWorkoutRecordsDialog = true
+                onMenuItemClick()
+            }
+        )
 //        WorkoutsMenuItem(
 //            label = "Clear all exercise info",
 //            onClick = {
@@ -183,6 +192,21 @@ fun WorkoutsMenu(
         },
         onDismiss = {
             showClearHistoryDialog = false
+        }
+    )
+
+    ConfirmationDialog(
+        show = showCleanWorkoutRecordsDialog,
+        title = "Clean workout records?",
+        message = "This removes all active workout progress records. Workout history will be kept.",
+        confirmText = "Clean",
+        isDestructive = true,
+        onConfirm = {
+            onCleanWorkoutRecords()
+            showCleanWorkoutRecordsDialog = false
+        },
+        onDismiss = {
+            showCleanWorkoutRecordsDialog = false
         }
     )
 

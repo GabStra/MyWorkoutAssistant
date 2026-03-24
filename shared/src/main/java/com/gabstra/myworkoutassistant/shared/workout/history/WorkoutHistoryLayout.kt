@@ -21,14 +21,18 @@ sealed class WorkoutHistoryLayoutItem {
 }
 
 /**
- * Builds layout items in workout template order. Skips exercises/supersets with no set history.
+ * Builds layout items in workout template order.
+ * Exercises/supersets are normally shown only when set history exists, but the current active
+ * exercise can also be surfaced via [activeExerciseId] so in-progress sessions remain visible
+ * before the first set history row is written for that component.
  * Between-workout-component [RestHistory] rows are placed at each template [Rest] via
  * [orderedBetweenWorkoutComponentRestHistories] (one row per template [Rest] per session).
  */
 fun buildWorkoutHistoryLayout(
     workout: Workout,
     setHistoriesByExerciseId: Map<UUID, List<SetHistory>>,
-    sessionRestHistories: List<RestHistory>
+    sessionRestHistories: List<RestHistory>,
+    activeExerciseId: UUID? = null,
 ): List<WorkoutHistoryLayoutItem> {
     val orderedBetween = orderedBetweenWorkoutComponentRestHistories(sessionRestHistories, workout)
     val historyByRestComponentId: Map<UUID, RestHistory> =
@@ -39,12 +43,15 @@ fun buildWorkoutHistoryLayout(
     for (component in workout.workoutComponents) {
         when (component) {
             is Exercise -> {
-                if (setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()) {
+                val hasSetHistory = setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()
+                if (hasSetHistory || component.id == activeExerciseId) {
                     items.add(WorkoutHistoryLayoutItem.ExerciseSection(component.id))
                 }
             }
             is Superset -> {
-                if (setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()) {
+                val hasSetHistory = setHistoriesByExerciseId[component.id].orEmpty().isNotEmpty()
+                val containsActiveExercise = component.exercises.any { it.id == activeExerciseId }
+                if (hasSetHistory || containsActiveExercise) {
                     items.add(WorkoutHistoryLayoutItem.SupersetSection(component.id))
                 }
             }

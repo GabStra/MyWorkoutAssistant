@@ -194,9 +194,9 @@ fun ExerciseScreen(
     ) {
         mutableListOf<ExerciseHorizontalPage>().apply {
             add(ExerciseHorizontalPage.BUTTONS)
+            if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
             if (showPlatesPage) add(ExerciseHorizontalPage.PLATES)
             add(ExerciseHorizontalPage.EXERCISE_DETAIL)
-            if (showTitledLinesPage) add(ExerciseHorizontalPage.TITLED_LINES)
             //if (hasMuscleInfo) add(ExerciseHorizontalPage.MUSCLES)
             //if (showProgressionComparisonPage) add(ExerciseHorizontalPage.PROGRESSION_COMPARISON)
             //if (showNotesPage) add(ExerciseHorizontalPage.NOTES)
@@ -264,6 +264,10 @@ fun ExerciseScreen(
     }
 
     LaunchedEffect(horizontalPagerState.currentPage) {
+        viewModel.setExerciseDetailPageVisibility(
+            horizontalPagerState.currentPage == exerciseDetailPageIndex
+        )
+
         val isOnPlatesPage = platesPageIndex >= 0 && horizontalPagerState.currentPage == platesPageIndex
         if (showEquipmentPicker || showEquipmentConfirmation) {
             viewModel.setDimming(false)
@@ -280,6 +284,12 @@ fun ExerciseScreen(
 
         if (horizontalPagerState.currentPage != exerciseDetailPageIndex) {
             isEditModeEnabled = false
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.setExerciseDetailPageVisibility(true)
         }
     }
 
