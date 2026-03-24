@@ -3,7 +3,6 @@ package com.gabstra.myworkoutassistant.shared.viewmodels
 import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -273,8 +272,29 @@ open class WorkoutViewModel(
     private val _lightScreenUp = Channel<Unit>(Channel.BUFFERED)
     val lightScreenUp = _lightScreenUp.receiveAsFlow()
 
-    val enableDimming: State<Boolean> = derivedStateOf {
-        !isPaused.value && currentScreenDimmingState.value && !keepScreenOn.value
+    private val _enableDimming = mutableStateOf(false)
+    val enableDimming: State<Boolean> = _enableDimming
+
+    /**
+     * Whether app-level dimming ([KeepOn]) may run. Recomputed in [rebuildScreenState] and
+     * [refreshEnableDimmingState] (Wear app overrides [rebuildScreenState] without super).
+     * For a Set, if the exercise has [Exercise.keepScreenOn] true, dimming is never enabled
+     * (avoids stale [_currentScreenDimmingState] vs exercise flag).
+     */
+    private fun computeEnableDimming(): Boolean {
+        val ws = _workoutState.value
+        if (ws is WorkoutState.Set) {
+            val exercise = exercisesById[ws.exerciseId]
+            if (exercise?.keepScreenOn == true) {
+                return false
+            }
+        }
+        return !_isPaused.value && _currentScreenDimmingState.value && !_keepScreenOn.value
+    }
+
+    /** Subclasses that fully override [rebuildScreenState] must call this so [enableDimming] stays correct. */
+    protected fun refreshEnableDimmingState() {
+        _enableDimming.value = computeEnableDimming()
     }
 
     /**
@@ -797,6 +817,7 @@ open class WorkoutViewModel(
      * Only emits if the new state differs from the current state to prevent unnecessary recompositions.
      */
     protected open fun rebuildScreenState() {
+        refreshEnableDimmingState()
         val newState = WorkoutScreenState(
             workoutState = _workoutState.value,
             sessionPhase = _sessionPhase.value,
@@ -812,7 +833,7 @@ open class WorkoutViewModel(
             measuredMaxHeartRate = workoutStore.measuredMaxHeartRate,
             restingHeartRate = workoutStore.restingHeartRate,
             startWorkoutTime = startWorkoutTime,
-            enableDimming = enableDimming.value,
+            enableDimming = _enableDimming.value,
             keepScreenOn = _keepScreenOn.value,
             currentScreenDimmingState = _currentScreenDimmingState.value,
             headerDisplayMode = 0, // Default for base WorkoutViewModel, overridden in AppViewModel
