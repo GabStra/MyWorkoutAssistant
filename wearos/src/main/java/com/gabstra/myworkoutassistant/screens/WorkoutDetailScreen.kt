@@ -229,7 +229,7 @@ fun WorkoutDetailScreen(
                         ) {
                             Text(
                                 modifier = Modifier.fillMaxWidth(),
-                                text = "Start workout",
+                                text = "Start",
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onPrimary
@@ -252,7 +252,7 @@ fun WorkoutDetailScreen(
                             ) {
                                 Text(
                                     modifier = Modifier.fillMaxWidth(),
-                                    text = "Resume workout",
+                                    text = "Resume",
                                     textAlign = TextAlign.Center,
                                     style =  MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onPrimary

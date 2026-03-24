@@ -7,7 +7,7 @@ object InterruptedWorkoutCopy {
 
     const val RESUME_DIALOG_DESCRIPTION = "You have interrupted workouts. Select one to resume:"
 
-    const val DELETE_BUTTON = "Delete interrupted workout"
+    const val DELETE_BUTTON = "Delete"
     const val DELETE_TITLE = "Delete Interrupted Workout"
     const val DELETE_MESSAGE = "Are you sure you want to delete this interrupted workout?"
     const val START_NEW_WORKOUT_MESSAGE = "An existing interrupted workout will be deleted. Continue?"
