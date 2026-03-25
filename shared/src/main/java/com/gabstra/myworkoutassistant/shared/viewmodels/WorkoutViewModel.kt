@@ -59,7 +59,6 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetPreparat
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetStateFactory
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAssemblyService
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
@@ -86,6 +85,7 @@ import com.gabstra.myworkoutassistant.shared.workout.rir.applyWorkSetUpdateToSta
 import com.gabstra.myworkoutassistant.shared.workout.rir.extractWorkWeight
 import com.gabstra.myworkoutassistant.shared.workout.rir.updateWorkSetsInExercise
 import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
+import com.gabstra.myworkoutassistant.shared.workout.session.ResumptionIndexResult
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutRefreshService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutResumptionService
 import com.gabstra.myworkoutassistant.shared.workout.session.WorkoutSessionLifecycleService
@@ -200,7 +200,8 @@ open class WorkoutViewModel(
             restHistoryDao = { restHistoryDao },
             exerciseInfoDao = { exerciseInfoDao },
             exerciseSessionProgressionDao = { exerciseSessionProgressionDao },
-            workoutStoreRepository = { workoutStoreRepository }
+            workoutStoreRepository = { workoutStoreRepository },
+            workoutRecordDao = { workoutRecordDao }
         )
     }
     private val workoutRecordService by lazy {
@@ -1001,7 +1002,7 @@ open class WorkoutViewModel(
     }
 
     /**
-     * Prepares to resume an interrupted workout by setting the selected workout and history id.
+     * Prepares to resume an incomplete workout by setting the selected workout and history id.
      * Call [resumeWorkoutFromRecord] after navigation to start the workout at the correct state.
      */
     open fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
@@ -1104,28 +1105,6 @@ open class WorkoutViewModel(
         }
     }
 
-    fun clearAllWorkoutRecords(onComplete: (() -> Unit)? = null) {
-        launchIO {
-            workoutRecordMutex.withLock {
-                workoutRecordDao.deleteAll()
-            }
-            withContext(dispatchers.main) {
-                _workoutRecord = null
-                _hasWorkoutRecord.value = false
-                _workoutResumeInfo.value = null
-                rebuildScreenState()
-                onComplete?.invoke()
-            }
-        }
-    }
-
-    suspend fun getInterruptedWorkouts(): List<InterruptedWorkout> {
-        return withContext(dispatchers.io) {
-            val currentWorkoutStore = workoutStore
-            workoutRecordService.getInterruptedWorkouts(currentWorkoutStore.workouts)
-        }
-    }
-
     private suspend fun resolveWorkoutResumeInfo(
         workout: Workout,
         workoutRecord: WorkoutRecord
@@ -1144,14 +1123,13 @@ open class WorkoutViewModel(
             ?: "Current exercise"
 
         val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutRecord.workoutHistoryId)
-        val sessionStatus = workoutHistory?.let { history ->
-            resolveWorkoutSessionStatus(history, workoutRecord)
-        } ?: WorkoutSessionStatus.INTERRUPTED
+            ?: error("Workout history missing for active workout record")
+        val sessionStatus = resolveWorkoutSessionStatus(workoutHistory, workoutRecord)
 
         return WorkoutResumeInfo(
             exerciseName = resumeExerciseName,
             setNumber = workoutRecord.setIndex.toInt() + 1,
-            startedAt = workoutHistory?.startTime,
+            startedAt = workoutHistory.startTime,
             sessionStatus = sessionStatus,
             lastActiveSyncAt = workoutRecord.lastActiveSyncAt,
         )
@@ -1165,12 +1143,12 @@ open class WorkoutViewModel(
      * 
      * @param allWorkoutStates The list of all workout states
      * @param executedSetsHistorySnapshot The snapshot of executed set histories
-     * @return The index to resume at, or 0 if no match found
+     * @return Index and whether the stored [WorkoutRecord] matched the template (if any).
      */
     private fun findResumptionIndex(
         allWorkoutStates: List<WorkoutState>,
         executedSetsHistorySnapshot: List<SetHistory>
-    ): Int {
+    ): ResumptionIndexResult {
         return workoutResumptionService.findResumptionIndex(
             allWorkoutStates = allWorkoutStates,
             executedSetsHistorySnapshot = executedSetsHistorySnapshot,
@@ -1262,14 +1240,35 @@ open class WorkoutViewModel(
                 // Apply executed set data to states in containers
                 val updatedSequence = applyExecutedSetDataToSequence(workoutSequence, executedSetsHistorySnapshot)
 
-                val resumptionIndex = workoutSessionOrchestrator.computeResumptionIndex(
+                val resumptionComputation = workoutSessionOrchestrator.computeResumptionIndex(
                     updatedSequence = updatedSequence,
                     executedSetsHistorySnapshot = executedSetsHistorySnapshot,
                     resolveIndex = ::findResumptionIndex
                 )
-                
+                val resumptionResult = resumptionComputation.indexResult
+                if (!resumptionResult.workoutRecordMatchedTemplate) {
+                    val coords = workoutResumptionService.exerciseIdAndOrderAtResumptionIndex(
+                        resumptionComputation.filteredStates,
+                        resumptionResult.index
+                    )
+                    if (coords != null) {
+                        workoutRecordMutex.withLock {
+                            _workoutRecord = workoutRecordService.upsertWorkoutRecord(
+                                existingRecord = _workoutRecord,
+                                workoutId = resumeSelectedWorkout.id,
+                                workoutHistoryId = currentWorkoutHistory!!.id,
+                                exerciseId = coords.first,
+                                setIndex = coords.second,
+                                ownerDevice = activeSessionOwnerDevice(),
+                                lastActiveSyncAt = LocalDateTime.now(),
+                                lastKnownSessionState = "RESUMED_RECONCILED"
+                            )
+                        }
+                    }
+                }
+
                 // Initialize state machine with sequence at the correct resumption index
-                val machine = initializeStateMachine(updatedSequence, resumptionIndex)
+                val machine = initializeStateMachine(updatedSequence, resumptionResult.index)
                 // Populate nextState for Rest states
                 populateNextStateForRest(machine)
                 stateMachine = machine
@@ -2010,6 +2009,13 @@ open class WorkoutViewModel(
             )
             withContext(dispatchers.main) {
                 currentWorkoutHistory = workoutHistoryForThisPush
+                if (isDone) {
+                    workoutRecordMutex.withLock {
+                        _workoutRecord = null
+                        _hasWorkoutRecord.value = false
+                        _workoutResumeInfo.value = null
+                    }
+                }
             }
             onEnd()
             if (isDone) {

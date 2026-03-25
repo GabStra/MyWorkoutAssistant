@@ -11,6 +11,11 @@ import java.time.Duration
 import java.time.LocalDateTime
 import java.util.UUID
 
+data class ResumptionComputation(
+    val indexResult: ResumptionIndexResult,
+    val filteredStates: List<WorkoutState>
+)
+
 internal class WorkoutSessionOrchestrator {
     fun selectWorkout(
         workouts: List<Workout>,
@@ -36,11 +41,7 @@ internal class WorkoutSessionOrchestrator {
         return now.minusSeconds(totalElapsedSeconds)
     }
 
-    fun computeResumptionIndex(
-        updatedSequence: List<WorkoutStateSequenceItem>,
-        executedSetsHistorySnapshot: List<SetHistory>,
-        resolveIndex: (List<WorkoutState>, List<SetHistory>) -> Int
-    ): Int {
+    fun flattenSequenceForResumption(updatedSequence: List<WorkoutStateSequenceItem>): List<WorkoutState> {
         val allStates = updatedSequence.flatMap { item ->
             when (item) {
                 is WorkoutStateSequenceItem.Container -> {
@@ -57,8 +58,17 @@ internal class WorkoutSessionOrchestrator {
         if (filteredStates.isNotEmpty() && filteredStates.last() is WorkoutState.Rest) {
             filteredStates.removeAt(filteredStates.size - 1)
         }
+        return filteredStates
+    }
 
-        return resolveIndex(filteredStates, executedSetsHistorySnapshot)
+    fun computeResumptionIndex(
+        updatedSequence: List<WorkoutStateSequenceItem>,
+        executedSetsHistorySnapshot: List<SetHistory>,
+        resolveIndex: (List<WorkoutState>, List<SetHistory>) -> ResumptionIndexResult
+    ): ResumptionComputation {
+        val filteredStates = flattenSequenceForResumption(updatedSequence)
+        val indexResult = resolveIndex(filteredStates, executedSetsHistorySnapshot)
+        return ResumptionComputation(indexResult = indexResult, filteredStates = filteredStates)
     }
 }
 

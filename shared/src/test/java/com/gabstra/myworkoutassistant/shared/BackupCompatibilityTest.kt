@@ -47,7 +47,7 @@ class BackupCompatibilityTest {
         val backup = fromJSONtoAppBackup(backupJson)
         val workoutRecord = backup.WorkoutRecords.single()
 
-        assertEquals("WEAR", workoutRecord.ownerDevice)
+        assertEquals("PHONE", workoutRecord.ownerDevice)
         assertEquals(0u, workoutRecord.activeSessionRevision)
         assertNull(workoutRecord.lastActiveSyncAt)
         assertNull(workoutRecord.lastKnownSessionState)

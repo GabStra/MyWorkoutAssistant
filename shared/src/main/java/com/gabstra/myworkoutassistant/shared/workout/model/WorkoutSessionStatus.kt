@@ -17,7 +17,6 @@ enum class WorkoutSessionStatus {
     IN_PROGRESS_ON_WEAR,
     IN_PROGRESS_ON_PHONE,
     STALE_ON_WEAR,
-    INTERRUPTED,
 }
 
 fun WorkoutRecord.ownerDeviceOrDefault(): SessionOwnerDevice = runCatching {
@@ -44,18 +43,39 @@ fun resolveWorkoutSessionStatus(
         return WorkoutSessionStatus.COMPLETED
     }
 
-    if (workoutRecord == null || workoutRecord.workoutHistoryId != workoutHistory.id) {
-        return WorkoutSessionStatus.INTERRUPTED
+    val record = workoutRecord
+        ?: error("Incomplete workout history ${workoutHistory.id} requires a matching workout record")
+    check(record.workoutHistoryId == workoutHistory.id) {
+        "Workout record ${record.id} does not match workout history ${workoutHistory.id}"
     }
 
-    return when (workoutRecord.ownerDeviceOrDefault()) {
+    return when (record.ownerDeviceOrDefault()) {
         SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
         SessionOwnerDevice.WEAR -> {
-            if (isWorkoutRecordFresh(workoutRecord, now, staleTimeoutMs)) {
+            if (isWorkoutRecordFresh(record, now, staleTimeoutMs)) {
                 WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
             } else {
                 WorkoutSessionStatus.STALE_ON_WEAR
             }
         }
     }
+}
+
+/** User-visible strings for compact session labels (Status tab, history headers). */
+object WorkoutSessionDisplayLabels {
+    const val IN_PROGRESS = "In progress"
+    /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
+    const val STALE_ON_WATCH = "Stale"
+}
+
+/**
+ * Short labels for compact UI. [COMPLETED] and null yield no label.
+ * Phone and fresh watch sessions share [WorkoutSessionDisplayLabels.IN_PROGRESS];
+ * stale watch uses [WorkoutSessionDisplayLabels.STALE_ON_WATCH].
+ */
+fun workoutSessionDisplayLabel(status: WorkoutSessionStatus?): String? = when (status) {
+    null, WorkoutSessionStatus.COMPLETED -> null
+    WorkoutSessionStatus.IN_PROGRESS_ON_PHONE, WorkoutSessionStatus.IN_PROGRESS_ON_WEAR ->
+        WorkoutSessionDisplayLabels.IN_PROGRESS
+    WorkoutSessionStatus.STALE_ON_WEAR -> WorkoutSessionDisplayLabels.STALE_ON_WATCH
 }

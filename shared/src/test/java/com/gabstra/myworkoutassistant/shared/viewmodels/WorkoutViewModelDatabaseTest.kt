@@ -504,6 +504,10 @@ class WorkoutViewModelDatabaseTest {
         assertNotNull("WorkoutHistory should exist for test workout", workoutHistory)
         assertEquals("WorkoutHistory workoutId should match", testWorkoutId, workoutHistory?.workoutId)
         assertEquals("WorkoutHistory should be done", true, workoutHistory?.isDone)
+        assertNull(
+            "WorkoutRecord should be cleared after completed pushWorkoutData",
+            database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
+        )
         assertEquals("WorkoutHistory globalId should match", testWorkoutGlobalId, workoutHistory?.globalId)
         assertTrue("WorkoutHistory should have heartbeat records", workoutHistory?.heartBeatRecords?.isNotEmpty() == true)
         assertNotNull("WorkoutHistory should have start time", workoutHistory?.startTime)

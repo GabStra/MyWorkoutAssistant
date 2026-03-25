@@ -13,6 +13,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
@@ -57,6 +58,7 @@ internal class WorkoutPersistenceCoordinator(
     private val exerciseInfoDao: () -> ExerciseInfoDao,
     private val exerciseSessionProgressionDao: () -> ExerciseSessionProgressionDao,
     private val workoutStoreRepository: () -> WorkoutStoreRepository,
+    private val workoutRecordDao: () -> WorkoutRecordDao,
     private val tag: String = "WorkoutViewModel"
 ) {
     data class SetHistorySnapshot(
@@ -323,6 +325,7 @@ internal class WorkoutPersistenceCoordinator(
         restHistoryDaoRef.insertAllWithVersionCheck(*newExecutedRestHistories.toTypedArray())
 
         if (isDone) {
+            workoutRecordDao().deleteByWorkoutId(selectedWorkoutSnapshot.id)
             val setHistoriesByExerciseId = newExecutedSetsHistory
                 .filter { it.exerciseId != null }
                 .groupBy { it.exerciseId!! }

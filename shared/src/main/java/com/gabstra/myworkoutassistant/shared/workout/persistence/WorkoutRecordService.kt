@@ -1,11 +1,9 @@
 package com.gabstra.myworkoutassistant.shared.workout.persistence
 
-import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
@@ -108,36 +106,5 @@ internal class WorkoutRecordService(
         workoutRecordDao().deleteById(recordId)
     }
 
-    suspend fun getInterruptedWorkouts(workouts: List<Workout>): List<InterruptedWorkout> {
-        val incompleteHistories = workoutHistoryDao().getAllUnfinishedWorkoutHistories(isDone = false)
-        val workoutRecordsByHistoryId = workoutRecordDao().getAll()
-            .associateBy { record -> record.workoutHistoryId }
-
-        val groupedByWorkoutId = incompleteHistories
-            .groupBy { it.workoutId }
-            .mapValues { (_, histories) ->
-                histories.maxByOrNull { it.startTime } ?: histories.first()
-            }
-
-        return groupedByWorkoutId.values.mapNotNull { workoutHistory ->
-            val sessionStatus = resolveWorkoutSessionStatus(
-                workoutHistory = workoutHistory,
-                workoutRecord = workoutRecordsByHistoryId[workoutHistory.id]
-            )
-            if (sessionStatus != WorkoutSessionStatus.INTERRUPTED) {
-                return@mapNotNull null
-            }
-
-            val workout = workouts.find { it.id == workoutHistory.workoutId }
-                ?: workouts.find { it.globalId == workoutHistory.globalId }
-                ?: return@mapNotNull null
-
-            InterruptedWorkout(
-                workoutHistory = workoutHistory,
-                workoutName = workout.name,
-                workoutId = workout.id
-            )
-        }
-    }
 }
 

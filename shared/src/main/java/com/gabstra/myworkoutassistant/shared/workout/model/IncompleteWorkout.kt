@@ -4,10 +4,10 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import java.util.UUID
 
 /**
- * Represents a workout that was started but not finished (interrupted).
- * Aligns with InterruptedWorkoutCopy for UI strings ("Interrupted workout", etc.).
+ * Snapshot of a started-but-not-finished workout (open history + ids) used for Wear recovery
+ * and sync. Aligns with [com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings].
  */
-data class InterruptedWorkout(
+data class IncompleteWorkout(
     val workoutHistory: WorkoutHistory,
     val workoutName: String,
     val workoutId: UUID

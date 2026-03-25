@@ -17,7 +17,7 @@ enum class CalibrationRecoveryChoice {
 }
 
 /**
- * Options selected by the user when resuming an interrupted workout after process death
+ * Options selected by the user when resuming an incomplete workout after process death
  * (e.g. continue vs restart timer, continue vs restart calibration).
  */
 data class RecoveryResumeOptions(

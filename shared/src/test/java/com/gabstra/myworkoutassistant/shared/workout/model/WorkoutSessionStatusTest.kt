@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.shared.workout.model
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -76,12 +77,11 @@ class WorkoutSessionStatusTest {
     }
 
     @Test
-    fun `missing active record resolves to interrupted`() {
+    fun `missing active record throws`() {
         val history = workoutHistory(isDone = false)
 
-        assertEquals(
-            WorkoutSessionStatus.INTERRUPTED,
+        assertThrows(IllegalStateException::class.java) {
             resolveWorkoutSessionStatus(history, null, now = now)
-        )
+        }
     }
 }

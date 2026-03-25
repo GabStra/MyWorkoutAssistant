@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.TypeConverters
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.typeconverters.ExerciseSessionSnapshotTypeConverter
@@ -79,6 +80,15 @@ abstract class AppDatabase : RoomDatabase() {
                         "app_database_2",
                     )
                         .fallbackToDestructiveMigration()
+                        .addCallback(object : RoomDatabase.Callback() {
+                            override fun onOpen(db: SupportSQLiteDatabase) {
+                                super.onOpen(db)
+                                db.execSQL(
+                                    "DELETE FROM workout_record WHERE workoutHistoryId NOT IN " +
+                                        "(SELECT id FROM workout_history)"
+                                )
+                            }
+                        })
                         .build()
                     INSTANCE = instance
                     instance

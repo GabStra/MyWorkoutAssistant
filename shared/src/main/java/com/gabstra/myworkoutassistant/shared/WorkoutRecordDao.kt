@@ -34,4 +34,9 @@ interface WorkoutRecordDao {
     //delete workout record by workout history id
     @Query("DELETE FROM workout_record WHERE workoutHistoryId = :workoutHistoryId")
     suspend fun deleteByWorkoutHistoryId(workoutHistoryId: UUID)
+
+    @Query(
+        "DELETE FROM workout_record WHERE workoutHistoryId NOT IN (SELECT id FROM workout_history)"
+    )
+    suspend fun deleteOrphanedRecords()
 }
