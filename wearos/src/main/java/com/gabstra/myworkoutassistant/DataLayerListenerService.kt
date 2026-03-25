@@ -24,6 +24,7 @@ import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.sync.WearBackupSyncEventPolicy
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -189,15 +190,36 @@ class DataLayerListenerService : WearableListenerService() {
             }
         }
 
-    private var completedTransactionIds: MutableSet<String>
-        get() {
-            val ids = sharedPreferences.getStringSet("completedTransactionIds", emptySet())
-                ?: emptySet()
-            return ids.toMutableSet()
+    private fun loadCompletedTransactionIds(): MutableList<String> {
+        val json = sharedPreferences.getString(PREFS_COMPLETED_ORDERED, null)
+        if (!json.isNullOrEmpty()) {
+            return try {
+                val typeToken = object : TypeToken<MutableList<String>>() {}.type
+                gson.fromJson<MutableList<String>>(json, typeToken) ?: mutableListOf()
+            } catch (e: Exception) {
+                Log.e("DataLayerListenerService", "Failed to parse completedTransactionIds list", e)
+                mutableListOf()
+            }
         }
-        set(value) {
-            sharedPreferences.edit { putStringSet("completedTransactionIds", value.toSet()) }
+        val legacy = sharedPreferences.getStringSet("completedTransactionIds", emptySet()) ?: emptySet()
+        return legacy.toList().takeLast(MAX_COMPLETED_TRANSACTION_IDS).toMutableList()
+    }
+
+    private fun saveCompletedTransactionIds(ids: MutableList<String>) {
+        val trimmed =
+            if (ids.size > MAX_COMPLETED_TRANSACTION_IDS) {
+                ids.takeLast(MAX_COMPLETED_TRANSACTION_IDS).toMutableList()
+            } else {
+                ids
+            }
+        sharedPreferences.edit {
+            putString(PREFS_COMPLETED_ORDERED, gson.toJson(trimmed))
+            remove("completedTransactionIds")
         }
+    }
+
+    private fun completedTransactionIdsContains(transactionId: String): Boolean =
+        transactionId in loadCompletedTransactionIds()
 
     private lateinit var workoutScheduleDao: WorkoutScheduleDao
 
@@ -217,6 +239,7 @@ class DataLayerListenerService : WearableListenerService() {
         
         // Detect service restart and handle incomplete syncs
         detectAndHandleServiceRestart()
+        reconcileBackupSyncStateIfNeeded()
     }
     
     /**
@@ -330,6 +353,22 @@ class DataLayerListenerService : WearableListenerService() {
         }
         sendBroadcast(intent)
         Log.d("DataLayerSync", "Cleaned up incomplete sync state and notified UI")
+    }
+
+    /**
+     * If persisted prefs are mutually inconsistent (e.g. process death mid-write), reset to a clean state.
+     */
+    private fun reconcileBackupSyncStateIfNeeded() {
+        val inconsistent =
+            (hasStartedSync && currentTransactionId == null) ||
+                (!hasStartedSync && currentTransactionId != null && expectedChunks > 0)
+        if (inconsistent) {
+            Log.w(
+                "DataLayerSync",
+                "Reconciling inconsistent backup sync prefs (hasStartedSync=$hasStartedSync, currentTransactionId=$currentTransactionId, expectedChunks=$expectedChunks)"
+            )
+            cleanupIncompleteSyncState()
+        }
     }
     
     /**
@@ -458,47 +497,46 @@ class DataLayerListenerService : WearableListenerService() {
 
     private fun markTransactionCompleted(transactionId: String?) {
         if (transactionId.isNullOrBlank()) return
-        val updatedIds = completedTransactionIds.toMutableSet()
-        updatedIds.add(transactionId)
-        completedTransactionIds = updatedIds
+        val updated = loadCompletedTransactionIds().toMutableList()
+        if (transactionId !in updated) {
+            updated.add(transactionId)
+        }
+        while (updated.size > MAX_COMPLETED_TRANSACTION_IDS) {
+            updated.removeAt(0)
+        }
+        saveCompletedTransactionIds(updated)
     }
 
     private fun shouldIgnoreBackupEvent(
         transactionId: String?,
         timestampStr: String?,
         isRetry: Boolean,
-        eventType: String
+        eventType: String,
+        ignoreUntilStartOrEnd: Boolean
     ): Boolean {
-        if (transactionId != null && completedTransactionIds.contains(transactionId)) {
-            Log.w(
-                "DataLayerSync",
-                "Ignoring replayed $eventType event for completed transaction: $transactionId"
-            )
-            return true
-        }
-
-        if (!isRetry && timestampStr != null) {
-            val staleThresholdMs = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
-                .getLong("stale_backup_event_threshold_ms", 300000L)
-            val eventTimestamp = timestampStr.toLongOrNull()
-            if (eventTimestamp != null) {
-                val eventAge = System.currentTimeMillis() - eventTimestamp
-                if (eventAge > staleThresholdMs) {
-                    Log.w(
-                        "DataLayerSync",
-                        "Ignoring stale $eventType event for transaction: $transactionId (age=${eventAge}ms, threshold=${staleThresholdMs}ms)"
-                    )
-                    return true
-                }
-            } else {
-                Log.w(
+        val staleThresholdMs = getSharedPreferences("sync_timeouts", Context.MODE_PRIVATE)
+            .getLong("stale_backup_event_threshold_ms", 300000L)
+        val nowMs = System.currentTimeMillis()
+        val ignore = WearBackupSyncEventPolicy.shouldIgnoreBackupEvent(
+            isTransactionCompleted = { completedTransactionIdsContains(it) },
+            transactionId = transactionId,
+            timestampStr = timestampStr,
+            isRetry = isRetry,
+            eventType = eventType,
+            ignoreUntilStartOrEnd = ignoreUntilStartOrEnd,
+            nowMs = nowMs,
+            staleThresholdMs = staleThresholdMs
+        )
+        if (!ignore && ignoreUntilStartOrEnd && eventType == "app_backup_start") {
+            val ts = timestampStr?.toLongOrNull()
+            if (ts != null && nowMs - ts > staleThresholdMs) {
+                Log.d(
                     "DataLayerSync",
-                    "Received $eventType with invalid timestamp format for transaction: $transactionId"
+                    "Stale-age exempt for app_backup_start while gated (recovery), tx=$transactionId"
                 )
             }
         }
-
-        return false
+        return ignore
     }
     
     /**
@@ -890,7 +928,8 @@ class DataLayerListenerService : WearableListenerService() {
                                     transactionId = transactionId,
                                     timestampStr = timestampStr,
                                     isRetry = isRetry,
-                                    eventType = eventType
+                                    eventType = eventType,
+                                    ignoreUntilStartOrEnd = ignoreUntilStartOrEnd
                                 )
                             ) {
                                 return@forEach
@@ -1274,6 +1313,10 @@ class DataLayerListenerService : WearableListenerService() {
                                                         )
                                                     }
 
+                                                // Re-register alarms here so sync completes reliably when MainActivity
+                                                // is not running (dynamic WearDataLayerReceiver would not receive APP_BACKUP_END).
+                                                WorkoutAlarmScheduler(applicationContext).rescheduleAllWorkouts()
+
                                                 val intent = Intent(INTENT_ID).apply {
                                                     putExtra(
                                                         APP_BACKUP_END_JSON,
@@ -1538,18 +1581,7 @@ class DataLayerListenerService : WearableListenerService() {
         } catch (exception: Exception) {
             exception.printStackTrace()
             Log.e("DataLayerListenerService", "Error processing data", exception)
-            removeTimeout()
-            removeRetryTimeout()
-            val intent = Intent(INTENT_ID).apply {
-                putExtra(APP_BACKUP_FAILED, APP_BACKUP_FAILED)
-                setPackage(packageName)
-            }
-            sendBroadcast(intent)
-            backupChunks = mutableMapOf()
-            receivedChunkIndices = mutableSetOf()
-            expectedChunks = 0
-            hasStartedSync = false
-            ignoreUntilStartOrEnd = true
+            cleanupIncompleteSyncState()
         }
     }
 
@@ -1626,6 +1658,9 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     companion object {
+        private const val MAX_COMPLETED_TRANSACTION_IDS = 128
+        private const val PREFS_COMPLETED_ORDERED = "completedTransactionIdsOrdered"
+
         const val CLEAR_ERROR_LOGS_PATH = "/clearErrorLogs"
         const val ERROR_LOGS_SYNC_PATH = "/errorLogsSync"
         const val INTENT_ID = "com.gabstra.myworkoutassistant.workoutstore"

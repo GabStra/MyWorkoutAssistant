@@ -12,6 +12,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import java.util.regex.Pattern
 
 /**
@@ -208,7 +209,7 @@ class WearWorkoutDriver(
     }
 
     /**
-     * Waits until the recovery (interrupted workout) dialog is visible.
+     * Waits until the recovery (incomplete workout) dialog is visible.
      * Returns true if any of the recovery dialog indicators appear within [timeoutMs].
      */
     fun waitForRecoveryDialog(timeoutMs: Long): Boolean {
@@ -226,7 +227,7 @@ class WearWorkoutDriver(
     fun isRecoveryDialogVisible(): Boolean {
         return device.hasObject(By.desc("Recovery resume action")) ||
             device.hasObject(By.desc("Recovery discard action")) ||
-            device.hasObject(By.text("Resume or discard this interrupted workout."))
+            device.hasObject(By.text(IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY))
     }
 
     /**

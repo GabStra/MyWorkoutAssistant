@@ -7,13 +7,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.wear.compose.material3.ButtonColors
 import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.Red
 
+/**
+ * Tonal filled label button — see [WearTonalButton] and the matrix in [WearAppButtons].
+ */
 @Composable
 fun ButtonWithText(
     modifier: Modifier = Modifier,
@@ -23,19 +25,14 @@ fun ButtonWithText(
     colors: ButtonColors = ButtonDefaults.filledTonalButtonColors(),
     onClick: () -> Unit
 ) {
-    FilledTonalButton(
+    WearTonalButton(
         modifier = modifier,
         transformation = transformation,
+        text = text,
         enabled = enabled,
         colors = colors,
         onClick = onClick,
-    ) {
-        Text(
-            modifier = Modifier.fillMaxWidth(),
-            text = text,
-            textAlign = TextAlign.Center,
-        )
-    }
+    )
 }
 
 @Composable

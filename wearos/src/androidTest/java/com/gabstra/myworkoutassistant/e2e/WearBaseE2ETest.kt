@@ -12,6 +12,7 @@ import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.helpers.TestWorkoutStoreSeeder
@@ -286,7 +287,7 @@ abstract class WearBaseE2ETest {
     private fun isRecoveryDialogVisible(): Boolean {
         return device.hasObject(By.desc("Recovery resume action")) ||
             device.hasObject(By.desc("Recovery discard action")) ||
-            device.hasObject(By.text("Resume or discard this interrupted workout."))
+            device.hasObject(By.text(IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY))
     }
 
     protected fun createWorkoutDriver(): WearWorkoutDriver = interactionDriver

@@ -10,7 +10,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDateTime
 import java.util.UUID
@@ -38,13 +37,13 @@ class WorkoutHistorySyncRequestModeTest {
     }
 
     @Test
-    fun `non set non completed state does not request sync`() {
+    fun `rest state requests debounced sync while workout is still active`() {
         val requestMode = resolveWorkoutHistorySyncRequestMode(
             currentState = createRestState(),
             isDone = false
         )
 
-        assertNull(requestMode)
+        assertEquals(WorkoutHistorySyncRequestMode.Debounced, requestMode)
     }
 
     private fun createSetState(exerciseId: UUID = UUID.randomUUID()): WorkoutState.Set {

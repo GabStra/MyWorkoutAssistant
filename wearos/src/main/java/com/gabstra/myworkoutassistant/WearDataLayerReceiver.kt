@@ -8,7 +8,6 @@ import android.util.Log
 import androidx.navigation.NavController
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
-import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
@@ -75,7 +74,7 @@ internal class WearDataLayerReceiver(
                 popUpTo(0) { inclusive = true }
             }
         }
-        WorkoutAlarmScheduler(activity).rescheduleAllWorkouts()
+        // Workout alarms are re-registered in DataLayerListenerService after backup DB commit.
     }
 
     private fun handleBackupProgress(intent: Intent) {

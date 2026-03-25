@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Build
 import android.os.PowerManager
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -26,6 +28,24 @@ import com.gabstra.myworkoutassistant.data.findActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Window brightness in 0..1 from [Settings.System.SCREEN_BRIGHTNESS] (user/slider value),
+ * or [WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE] if unavailable.
+ */
+private fun readSystemBrightnessAsWindowOverride(context: Context): Float {
+    return try {
+        val raw = Settings.System.getInt(
+            context.contentResolver,
+            Settings.System.SCREEN_BRIGHTNESS
+        )
+        raw.coerceIn(0, 255) / 255f
+    } catch (_: Settings.SettingNotFoundException) {
+        WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    } catch (_: SecurityException) {
+        WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
+}
 
 @Composable
 @SuppressLint("WakelockTimeout")
@@ -58,6 +78,11 @@ fun KeepOn(
         window?.attributes = window?.attributes?.apply {
             screenBrightness = brightness
         }
+    }
+
+    /** Lock brightness to the current system slider level until in-app dim kicks in. */
+    fun applyAwakeBrightness() {
+        setScreenBrightness(readSystemBrightnessAsWindowOverride(context))
     }
 
     fun applyWindowFlags() {
@@ -104,17 +129,19 @@ fun KeepOn(
         dimmingJob?.cancel()
 
         if (isDimmed) {
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
         }
 
         if (updatedEnableDimming) {
+            applyAwakeBrightness()
             dimmingJob = scope.launch {
                 delay(updatedDimDelay)
                 // Keep the display alive but visibly dimmed instead of completely off
                 setScreenBrightness(0.05f)
                 isDimmed = true
             }
+        } else {
+            applyAwakeBrightness()
         }
     }
 

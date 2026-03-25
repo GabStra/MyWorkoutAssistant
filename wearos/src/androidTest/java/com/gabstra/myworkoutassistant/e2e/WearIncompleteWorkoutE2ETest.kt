@@ -20,7 +20,7 @@ import org.junit.runners.MethodSorters
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
+class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
 
     private lateinit var workoutDriver: WearWorkoutDriver
 
@@ -35,7 +35,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
      * Clears workout_state prefs and relaunches; asserts no recovery dialog appears.
      */
     @Test
-    fun cleanLaunch_noInterruptedWorkout_doesNotShowRecoveryDialog() {
+    fun cleanLaunch_noIncompleteWorkout_doesNotShowRecoveryDialog() {
         context.getSharedPreferences("workout_state", Context.MODE_PRIVATE).edit().clear().commit()
         device.pressHome()
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
@@ -46,7 +46,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
 
         val noRecoveryDialog = !workoutDriver.waitForRecoveryDialog(3_000)
         require(noRecoveryDialog) {
-            "Recovery dialog should not appear when there are no interrupted workouts"
+            "Recovery dialog should not appear when there are no incomplete workouts"
         }
     }
 
@@ -54,7 +54,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
     fun recoveryDialog_discard_clearsWorkoutAndNextLaunchShowsNoDialog() {
         MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         val db = AppDatabase.getDatabase(context)
-        val interruptedBefore = runBlocking {
+        val incompleteBefore = runBlocking {
             db.workoutHistoryDao().getAllWorkoutHistoriesByIsDone(false).size
         }
         launchAppFromHome()
@@ -64,7 +64,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
-        forceActiveWorkoutIntoInterruptedState(db)
+        forceActiveWorkoutIntoIncompleteState(db)
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -102,16 +102,16 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         launchAppFromHome()
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
 
-        val interruptedCount = runBlocking {
+        val incompleteCount = runBlocking {
             db.workoutHistoryDao().getAllWorkoutHistoriesByIsDone(false).size
         }
-        require(interruptedCount <= interruptedBefore) {
-            "Discard should clear the newly interrupted workout history row. before=$interruptedBefore after=$interruptedCount"
+        require(incompleteCount <= incompleteBefore) {
+            "Discard should clear the newly incomplete workout history row. before=$incompleteBefore after=$incompleteCount"
         }
     }
 
     @Test
-    fun recoveryDialog_dismiss_closesDialogWorkoutRemainsInterrupted() {
+    fun recoveryDialog_dismiss_closesDialogWorkoutRemainsIncomplete() {
         MultipleSetsAndRestsWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
         startWorkout(MultipleSetsAndRestsWorkoutStoreFixture.getWorkoutName())
@@ -120,7 +120,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
-        forceActiveWorkoutIntoInterruptedState(AppDatabase.getDatabase(context))
+        forceActiveWorkoutIntoIncompleteState(AppDatabase.getDatabase(context))
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -139,7 +139,7 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
 
         val dialogAppearsAgain = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
         require(dialogAppearsAgain) {
-            "Recovery dialog should appear again on relaunch (workout still interrupted)"
+            "Recovery dialog should appear again on relaunch (workout still incomplete)"
         }
     }
 
@@ -291,9 +291,9 @@ class WearInterruptedWorkoutE2ETest : WearBaseE2ETest() {
         return readRestTimerSecondsFromScreen()
     }
 
-    private fun forceActiveWorkoutIntoInterruptedState(db: AppDatabase) = runBlocking {
+    private fun forceActiveWorkoutIntoIncompleteState(db: AppDatabase) = runBlocking {
         val workoutRecords = db.workoutRecordDao().getAll()
-        require(workoutRecords.isNotEmpty()) { "Expected an active workout record before forcing interruption" }
+        require(workoutRecords.isNotEmpty()) { "Expected an active workout record before forcing incomplete state" }
         workoutRecords.forEach { workoutRecord ->
             db.workoutRecordDao().deleteById(workoutRecord.id)
         }

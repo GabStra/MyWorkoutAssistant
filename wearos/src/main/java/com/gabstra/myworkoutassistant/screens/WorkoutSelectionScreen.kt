@@ -48,7 +48,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OpenOnPhoneDialog
@@ -64,6 +63,7 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.openOnPhoneDialogCurvedText
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.SyncStatusBadge
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
@@ -363,11 +363,12 @@ fun WorkoutSelectionScreen(
                         Spacer(modifier = Modifier.height(5.dp))
                     }
                     item {
-                        Button(
+                        WearPrimaryButton(
                             modifier = Modifier
                                 .transformedHeight(this, spec)
                                 .animateItem(),
                             transformation = SurfaceTransformation(spec),
+                            text = "Open reminder settings",
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 val intent = Intent(
@@ -377,14 +378,7 @@ fun WorkoutSelectionScreen(
 
                                 context.startActivity(intent)
                             }
-                        ) {
-                            Text(
-                                text = "Open reminder settings",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
+                        )
                     }
                 }
 
@@ -422,11 +416,12 @@ fun WorkoutSelectionScreen(
                     }
                     if (viewModel.isPhoneConnectedAndHasApp) {
                         item {
-                            Button(
+                            WearPrimaryButton(
                                 modifier = Modifier
                                     .transformedHeight(this, spec)
                                     .animateItem(),
                                 transformation = SurfaceTransformation(spec),
+                                text = "Open phone app",
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
                                     showOpenOnPhoneDialog = true
@@ -439,14 +434,7 @@ fun WorkoutSelectionScreen(
                                         )
                                     }
                                 }
-                            ) {
-                                Text(
-                                    text = "Open phone app",
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            }
+                            )
                         }
                     }
                 } else {

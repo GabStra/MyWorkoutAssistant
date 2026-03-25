@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
@@ -183,13 +183,14 @@ fun PreparingPolarScreen(
                 }
             }else{
                 item{
-                    Button(
+                    WearPrimaryButton(
                         modifier = Modifier
                             .fillMaxWidth()
                             .transformedHeight(this, spec),
                         transformation = SurfaceTransformation(spec),
+                        text = "Skip",
                         onClick = {
-                            if (hasTriggeredNextState) return@Button
+                            if (hasTriggeredNextState) return@WearPrimaryButton
                             hasTriggeredNextState = true
                             hapticsViewModel.doGentleVibration()
 
@@ -207,15 +208,7 @@ fun PreparingPolarScreen(
 
                             onReady()
                         },
-                    ) {
-                        Text(
-                            modifier = Modifier.fillMaxWidth(),
-                            text = "Skip",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
+                    )
                 }
                 item{
                     ButtonWithText(

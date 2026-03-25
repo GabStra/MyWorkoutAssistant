@@ -36,12 +36,12 @@ import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
+import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOptions
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Locale.getDefault
@@ -49,11 +49,11 @@ import java.util.Locale.getDefault
 @Composable
 internal fun RecoveryDialog(
     show: Boolean,
-    workout: InterruptedWorkout?,
+    workout: IncompleteWorkout?,
     uiState: RecoveryPromptUiState,
     onDismiss: () -> Unit,
-    onResume: (InterruptedWorkout, RecoveryResumeOptions) -> Unit,
-    onDiscard: (InterruptedWorkout) -> Unit
+    onResume: (IncompleteWorkout, RecoveryResumeOptions) -> Unit,
+    onDiscard: (IncompleteWorkout) -> Unit
 ) {
     if (!show || workout == null) return
 
@@ -129,7 +129,7 @@ internal fun RecoveryDialog(
                             transformation = SurfaceTransformation(spec)
                         ) {
                             Text(
-                                text = InterruptedWorkoutCopy.SINGULAR,
+                                text = IncompleteWorkoutStrings.SINGULAR,
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -139,7 +139,7 @@ internal fun RecoveryDialog(
 
                     item {
                         RecoveryBodyText(
-                            text = "Resume or discard this interrupted workout.",
+                            text = IncompleteWorkoutStrings.RECOVERY_RESUME_OR_DISCARD_BODY,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec)
@@ -200,7 +200,7 @@ internal fun RecoveryDialog(
                     if (showTimerChoice) {
                         item {
                             RecoverySectionLabel(
-                                text = "Timer recovery",
+                                text = IncompleteWorkoutStrings.RECOVERY_SECTION_TIMER,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec)
@@ -242,7 +242,7 @@ internal fun RecoveryDialog(
                     if (showCalibrationChoice) {
                         item {
                             RecoverySectionLabel(
-                                text = "Calibration recovery",
+                                text = IncompleteWorkoutStrings.RECOVERY_SECTION_CALIBRATION,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec)
@@ -311,7 +311,7 @@ internal fun RecoveryDialog(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = "Recovery discard action",
-                            text = "Discard",
+                            text = IncompleteWorkoutStrings.DISCARD_BUTTON,
                             onClick = { onDiscard(workout) }
                         )
                     }

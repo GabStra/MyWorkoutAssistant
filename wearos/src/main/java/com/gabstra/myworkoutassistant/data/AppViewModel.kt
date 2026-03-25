@@ -26,7 +26,7 @@ import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
+import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -169,8 +169,8 @@ open class AppViewModel : WorkoutViewModel() {
     private val _showRecoveryPrompt = mutableStateOf(false)
     val showRecoveryPrompt: State<Boolean> = _showRecoveryPrompt
 
-    private val _recoveryWorkout = mutableStateOf<InterruptedWorkout?>(null)
-    val recoveryWorkout: State<InterruptedWorkout?> = _recoveryWorkout
+    private val _recoveryWorkout = mutableStateOf<IncompleteWorkout?>(null)
+    val recoveryWorkout: State<IncompleteWorkout?> = _recoveryWorkout
     private val _recoveryPromptUiState = mutableStateOf(RecoveryPromptUiState())
     internal val recoveryPromptUiState: State<RecoveryPromptUiState> = _recoveryPromptUiState
 
@@ -189,24 +189,24 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     internal fun showRecoveryPrompt(
-        interruptedWorkout: InterruptedWorkout,
+        incompleteWorkout: IncompleteWorkout,
         checkpoint: WorkoutRecoveryCheckpoint?
     ) {
         val showCalibrationOptions = checkpoint?.isCalibrationSetExecution == true ||
             checkpoint?.stateType == RecoveryStateType.CALIBRATION_LOAD ||
             checkpoint?.stateType == RecoveryStateType.CALIBRATION_RIR ||
             checkpoint?.stateType == RecoveryStateType.AUTO_REGULATION_RIR
-        val showTimerOptions = !showCalibrationOptions && shouldShowTimerOptions(checkpoint, interruptedWorkout.workoutId)
-        val exerciseName = resolveRecoveryExerciseName(interruptedWorkout, checkpoint)
+        val showTimerOptions = !showCalibrationOptions && shouldShowTimerOptions(checkpoint, incompleteWorkout.workoutId)
+        val exerciseName = resolveRecoveryExerciseName(incompleteWorkout, checkpoint)
 
         _recoveryPromptUiState.value = RecoveryPromptUiState(
-            workoutName = interruptedWorkout.workoutName,
+            workoutName = incompleteWorkout.workoutName,
             exerciseName = exerciseName.orEmpty(),
-            workoutStartTime = interruptedWorkout.workoutHistory.startTime,
+            workoutStartTime = incompleteWorkout.workoutHistory.startTime,
             showTimerOptions = showTimerOptions,
             showCalibrationOptions = showCalibrationOptions
         )
-        _recoveryWorkout.value = interruptedWorkout
+        _recoveryWorkout.value = incompleteWorkout
         _showRecoveryPrompt.value = true
         pendingRecoveryCheckpoint = checkpoint
     }
@@ -226,8 +226,8 @@ open class AppViewModel : WorkoutViewModel() {
         clearRecoveryPromptState()
     }
 
-    fun prepareResumeWorkout(interruptedWorkout: InterruptedWorkout) {
-        prepareResumeWorkout(interruptedWorkout.workoutId, interruptedWorkout.workoutHistory.id)
+    fun prepareResumeWorkout(incompleteWorkout: IncompleteWorkout) {
+        prepareResumeWorkout(incompleteWorkout.workoutId, incompleteWorkout.workoutHistory.id)
     }
 
     private fun clearRecoveryPromptState() {
@@ -268,12 +268,12 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private fun resolveRecoveryExerciseName(
-        interruptedWorkout: InterruptedWorkout,
+        incompleteWorkout: IncompleteWorkout,
         checkpoint: WorkoutRecoveryCheckpoint?
     ): String? {
         return checkpoint
-            ?.takeIf { it.workoutId == interruptedWorkout.workoutId }
-            ?.let { findExerciseForCheckpoint(it, interruptedWorkout.workoutId)?.name }
+            ?.takeIf { it.workoutId == incompleteWorkout.workoutId }
+            ?.let { findExerciseForCheckpoint(it, incompleteWorkout.workoutId)?.name }
     }
 
     private fun findExerciseForCheckpoint(
@@ -305,23 +305,23 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     /**
-     * Discards an interrupted workout: deletes the workout record and persisted interrupted history
+     * Discards an incomplete workout: deletes the workout record and persisted history row
      * locally, then notifies mobile to mirror the deletion.
      */
-    fun discardInterruptedWorkout(interruptedWorkout: InterruptedWorkout) {
+    fun discardIncompleteWorkout(incompleteWorkout: IncompleteWorkout) {
         launchIO {
-            setHistoryDao.deleteByWorkoutHistoryId(interruptedWorkout.workoutHistory.id)
-            restHistoryDao.deleteByWorkoutHistoryId(interruptedWorkout.workoutHistory.id)
-            workoutRecordDao.deleteByWorkoutId(interruptedWorkout.workoutId)
-            workoutHistoryDao.deleteById(interruptedWorkout.workoutHistory.id)
-            sendDiscardInterruptedWorkoutToPhone(
-                workoutId = interruptedWorkout.workoutId,
-                workoutHistoryId = interruptedWorkout.workoutHistory.id
+            setHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
+            restHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
+            workoutRecordDao.deleteByWorkoutId(incompleteWorkout.workoutId)
+            workoutHistoryDao.deleteById(incompleteWorkout.workoutHistory.id)
+            sendDiscardIncompleteWorkoutToPhone(
+                workoutId = incompleteWorkout.workoutId,
+                workoutHistoryId = incompleteWorkout.workoutHistory.id
             )
         }
     }
 
-    private suspend fun sendDiscardInterruptedWorkoutToPhone(
+    private suspend fun sendDiscardIncompleteWorkoutToPhone(
         workoutId: UUID,
         workoutHistoryId: UUID
     ) {

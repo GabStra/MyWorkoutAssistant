@@ -18,7 +18,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -95,20 +94,13 @@ fun PlateauInfoDialog(
                             textAlign = TextAlign.Center
                         )
 
-                        // Button now scrolls with the text
-                        Button(
+                        WearPrimaryButton(
+                            text = buttonText,
                             onClick = {
                                 hapticsViewModel?.doGentleVibration()
                                 onDismiss()
                             },
-                        ) {
-                            Text(
-                                text = buttonText,
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
+                        )
                     }
                 }
             }

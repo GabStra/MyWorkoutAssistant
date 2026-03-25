@@ -32,7 +32,6 @@ import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
@@ -46,6 +45,7 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.composables.ButtonWithText
+import com.gabstra.myworkoutassistant.composables.WearPrimaryButton
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.LoadingText
 import com.gabstra.myworkoutassistant.composables.OutlinedButtonWithText
@@ -55,7 +55,7 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import kotlinx.coroutines.delay
 
 @Composable
@@ -151,7 +151,7 @@ fun WorkoutDetailScreen(
         ) {
             CircularProgressIndicator()
             Spacer(Modifier.height(8.dp))
-            LoadingText(baseText = "Loading")
+            LoadingText(baseText = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS)
         }
         return
     }
@@ -211,13 +211,28 @@ fun WorkoutDetailScreen(
                         }
                     }
 
+                    if (hasWorkoutRecord) {
+                        item {
+                            Text(
+                                text = IncompleteWorkoutStrings.SINGULAR,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .transformedHeight(this, spec),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
                     item {
-                        Button(
+                        WearPrimaryButton(
                             modifier = Modifier
                                 .semantics { contentDescription = "Start workout" }
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
+                            text = "Start",
                             onClick = {
                                 hapticsViewModel.doGentleVibration()
                                 if (hasWorkoutRecord) {
@@ -226,47 +241,33 @@ fun WorkoutDetailScreen(
                                     permissionLauncherStart.launch(basePermissions.toTypedArray())
                                 }
                             },
-                        ) {
-                            Text(
-                                modifier = Modifier.fillMaxWidth(),
-                                text = "Start",
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
+                        )
                     }
 
                     if (hasWorkoutRecord) {
                         item {
-                            Button(
+                            WearPrimaryButton(
                                 modifier = Modifier
-                                    .semantics { contentDescription = "Resume workout" }
+                                    .semantics { contentDescription = "Resume incomplete workout" }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
+                                text = "Resume",
                                 onClick = {
                                     hapticsViewModel.doGentleVibration()
                                     permissionLauncherResume.launch(basePermissions.toTypedArray())
                                 }
-                            ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = "Resume",
-                                    textAlign = TextAlign.Center,
-                                    style =  MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            }
+                            )
                         }
 
                         item {
                             OutlinedButtonWithText(
                                 modifier = Modifier
+                                    .semantics { contentDescription = "Discard incomplete workout" }
                                     .fillMaxWidth()
                                     .transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
-                                text = InterruptedWorkoutCopy.DELETE_BUTTON,
+                                text = IncompleteWorkoutStrings.DISCARD_BUTTON,
                                 borderColor = Red,
                                 textColor = Red,
                                 onClick = {
@@ -295,8 +296,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showDeleteDialog,
-        title = InterruptedWorkoutCopy.DELETE_TITLE,
-        message = InterruptedWorkoutCopy.DELETE_MESSAGE,
+        title = IncompleteWorkoutStrings.DELETE_TITLE,
+        message = IncompleteWorkoutStrings.DELETE_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             viewModel.deleteWorkoutRecord()
@@ -321,8 +322,8 @@ fun WorkoutDetailScreen(
 
     CustomDialogYesOnLongPress(
         show = showStartConfirmationDialog,
-        title = "Start a new workout",
-        message = InterruptedWorkoutCopy.START_NEW_WORKOUT_MESSAGE,
+        title = IncompleteWorkoutStrings.START_NEW_WORKOUT_TITLE,
+        message = IncompleteWorkoutStrings.START_NEW_WORKOUT_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
             permissionLauncherStart.launch(basePermissions.toTypedArray())
