@@ -54,8 +54,10 @@ import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionDisplayLabels
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -88,7 +90,8 @@ fun WorkoutOverviewTab(
     onPendingComponentBringIntoViewConsumed: () -> Unit,
     onRequestStartWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
-    onRequestDeleteInterruptedWorkout: () -> Unit,
+    onRequestDeleteIncompleteWorkout: () -> Unit,
+    onRequestClearAllIncompleteSessions: () -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     modifier: Modifier = Modifier
@@ -152,7 +155,8 @@ fun WorkoutOverviewTab(
                     timeFormatter = resumeTimeFormatter,
                     onRequestStartWorkout = onRequestStartWorkout,
                     onResumeWorkout = onResumeWorkout,
-                    onRequestDeleteInterruptedWorkout = onRequestDeleteInterruptedWorkout
+                    onRequestDeleteIncompleteWorkout = onRequestDeleteIncompleteWorkout,
+                    onRequestClearAllIncompleteSessions = onRequestClearAllIncompleteSessions
                 )
 
                 Spacer(Modifier.height(Spacing.md))
@@ -169,7 +173,7 @@ fun WorkoutOverviewTab(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Reminders",
+                            text = "Alarms",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -338,30 +342,30 @@ private fun WorkoutSessionActionCard(
     timeFormatter: DateTimeFormatter,
     onRequestStartWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
-    onRequestDeleteInterruptedWorkout: () -> Unit
+    onRequestDeleteIncompleteWorkout: () -> Unit,
+    onRequestClearAllIncompleteSessions: () -> Unit
 ) {
     val sessionStatus = workoutResumeInfo?.sessionStatus
     val hasResumeAction = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR,
-        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-        WorkoutSessionStatus.INTERRUPTED -> true
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> true
         WorkoutSessionStatus.COMPLETED,
         null -> false
     }
     val titleText = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Workout in progress on watch"
-        WorkoutSessionStatus.STALE_ON_WEAR -> "Watch not responding"
-        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-        WorkoutSessionStatus.INTERRUPTED -> "Interrupted workout"
+        WorkoutSessionStatus.STALE_ON_WEAR ->
+            workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
+                ?: WorkoutSessionDisplayLabels.STALE_ON_WATCH
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> IncompleteWorkoutStrings.SINGULAR
         WorkoutSessionStatus.COMPLETED,
-        null -> "Interrupted workout"
+        null -> IncompleteWorkoutStrings.SINGULAR
     }
     val primaryActionText = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR -> "Resume on phone"
-        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-        WorkoutSessionStatus.INTERRUPTED -> "Resume workout"
+        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Resume workout"
         WorkoutSessionStatus.COMPLETED,
         null -> "Resume workout"
     }
@@ -383,7 +387,7 @@ private fun WorkoutSessionActionCard(
                         strokeWidth = 2.dp
                     )
                     Text(
-                        text = "Checking for an interrupted session...",
+                        text = IncompleteWorkoutStrings.CHECKING_SESSION,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -437,13 +441,18 @@ private fun WorkoutSessionActionCard(
                         text = "Start over",
                         onClick = onRequestStartWorkout
                     )
+                    AppPrimaryOutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                        onClick = onRequestClearAllIncompleteSessions
+                    )
                     Box(
                         modifier = Modifier.fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = InterruptedWorkoutCopy.DELETE_BUTTON,
-                            modifier = Modifier.clickable(onClick = onRequestDeleteInterruptedWorkout),
+                            text = IncompleteWorkoutStrings.DELETE_BUTTON,
+                            modifier = Modifier.clickable(onClick = onRequestDeleteIncompleteWorkout),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -514,7 +523,6 @@ private fun buildResumeDescription(
             WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> append("This workout is still running on your watch. Resume on phone at ")
             WorkoutSessionStatus.STALE_ON_WEAR -> append("Your watch stopped communicating. Resume on phone at ")
             WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-            WorkoutSessionStatus.INTERRUPTED,
             WorkoutSessionStatus.COMPLETED -> append("Resume at ")
         }
         append(workoutResumeInfo.exerciseName)

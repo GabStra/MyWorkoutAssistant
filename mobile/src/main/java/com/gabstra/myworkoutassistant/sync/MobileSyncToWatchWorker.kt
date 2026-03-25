@@ -132,16 +132,18 @@ class MobileSyncToWatchWorker(
             workerSyncMutex.withLock {
                 sendAppBackup(dataClient, appBackup, context)
             }
+            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(context.applicationContext)
             Result.success()
         }.getOrElse { exception ->
             Log.e(TAG, "Mobile sync worker failed", exception)
+            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
             Result.retry()
         }
     }
 
     companion object {
         private const val TAG = "MobileSyncToWatchWorker"
-        private const val UNIQUE_WORK_NAME = "mobile_sync_to_watch"
+        const val UNIQUE_WORK_NAME = "mobile_sync_to_watch"
         private val workerSyncMutex = Mutex()
 
         fun enqueue(context: Context) {

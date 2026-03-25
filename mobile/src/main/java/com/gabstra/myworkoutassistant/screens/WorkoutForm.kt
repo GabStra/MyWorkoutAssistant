@@ -65,7 +65,7 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
-import com.gabstra.myworkoutassistant.composables.DialogTextButton
+import com.gabstra.myworkoutassistant.composables.DialogOutlinedButton
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
@@ -240,18 +240,18 @@ fun WorkoutForm(
 
                 FormSectionTitle(text = "Schedule")
                 val scheduleSummary = remember(schedules.value.size) {
-                    if (schedules.value.isEmpty()) "No reminders yet"
-                    else "${schedules.value.size} reminder${if (schedules.value.size == 1) "" else "s"}"
+                    if (schedules.value.isEmpty()) "No alarms yet"
+                    else "${schedules.value.size} alarm${if (schedules.value.size == 1) "" else "s"}"
                 }
                 CollapsibleSection(
-                    title = "Reminders",
+                    title = "Alarms",
                     summary = scheduleSummary,
                     expanded = expandedSchedule,
                     onToggle = { expandedSchedule = !expandedSchedule }
                 ) {
                     if (schedules.value.isEmpty()) {
                         Text(
-                            text = "No reminders yet.",
+                            text = "No alarms yet.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     } else {
@@ -429,7 +429,7 @@ fun ScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = if (isEditing) "Edit reminder" else "Add reminder",
+        title = if (isEditing) "Edit alarm" else "Add alarm",
         body = {
             Column(
                 modifier = Modifier
@@ -564,13 +564,13 @@ fun ScheduleDialog(
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
             confirmButton = {
-                DialogTextButton(
+                DialogOutlinedButton(
                     text = "OK",
                     onClick = { showDatePicker.value = false }
                 )
             },
             dismissButton = {
-                DialogTextButton(
+                DialogOutlinedButton(
                     text = "Cancel",
                     onClick = { showDatePicker.value = false }
                 )
@@ -674,7 +674,7 @@ fun ScheduleListItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = if (schedule.label.isNotEmpty()) schedule.label else "Reminder ${index + 1}",
+                text = if (schedule.label.isNotEmpty()) schedule.label else "Alarm ${index + 1}",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -726,7 +726,7 @@ fun BatchScheduleDialog(
 
     StandardDialog(
         onDismissRequest = onDismiss,
-        title = "Add multiple reminders",
+        title = "Add multiple alarms",
         body = {
             Column(
                 modifier = Modifier
@@ -944,13 +944,13 @@ fun BatchScheduleDialog(
         DatePickerDialog(
             onDismissRequest = { showDatePicker.value = false },
             confirmButton = {
-                DialogTextButton(
+                DialogOutlinedButton(
                     text = "OK",
                     onClick = { showDatePicker.value = false }
                 )
             },
             dismissButton = {
-                DialogTextButton(
+                DialogOutlinedButton(
                     text = "Cancel",
                     onClick = { showDatePicker.value = false }
                 )

@@ -41,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIngest
+import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -343,9 +344,16 @@ class DataLayerListenerService : WearableListenerService() {
             return false
         }
 
-        val existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workoutId) ?: return true
-        val existingHistory =
+        var existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workoutId) ?: return true
+        var existingHistory =
             workoutHistoryDao.getWorkoutHistoryById(existingRecord.workoutHistoryId) ?: return true
+
+        if (existingHistory.isDone) {
+            workoutRecordDao.deleteByWorkoutId(workoutId)
+            existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(workoutId) ?: return true
+            existingHistory =
+                workoutHistoryDao.getWorkoutHistoryById(existingRecord.workoutHistoryId) ?: return true
+        }
 
         val decision = decideWorkoutRecordIngest(
             incomingHistory = incomingHistory,
@@ -808,6 +816,8 @@ class DataLayerListenerService : WearableListenerService() {
                                 )
                                 if (!ignoreUntilStartOrEnd) {
                                     scope.launch(Dispatchers.IO) {
+                                        PhoneSyncToWatchSuppressor.enterWearInboundApply()
+                                        try {
                                         var processingStep = "initialization"
                                         try {
                                             processingStep = "validating chunks"
@@ -1040,6 +1050,8 @@ class DataLayerListenerService : WearableListenerService() {
                                                     workoutRecordDao.insert(workoutHistoryStore.WorkoutRecord!!)
                                                 }
 
+                                                // Completed incoming history always clears workout_record for this workout below,
+                                                // independent of shouldApplyIncomingWorkoutRecord; do not remove or reorder.
                                                 if (workoutHistoryStore.WorkoutHistory.isDone) {
                                                     exerciseInfoDao.insertAllWithVersionCheck(*workoutHistoryStore.ExerciseInfos.toTypedArray())
                                                     exerciseSessionProgressionDao.insertAllWithVersionCheck(
@@ -1279,6 +1291,9 @@ class DataLayerListenerService : WearableListenerService() {
                                             hasStartedSync = false
                                             ignoreUntilStartOrEnd = false
                                             currentTransactionId = null
+                                        }
+                                        } finally {
+                                            PhoneSyncToWatchSuppressor.exitWearInboundApply()
                                         }
                                     }
                                 }

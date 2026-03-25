@@ -120,7 +120,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
+import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
@@ -244,6 +244,7 @@ class MainActivity : ComponentActivity() {
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+                PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(this@MainActivity)
             }
         }
     }
@@ -255,6 +256,7 @@ class MainActivity : ComponentActivity() {
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+                PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(this@MainActivity)
             }
         }
     }
@@ -318,6 +320,8 @@ class MainActivity : ComponentActivity() {
 
         // Clean up duplicate backup files once at app startup (after storage access check)
         requestBackupCleanup()
+
+        PhoneToWatchSyncCoordinator.install(applicationContext)
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -438,6 +442,33 @@ fun MyWorkoutAssistantNavHost(
 
     val initialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState(initial = false)
     val scope = rememberCoroutineScope()
+
+    val clearAllIncompleteSessions: () -> Unit = {
+        scope.launch {
+            val unfinishedWorkoutHistories =
+                workoutHistoryDao.getAllUnfinishedWorkoutHistories()
+
+            try {
+                deleteWorkoutHistoriesFromHealthConnect(
+                    unfinishedWorkoutHistories,
+                    healthConnectClient
+                )
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    "Couldn't remove unfinished workout history from Health Connect.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            for (history in unfinishedWorkoutHistories) {
+                workoutRecordDao.deleteByWorkoutHistoryId(history.id)
+            }
+            workoutHistoryDao.deleteAllUnfinished()
+            appViewModel.triggerUpdate()
+        }
+    }
+
     val requiredHealthPermissions = remember {
         setOf(
             HealthPermission.getWritePermission(ExerciseSessionRecord::class),
@@ -511,21 +542,10 @@ fun MyWorkoutAssistantNavHost(
         refreshPermissionState(showDialogWhenMissing = true)
     }
 
-    // Sync WorkoutViewModel when initial load has completed, then run incomplete workouts check
+    // Sync WorkoutViewModel when initial load has completed
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
         workoutViewModel.updateWorkoutStore(appViewModel.workoutStore)
-        val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-        val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
-        if (!isWorkoutInProgress) {
-            try {
-                val interruptedWorkouts = workoutViewModel.getInterruptedWorkouts()
-                if (interruptedWorkouts.isNotEmpty()) {
-                    appViewModel.showResumeWorkoutDialog(interruptedWorkouts)
-                }
-            } catch (exception: Exception) {
-            }
-        }
     }
 
     val firstBackHandlerRegistrationTime = remember { System.currentTimeMillis() }
@@ -945,6 +965,7 @@ fun MyWorkoutAssistantNavHost(
                         // Show the success toast after all operations are complete
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
+                    PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(context)
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
                             "Message: ${e.message}, " +
@@ -1158,7 +1179,8 @@ fun MyWorkoutAssistantNavHost(
 
     val syncWithWatch = {
         scope.launch {
-            MobileSyncToWatchWorker.enqueue(context)
+            appViewModel.flushWorkoutSave(context)
+            PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
             isSyncing = true
         }
     }
@@ -1297,32 +1319,6 @@ fun MyWorkoutAssistantNavHost(
                                     }
                                 }
                             },
-                            onClearUnfinishedWorkouts = {
-                                scope.launch {
-                                    val unfinishedWorkoutHistories =
-                                        workoutHistoryDao.getAllUnfinishedWorkoutHistories()
-
-                                    try {
-
-                                        deleteWorkoutHistoriesFromHealthConnect(
-                                            unfinishedWorkoutHistories,
-                                            healthConnectClient
-                                        )
-                                    } catch (e: Exception) {
-                                        Toast.makeText(
-                                            context,
-                                            "Couldn't remove unfinished workout history from Health Connect.",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-
-                                    for (history in unfinishedWorkoutHistories) {
-                                        workoutRecordDao.deleteByWorkoutHistoryId(history.id)
-                                    }
-                                    workoutHistoryDao.deleteAllUnfinished()
-                                    appViewModel.triggerUpdate()
-                                }
-                            },
                             onClearAllHistories = {
                                 scope.launch {
                                     withContext(Dispatchers.IO) {
@@ -1349,16 +1345,6 @@ fun MyWorkoutAssistantNavHost(
 
                                     appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
                                     appViewModel.triggerUpdate()
-                                }
-                            },
-                            onCleanWorkoutRecords = {
-                                workoutViewModel.clearAllWorkoutRecords {
-                                    appViewModel.triggerUpdate()
-                                    Toast.makeText(
-                                        context,
-                                        "Workout records cleaned.",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
                                 }
                             },
                             onSyncToHealthConnectClick = {
@@ -1439,16 +1425,6 @@ fun MyWorkoutAssistantNavHost(
                                     } finally {
                                         isSaving = false
                                     }
-                                }
-                            },
-                            onClearWorkoutRecords = {
-                                workoutViewModel.clearAllWorkoutRecords {
-                                    appViewModel.triggerUpdate()
-                                    Toast.makeText(
-                                        context,
-                                        "Workout records cleaned.",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
                                 }
                             },
                             onCancel = {
@@ -1703,7 +1679,8 @@ fun MyWorkoutAssistantNavHost(
                                 workoutScheduleDao,
                                 selectedWorkout,
                                 initialSelectedTabIndex = screenData.selectedTabIndex,
-                                initialWorkoutHistoryId = screenData.workoutHistoryId
+                                initialWorkoutHistoryId = screenData.workoutHistoryId,
+                                onClearAllIncompleteSessions = clearAllIncompleteSessions
                             ) {
                                 appViewModel.goBack()
                             }
@@ -1729,7 +1706,8 @@ fun MyWorkoutAssistantNavHost(
                             workoutScheduleDao = workoutScheduleDao,
                             workout = selectedWorkout,
                             initialSelectedTabIndex = screenData.selectedTabIndex,
-                            initialWorkoutHistoryId = screenData.workoutHistoryId
+                            initialWorkoutHistoryId = screenData.workoutHistoryId,
+                            onClearAllIncompleteSessions = clearAllIncompleteSessions
                         ) {
                             appViewModel.goBack()
                         }
@@ -2900,25 +2878,6 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
 
-            // Resume workout dialog
-            val showResumeDialog by appViewModel.showResumeWorkoutDialog
-            val interruptedWorkouts by appViewModel.interruptedWorkouts
-
-            com.gabstra.myworkoutassistant.workout.ResumeWorkoutDialog(
-                show = showResumeDialog,
-                interruptedWorkouts = interruptedWorkouts,
-                onDismiss = {
-                    appViewModel.hideResumeWorkoutDialog()
-                },
-                onResumeWorkout = { interruptedWorkout ->
-                    appViewModel.hideResumeWorkoutDialog()
-                    workoutViewModel.prepareResumeWorkout(interruptedWorkout.workoutId, interruptedWorkout.workoutHistory.id)
-                    workoutViewModel.resumeWorkoutFromRecord()
-                    val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-                    prefs.edit { putBoolean("isWorkoutInProgress", true) }
-                    appViewModel.setScreenData(ScreenData.Workout(interruptedWorkout.workoutId))
-                }
-            )
         }
     }
 }

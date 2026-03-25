@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +28,7 @@ import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -36,8 +37,8 @@ fun WorkoutHistoryCard(
     workout: Workout,
     appViewModel: AppViewModel,
     timeFormatter: DateTimeFormatter,
-    statusBadgeText: String? = null,
     sessionStatus: WorkoutSessionStatus? = null,
+    statusBadgeText: String? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -65,16 +66,28 @@ fun WorkoutHistoryCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
-                text = if (sessionStatus == WorkoutSessionStatus.INTERRUPTED) {
-                    "${workout.name} ${InterruptedWorkoutCopy.SUFFIX}"
-                } else {
-                    workout.name
-                },
-                color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                style = MaterialTheme.typography.bodyLarge,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    modifier = Modifier
+                        .weight(1f)
+                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    text = workout.name,
+                    color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                workoutSessionDisplayLabel(sessionStatus)?.let { label ->
+                    Text(
+                        text = label,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
+                }
+            }
             if (statusBadgeText != null) {
                 Text(
                     modifier = Modifier

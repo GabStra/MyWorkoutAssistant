@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,7 +34,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 data class MenuItem(
@@ -65,11 +62,7 @@ fun GenericButtonWithMenu(
         contentAlignment = Alignment.Center
     ) {
         Box {
-            Button(
-                colors = ButtonDefaults.buttonColors(
-                    contentColor = MaterialTheme.colorScheme.background,
-                    disabledContentColor = DisabledContentGray
-                ),
+            AppPrimaryContentButton(
                 onClick = { expanded = !expanded },
                 enabled = enabled
             ) { content() }

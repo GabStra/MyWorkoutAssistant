@@ -99,7 +99,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.cloneWorkoutComponent
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
+import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -236,6 +236,7 @@ fun WorkoutDetailScreen(
     workout: Workout,
     initialSelectedTabIndex: Int = 0,
     initialWorkoutHistoryId: UUID? = null,
+    onClearAllIncompleteSessions: () -> Unit,
     onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -252,6 +253,7 @@ fun WorkoutDetailScreen(
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showStartConfirmationDialog by remember { mutableStateOf(false) }
+    var showClearAllIncompleteSessionsDialog by remember { mutableStateOf(false) }
     var showClearAllHistoriesDialog by remember { mutableStateOf(false) }
     var showDeleteSelectedSessionDialog by remember { mutableStateOf(false) }
 
@@ -1077,7 +1079,10 @@ fun WorkoutDetailScreen(
                                 }
                             },
                             onResumeWorkout = { resumeWorkoutDirectly() },
-                            onRequestDeleteInterruptedWorkout = { showDeleteDialog = true },
+                            onRequestDeleteIncompleteWorkout = { showDeleteDialog = true },
+                            onRequestClearAllIncompleteSessions = {
+                                showClearAllIncompleteSessionsDialog = true
+                            },
                             onWorkoutComponentsReordered = { adjustedComponents ->
                                 val updatedWorkout = workout.copy(workoutComponents = adjustedComponents)
                                 updateWorkoutWithHistory(updatedWorkout)
@@ -1155,8 +1160,8 @@ fun WorkoutDetailScreen(
 
             ConfirmationDialog(
                 show = showDeleteDialog,
-                title = InterruptedWorkoutCopy.DELETE_TITLE,
-                message = InterruptedWorkoutCopy.DELETE_MESSAGE,
+                title = IncompleteWorkoutStrings.DELETE_TITLE,
+                message = IncompleteWorkoutStrings.DELETE_MESSAGE,
                 confirmText = "Delete",
                 isDestructive = true,
                 onConfirm = {
@@ -1171,7 +1176,7 @@ fun WorkoutDetailScreen(
             ConfirmationDialog(
                 show = showStartConfirmationDialog,
                 title = "Start workout from the beginning",
-                message = "This will remove the interrupted session and start the workout from the beginning.",
+                message = "This will remove the incomplete session and start the workout from the beginning.",
                 confirmText = "Start over",
                 isDestructive = true,
                 onConfirm = {
@@ -1180,6 +1185,20 @@ fun WorkoutDetailScreen(
                 },
                 onDismiss = {
                     showStartConfirmationDialog = false
+                }
+            )
+            ConfirmationDialog(
+                show = showClearAllIncompleteSessionsDialog,
+                title = IncompleteWorkoutStrings.CLEAR_TITLE,
+                message = IncompleteWorkoutStrings.CLEAR_MESSAGE,
+                confirmText = "Clear",
+                isDestructive = true,
+                onConfirm = {
+                    onClearAllIncompleteSessions()
+                    showClearAllIncompleteSessionsDialog = false
+                },
+                onDismiss = {
+                    showClearAllIncompleteSessionsDialog = false
                 }
             )
             ConfirmationDialog(

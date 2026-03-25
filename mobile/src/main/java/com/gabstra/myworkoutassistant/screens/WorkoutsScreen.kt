@@ -97,9 +97,7 @@ fun WorkoutsScreen(
     onRestoreClick: () -> Unit,
     onImportWorkoutsClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
-    onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
-    onCleanWorkoutRecords: () -> Unit,
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
@@ -220,6 +218,9 @@ fun WorkoutsScreen(
     }
 
     val groupedWorkoutsHistories by appViewModel.groupedWorkoutHistories.collectAsState(initial = null)
+    val workoutHistorySessionStatuses by appViewModel.workoutHistorySessionStatuses.collectAsState(
+        initial = null
+    )
     val workoutById by appViewModel.workoutByIdForHistories.collectAsState(initial = null)
 
     val selectedWeekStart = remember(selectedWeekAnchorDate) { getStartOfWeek(selectedWeekAnchorDate) }
@@ -464,9 +465,7 @@ fun WorkoutsScreen(
                         onBackupClick = onBackupClick,
                         onRestoreClick = onRestoreClick,
                         onImportWorkoutsClick = onImportWorkoutsClick,
-                        onClearUnfinishedWorkouts = onClearUnfinishedWorkouts,
                         onClearAllHistories = onClearAllHistories,
-                        onCleanWorkoutRecords = onCleanWorkoutRecords,
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts,
                         onExportWorkoutPlan = onExportWorkoutPlan,
@@ -638,7 +637,8 @@ fun WorkoutsScreen(
                                                 appViewModel.clearWeeklyProgressOverride(selectedWeekStart)
                                                 appViewModel.scheduleWorkoutSave(context)
                                             },
-                                            groupedWorkoutsHistories = groupedWorkoutsHistories
+                                            groupedWorkoutsHistories = groupedWorkoutsHistories,
+                                            workoutHistorySessionStatuses = workoutHistorySessionStatuses
                                         )
                                     }
 

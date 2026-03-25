@@ -27,7 +27,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Scaffold
@@ -60,6 +59,7 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ZoomableMuscleHeatMap
 import com.gabstra.myworkoutassistant.composables.CustomTimePicker
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
+import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
@@ -507,15 +507,11 @@ fun ExerciseForm(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End
                         ) {
-                            OutlinedButton(
-                                onClick = { resetMuscleMapTrigger++ }
-                            ) {
-                                Text(
-                                    text = "Reset zoom & center",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
+                            AppPrimaryOutlinedButton(
+                                text = "Reset zoom & center",
+                                onClick = { resetMuscleMapTrigger++ },
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
 
                         ZoomableMuscleHeatMap(

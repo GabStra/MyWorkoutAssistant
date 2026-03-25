@@ -34,9 +34,11 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.shared.workout.model.InterruptedWorkout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
+import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -299,22 +301,6 @@ class AppViewModel(
         _isInitialDataLoaded.value = loaded
     }
 
-    private val _showResumeWorkoutDialog = mutableStateOf(false)
-    val showResumeWorkoutDialog: State<Boolean> = _showResumeWorkoutDialog
-
-    private val _interruptedWorkouts = mutableStateOf<List<InterruptedWorkout>>(emptyList())
-    val interruptedWorkouts: State<List<InterruptedWorkout>> = _interruptedWorkouts
-
-    fun showResumeWorkoutDialog(interruptedWorkouts: List<InterruptedWorkout>) {
-        _interruptedWorkouts.value = interruptedWorkouts
-        _showResumeWorkoutDialog.value = true
-    }
-
-    fun hideResumeWorkoutDialog() {
-        _showResumeWorkoutDialog.value = false
-        _interruptedWorkouts.value = emptyList()
-    }
-
     fun setHomeTab(tabIndex: Int) {
         selectedHomeTab = tabIndex
     }
@@ -374,6 +360,11 @@ class AppViewModel(
     private val _groupedWorkoutHistories = MutableStateFlow<Map<LocalDate, List<WorkoutHistory>>?>(null)
     val groupedWorkoutHistories: StateFlow<Map<LocalDate, List<WorkoutHistory>>?> = _groupedWorkoutHistories.asStateFlow()
 
+    private val _workoutHistorySessionStatuses =
+        MutableStateFlow<Map<UUID, WorkoutSessionStatus?>?>(null)
+    val workoutHistorySessionStatuses: StateFlow<Map<UUID, WorkoutSessionStatus?>?> =
+        _workoutHistorySessionStatuses.asStateFlow()
+
     private val _workoutByIdForHistories = MutableStateFlow<Map<UUID, Workout>?>(null)
     val workoutByIdForHistories: StateFlow<Map<UUID, Workout>?> = _workoutByIdForHistories.asStateFlow()
 
@@ -409,10 +400,23 @@ class AppViewModel(
                             history.globalId in preferredWorkoutByGlobalId
                     }
                     val groupedMap = filtered.groupBy { it.date }
+                    val recordsByHistoryId =
+                        db.workoutRecordDao().getAll().associateBy { it.workoutHistoryId }
+                    val sessionStatuses = filtered.associate { history ->
+                        history.id to runCatching {
+                            resolveWorkoutSessionStatus(history, recordsByHistoryId[history.id])
+                        }.onFailure { e ->
+                            Log.e(
+                                DEBUG_TAG,
+                                "resolveWorkoutSessionStatus failed historyId=${history.id}",
+                                e
+                            )
+                        }.getOrNull()
+                    }
                 // #region agent log
                 Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} workoutCount=${workoutsForHistory.size} groupedSize=${groupedMap.size}")
                 // #endregion
-                    groupedMap
+                    groupedMap to sessionStatuses
                 }
                 val byId = workoutsForHistory.associateBy { it.id }.toMutableMap()
                 val preferredWorkoutByGlobalId = workoutsForHistory
@@ -421,7 +425,7 @@ class AppViewModel(
                         workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
                     }
 
-                grouped.values.asSequence()
+                grouped.first.values.asSequence()
                     .flatten()
                     .forEach { history ->
                         val resolvedWorkout = preferredWorkoutByGlobalId[history.globalId]
@@ -429,10 +433,11 @@ class AppViewModel(
                             byId.putIfAbsent(history.workoutId, resolvedWorkout)
                         }
                     }
-                _groupedWorkoutHistories.value = grouped
+                _groupedWorkoutHistories.value = grouped.first
+                _workoutHistorySessionStatuses.value = grouped.second
                 _workoutByIdForHistories.value = byId
                 // #region agent log
-                Log.d(DEBUG_TAG, "refreshWorkoutHistories set groupedSize=${grouped.size}")
+                Log.d(DEBUG_TAG, "refreshWorkoutHistories set groupedSize=${grouped.first.size}")
                 // #endregion
             } catch (e: Exception) {
                 // #region agent log
@@ -1227,6 +1232,7 @@ class AppViewModel(
                     return@schedule
                 }
                 saveWorkoutStoreWithBackup(context, workoutStore, workoutStoreRepository, db)
+                PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
             }
         }
     }
@@ -1245,6 +1251,7 @@ class AppViewModel(
                     return@schedule
                 }
                 saveWorkoutStoreWithBackupFromContext(context, workoutStore)
+                PhoneToWatchSyncCoordinator.onPhoneDataPersisted(context)
             }
         }
     }

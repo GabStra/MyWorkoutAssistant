@@ -480,8 +480,8 @@ suspend fun sendAppBackup(dataClient: DataClient, appBackup: AppBackup, context:
         if (context != null) {
             val hasConnection = checkConnection(context)
             if (!hasConnection) {
-                Log.d("DataLayerSync", "Skipping app backup sync - watch not connected (transaction: $transactionId)")
-                return
+                Log.d("DataLayerSync", "Watch not connected — aborting app backup (transaction: $transactionId); worker will retry")
+                throw SyncError.ConnectionError(transactionId)
             }
         }
         

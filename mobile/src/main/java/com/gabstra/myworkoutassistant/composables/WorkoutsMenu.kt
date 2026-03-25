@@ -19,7 +19,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gabstra.myworkoutassistant.shared.Orange
-import com.gabstra.myworkoutassistant.shared.workout.ui.InterruptedWorkoutCopy
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 
 @OptIn(ExperimentalPermissionsApi::class)
@@ -30,9 +29,7 @@ fun WorkoutsMenu(
     onRestoreClick: () -> Unit,
     onImportWorkoutsClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
-    onClearUnfinishedWorkouts: () -> Unit,
     onClearAllHistories: () -> Unit,
-    onCleanWorkoutRecords: () -> Unit,
     onSyncWithHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
@@ -41,9 +38,7 @@ fun WorkoutsMenu(
     onViewErrorLogs: () -> Unit,
     onMenuItemClick: () -> Unit = {},
 ) {
-    var showClearIncompleteDialog by remember { mutableStateOf(false) }
     var showClearHistoryDialog by remember { mutableStateOf(false) }
-    var showCleanWorkoutRecordsDialog by remember { mutableStateOf(false) }
     var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
@@ -127,23 +122,9 @@ fun WorkoutsMenu(
 
         MenuSectionHeader("Maintenance")
         WorkoutsMenuItem(
-            label = InterruptedWorkoutCopy.CLEAR_MENU_LABEL,
-            onClick = {
-                showClearIncompleteDialog = true
-                onMenuItemClick()
-            }
-        )
-        WorkoutsMenuItem(
             label = "Clear workout history",
             onClick = {
                 showClearHistoryDialog = true
-                onMenuItemClick()
-            }
-        )
-        WorkoutsMenuItem(
-            label = "Clean workout records",
-            onClick = {
-                showCleanWorkoutRecordsDialog = true
                 onMenuItemClick()
             }
         )
@@ -166,21 +147,6 @@ fun WorkoutsMenu(
     }
 
     ConfirmationDialog(
-        show = showClearIncompleteDialog,
-        title = InterruptedWorkoutCopy.CLEAR_TITLE,
-        message = InterruptedWorkoutCopy.CLEAR_MESSAGE,
-        confirmText = "Clear",
-        isDestructive = true,
-        onConfirm = {
-            onClearUnfinishedWorkouts()
-            showClearIncompleteDialog = false
-        },
-        onDismiss = {
-            showClearIncompleteDialog = false
-        }
-    )
-
-    ConfirmationDialog(
         show = showClearHistoryDialog,
         title = "Clear Workout History",
         message = "Are you sure you want to clear all workout history? This action cannot be undone.",
@@ -192,21 +158,6 @@ fun WorkoutsMenu(
         },
         onDismiss = {
             showClearHistoryDialog = false
-        }
-    )
-
-    ConfirmationDialog(
-        show = showCleanWorkoutRecordsDialog,
-        title = "Clean workout records?",
-        message = "This removes all active workout progress records. Workout history will be kept.",
-        confirmText = "Clean",
-        isDestructive = true,
-        onConfirm = {
-            onCleanWorkoutRecords()
-            showCleanWorkoutRecordsDialog = false
-        },
-        onDismiss = {
-            showCleanWorkoutRecordsDialog = false
         }
     )
 

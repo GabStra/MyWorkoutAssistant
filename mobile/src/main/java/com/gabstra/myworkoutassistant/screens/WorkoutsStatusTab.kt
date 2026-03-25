@@ -47,6 +47,7 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kizitonwose.calendar.compose.CalendarState
@@ -77,7 +78,8 @@ fun WorkoutsStatusTab(
     highlightDay: (CalendarDay) -> Boolean,
     onSaveWeeklyProgressSelection: (Set<UUID>) -> Unit,
     onClearWeeklyProgressSelection: () -> Unit,
-    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null
+    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
+    workoutHistorySessionStatuses: Map<UUID, WorkoutSessionStatus?>? = null,
 ) {
     val scrollState = rememberScrollState()
     val currentLocale = Locale.getDefault()
@@ -408,7 +410,8 @@ fun WorkoutsStatusTab(
                                 WorkoutHistoriesByWorkoutGroup(
                                     dayWorkouts = dayWorkouts,
                                     appViewModel = appViewModel,
-                                    timeFormatter = timeFormatter
+                                    timeFormatter = timeFormatter,
+                                    sessionStatusesByHistoryId = workoutHistorySessionStatuses,
                                 )
                             }
                     }
@@ -422,7 +425,8 @@ fun WorkoutsStatusTab(
 private fun WorkoutHistoriesByWorkoutGroup(
     dayWorkouts: List<WeeklyStatusWorkoutHistory>,
     appViewModel: AppViewModel,
-    timeFormatter: DateTimeFormatter
+    timeFormatter: DateTimeFormatter,
+    sessionStatusesByHistoryId: Map<UUID, WorkoutSessionStatus?>?,
 ) {
     dayWorkouts
         .groupBy { it.workout.id }
@@ -480,6 +484,9 @@ private fun WorkoutHistoriesByWorkoutGroup(
                                         workout = dayWorkout.workout,
                                         appViewModel = appViewModel,
                                         timeFormatter = timeFormatter,
+                                        sessionStatus = sessionStatusesByHistoryId?.get(
+                                            dayWorkout.workoutHistory.id
+                                        ),
                                         statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
                                             "Not counted"
                                         } else {
@@ -498,6 +505,7 @@ private fun WorkoutHistoriesByWorkoutGroup(
                     workout = dayWorkout.workout,
                     appViewModel = appViewModel,
                     timeFormatter = timeFormatter,
+                    sessionStatus = sessionStatusesByHistoryId?.get(dayWorkout.workoutHistory.id),
                     statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
                         "Not counted"
                     } else {

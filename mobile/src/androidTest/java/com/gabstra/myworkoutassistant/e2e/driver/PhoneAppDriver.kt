@@ -9,6 +9,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
@@ -62,7 +63,7 @@ class PhoneAppDriver(
     fun syncWithWatchFromMenu(timeoutMs: Long = 12_000) {
         val workManager = WorkManager.getInstance(context)
         val existingWorkIds = runBlocking {
-            workManager.getWorkInfosForUniqueWorkFlow(MOBILE_SYNC_UNIQUE_WORK_NAME)
+            workManager.getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
                 .first()
                 .map { it.id }
                 .toSet()
@@ -145,7 +146,7 @@ class PhoneAppDriver(
 
         while (System.currentTimeMillis() < deadline) {
             val workInfos = runBlocking {
-                workManager.getWorkInfosForUniqueWorkFlow(MOBILE_SYNC_UNIQUE_WORK_NAME).first()
+                workManager.getWorkInfosForUniqueWorkFlow(MobileSyncToWatchWorker.UNIQUE_WORK_NAME).first()
             }
             val candidate = trackedWorkInfo?.let { tracked ->
                 workInfos.firstOrNull { it.id == tracked.id }
@@ -171,7 +172,4 @@ class PhoneAppDriver(
         )
     }
 
-    companion object {
-        private const val MOBILE_SYNC_UNIQUE_WORK_NAME = "mobile_sync_to_watch"
-    }
 }

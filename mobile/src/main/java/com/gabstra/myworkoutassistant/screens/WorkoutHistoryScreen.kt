@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +93,7 @@ import com.gabstra.myworkoutassistant.shared.workout.history.buildWorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
@@ -110,6 +112,8 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToLong
+
+private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
 
 private data class HeartRateZoneSegment(
     val zoneIndex: Int,
@@ -185,15 +189,6 @@ private fun getHeartRateZoneBounds(
         }
         lowerBound..maxOf(lowerBound, upperBound)
     }
-}
-
-private fun workoutHistoryStatusLabel(status: WorkoutSessionStatus?): String? = when (status) {
-    WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "In progress on watch"
-    WorkoutSessionStatus.STALE_ON_WEAR -> "Watch not responding"
-    WorkoutSessionStatus.INTERRUPTED -> "Interrupted"
-    WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "In progress on phone"
-    WorkoutSessionStatus.COMPLETED,
-    null -> null
 }
 
 private fun getZoneFromHeartRate(
@@ -562,12 +557,20 @@ fun WorkoutHistoryScreen(
                     )
                 )
 
-            workoutSessionStatuses = workoutHistories.associate { history ->
-                history.id to resolveWorkoutSessionStatus(
-                    workoutHistory = history,
-                    workoutRecord = recordsByHistoryId[history.id]
-                )
-            }
+            workoutSessionStatuses = workoutHistories.mapNotNull { history ->
+                runCatching {
+                    history.id to resolveWorkoutSessionStatus(
+                        workoutHistory = history,
+                        workoutRecord = recordsByHistoryId[history.id]
+                    )
+                }.onFailure { e ->
+                    Log.e(
+                        WORKOUT_HISTORY_SCREEN_LOG_TAG,
+                        "Invalid session state for history ${history.id}",
+                        e
+                    )
+                }.getOrNull()
+            }.toMap()
 
             if (workoutHistories.isEmpty()) {
                 selectedWorkoutHistory = null
@@ -734,7 +737,7 @@ fun WorkoutHistoryScreen(
                             color = MaterialTheme.colorScheme.onBackground,
                             style = MaterialTheme.typography.titleMedium,
                         )
-                        workoutHistoryStatusLabel(
+                        workoutSessionDisplayLabel(
                             workoutSessionStatuses[history.id]
                         )?.let { statusLabel ->
                             Text(
@@ -864,7 +867,7 @@ fun WorkoutHistoryScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    workoutHistoryStatusLabel(
+                    workoutSessionDisplayLabel(
                         workoutSessionStatuses[selectedWorkoutHistory!!.id]
                     )?.let { statusLabel ->
                         Text(

@@ -49,7 +49,6 @@ import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.CollapsibleSection
-import com.gabstra.myworkoutassistant.composables.DialogTextButton
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.composables.StandardDialog

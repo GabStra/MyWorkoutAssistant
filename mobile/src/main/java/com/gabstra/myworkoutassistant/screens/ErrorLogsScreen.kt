@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.composables.AppTextButton
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.gabstra.myworkoutassistant.shared.ErrorLogDao
 import com.google.android.gms.wearable.DataClient
@@ -208,12 +209,11 @@ fun ErrorLogCard(errorLog: ErrorLog) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                TextButton(
+                AppTextButton(
+                    text = if (expanded) "Hide Stack Trace" else "Show Stack Trace",
                     onClick = { expanded = !expanded },
                     modifier = Modifier.weight(1f)
-                ) {
-                    Text(if (expanded) "Hide Stack Trace" else "Show Stack Trace")
-                }
+                )
                 
                 IconButton(
                     onClick = copyToClipboard,
