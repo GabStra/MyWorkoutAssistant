@@ -106,7 +106,9 @@ object PhoneToWatchSyncCoordinator {
     }
 
     /**
-     * Cancels debounce and requests an immediate enqueue (or pending follow-up if sync is running). Use after flushing saves on pause/background.
+     * Cancels an in-flight debounced sync timer and runs that sync immediately (or sets a pending
+     * follow-up if a sync is already running). If there is no debounced sync pending, does nothing —
+     * otherwise every lifecycle pause would enqueue a redundant full sync.
      */
     suspend fun flushDebouncedSyncToWatch(context: Context) {
         if (PhoneSyncToWatchSuppressor.shouldSuppressPhoneToWatchSync()) {
@@ -114,8 +116,12 @@ object PhoneToWatchSyncCoordinator {
         }
         val appContext = context.applicationContext
         mutex.withLock {
+            val hadPendingDebounce = debounceJob != null
             debounceJob?.cancel()
             debounceJob = null
+            if (!hadPendingDebounce) {
+                return@withLock
+            }
             if (isWorkerRunning.get()) {
                 setPendingFollowUp(appContext, true)
                 Log.d(TAG, "flush: sync running, pending follow-up set")

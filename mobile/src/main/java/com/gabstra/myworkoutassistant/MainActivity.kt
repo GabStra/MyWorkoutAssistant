@@ -965,7 +965,7 @@ fun MyWorkoutAssistantNavHost(
                         // Show the success toast after all operations are complete
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
-                    PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(context)
+                    PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
                             "Message: ${e.message}, " +
