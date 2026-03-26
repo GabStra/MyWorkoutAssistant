@@ -94,6 +94,7 @@ fun WorkoutOverviewTab(
     onRequestClearAllIncompleteSessions: () -> Unit,
     onWorkoutComponentsReordered: (List<WorkoutComponent>) -> Unit,
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
+    workoutHistoryIdForExerciseNavigation: UUID? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -274,7 +275,8 @@ fun WorkoutOverviewTab(
                                 titleModifier = Modifier.combinedClickable(
                                     onClick = onItemClick,
                                     onLongClick = onItemLongClick
-                                )
+                                ),
+                                workoutHistoryIdForExerciseNavigation = workoutHistoryIdForExerciseNavigation,
                             )
                             if (showRest && !isSelectionModeActive && component !is Rest) {
                                 val currentIndex = workout.workoutComponents.indexOfFirst { it.id == component.id }

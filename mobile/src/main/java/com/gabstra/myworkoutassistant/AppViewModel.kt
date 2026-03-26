@@ -74,12 +74,14 @@ sealed class ScreenData() {
     class ExerciseDetail(
         val workoutId: UUID,
         val selectedExerciseId: UUID,
-        val selectedTabIndex: Int = 0
+        val selectedTabIndex: Int = 0,
+        val workoutHistoryId: UUID? = null
     ) : ScreenData()
     class ExerciseHistory(
         val workoutId: UUID,
         val selectedExerciseId: UUID,
-        val selectedTabIndex: Int = 0
+        val selectedTabIndex: Int = 0,
+        val workoutHistoryId: UUID? = null
     ) : ScreenData()
 
     class NewExercise(val workoutId: UUID) : ScreenData()
@@ -116,8 +118,8 @@ sealed class ScreenData() {
             is EditWorkout -> "EditWorkout_${workoutId}"
             is WorkoutDetail -> "WorkoutDetail_${workoutId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}_${selectedTabIndex}"
-            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}_${selectedTabIndex}"
-            is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}"
+            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
+            is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
             is NewSuperset -> "NewSuperset_${workoutId}"

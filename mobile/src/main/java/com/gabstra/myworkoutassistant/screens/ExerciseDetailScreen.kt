@@ -298,6 +298,7 @@ fun ExerciseDetailScreen(
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
     initialSelectedTabIndex: Int = 0,
+    initialWorkoutHistoryId: UUID? = null,
     onGoBack: () -> Unit
 ) {
     val sets = remember(exercise.sets) { ensureRestSeparatedBySets(exercise.sets) }
@@ -722,7 +723,8 @@ fun ExerciseDetailScreen(
                         val targetScreenData = ScreenData.ExerciseDetail(
                             workoutId = workout.id,
                             selectedExerciseId = exercise.id,
-                            selectedTabIndex = index
+                            selectedTabIndex = index,
+                            workoutHistoryId = if (index in 1..2) initialWorkoutHistoryId else null,
                         )
                         if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
                             appViewModel.updateScreenData(targetScreenData)
@@ -768,17 +770,31 @@ fun ExerciseDetailScreen(
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
                             exercise = exercise,
+                            workoutHistoryId = initialWorkoutHistoryId,
+                            pageIndex = pageIndex,
+                            selectedTopTab = selectedTopTab,
                             selectedHistoryMode = pageIndex - 1,
-                            onGoBack = onGoBack
+                            onGoBack = onGoBack,
+                            onDisplayedWorkoutHistoryIdChange = { id ->
+                                appViewModel.updateScreenData(
+                                    ScreenData.ExerciseDetail(
+                                        workoutId = workout.id,
+                                        selectedExerciseId = exercise.id,
+                                        selectedTabIndex = selectedTopTab,
+                                        workoutHistoryId = id,
+                                    )
+                                )
+                            },
                         )
                     }
                 }
 
-                LaunchedEffect(selectedTopTab, workout.id, exercise.id) {
+                LaunchedEffect(selectedTopTab, workout.id, exercise.id, initialWorkoutHistoryId) {
                     val targetScreenData = ScreenData.ExerciseDetail(
                         workoutId = workout.id,
                         selectedExerciseId = exercise.id,
-                        selectedTabIndex = selectedTopTab
+                        selectedTabIndex = selectedTopTab,
+                        workoutHistoryId = if (selectedTopTab in 1..2) initialWorkoutHistoryId else null,
                     )
                     if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
                         appViewModel.updateScreenData(targetScreenData)

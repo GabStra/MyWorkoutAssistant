@@ -103,8 +103,10 @@ fun ExerciseHistoryScreen(
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
+    workoutHistoryId: UUID? = null,
     selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
+    onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
 ) {
     var isLoading by remember { mutableStateOf(true) }
     var isChartInteractionActive by remember { mutableStateOf(false) }
@@ -278,7 +280,9 @@ fun ExerciseHistoryScreen(
 
         if(setHistoriesByWorkoutHistoryId.isEmpty()) return
 
-        selectedWorkoutHistory = chartWorkoutHistories.lastOrNull()
+        selectedWorkoutHistory =
+            workoutHistoryId?.let { id -> chartWorkoutHistories.find { it.id == id } }
+                ?: chartWorkoutHistories.lastOrNull()
 
         if (volumes.any { it.second != 0.0 }) {
             if (volumes.count() == 1) {
@@ -342,7 +346,7 @@ fun ExerciseHistoryScreen(
         hasLoadedWorkoutHistories = true
     }
 
-    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories) {
+    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories, workoutHistoryId) {
         if (!hasLoadedWorkoutHistories) {
             return@LaunchedEffect
         }
@@ -365,6 +369,10 @@ fun ExerciseHistoryScreen(
         setCharts(historiesToShow)
         ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
         isLoading = false
+    }
+
+    LaunchedEffect(selectedWorkoutHistory) {
+        onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
     }
 
     val workoutSelector = @Composable {

@@ -7,6 +7,8 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
+import java.util.UUID
+
 @Composable
 fun ExerciseHistoryTab(
     appViewModel: AppViewModel,
@@ -14,8 +16,12 @@ fun ExerciseHistoryTab(
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exercise: Exercise,
+    workoutHistoryId: UUID?,
+    pageIndex: Int,
+    selectedTopTab: Int,
     selectedHistoryMode: Int,
     onGoBack: () -> Unit,
+    onDisplayedWorkoutHistoryIdChange: (UUID?) -> Unit,
 ) {
     ExerciseHistoryScreen(
         appViewModel = appViewModel,
@@ -23,7 +29,13 @@ fun ExerciseHistoryTab(
         workoutHistoryDao = workoutHistoryDao,
         setHistoryDao = setHistoryDao,
         exercise = exercise,
+        workoutHistoryId = workoutHistoryId,
         selectedHistoryMode = selectedHistoryMode,
         onGoBack = onGoBack,
+        onSelectedWorkoutHistoryIdChanged = { id ->
+            if (pageIndex == selectedTopTab) {
+                onDisplayedWorkoutHistoryIdChange(id)
+            }
+        },
     )
 }

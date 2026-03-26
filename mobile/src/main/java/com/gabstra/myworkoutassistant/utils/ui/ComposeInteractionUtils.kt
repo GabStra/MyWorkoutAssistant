@@ -71,7 +71,9 @@ import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
+import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
+import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
@@ -717,6 +719,58 @@ suspend fun exportExerciseHistoryToMarkdown(
                 context,
                 e.toExportToastMessage(
                     intro = "Couldn't export exercise history.",
+                    fallbackDetail = "Please try again."
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+}
+
+suspend fun exportWorkoutSessionToMarkdown(
+    context: Context,
+    workoutHistoryId: UUID,
+    workoutHistoryDao: WorkoutHistoryDao,
+    setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
+    exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
+    workoutStore: WorkoutStore
+) {
+    try {
+        when (
+            val result = buildWorkoutSessionMarkdown(
+                workoutHistoryId = workoutHistoryId,
+                workoutHistoryDao = workoutHistoryDao,
+                setHistoryDao = setHistoryDao,
+                restHistoryDao = restHistoryDao,
+                exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                workoutStore = workoutStore
+            )
+        ) {
+            is WorkoutSessionMarkdownResult.Success -> {
+                val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                val timestamp = sdf.format(Date())
+                val shortId = workoutHistoryId.toString().replace("-", "").take(8)
+                val filename = "workout_session_${shortId}_$timestamp.md"
+                writeMarkdownToDownloadsFolder(context, filename, result.markdown)
+            }
+            is WorkoutSessionMarkdownResult.Failure -> {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Couldn't export session. ${result.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("WorkoutSessionExport", "Error exporting workout session", e)
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                context,
+                e.toExportToastMessage(
+                    intro = "Couldn't export workout session.",
                     fallbackDetail = "Please try again."
                 ),
                 Toast.LENGTH_SHORT

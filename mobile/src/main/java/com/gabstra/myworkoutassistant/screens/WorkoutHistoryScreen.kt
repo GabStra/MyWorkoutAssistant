@@ -580,7 +580,8 @@ fun WorkoutHistoryScreen(
             }
 
             selectedWorkoutHistory =
-                if (workoutHistoryId != null) workoutHistories.find { it.id == workoutHistoryId } else workoutHistories.lastOrNull()
+                workoutHistoryId?.let { id -> workoutHistories.find { it.id == id } }
+                    ?: workoutHistories.lastOrNull()
 
             delay(500)
             if (selectedWorkoutHistory == null) {
@@ -1162,7 +1163,8 @@ fun WorkoutHistoryScreen(
                                                 ScreenData.ExerciseHistory(
                                                     selectedWorkoutHistory?.workoutId ?: workout.id,
                                                     exerciseId,
-                                                    1
+                                                    1,
+                                                    workoutHistoryId = selectedWorkoutHistory?.id,
                                                 )
                                             )
                                         }
@@ -1361,7 +1363,8 @@ fun WorkoutHistoryScreen(
                                                                         selectedWorkoutHistory?.workoutId
                                                                             ?: workout.id,
                                                                         exercise.id,
-                                                                        1
+                                                                        1,
+                                                                        workoutHistoryId = selectedWorkoutHistory?.id,
                                                                     )
                                                                 )
                                                             }) {
@@ -1404,7 +1407,8 @@ fun WorkoutHistoryScreen(
                                                                     selectedWorkoutHistory?.workoutId
                                                                         ?: workout.id,
                                                                     exercise.id,
-                                                                    1
+                                                                    1,
+                                                                    workoutHistoryId = selectedWorkoutHistory?.id,
                                                                 )
                                                             )
                                                         }) {
