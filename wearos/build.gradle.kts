@@ -117,6 +117,7 @@ dependencies {
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.concurrent:concurrent-futures-ktx:1.3.0")
     implementation("androidx.work:work-runtime-ktx:2.11.1")

@@ -46,6 +46,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -227,6 +229,9 @@ class DataLayerListenerService : WearableListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Foreground before any onDataChanged: otherwise GMS can tear down the service before
+        // SYNC_REQUEST / chunks are delivered (see WearableService "disconnected before delivering").
+        DataLayerSyncForegroundHelper.startFromServiceCreated(this)
         val db = AppDatabase.getDatabase(this)
         context = this
         setHistoryDao = db.setHistoryDao()
@@ -719,9 +724,12 @@ class DataLayerListenerService : WearableListenerService() {
                         finalTransactionId?.let { tid ->
                             Log.d("DataLayerSync", "Received SYNC_REQUEST for transaction: $tid")
 
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    // Send acknowledgment to transaction-scoped path
+                            // Foreground + synchronous ACK: async launch let onDataChanged return while GMS
+                            // still had events queued; the process could be killed before Tasks.await ran,
+                            // causing phone handshake timeouts and "Service disconnected before delivering all events".
+                            DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
+                            try {
+                                runBlocking(Dispatchers.IO) {
                                     val ackPath = DataLayerPaths.buildPath(
                                         DataLayerPaths.SYNC_ACK_PREFIX,
                                         tid
@@ -741,14 +749,14 @@ class DataLayerListenerService : WearableListenerService() {
                                         "DataLayerSync",
                                         "Sent sync acknowledgment for transaction: $tid"
                                     )
-                                } catch (exception: Exception) {
-                                    Log.e(
-                                        "DataLayerSync",
-                                        "Error sending sync acknowledgment for transaction: $tid",
-                                        exception
-                                    )
-                                    exception.printStackTrace()
                                 }
+                            } catch (exception: Exception) {
+                                Log.e(
+                                    "DataLayerSync",
+                                    "Error sending sync acknowledgment for transaction: $tid",
+                                    exception
+                                )
+                                exception.printStackTrace()
                             }
                         } ?: Log.w("DataLayerSync", "Received SYNC_REQUEST without transactionId")
                     }
@@ -968,6 +976,7 @@ class DataLayerListenerService : WearableListenerService() {
                             }
 
                             if (isStart) {
+                                DataLayerSyncForegroundHelper.startIfNeeded(this@DataLayerListenerService)
                                 if (dataMap.containsKey("chunksCount")) {
                                     expectedChunks = dataMap.getInt("chunksCount", 0)
                                 }
@@ -1317,6 +1326,9 @@ class DataLayerListenerService : WearableListenerService() {
                                                 // is not running (dynamic WearDataLayerReceiver would not receive APP_BACKUP_END).
                                                 WorkoutAlarmScheduler(applicationContext).rescheduleAllWorkouts()
 
+                                                // Sync-complete notification is only posted from this full chunked backup path
+                                                // (phone MobileSyncToWatchWorker → sendAppBackup). Smaller paths (e.g. workout
+                                                // store JSON only) do not call showSyncCompleteNotification.
                                                 val intent = Intent(INTENT_ID).apply {
                                                     putExtra(
                                                         APP_BACKUP_END_JSON,
@@ -1329,7 +1341,18 @@ class DataLayerListenerService : WearableListenerService() {
                                                     "DataLayerSync",
                                                     "Backup completed and broadcast sent for transaction: $transactionId"
                                                 )
-                                                if (!MyApplication.isAppInForeground()) {
+                                                val legacyAppInForeground = MyApplication.isAppInForeground()
+                                                val processLifecycleState =
+                                                    ProcessLifecycleOwner.get().lifecycle.currentState
+                                                val shouldPostSyncCompleteNotification =
+                                                    !processLifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+                                                Log.d(
+                                                    TAG,
+                                                    "syncCompleteNotification policy show=$shouldPostSyncCompleteNotification " +
+                                                        "legacyAppInForeground=$legacyAppInForeground " +
+                                                        "processLifecycleState=$processLifecycleState tx=$transactionId"
+                                                )
+                                                if (shouldPostSyncCompleteNotification) {
                                                     showSyncCompleteNotification(this@DataLayerListenerService)
                                                 }
 
@@ -1653,11 +1676,13 @@ class DataLayerListenerService : WearableListenerService() {
     }
 
     override fun onDestroy() {
+        DataLayerSyncForegroundHelper.stopIfActive(this)
         super.onDestroy()
         scope.cancel()
     }
 
     companion object {
+        private const val TAG = "DataLayerListenerService"
         private const val MAX_COMPLETED_TRANSACTION_IDS = 128
         private const val PREFS_COMPLETED_ORDERED = "completedTransactionIdsOrdered"
 
