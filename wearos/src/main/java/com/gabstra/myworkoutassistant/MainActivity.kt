@@ -300,7 +300,9 @@ fun WearApp(
         LaunchedEffect(Unit) {
             val startTime = System.currentTimeMillis()
             try {
-                val workoutStore = workoutStoreRepository.getWorkoutStore()
+                val workoutStore = withContext(Dispatchers.IO) {
+                    workoutStoreRepository.getWorkoutStore()
+                }
                 appViewModel.updateWorkoutStore(workoutStore)
             } catch (exception: Exception) {
                 Log.e("MainActivity", "Failed to load workout repository", exception)
@@ -353,7 +355,14 @@ fun WearApp(
                 onNavControllerAvailable(navController)
             } catch (exception: Exception) {
                 Log.e("MainActivity", "Error initializing workout store repository", exception)
-                initialized = true // Still set initialized to prevent blocking the UI
+                // Must set both or LoadingScreen shows forever (!initialized || startDestination == null).
+                startDestination = Screen.WorkoutSelection.route
+                initialized = true
+                try {
+                    onNavControllerAvailable(navController)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error registering receivers after init failure", e)
+                }
             }
         }
 
