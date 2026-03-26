@@ -8,23 +8,11 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.formatNumber
-import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
-import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
-import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.utils.Ternary
-import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
-import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
-import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import java.time.Duration
 import java.util.Calendar
-import kotlin.math.abs
 
 sealed class ExerciseHistoryMarkdownResult {
     data class Success(val markdown: String) : ExerciseHistoryMarkdownResult()
@@ -89,7 +77,6 @@ suspend fun buildExerciseHistoryMarkdown(
     val userAge = Calendar.getInstance().get(Calendar.YEAR) - workoutStore.birthDateYear
     val markdown = StringBuilder()
 
-    // Prefer historical equipment snapshot if present on any of the recorded sets.
     val firstSessionWithSets = sessionsWithRecordedSets.firstOrNull { it.activeSetHistories.isNotEmpty() }
     val firstHistory = firstSessionWithSets?.activeSetHistories?.firstOrNull()
 
@@ -124,6 +111,8 @@ suspend fun buildExerciseHistoryMarkdown(
     }
     markdown.append("\n\n")
 
+    appendLlmExportContextMarkdown(markdown, workoutStore, userAge)
+
     val firstSession = sessionsWithRecordedSets.first().workoutHistory
     val lastSession = sessionsWithRecordedSets.last().workoutHistory
     markdown.append(
@@ -149,284 +138,55 @@ suspend fun buildExerciseHistoryMarkdown(
         } else null
 
         markdown.append(
-            "## S${sessionIndex + 1}: ${workoutHistory.date} ${workoutHistory.time} | $workoutName | Dur: ${formatDuration(workoutHistory.duration)}"
+            "## S${sessionIndex + 1}: ${workoutHistory.date} ${workoutHistory.time} | $workoutName | Dur: ${formatDurationForExport(workoutHistory.duration)}"
         )
         if (sessionBwFromSnapshot != null) {
             markdown.append(" | Session BW: ${formatNumber(sessionBwFromSnapshot)} kg")
         }
-
-        if (workoutHistory.heartBeatRecords.isNotEmpty() && workoutHistory.heartBeatRecords.any { it > 0 }) {
-            val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }
-            val avgHR = validHRRecords.average().toInt()
-            val minHR = validHRRecords.minOrNull() ?: 0
-            val maxHR = validHRRecords.maxOrNull() ?: 0
-            markdown.append(" | HR: Avg ${avgHR} Min:${minHR} Max:${maxHR}")
-        }
         markdown.append("\n")
+        markdown.append(
+            "Session: start at ${workoutHistory.startTime} | sessionId: ${workoutHistory.id} | globalId: ${workoutHistory.globalId}\n"
+        )
+
+        workout?.let { w ->
+            templatePosition1BasedForExercise(w, exercise.id)?.let { pos ->
+                val total = templateExerciseIdsInWorkoutOrder(w).size
+                markdown.append("- Template position: exercise $pos of $total (flattened workout order)\n")
+            }
+        }
+
+        appendSessionHeartRateMarkdown(
+            markdown = markdown,
+            workoutHistory = workoutHistory,
+            userAge = userAge,
+            workoutStore = workoutStore,
+            exerciseForTargetBand = exercise
+        )
 
         progressionData?.let { progression ->
-            markdown.append("### Progression\n")
-            markdown.append("- State: ${progression.progressionState.name}\n")
-
-            // Extract executed sets from activeSetHistories
-            val executedSets = activeSetHistories.mapNotNull { setHistory ->
-                when (val setData = setHistory.setData) {
-                    is WeightSetData -> {
-                        val (adjustedWeight, _) = adjustWeightAndVolume(
-                            setData.actualWeight,
-                            setData.actualReps,
-                            achievableWeights
-                        )
-                        SimpleSet(adjustedWeight, setData.actualReps)
-                    }
-                    is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
-                    else -> null
-                }
-            }
-
-            if (progression.expectedSets.isNotEmpty()) {
-                val expectedSetsStr = progression.expectedSets.joinToString(", ") {
-                    "${formatNumber(it.weight)}kg×${it.reps}"
-                }
-                markdown.append("- Expected: $expectedSetsStr\n")
-            }
-
-            if (executedSets.isNotEmpty()) {
-                val executedSetsStr = executedSets.joinToString(", ") {
-                    "${formatNumber(it.weight)}kg×${it.reps}"
-                }
-                markdown.append("- Executed: $executedSetsStr\n")
-            }
-
-            // Add set-by-set differences when it makes sense
-            val shouldShowSetDifferences = progression.expectedSets.isNotEmpty() &&
-                    executedSets.isNotEmpty() &&
-                    progression.expectedSets.size == executedSets.size
-
-            if (shouldShowSetDifferences) {
-                val setDifferences = progression.expectedSets.zip(executedSets).mapIndexed { index, (expected, executed) ->
-                    val weightDiff = executed.weight - expected.weight
-                    val repsDiff = executed.reps - expected.reps
-                    val expectedVolume = expected.weight * expected.reps
-                    val executedVolume = executed.weight * executed.reps
-                    val volumeDiff = executedVolume - expectedVolume
-
-                    val weightDiffStr = if (weightDiff >= 0) "+${formatNumber(weightDiff)}" else formatNumber(weightDiff)
-                    val repsDiffStr = if (repsDiff >= 0) "+$repsDiff" else repsDiff.toString()
-                    val volumeDiffStr = if (volumeDiff >= 0) "+${formatNumber(volumeDiff)}" else formatNumber(volumeDiff)
-
-                    "S${index + 1}: Exp ${formatNumber(expected.weight)}kg×${expected.reps} Exec ${formatNumber(executed.weight)}kg×${executed.reps} Δw:${weightDiffStr}kg Δr:${repsDiffStr} Δv:${volumeDiffStr}kg"
-                }
-                val allSetsEqual = progression.expectedSets.zip(executedSets).all { (expected, executed) -> expected == executed }
-                if (!allSetsEqual) {
-                    markdown.append("- Set Differences: ${setDifferences.joinToString(" | ")}\n")
-                }
-            }
-
-            val expectedSetCount = progression.expectedSets.size
-            val executedSetCount = executedSets.size
-            if (expectedSetCount != executedSetCount) {
-                markdown.append("- Note: Expected $expectedSetCount sets but executed $executedSetCount sets.\n")
-            }
-
-            val vsExpectedIcon = when (progression.vsExpected) {
-                Ternary.ABOVE -> "↑"
-                Ternary.EQUAL -> "="
-                Ternary.BELOW -> "↓"
-                Ternary.MIXED -> "~"
-            }
-            val vsPreviousIcon = when (progression.vsPrevious) {
-                Ternary.ABOVE -> "↑"
-                Ternary.EQUAL -> "="
-                Ternary.BELOW -> "↓"
-                Ternary.MIXED -> "~"
-            }
-            markdown.append("- Comparison: vs Exp ${progression.vsExpected.name} $vsExpectedIcon | vs Prev ${progression.vsPrevious.name} $vsPreviousIcon\n")
-            markdown.append("- Vol: Prev ${formatNumber(progression.previousSessionVolume)}kg | Exp ${formatNumber(progression.expectedVolume)}kg | Exec ${formatNumber(progression.executedVolume)}kg\n")
-
-            markdown.append("\n")
+            appendExerciseProgressionMarkdown(
+                markdown = markdown,
+                progression = progression,
+                activeSetHistories = activeSetHistories,
+                achievableWeights = achievableWeights
+            )
         }
-
-        var totalVolume = 0.0
-        var totalDuration = 0
 
         val restsForSession =
             restHistoryDao.getByWorkoutHistoryIdAndExerciseId(workoutHistory.id, exercise.id)
-        val timeline = mergeSessionTimeline(activeSetHistories, restsForSession)
-        var workSetOrdinal = 0
-        for (step in timeline) {
-            when (step) {
-                is SessionTimelineItem.RestStep -> {
-                    val rh = step.history
-                    val sd = rh.setData as? RestSetData
-                    val secs = sd?.startTimer?.coerceAtLeast(0) ?: 0
-                    markdown.append("Rest: ${formatDuration(secs)}\n")
-                }
-                is SessionTimelineItem.SetStep -> {
-                    workSetOrdinal += 1
-                    val setHistory = step.history
-                    val setLine = StringBuilder("S$workSetOrdinal: ")
-                    when (val setData = setHistory.setData) {
-                        is WeightSetData -> {
-                            val (adjustedWeight, adjustedVolume) = adjustWeightAndVolume(
-                                setData.actualWeight,
-                                setData.actualReps,
-                                achievableWeights
-                            )
-                            setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                            totalVolume += adjustedVolume
-                        }
-                        is BodyWeightSetData -> {
-                            val totalWeight = setData.getWeight()
-                            setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                            if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                            totalVolume += setData.volume
-                        }
-                        is TimedDurationSetData -> {
-                            val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
-                            setLine.append("Dur:${formatDuration(durationSeconds)}")
-                            totalDuration += durationSeconds
-                        }
-                        is EnduranceSetData -> {
-                            val durationSeconds = setData.endTimer / 1000
-                            setLine.append("Dur:${formatDuration(durationSeconds)}")
-                            totalDuration += durationSeconds
-                        }
-                        else -> setLine.append("Rest/Other")
-                    }
-
-                    if (workoutHistory.heartBeatRecords.isNotEmpty() &&
-                        setHistory.startTime != null &&
-                        setHistory.endTime != null
-                    ) {
-                        val hrTimeOffset = Duration.between(
-                            workoutHistory.startTime,
-                            setHistory.startTime
-                        ).seconds.toInt()
-
-                        val setDuration = Duration.between(
-                            setHistory.startTime,
-                            setHistory.endTime
-                        ).seconds.toInt()
-
-                        val startSampleIndex = hrTimeOffset * 2
-                        val endSampleIndex = (hrTimeOffset + setDuration) * 2
-
-                        if (startSampleIndex >= 0 && endSampleIndex <= workoutHistory.heartBeatRecords.size) {
-                            val setHRRecords = workoutHistory.heartBeatRecords
-                                .subList(startSampleIndex, minOf(endSampleIndex, workoutHistory.heartBeatRecords.size))
-                                .filter { it > 0 }
-
-                            if (setHRRecords.isNotEmpty()) {
-                                val setAvgHR = setHRRecords.average().toInt()
-                                val setMinHR = setHRRecords.minOrNull() ?: 0
-                                val setMaxHR = setHRRecords.maxOrNull() ?: 0
-                                setLine.append(" HR:${setAvgHR}(${setMinHR}-${setMaxHR})")
-
-                                if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
-                                    val lowHr = getHeartRateFromPercentage(
-                                        exercise.lowerBoundMaxHRPercent!!,
-                                        userAge,
-                                        workoutStore.measuredMaxHeartRate,
-                                        workoutStore.restingHeartRate
-                                    )
-                                    val highHr = getHeartRateFromPercentage(
-                                        exercise.upperBoundMaxHRPercent!!,
-                                        userAge,
-                                        workoutStore.measuredMaxHeartRate,
-                                        workoutStore.restingHeartRate
-                                    )
-
-                                    val hrInZoneCount = setHRRecords.count { it in lowHr..highHr }
-                                    val zonePercentage = if (setHRRecords.isNotEmpty()) {
-                                        (hrInZoneCount.toFloat() / setHRRecords.size * 100).toInt()
-                                    } else 0
-
-                                    setLine.append(" Zone:${zonePercentage}%")
-                                }
-                            }
-                        }
-                    }
-
-                    markdown.append(setLine.toString()).append("\n")
-                }
-            }
-        }
-
-        val totalsLine = StringBuilder()
-        if (totalVolume > 0) {
-            totalsLine.append("Total Vol: ${formatNumber(totalVolume)}kg")
-        }
-        if (totalDuration > 0) {
-            if (totalsLine.isNotEmpty()) totalsLine.append(" | ")
-            totalsLine.append("Total Dur: ${formatDuration(totalDuration)}")
-        }
-
-        if (exercise.lowerBoundMaxHRPercent != null &&
-            exercise.upperBoundMaxHRPercent != null &&
-            workoutHistory.heartBeatRecords.isNotEmpty()
-        ) {
-            val lowHr = getHeartRateFromPercentage(
-                exercise.lowerBoundMaxHRPercent!!,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
-            val highHr = getHeartRateFromPercentage(
-                exercise.upperBoundMaxHRPercent!!,
-                userAge,
-                workoutStore.measuredMaxHeartRate,
-                workoutStore.restingHeartRate
-            )
-            val validHRRecords = workoutHistory.heartBeatRecords.filter { it > 0 }
-            val hrInZoneCount = validHRRecords.count { it in lowHr..highHr }
-            val zonePercentage = if (validHRRecords.isNotEmpty()) {
-                (hrInZoneCount.toFloat() / validHRRecords.size * 100).toInt()
-            } else 0
-
-            if (totalsLine.isNotEmpty()) totalsLine.append(" | ")
-            totalsLine.append("HR Zone(${lowHr}-${highHr}): ${zonePercentage}%")
-        }
-
-        if (totalsLine.isNotEmpty()) {
-            markdown.append(totalsLine.toString()).append("\n")
-        }
+        appendExerciseTimelineToMarkdown(
+            markdown = markdown,
+            exercise = exercise,
+            activeSetHistories = activeSetHistories,
+            restsForExercise = restsForSession,
+            workoutHistory = workoutHistory,
+            workoutStore = workoutStore,
+            userAge = userAge,
+            achievableWeights = achievableWeights,
+            equipmentNameForHeader = equipment?.name
+        )
         markdown.append("\n")
     }
 
     return ExerciseHistoryMarkdownResult.Success(markdown.toString())
-}
-
-private fun formatDuration(seconds: Int): String {
-    val hours = seconds / 3600
-    val minutes = (seconds % 3600) / 60
-    val remainingSeconds = seconds % 60
-
-    return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
-    } else {
-        String.format("%02d:%02d", minutes, remainingSeconds)
-    }
-}
-
-private fun adjustWeightAndVolume(
-    actualWeight: Double,
-    reps: Int,
-    achievableWeights: List<Double>?
-): Pair<Double, Double> {
-    if (actualWeight <= 0.0 || reps <= 0) {
-        return actualWeight to (actualWeight * reps)
-    }
-
-    val adjustedWeight = findClosestAchievableWeight(actualWeight, achievableWeights)
-    return adjustedWeight to adjustedWeight * reps
-}
-
-private fun findClosestAchievableWeight(
-    targetWeight: Double,
-    achievableWeights: List<Double>?
-): Double {
-    if (achievableWeights.isNullOrEmpty()) return targetWeight
-    return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
 }
