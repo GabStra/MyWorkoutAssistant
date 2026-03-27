@@ -65,6 +65,7 @@ import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.SensorDataViewModelFactory
 import com.gabstra.myworkoutassistant.data.TutorialPreferences
 import com.gabstra.myworkoutassistant.data.TutorialState
+import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.findActivity
 import com.gabstra.myworkoutassistant.data.sendErrorLogsToMobile
@@ -403,6 +404,7 @@ fun WearApp(
         hrViewModel.initApplicationContext(localContext)
 
         val polarViewModel: PolarViewModel = viewModel()
+        val whoopHeartRateViewModel: WhoopHeartRateViewModel = viewModel()
 
         val nodes by appHelper.connectedAndInstalledNodes.collectAsState(initial = emptyList())
 
@@ -533,6 +535,7 @@ fun WearApp(
                                 heartRateChangeViewModel,
                                 hrViewModel,
                                 polarViewModel,
+                                whoopHeartRateViewModel,
                                 showHeartRateTutorial = showWorkoutHeartRateTutorial,
                                 onDismissHeartRateTutorial = {
                                     showWorkoutHeartRateTutorial = false

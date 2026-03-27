@@ -1145,8 +1145,8 @@ open class AppViewModel : WorkoutViewModel() {
             }
             applyTimerRecoveryChoice(recoveryOptions.timerChoice)
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
-            if (selectedWorkout.value.usePolarDevice) {
-                // Leave user on Preparing Polar screen so they can try to connect or skip
+            if (selectedWorkout.value.usesExternalHeartRateDevice) {
+                // Leave user on the external heart-rate prep screen so they can connect or skip
                 markSessionReady()
                 rebuildScreenState()
             } else {

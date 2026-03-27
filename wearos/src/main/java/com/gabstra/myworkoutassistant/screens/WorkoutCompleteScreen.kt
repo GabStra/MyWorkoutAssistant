@@ -36,8 +36,8 @@ import com.gabstra.myworkoutassistant.composables.ScalableText
 import com.gabstra.myworkoutassistant.composables.WorkoutPagerHeaderReservedHeight
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.data.PolarViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
@@ -61,7 +61,7 @@ fun WorkoutCompleteScreen(
     state : WorkoutState.Completed,
     hrViewModel: SensorDataViewModel,
     hapticsViewModel: HapticsViewModel,
-    polarViewModel: PolarViewModel
+    externalHeartRateController: ExternalHeartRateDeviceController?
 ){
     val showNextDialog by viewModel.isCustomDialogOpen.collectAsState()
     val workout by viewModel.selectedWorkout
@@ -102,10 +102,10 @@ fun WorkoutCompleteScreen(
         if (!completionSyncInitiated) {
             completionSyncInitiated = true
 
-            if (!workout.usePolarDevice) {
+            if (!workout.usesExternalHeartRateDevice) {
                 hrViewModel.stopMeasuringHeartRate()
             } else {
-                polarViewModel.disconnectFromDevice()
+                externalHeartRateController?.disconnectFromDevice()
             }
             cancelWorkoutInProgressNotification(context)
 

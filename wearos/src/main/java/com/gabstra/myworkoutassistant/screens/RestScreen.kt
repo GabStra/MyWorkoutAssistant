@@ -346,7 +346,7 @@ private fun UpcomingSetPreview(
 ) {
     val useWeightHeader = exercise.exerciseType == ExerciseType.WEIGHT ||
         exercise.exerciseType == ExerciseType.BODY_WEIGHT
-    val borderColor: Color = MaterialTheme.colorScheme.onBackground
+    val borderColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
     val textColor = borderColor
 
     val rowShape = RoundedCornerShape(25)

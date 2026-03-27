@@ -253,7 +253,8 @@ fun PageButtons(
             if (
                 isMovementSet &&
                 (exercise.exerciseType == ExerciseType.WEIGHT ||
-                        exercise.exerciseType == ExerciseType.BODY_WEIGHT)
+                        exercise.exerciseType == ExerciseType.BODY_WEIGHT) &&
+                canChangeEquipment
             ) {
                 item {
                     ButtonWithText(
@@ -267,7 +268,6 @@ fun PageButtons(
                             ),
                         transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
                         text = "Change equipment",
-                        enabled = canChangeEquipment,
                         onClick = {
                             hapticsViewModel.doGentleVibration()
                             onChangeEquipmentClick()

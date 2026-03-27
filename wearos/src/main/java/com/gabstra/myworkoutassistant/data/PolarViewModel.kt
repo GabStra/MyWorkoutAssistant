@@ -5,8 +5,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.polar.androidcommunications.api.ble.model.DisInfo
 import com.polar.sdk.api.PolarBleApi
 import com.polar.sdk.api.PolarBleApiCallback
@@ -19,28 +21,24 @@ import io.reactivex.rxjava3.core.Scheduler
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.Schedulers
-import com.gabstra.myworkoutassistant.MyApplication
-import kotlin.coroutines.EmptyCoroutineContext
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.atomic.AtomicBoolean
 
 interface HrBpmSource {
     fun bpmStream(deviceId: String): Flowable<Int>
 }
 
-/** How to reconnect the device when stream goes stale. */
 interface ReconnectionActions {
     fun onStale(deviceId: String, onReconnecting: (() -> Unit)? = null): Completable
 }
 
-/** Adds stale-timeout detection + reconnect/backoff around a bpm stream. */
 class StaleRetryingBpmStream(
     private val deviceId: String,
     private val source: HrBpmSource,
@@ -48,24 +46,25 @@ class StaleRetryingBpmStream(
     private val staleTimeoutSec: Long = 15,
     private val backoffSec: Long = 2,
     private val scheduler: Scheduler = Schedulers.computation(),
-    private val onReconnecting: (() -> Unit)? = null
+    private val onReconnecting: (() -> Unit)? = null,
 ) {
     fun stream(): Flowable<Int> {
-        return Flowable.defer {                // <-- build source per subscribe/retry
-            source.bpmStream(deviceId)
-        }
+        return Flowable.defer { source.bpmStream(deviceId) }
             .timeout(
-                staleTimeoutSec, TimeUnit.SECONDS, 
+                staleTimeoutSec,
+                TimeUnit.SECONDS,
                 scheduler,
-                Flowable.error<Int>(TimeoutException("Heart rate stream timed out after ${staleTimeoutSec}s"))
+                Flowable.error<Int>(
+                    TimeoutException("Heart rate stream timed out after ${staleTimeoutSec}s")
+                )
             )
             .retryWhen { errors ->
-                errors.flatMap { t ->
-                    if (t is TimeoutException) {
+                errors.flatMap { throwable ->
+                    if (throwable is TimeoutException) {
                         reconnection.onStale(deviceId, onReconnecting)
                             .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
                     } else {
-                        Flowable.error(t)
+                        Flowable.error(throwable)
                     }
                 }
             }
@@ -83,14 +82,15 @@ class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
             }
 }
 
-class PolarReconnector(private val api: PolarBleApi, private val context: Context) : ReconnectionActions {
+class PolarReconnector(
+    private val api: PolarBleApi,
+    private val context: Context,
+) : ReconnectionActions {
     override fun onStale(deviceId: String, onReconnecting: (() -> Unit)?): Completable {
-        // Call the reconnecting callback if provided
         onReconnecting?.invoke()
-        
-        // Show toast on main thread
         Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, "Reconnecting to your Polar device...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Reconnecting to your Polar device...", Toast.LENGTH_SHORT)
+                .show()
         }
         return Completable.fromAction { api.foregroundEntered() }
             .andThen(Completable.fromAction { api.connectToDevice(deviceId) })
@@ -98,14 +98,9 @@ class PolarReconnector(private val api: PolarBleApi, private val context: Contex
     }
 }
 
-class PolarViewModel : ViewModel() {
-    private lateinit var deviceId: String
-
+class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE) {
+    private var deviceId: String? = null
     private lateinit var api: PolarBleApi
-
-    private lateinit var applicationContext: Context
-
-    private val appCeh get() = (applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
 
     private val _deviceConnectionState = MutableStateFlow<PolarDeviceInfo?>(null)
     val deviceConnectionState = _deviceConnectionState.asStateFlow()
@@ -113,61 +108,108 @@ class PolarViewModel : ViewModel() {
     private val _batteryLevelState = MutableStateFlow<Int?>(null)
     val batteryLevelState = _batteryLevelState.asStateFlow()
 
-    private val _bluetoothEnabledState = MutableStateFlow<Boolean>(false)
+    private val _bluetoothEnabledState = MutableStateFlow(false)
     val bluetoothEnabledState = _bluetoothEnabledState.asStateFlow()
 
     private val disposables = CompositeDisposable()
     private var hrStreamDisposable: Disposable? = null
     private val isHrStreamingActive = AtomicBoolean(false)
 
-    private val _hasBeenInitialized = MutableStateFlow<Boolean>(false)
+    override fun hasUsableConfig(config: ExternalHeartRateConfig?): Boolean =
+        (config as? PolarHeartRateConfig)?.deviceId?.isNotBlank() == true
 
-    val hasBeenInitialized = _hasBeenInitialized.asStateFlow()
+    override fun onInitialize(config: ExternalHeartRateConfig) {
+        val polarConfig = config as PolarHeartRateConfig
+        applicationContext?.let { initializePolarApi(it, polarConfig.deviceId) }
+    }
+
+    override fun connectToConfiguredDevice(config: ExternalHeartRateConfig) {
+        val polarConfig = config as? PolarHeartRateConfig ?: run {
+            publishConnectionState(
+                ExternalHeartRateConnectionState.MissingConfiguration(
+                    source = source,
+                    message = "Configure ${source.displayName()} in Settings first."
+                )
+            )
+            return
+        }
+
+        if (!::api.isInitialized) {
+            applicationContext?.let { initializePolarApi(it, polarConfig.deviceId) }
+        }
+
+        publishConnectionState(
+            ExternalHeartRateConnectionState.Connecting(
+                source = source,
+                message = "Connecting to your Polar device..."
+            )
+        )
+
+        viewModelScope.launch(appCeh) {
+            try {
+                api.connectToDevice(polarConfig.deviceId)
+            } catch (exception: Exception) {
+                Log.e("PolarViewModel", "Error connecting to device ${polarConfig.deviceId}", exception)
+                publishConnectionState(
+                    ExternalHeartRateConnectionState.Error(
+                        source = source,
+                        message = "Couldn't connect to your Polar device."
+                    )
+                )
+            }
+        }
+    }
+
+    override fun releaseDeviceResources() {
+        publishHeartRate(null)
+        clearHrStreamingState()
+        disposables.clear()
+
+        if (!::api.isInitialized) {
+            deviceId = null
+            _deviceConnectionState.value = null
+            _batteryLevelState.value = null
+            return
+        }
+
+        try {
+            deviceId?.let { api.disconnectFromDevice(it) }
+        } catch (exception: Exception) {
+            Log.w("PolarViewModel", "Error disconnecting from device during release", exception)
+        }
+
+        try {
+            api.shutDown()
+        } catch (exception: Exception) {
+            Log.w("PolarViewModel", "Error shutting down Polar API", exception)
+        } finally {
+            deviceId = null
+            _deviceConnectionState.value = null
+            _batteryLevelState.value = null
+        }
+    }
+
+    override fun foregroundEntered() {
+        if (::api.isInitialized) {
+            api.foregroundEntered()
+        }
+    }
 
     private fun clearHrStreamingState() {
-        hrStreamDisposable?.let {
-            if (!it.isDisposed) {
-                it.dispose()
-                disposables.remove(it)
+        hrStreamDisposable?.let { disposable ->
+            if (!disposable.isDisposed) {
+                disposable.dispose()
+                disposables.remove(disposable)
             }
         }
         hrStreamDisposable = null
         isHrStreamingActive.set(false)
     }
 
-    private fun releasePolarApi() {
-        clearHrStreamingState()
-        disposables.clear()
-
-        if (!::api.isInitialized) {
-            return
-        }
-
-        try {
-            if (::deviceId.isInitialized) {
-                api.disconnectFromDevice(deviceId)
-            }
-        } catch (e: Exception) {
-            Log.w("PolarViewModel", "Error disconnecting from device during release", e)
-        }
-
-        try {
-            api.shutDown()
-        } catch (e: Exception) {
-            Log.w("PolarViewModel", "Error shutting down Polar API", e)
-        }
-    }
-
-    fun initialize(applicationContext: Context, deviceId: String){
-        if (_hasBeenInitialized.value) {
-            releasePolarApi()
-        }
-
-        _hasBeenInitialized.value = true
-
-        this.applicationContext = applicationContext
+    private fun initializePolarApi(applicationContext: Context, deviceId: String) {
         this.deviceId = deviceId
-        api = PolarBleApiDefaultImpl.defaultImplementation(applicationContext,
+        api = PolarBleApiDefaultImpl.defaultImplementation(
+            applicationContext,
             setOf(
                 PolarBleApi.PolarBleSdkFeature.FEATURE_HR,
                 PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_SDK_MODE,
@@ -181,152 +223,117 @@ class PolarViewModel : ViewModel() {
             )
         )
 
-        api.setAutomaticReconnection(true);
+        api.setAutomaticReconnection(true)
         api.setMtu(70)
-
-        val enableSdkLogs = false
-        if(enableSdkLogs) {
-            api.setApiLogger { s: String -> Log.d("MyApp", s) }
-        }
 
         api.setApiCallback(object : PolarBleApiCallback() {
             override fun blePowerStateChanged(powered: Boolean) {
                 viewModelScope.launch(appCeh) {
-                    try {
-                        _bluetoothEnabledState.value = powered
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error updating bluetooth state", e)
-                    }
+                    _bluetoothEnabledState.value = powered
                 }
             }
 
             override fun deviceConnected(polarDeviceInfo: PolarDeviceInfo) {
-                // Only start streaming if not already active (prevents race condition with retry mechanism)
+                val deviceName = polarDeviceInfo.name
+                markConnectedThisSession()
+                publishConnectionState(
+                    ExternalHeartRateConnectionState.Connected(
+                        source = source,
+                        message = "Connected to $deviceName.",
+                        deviceLabel = deviceName
+                    )
+                )
                 if (!isHrStreamingActive.get()) {
-                    try {
-                        startHrStreaming(polarDeviceInfo.deviceId)
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error starting HR streaming", e)
-                    }
-                } else {
-                    Log.d("MyApp", "HR stream already active, skipping startHrStreaming from deviceConnected callback")
+                    startHrStreaming(polarDeviceInfo.deviceId)
                 }
                 viewModelScope.launch(appCeh) {
-                    try {
-                        _deviceConnectionState.value = polarDeviceInfo
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error updating device connection state", e)
-                    }
+                    _deviceConnectionState.value = polarDeviceInfo
                 }
             }
 
             override fun deviceConnecting(polarDeviceInfo: PolarDeviceInfo) {
+                val deviceName = polarDeviceInfo.name
+                publishConnectionState(
+                    ExternalHeartRateConnectionState.Connecting(
+                        source = source,
+                        message = "Connecting to $deviceName..."
+                    )
+                )
             }
 
             override fun deviceDisconnected(polarDeviceInfo: PolarDeviceInfo) {
+                val deviceName = polarDeviceInfo.name
                 clearHrStreamingState()
-                
-                // Reset HR state to indicate no valid data
                 viewModelScope.launch(appCeh) {
-                    try {
-                        _hrBpm.value = null
-                        _deviceConnectionState.value = null
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error updating state on disconnect", e)
-                    }
+                    publishHeartRate(null)
+                    _deviceConnectionState.value = null
                 }
-                
-                try {
-                    viewModelScope.launch(appCeh) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(applicationContext, "Polar device disconnected.", Toast.LENGTH_SHORT).show()
-                        }
+                if (!isReleaseInProgress && !isSessionSkipped) {
+                    publishConnectionState(
+                        ExternalHeartRateConnectionState.Error(
+                            source = source,
+                            message = "Disconnected from $deviceName."
+                        )
+                    )
+                }
+                viewModelScope.launch(appCeh) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            applicationContext,
+                            "Polar device disconnected.",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-                } catch (e: Exception) {
-                    Log.e("PolarViewModel", "Error showing disconnect toast", e)
                 }
             }
 
-            override fun disInformationReceived(
+            override fun disInformationReceived(identifier: String, disInfo: DisInfo) = Unit
+
+            override fun bleSdkFeatureReady(
                 identifier: String,
-                disInfo: DisInfo
-            ) {}
+                feature: PolarBleApi.PolarBleSdkFeature,
+            ) = Unit
 
-            override fun bleSdkFeatureReady(identifier: String, feature: PolarBleApi.PolarBleSdkFeature) {}
+            override fun disInformationReceived(identifier: String, uuid: UUID, value: String) = Unit
 
-            override fun disInformationReceived(identifier: String, uuid: UUID, value: String) {}
             override fun htsNotificationReceived(
                 identifier: String,
-                data: PolarHealthThermometerData
-            ) {
-            }
+                data: PolarHealthThermometerData,
+            ) = Unit
 
             override fun batteryLevelReceived(identifier: String, level: Int) {
-                try {
-                    viewModelScope.launch(appCeh) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(applicationContext, "Polar device connected.\nBattery: $level%", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("PolarViewModel", "Error showing battery level toast", e)
-                }
                 viewModelScope.launch(appCeh) {
-                    try {
-                        _batteryLevelState.value = level
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error updating battery level state", e)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            applicationContext,
+                            "Polar connected. Battery: $level%",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
+                    _batteryLevelState.value = level
                 }
             }
         })
     }
 
-    fun connectToDevice() {
-        viewModelScope.launch(appCeh) {
-            try {
-                api.connectToDevice(deviceId)
-            } catch (e: Exception) {
-                Log.e("PolarViewModel", "Error connecting to device ${deviceId}: $e", e)
-            }
-        }
-    }
-
-    fun disconnectFromDevice() {
-        viewModelScope.launch(appCeh) {
-            try {
-                releasePolarApi()
-            } catch (e: Exception) {
-                Log.e("PolarViewModel", "Error disconnecting from device ${deviceId}: $e", e)
-            }
-        }
-    }
-
-    private val _hrBpm = MutableStateFlow<Int?>(null)
-    val hrBpm = _hrBpm.asStateFlow()
-
-    fun foregroundEntered() {
-        api.foregroundEntered()
-    }
-
     private fun startHrStreaming(deviceId: String) {
-        // Prevent duplicate stream creation
         if (!isHrStreamingActive.compareAndSet(false, true)) {
-            Log.d("MyApp", "HR stream already active, skipping duplicate startHrStreaming call")
+            Log.d("PolarViewModel", "HR stream already active, skipping duplicate start")
             return
         }
-        
-        // Clear existing HR stream subscription before creating a new one
-        hrStreamDisposable?.let {
-            if (!it.isDisposed) {
-                it.dispose()
-                disposables.remove(it)
+
+        hrStreamDisposable?.let { disposable ->
+            if (!disposable.isDisposed) {
+                disposable.dispose()
+                disposables.remove(disposable)
             }
         }
         hrStreamDisposable = null
 
-        Log.d("MyApp", "Starting HR stream for device: $deviceId")
-        
+        val applicationContext = applicationContext ?: run {
+            isHrStreamingActive.set(false)
+            return
+        }
         val stream = StaleRetryingBpmStream(
             deviceId = deviceId,
             source = PolarHrBpmSource(api),
@@ -334,46 +341,51 @@ class PolarViewModel : ViewModel() {
             staleTimeoutSec = 15,
             backoffSec = 2,
             onReconnecting = {
-                // Reset HR BPM when stale stream triggers reconnection
                 viewModelScope.launch(appCeh) {
-                    try {
-                        _hrBpm.value = null
-                    } catch (e: Exception) {
-                        Log.e("PolarViewModel", "Error resetting HR BPM on reconnection", e)
+                    publishHeartRate(null)
+                    if (!isSessionSkipped) {
+                        publishConnectionState(
+                            ExternalHeartRateConnectionState.Connecting(
+                                source = source,
+                                message = "Reconnecting to your Polar device..."
+                            )
+                        )
                     }
                 }
             }
         ).stream()
 
-        val d = stream
+        val disposable = stream
             .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
             .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
-            .doOnTerminate {
-                // Reset flag when stream terminates
-                isHrStreamingActive.set(false)
-                Log.d("MyApp", "HR stream terminated")
-            }
-            .doFinally {
-                // Reset flag when stream is disposed or terminated
-                isHrStreamingActive.set(false)
-                Log.d("MyApp", "HR stream disposed")
-            }
+            .doOnTerminate { isHrStreamingActive.set(false) }
+            .doFinally { isHrStreamingActive.set(false) }
             .subscribe(
-                { bpm -> 
-                    _hrBpm.value = bpm 
-                    //Log.d("MyApp", "HR BPM received: $bpm")
+                { bpm ->
+                    publishHeartRate(bpm)
+                    publishConnectionState(
+                        ExternalHeartRateConnectionState.Streaming(
+                            source = source,
+                            message = "Streaming from your Polar device.",
+                            deviceLabel = deviceId
+                        )
+                    )
                 },
-                { e -> 
-                    android.util.Log.e("MyApp", "HR stream error: $e")
+                { exception ->
+                    Log.e("PolarViewModel", "HR stream error", exception)
+                    publishHeartRate(null)
+                    if (!isSessionSkipped) {
+                        publishConnectionState(
+                            ExternalHeartRateConnectionState.Error(
+                                source = source,
+                                message = "Couldn't stream heart rate from your Polar device."
+                            )
+                        )
+                    }
                     isHrStreamingActive.set(false)
                 }
             )
-        hrStreamDisposable = d
-        disposables.add(d)
-    }
-
-    override fun onCleared() {
-        releasePolarApi()
-        super.onCleared()
+        hrStreamDisposable = disposable
+        disposables.add(disposable)
     }
 }

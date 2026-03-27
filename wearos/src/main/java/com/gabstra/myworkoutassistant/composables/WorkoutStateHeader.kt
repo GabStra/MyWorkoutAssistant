@@ -35,6 +35,29 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
+import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
+
+@Composable
+private fun rememberHeaderClockTime(enabled: Boolean): LocalDateTime {
+    var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
+
+    LaunchedEffect(enabled) {
+        if (!enabled) return@LaunchedEffect
+
+        while (true) {
+            val now = LocalDateTime.now()
+            currentTime = now
+            val nextSecond = now.truncatedTo(ChronoUnit.SECONDS).plusSeconds(1)
+            val delayMillis = Duration.between(now, nextSecond).toMillis().coerceAtLeast(1L)
+            delay(delayMillis)
+        }
+    }
+
+    return currentTime
+}
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalFoundationApi::class)
@@ -94,6 +117,8 @@ fun WorkoutStateHeader(
         else -> 0
     }
     val shouldShowSetTimer = showSetTimerInHeader
+    val showWorkoutElapsedTime = !showRestTimerInHeader && !shouldShowSetTimer && displayMode != 0
+    val headerClockTime = rememberHeaderClockTime(enabled = showWorkoutElapsedTime)
 
     Row(
         modifier = modifier
@@ -166,7 +191,7 @@ fun WorkoutStateHeader(
             )
 
             val durationSeconds = screenState.startWorkoutTime?.let { startTime ->
-                java.time.Duration.between(startTime, java.time.LocalDateTime.now())
+                Duration.between(startTime, headerClockTime)
                     .seconds
                     .coerceAtLeast(0L)
             } ?: 0L

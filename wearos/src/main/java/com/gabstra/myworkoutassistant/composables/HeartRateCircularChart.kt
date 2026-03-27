@@ -69,6 +69,7 @@ import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.HapticsHelper
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -973,6 +974,50 @@ fun HeartRatePolar(
         while (true) {
             appViewModel.registerHeartBeat(polarViewModel.hrBpm.value ?: 0)
             heartRateChangeViewModel.registerHeartRate(polarViewModel.hrBpm.value ?: 0)
+            delay(1000)
+        }
+    }
+
+    HeartRateCircularChart(
+        modifier = modifier,
+        zoneSegmentsModifier = zoneSegmentsModifier,
+        heartRateDisplayModifier = heartRateDisplayModifier,
+        appViewModel = appViewModel,
+        hapticsViewModel = hapticsViewModel,
+        heartRateChangeViewModel = heartRateChangeViewModel,
+        hr = hr,
+        age = userAge,
+        measuredMaxHeartRate = measuredMaxHeartRate,
+        restingHeartRate = restingHeartRate,
+        lowerBoundMaxHRPercent = lowerBoundMaxHRPercent,
+        upperBoundMaxHRPercent = upperBoundMaxHRPercent,
+        onHrStatusChange = onHrStatusChange
+    )
+}
+
+@Composable
+fun HeartRateExternal(
+    modifier: Modifier = Modifier,
+    zoneSegmentsModifier: Modifier = Modifier,
+    heartRateDisplayModifier: Modifier = Modifier,
+    appViewModel: AppViewModel,
+    hapticsViewModel: HapticsViewModel,
+    heartRateChangeViewModel: HeartRateChangeViewModel,
+    externalHeartRateController: ExternalHeartRateDeviceController,
+    userAge: Int,
+    measuredMaxHeartRate: Int? = null,
+    restingHeartRate: Int? = null,
+    lowerBoundMaxHRPercent: Float?,
+    upperBoundMaxHRPercent: Float?,
+    onHrStatusChange: ((HeartRateStatus?) -> Unit)? = null,
+) {
+    val hrData by externalHeartRateController.hrBpm.collectAsState()
+    val hr = hrData ?: 0
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            appViewModel.registerHeartBeat(externalHeartRateController.hrBpm.value ?: 0)
+            heartRateChangeViewModel.registerHeartRate(externalHeartRateController.hrBpm.value ?: 0)
             delay(1000)
         }
     }
