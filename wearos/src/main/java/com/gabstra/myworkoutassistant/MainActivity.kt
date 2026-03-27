@@ -331,16 +331,8 @@ fun WearApp(
 
                 appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
-                // Check for incomplete workouts
-                val prefs = localContext.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-                val isWorkoutInProgress = prefs.getBoolean("isWorkoutInProgress", false)
                 try {
-                    if (isWorkoutInProgress) {
-                        val checkpoint = appViewModel.getSavedRecoveryCheckpoint()
-                        if (checkpoint == null) {
-                            appViewModel.clearWorkoutInProgressFlag()
-                        }
-                    }
+                    appViewModel.maybeShowRecoveryPromptOnLaunch()
                 } catch (exception: Exception) {
                     Log.e("MainActivity", "Error checking workout recovery state", exception)
                 }

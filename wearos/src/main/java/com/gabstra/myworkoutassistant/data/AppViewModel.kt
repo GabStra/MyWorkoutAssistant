@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.gabstra.myworkoutassistant.MyApplication
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -245,6 +246,69 @@ open class AppViewModel : WorkoutViewModel() {
         checkpointStore()?.clear()
         lastCheckpointFingerprint = null
         clearRecoveryPromptState()
+    }
+
+    internal fun maybeShowRecoveryPromptOnLaunch() {
+        val context = applicationContext ?: return
+        launchIO {
+            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("isWorkoutInProgress", false)) {
+                return@launchIO
+            }
+
+            val checkpoint = getSavedRecoveryCheckpoint()
+            val incompleteWorkout = resolveIncompleteWorkoutForRecovery(
+                context = context,
+                checkpoint = checkpoint
+            )
+
+            withContext(Dispatchers.Main) {
+                if (incompleteWorkout != null) {
+                    showRecoveryPrompt(incompleteWorkout, checkpoint)
+                } else {
+                    clearWorkoutInProgressFlag()
+                    clearRecoveryCheckpoint()
+                }
+            }
+        }
+    }
+
+    private suspend fun resolveIncompleteWorkoutForRecovery(
+        context: Context,
+        checkpoint: WorkoutRecoveryCheckpoint?
+    ): IncompleteWorkout? {
+        val db = AppDatabase.getDatabase(context)
+        val unfinishedHistories = db.workoutHistoryDao()
+            .getAllWorkoutHistories()
+            .filterNot { it.isDone }
+            .sortedByDescending { it.startTime }
+        if (unfinishedHistories.isEmpty()) {
+            return null
+        }
+
+        val workoutRecords = db.workoutRecordDao().getAll()
+        val prioritizedHistory = checkpoint?.workoutHistoryId?.let { workoutHistoryId ->
+            unfinishedHistories.firstOrNull { it.id == workoutHistoryId }
+        } ?: checkpoint?.workoutId?.let { workoutId ->
+            unfinishedHistories.firstOrNull { it.workoutId == workoutId }
+        } ?: workoutRecords
+            .sortedByDescending { it.lastActiveSyncAt }
+            .firstNotNullOfOrNull { record ->
+                unfinishedHistories.firstOrNull { it.id == record.workoutHistoryId }
+            } ?: unfinishedHistories.firstOrNull()
+
+        val workoutHistory = prioritizedHistory ?: return null
+        val workout = workoutStore.workouts.firstOrNull { candidate ->
+            candidate.id == workoutHistory.workoutId || candidate.globalId == workoutHistory.globalId
+        } ?: checkpoint?.workoutId?.let { workoutId ->
+            workoutStore.workouts.firstOrNull { it.id == workoutId }
+        } ?: return null
+
+        return IncompleteWorkout(
+            workoutHistory = workoutHistory,
+            workoutName = workout.name,
+            workoutId = workout.id
+        )
     }
 
     private fun shouldShowTimerOptions(
