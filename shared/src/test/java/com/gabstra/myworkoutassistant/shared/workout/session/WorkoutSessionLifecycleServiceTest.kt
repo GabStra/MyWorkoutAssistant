@@ -170,7 +170,7 @@ class WorkoutSessionLifecycleServiceTest {
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.of(2026, 3, 20),
             previousVersionId = null,
             nextVersionId = null,

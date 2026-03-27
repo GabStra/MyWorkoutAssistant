@@ -26,7 +26,7 @@ class WeeklyProgressResolverTest {
         workoutComponents = emptyList(),
         order = order,
         enabled = enabled,
-        usePolarDevice = false,
+        heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
         creationDate = creationDate,
         previousVersionId = null,
         nextVersionId = null,

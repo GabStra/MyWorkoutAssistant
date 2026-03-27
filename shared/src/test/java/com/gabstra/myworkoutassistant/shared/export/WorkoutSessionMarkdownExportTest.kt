@@ -315,7 +315,7 @@ class WorkoutSessionMarkdownExportTest {
             ),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.of(2026, 1, 1),
             globalId = workoutGlobalId,
             type = 0
