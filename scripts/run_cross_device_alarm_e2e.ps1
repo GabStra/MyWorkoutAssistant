@@ -79,7 +79,7 @@ function Resolve-EmulatorPath {
     ) | Where-Object { $_ -and (Test-Path $_) }
 
     if ($candidates.Count -gt 0) {
-        return $candidates[0]
+        return $candidates | Select-Object -First 1
     }
 
     $cmd = Get-Command emulator -ErrorAction SilentlyContinue
@@ -90,7 +90,19 @@ function Resolve-EmulatorPath {
     return $null
 }
 
-function Wait-ForEmulatorBoot([string]$serial, [int]$timeoutSeconds = 240) {
+function Get-ExecutablePath([object]$commandPath) {
+    $normalizedPath = if ($commandPath -is [System.Array]) {
+        $commandPath -join ""
+    } elseif ($commandPath -is [System.Management.Automation.CommandInfo]) {
+        $commandPath.Source
+    } else {
+        [string]$commandPath
+    }
+
+    return (Get-Item -LiteralPath $normalizedPath).FullName
+}
+
+function Wait-ForEmulatorBoot([string]$serial, [int]$timeoutSeconds = 420) {
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $bootCompleted = (& adb -s $serial shell getprop sys.boot_completed 2>$null).Trim()
@@ -108,7 +120,7 @@ function Start-Emulator([string]$deviceKind, [string]$forcedAvdName = $null) {
         throw "Could not find emulator binary. Set ANDROID_SDK_ROOT/ANDROID_HOME or add emulator to PATH."
     }
 
-    $avds = & $emulatorPath -list-avds
+    $avds = & (Get-ExecutablePath $emulatorPath) -list-avds
     $avdNameToUse = $forcedAvdName
     if (-not $avdNameToUse) {
         if ($deviceKind -eq "watch") {
@@ -124,9 +136,9 @@ function Start-Emulator([string]$deviceKind, [string]$forcedAvdName = $null) {
 
     Write-Host "Starting $deviceKind emulator AVD: $avdNameToUse" -ForegroundColor Yellow
     $before = (Get-ConnectedDevices | Where-Object { Is-Emulator $_.Serial }).Serial
-    Start-Process -FilePath $emulatorPath -ArgumentList @("-avd", $avdNameToUse) | Out-Null
+    Start-Process -FilePath (Get-ExecutablePath $emulatorPath) -ArgumentList @("-avd", $avdNameToUse) | Out-Null
 
-    $deadline = (Get-Date).AddMinutes(5)
+    $deadline = (Get-Date).AddMinutes(10)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 3
         $connected = Get-ConnectedDevices | Where-Object { $_.State -eq "device" -and (Is-Emulator $_.Serial) }
@@ -170,20 +182,29 @@ function Resolve-EmulatorSerial([string]$preferredSerial, [string]$kind, [string
 }
 
 function Install-WearDebugApp([string]$watchSerial) {
-    Write-Host "Building and installing Wear debug app on watch emulator..." -ForegroundColor Cyan
-    & .\gradlew :wearos:assembleDebug
+    Write-Host "Building and installing Wear debug + androidTest APKs on watch emulator..." -ForegroundColor Cyan
+    & .\gradlew :wearos:assembleDebug :wearos:assembleDebugAndroidTest
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to assemble wear debug app."
+        throw "Failed to assemble wear debug/test APKs."
     }
 
     $wearApk = "wearos/build/outputs/apk/debug/wearos-debug.apk"
+    $wearTestApk = "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk"
     if (-not (Test-Path $wearApk)) {
         throw "Wear APK not found at $wearApk"
+    }
+    if (-not (Test-Path $wearTestApk)) {
+        throw "Wear test APK not found at $wearTestApk"
     }
 
     & adb -s $watchSerial install -r $wearApk | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install wear debug app on $watchSerial"
+    }
+
+    & adb -s $watchSerial install -r $wearTestApk | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install wear androidTest APK on $watchSerial"
     }
 }
 
@@ -343,6 +364,8 @@ try {
         "-WearEmulatorSerial",
         $watchSerial,
         "-StartEmulatorIfNeeded:`$false",
+        "-SkipAssemble",
+        "-SkipInstall",
         "-TimingOutputPath",
         (Join-Path $logsDir "wear_alarm_$timestamp.json")
     )

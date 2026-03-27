@@ -86,7 +86,7 @@ function Resolve-EmulatorPath {
     ) | Where-Object { $_ -and (Test-Path $_) }
 
     if ($candidates.Count -gt 0) {
-        return $candidates[0]
+        return $candidates | Select-Object -First 1
     }
 
     $cmd = Get-Command emulator -ErrorAction SilentlyContinue
@@ -97,7 +97,19 @@ function Resolve-EmulatorPath {
     return $null
 }
 
-function Wait-ForEmulatorBoot([string]$serial, [int]$timeoutSeconds = 240) {
+function Get-ExecutablePath([object]$commandPath) {
+    $normalizedPath = if ($commandPath -is [System.Array]) {
+        $commandPath -join ""
+    } elseif ($commandPath -is [System.Management.Automation.CommandInfo]) {
+        $commandPath.Source
+    } else {
+        [string]$commandPath
+    }
+
+    return (Get-Item -LiteralPath $normalizedPath).FullName
+}
+
+function Wait-ForEmulatorBoot([string]$serial, [int]$timeoutSeconds = 420) {
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $bootCompleted = (& adb -s $serial shell getprop sys.boot_completed 2>$null).Trim()
@@ -115,7 +127,7 @@ function Start-Emulator([string]$deviceKind, [string]$forcedAvdName = $null) {
         throw "Could not find emulator binary. Set ANDROID_SDK_ROOT/ANDROID_HOME or add emulator to PATH."
     }
 
-    $avds = & $emulatorPath -list-avds
+    $avds = & (Get-ExecutablePath $emulatorPath) -list-avds
     $avdNameToUse = $forcedAvdName
     if (-not $avdNameToUse) {
         if ($deviceKind -eq "watch") {
@@ -131,9 +143,9 @@ function Start-Emulator([string]$deviceKind, [string]$forcedAvdName = $null) {
 
     Write-Host "Starting $deviceKind emulator AVD: $avdNameToUse" -ForegroundColor Yellow
     $before = (Get-ConnectedDevices | Where-Object { Is-Emulator $_.Serial }).Serial
-    Start-Process -FilePath $emulatorPath -ArgumentList @("-avd", $avdNameToUse) | Out-Null
+    Start-Process -FilePath (Get-ExecutablePath $emulatorPath) -ArgumentList @("-avd", $avdNameToUse) | Out-Null
 
-    $deadline = (Get-Date).AddMinutes(5)
+    $deadline = (Get-Date).AddMinutes(10)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 3
         $connected = Get-ConnectedDevices | Where-Object { $_.State -eq "device" -and (Is-Emulator $_.Serial) }
