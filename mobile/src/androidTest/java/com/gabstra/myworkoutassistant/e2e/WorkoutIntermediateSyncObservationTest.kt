@@ -23,37 +23,34 @@ class WorkoutIntermediateSyncObservationTest {
     }
 
     @Test
-    fun crossDeviceSync_intermediateUpdatesArrivePerCompletedSet() = runBlocking {
-        requireLiveObservationOrSkip()
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-
-        CrossDeviceSyncAssertions.intermediateCheckpoints.forEach { checkpoint ->
-            CrossDeviceSyncAssertions.waitForCheckpoint(
-                context = context,
-                checkpoint = checkpoint,
-                timeoutMs = resolvedCheckpointTimeoutMs()
-            )
-        }
-
-        CrossDeviceSyncAssertions.waitForFinalDerivedState(
-            context = context,
-            timeoutMs = resolvedCheckpointTimeoutMs()
-        )
-    }
-
-    @Test
-    fun crossDeviceSync_liveWearSessionIsWearOwnedAndNotInterrupted() = runBlocking {
+    fun crossDeviceSync_liveWearSessionStaysWearOwnedAndIntermediateUpdatesArrive() = runBlocking {
         requireLiveObservationOrSkip()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val activeCheckpoints = listOf(CrossDeviceSyncAssertions.startedCheckpoint) +
             CrossDeviceSyncAssertions.intermediateCheckpoints.dropLast(1)
 
         activeCheckpoints.forEach { checkpoint ->
+            CrossDeviceSyncAssertions.waitForCheckpoint(
+                context = context,
+                checkpoint = checkpoint,
+                timeoutMs = resolvedCheckpointTimeoutMs()
+            )
             CrossDeviceSyncAssertions.waitForWearOwnedActiveState(
                 context = context,
                 checkpoint = checkpoint,
                 timeoutMs = resolvedCheckpointTimeoutMs()
             )
         }
+
+        CrossDeviceSyncAssertions.waitForCheckpoint(
+            context = context,
+            checkpoint = CrossDeviceSyncAssertions.finalCheckpoint,
+            timeoutMs = resolvedCheckpointTimeoutMs()
+        )
+
+        CrossDeviceSyncAssertions.waitForFinalDerivedState(
+            context = context,
+            timeoutMs = resolvedCheckpointTimeoutMs()
+        )
     }
 }
