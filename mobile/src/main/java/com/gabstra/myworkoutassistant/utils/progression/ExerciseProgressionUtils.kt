@@ -724,7 +724,7 @@ fun mergeWorkoutStore(
     val mergedBirthDateYear = existing.birthDateYear
     val mergedWeightKg = existing.weightKg
     val mergedProgressionPercentageAmount = existing.progressionPercentageAmount
-    val mergedPolarDeviceId = existing.polarDeviceId
+    val mergedExternalHeartRateConfigs = existing.externalHeartRateConfigs
     val mergedMeasuredMaxHeartRate = existing.measuredMaxHeartRate
     val mergedRestingHeartRate = existing.restingHeartRate
     
@@ -768,7 +768,7 @@ fun mergeWorkoutStore(
         birthDateYear = mergedBirthDateYear,
         weightKg = mergedWeightKg,
         progressionPercentageAmount = mergedProgressionPercentageAmount,
-        polarDeviceId = mergedPolarDeviceId,
+        externalHeartRateConfigs = mergedExternalHeartRateConfigs,
         measuredMaxHeartRate = mergedMeasuredMaxHeartRate,
         restingHeartRate = mergedRestingHeartRate
     )

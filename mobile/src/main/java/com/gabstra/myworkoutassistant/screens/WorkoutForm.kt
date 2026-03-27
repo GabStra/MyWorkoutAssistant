@@ -72,6 +72,7 @@ import com.gabstra.myworkoutassistant.composables.StandardFilterDropdown
 import com.gabstra.myworkoutassistant.composables.StandardFilterDropdownItem
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
@@ -91,13 +92,16 @@ fun WorkoutForm(
     workout: Workout? = null,
     isSaving: Boolean = false,
     existingSchedules: List<WorkoutSchedule> = emptyList(),
-    workoutPlanId: UUID? = null
+    workoutPlanId: UUID? = null,
+    availableExternalHeartRateSources: Set<HeartRateSource> = emptySet(),
 ) {
     // ---- state ----
     val workoutNameState = rememberSaveable { mutableStateOf(workout?.name ?: "") }
     val workoutDescriptionState = rememberSaveable { mutableStateOf(workout?.description ?: "") }
     val timesCompletedInAWeekState = rememberSaveable { mutableStateOf(workout?.timesCompletedInAWeek?.toString() ?: "0") }
-    val usePolarDeviceState = rememberSaveable { mutableStateOf(workout?.usePolarDevice ?: false) }
+    val heartRateSourceState = rememberSaveable {
+        mutableStateOf(workout?.heartRateSource ?: HeartRateSource.WATCH_SENSOR)
+    }
 
     val selectedWorkoutType = rememberSaveable { mutableStateOf(workout?.type ?: ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING) }
     val workoutTypeItems = remember {
@@ -106,6 +110,14 @@ fun WorkoutForm(
                 value = entry.value,
                 label = entry.key.replace('_', ' ').lowercase(Locale.ROOT)
                     .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+            )
+        }
+    }
+    val heartRateSourceItems = remember {
+        HeartRateSource.entries.map { source ->
+            StandardFilterDropdownItem(
+                value = source,
+                label = source.displayName()
             )
         }
     }
@@ -122,6 +134,7 @@ fun WorkoutForm(
 
     val scrollState = rememberScrollState()
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+    val context = LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -224,15 +237,17 @@ fun WorkoutForm(
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        ListItem(
-                            colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                            headlineContent = { Text("Use Polar device", style = MaterialTheme.typography.bodyLarge) },
-                            trailingContent = {
-                                Switch(
-                                    checked = usePolarDeviceState.value,
-                                    onCheckedChange = { usePolarDeviceState.value = it }
-                                )
-                            }
+                        val heartRateSourceLabel = remember(heartRateSourceItems, heartRateSourceState.value) {
+                            heartRateSourceItems.firstOrNull { it.value == heartRateSourceState.value }?.label
+                                ?: HeartRateSource.WATCH_SENSOR.displayName()
+                        }
+                        StandardFilterDropdown(
+                            label = "Heart rate source",
+                            selectedText = heartRateSourceLabel,
+                            items = heartRateSourceItems,
+                            onItemSelected = { heartRateSourceState.value = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            isItemSelected = { it == heartRateSourceState.value }
                         )
                     }
                 }
@@ -318,12 +333,23 @@ fun WorkoutForm(
                     AppPrimaryButton(
                         text = "Save",
                         onClick = {
+                            if (
+                                heartRateSourceState.value.isExternal &&
+                                heartRateSourceState.value !in availableExternalHeartRateSources
+                            ) {
+                                Toast.makeText(
+                                    context,
+                                    "Configure ${heartRateSourceState.value.displayName()} in Settings first.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                return@AppPrimaryButton
+                            }
                             val newWorkout = Workout(
                                 id = workout?.id ?: UUID.randomUUID(),
                                 name = workoutNameState.value.trim(),
                                 description = workoutDescriptionState.value.trim(),
                                 workoutComponents = workout?.workoutComponents ?: listOf(),
-                                usePolarDevice = usePolarDeviceState.value,
+                                heartRateSource = heartRateSourceState.value,
                                 creationDate = LocalDate.now(),
                                 order = workout?.order ?: 0,
                                 timesCompletedInAWeek = timesCompletedInAWeekState.value.toIntOrNull(),

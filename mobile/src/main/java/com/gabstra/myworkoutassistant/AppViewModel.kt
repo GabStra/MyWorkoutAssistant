@@ -141,7 +141,6 @@ sealed class ScreenData() {
 private fun emptyWorkoutStore(): WorkoutStore {
     return WorkoutStore(
         workouts = emptyList(),
-        polarDeviceId = null,
         birthDateYear = 0,
         weightKg = 0.0,
         equipments = emptyList(),

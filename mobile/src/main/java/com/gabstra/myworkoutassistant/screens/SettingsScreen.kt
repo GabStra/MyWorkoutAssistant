@@ -44,8 +44,12 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
+import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
+import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.delay
@@ -64,8 +68,13 @@ fun SettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val defaultRestingHeartRate = getEffectiveRestingHeartRate()
+    val polarConfig = remember(workoutStore.externalHeartRateConfigs) { workoutStore.findPolarHeartRateConfig() }
+    val whoopConfig = remember(workoutStore.externalHeartRateConfigs) { workoutStore.findWhoopHeartRateConfig() }
 
-    val polarDeviceIdState = remember { mutableStateOf(workoutStore.polarDeviceId ?: "") }
+    val polarDeviceIdState = remember { mutableStateOf(polarConfig?.deviceId ?: "") }
+    val polarDisplayNameState = remember { mutableStateOf(polarConfig?.displayName ?: "") }
+    val whoopDeviceIdState = remember { mutableStateOf(whoopConfig?.deviceId ?: "") }
+    val whoopDisplayNameState = remember { mutableStateOf(whoopConfig?.displayName ?: "") }
     val birthDateYearState = remember { mutableStateOf(workoutStore.birthDateYear.toString()) }
     val weightState = remember { mutableStateOf(workoutStore.weightKg.toString()) }
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
@@ -169,6 +178,33 @@ fun SettingsScreen(
                 value = polarDeviceIdState.value,
                 onValueChange = { polarDeviceIdState.value = it },
                 label = { Text("Polar Device ID") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            OutlinedTextField(
+                value = polarDisplayNameState.value,
+                onValueChange = { polarDisplayNameState.value = it },
+                label = { Text("Polar Display Name (optional)") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            OutlinedTextField(
+                value = whoopDeviceIdState.value,
+                onValueChange = { whoopDeviceIdState.value = it },
+                label = { Text("WHOOP Device ID (optional)") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+            )
+
+            OutlinedTextField(
+                value = whoopDisplayNameState.value,
+                onValueChange = { whoopDisplayNameState.value = it },
+                label = { Text("WHOOP Display Name (optional)") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(8.dp)
@@ -322,8 +358,31 @@ fun SettingsScreen(
                             return@AppPrimaryButton
                         }
 
+                        val externalHeartRateConfigs = buildList {
+                            val polarDeviceId = polarDeviceIdState.value.trim()
+                            if (polarDeviceId.isNotEmpty()) {
+                                add(
+                                    PolarHeartRateConfig(
+                                        deviceId = polarDeviceId,
+                                        displayName = polarDisplayNameState.value.trim().ifBlank { null }
+                                    )
+                                )
+                            }
+
+                            val whoopDeviceId = whoopDeviceIdState.value.trim().ifBlank { null }
+                            val whoopDisplayName = whoopDisplayNameState.value.trim().ifBlank { null }
+                            if (whoopDeviceId != null || whoopDisplayName != null) {
+                                add(
+                                    WhoopHeartRateConfig(
+                                        deviceId = whoopDeviceId,
+                                        displayName = whoopDisplayName
+                                    )
+                                )
+                            }
+                        }
+
                         val newWorkoutStore = workoutStore.copy(
-                            polarDeviceId = polarDeviceIdState.value.ifBlank { null },
+                            externalHeartRateConfigs = externalHeartRateConfigs,
                             birthDateYear = birthDateYear,
                             weightKg = weight,
                             measuredMaxHeartRate = measuredMaxHeartRate,
@@ -340,5 +399,4 @@ fun SettingsScreen(
 
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }
-
 

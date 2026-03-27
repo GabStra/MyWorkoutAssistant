@@ -1541,6 +1541,9 @@ fun MyWorkoutAssistantNavHost(
                             },
                             isSaving = isSaving,
                             workoutPlanId = screenData.workoutPlanId,
+                            availableExternalHeartRateSources = appViewModel.workoutStore.externalHeartRateConfigs
+                                .map { it.source }
+                                .toSet(),
                         )
                     }
 
@@ -1627,7 +1630,10 @@ fun MyWorkoutAssistantNavHost(
                             },
                             workout = selectedWorkout,
                             isSaving = isSaving,
-                            existingSchedules = existingSchedules
+                            existingSchedules = existingSchedules,
+                            availableExternalHeartRateSources = appViewModel.workoutStore.externalHeartRateConfigs
+                                .map { it.source }
+                                .toSet(),
                         )
                     }
 
