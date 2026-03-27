@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.shared.workout.ui
 
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.time.LocalDateTime
 
@@ -49,7 +50,7 @@ data class WorkoutScreenState(
                     workoutComponents = emptyList(),
                     order = 0,
                     enabled = true,
-                    usePolarDevice = false,
+                    heartRateSource = HeartRateSource.WATCH_SENSOR,
                     creationDate = java.time.LocalDate.now(),
                     type = 0,
                     globalId = java.util.UUID.randomUUID()

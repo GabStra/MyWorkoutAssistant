@@ -6,12 +6,14 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
@@ -83,6 +85,7 @@ fun fromWorkoutStoreToJSON(workoutStore: WorkoutStore): String {
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .create()
     return gson.toJson(workoutStore)
@@ -99,6 +102,8 @@ fun fromJSONToWorkoutStore(json: String): WorkoutStore {
         .registerTypeAdapter(WeightLoadedEquipment::class.java,EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
@@ -125,6 +130,7 @@ fun fromWorkoutPlanPackageToJSON(workoutPlanPackage: WorkoutPlanPackage): String
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .create()
     return gson.toJson(workoutPlanPackage)
 }
@@ -139,6 +145,8 @@ fun fromJSONToWorkoutPlanPackage(json: String): WorkoutPlanPackage {
         .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
@@ -178,6 +186,7 @@ fun fromAppBackupToJSON(appBackup: AppBackup) : String {
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .create()
 
     return gson.toJson(appBackup)
@@ -207,6 +216,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .setPrettyPrinting()
         .create()
@@ -281,6 +291,8 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+        .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
         .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
         .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
         .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())

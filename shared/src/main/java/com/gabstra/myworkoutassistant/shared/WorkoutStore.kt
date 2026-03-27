@@ -9,7 +9,7 @@ data class WorkoutStore(
     val accessoryEquipments: List<AccessoryEquipment> = emptyList(), // List of accessory equipment
     val workoutPlans: List<WorkoutPlan> = emptyList(),
     val weeklyProgressOverrides: List<WeeklyProgressOverride> = emptyList(),
-    val polarDeviceId: String? = null,
+    val externalHeartRateConfigs: List<ExternalHeartRateConfig> = emptyList(),
     val birthDateYear: Int,
     val weightKg: Double,
     val progressionPercentageAmount: Double,

@@ -4,6 +4,8 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
+import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
+import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.google.gson.*
@@ -29,6 +31,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val accessoryEquipmentsType = object : TypeToken<List<AccessoryEquipment>>() {}.type
         val workoutPlansType = object : TypeToken<List<WorkoutPlan>>() {}.type
         val weeklyProgressOverridesType = object : TypeToken<List<WeeklyProgressOverride>>() {}.type
+        val externalHeartRateConfigsType = object : TypeToken<List<ExternalHeartRateConfig>>() {}.type
         
         // Safely get list fields, defaulting to empty lists if null or missing
         val workouts = jsonObject.get("workouts")?.let {
@@ -55,8 +58,20 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             }
         } ?: emptyList()
         
-        val polarDeviceId = jsonObject.get("polarDeviceId")?.let {
+        val externalHeartRateConfigs = jsonObject.get("externalHeartRateConfigs")?.let {
+            if (it.isJsonNull) emptyList<ExternalHeartRateConfig>()
+            else context.deserialize(it, externalHeartRateConfigsType)
+        } ?: emptyList()
+        val legacyPolarDeviceId = jsonObject.get("polarDeviceId")?.let {
             if (it.isJsonNull) null else it.asString
+        }
+        val migratedExternalConfigs = if (
+            legacyPolarDeviceId != null &&
+            externalHeartRateConfigs.none { config -> config is PolarHeartRateConfig }
+        ) {
+            externalHeartRateConfigs + PolarHeartRateConfig(deviceId = legacyPolarDeviceId)
+        } else {
+            externalHeartRateConfigs
         }
         
         val birthDateYear = jsonObject.get("birthDateYear")?.asInt ?: 0
@@ -75,7 +90,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             accessoryEquipments = accessoryEquipments,
             workoutPlans = workoutPlans,
             weeklyProgressOverrides = weeklyProgressOverrides,
-            polarDeviceId = polarDeviceId,
+            externalHeartRateConfigs = migratedExternalConfigs,
             birthDateYear = birthDateYear,
             weightKg = weightKg,
             progressionPercentageAmount = progressionPercentageAmount,

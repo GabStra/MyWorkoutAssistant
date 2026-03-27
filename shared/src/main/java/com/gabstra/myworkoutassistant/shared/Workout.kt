@@ -13,7 +13,7 @@ data class Workout(
     val workoutComponents: List<WorkoutComponent>,
     val order : Int,
     val enabled: Boolean = true,
-    val usePolarDevice: Boolean = false,
+    val heartRateSource: HeartRateSource = HeartRateSource.WATCH_SENSOR,
     val creationDate: LocalDate,
     val previousVersionId: UUID? = null,
     val nextVersionId: UUID? = null,
@@ -22,4 +22,10 @@ data class Workout(
     val globalId: UUID,
     val type: Int,
     val workoutPlanId: UUID? = null
-)
+) {
+    val usePolarDevice: Boolean
+        get() = heartRateSource == HeartRateSource.POLAR_BLE
+
+    val usesExternalHeartRateDevice: Boolean
+        get() = heartRateSource.isExternal
+}

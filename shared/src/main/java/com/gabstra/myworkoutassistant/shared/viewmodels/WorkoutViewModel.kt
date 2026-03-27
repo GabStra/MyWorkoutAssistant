@@ -15,10 +15,12 @@ import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
+import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
+import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -39,6 +41,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.getNewSet
 import com.gabstra.myworkoutassistant.shared.initializeSetData
 import com.gabstra.myworkoutassistant.shared.isSetDataValid
+import com.gabstra.myworkoutassistant.shared.findExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.round
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -363,7 +366,6 @@ open class WorkoutViewModel(
     var workoutStore by mutableStateOf(
         WorkoutStore(
             workouts = emptyList(),
-            polarDeviceId = null,
             birthDateYear = 0,
             weightKg = 0.0,
             equipments = emptyList(),
@@ -438,14 +440,13 @@ open class WorkoutViewModel(
     val allWorkoutStates: List<WorkoutState>
         get() = stateMachine?.allStates ?: emptyList()
 
-    var polarDeviceId: String = ""
-        get() = workoutStore.polarDeviceId ?: ""
+    fun getExternalHeartRateConfig(source: HeartRateSource): ExternalHeartRateConfig? =
+        workoutStore.findExternalHeartRateConfig(source)
 
     fun resetWorkoutStore() {
         updateWorkoutStore(
             WorkoutStore(
                 workouts = emptyList(),
-                polarDeviceId = null,
                 birthDateYear = 0,
                 weightKg = 0.0,
                 equipments = emptyList(),

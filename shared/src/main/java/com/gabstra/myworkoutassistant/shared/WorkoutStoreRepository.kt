@@ -20,7 +20,6 @@ class WorkoutStoreRepository(private val filesDir:File) : IWorkoutStoreRepositor
             equipments = emptyList(),
             accessoryEquipments = emptyList(),
             workoutPlans = emptyList(),
-            polarDeviceId = null,
             birthDateYear = 0,
             weightKg = 0.0,
             progressionPercentageAmount = 0.0
