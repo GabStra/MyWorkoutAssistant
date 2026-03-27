@@ -160,6 +160,32 @@ pwsh ./scripts/run_cross_device_sync_e2e.ps1 -SkipWearRebuildAfterFirstRun
 
 This runs the first Wear class normally, then runs subsequent Wear classes via `run_wear_e2e.ps1` with `-SkipAssemble -SkipInstall` (currently the VS LAST verifier runs first, then producer).
 
+## Cross-Device Alarm E2E
+
+Use this script:
+
+```powershell
+pwsh ./scripts/run_cross_device_alarm_e2e.ps1
+```
+
+Default flow:
+
+1. Resolve watch + phone emulators/devices.
+2. Build/install Wear debug app.
+3. Build/install mobile debug + mobile androidTest APKs.
+4. Run mobile prep instrumentation that seeds a one-time phone schedule and syncs it to the watch.
+5. Wait for the synced workout store to appear on the watch.
+6. Run Wear verification that waits for the synced schedule to trigger `WorkoutAlarmActivity`.
+
+Common runs:
+
+```powershell
+pwsh ./scripts/run_cross_device_alarm_e2e.ps1
+pwsh ./scripts/run_cross_device_alarm_e2e.ps1 -WearEmulatorSerial emulator-5554 -PhoneEmulatorSerial emulator-5556
+pwsh ./scripts/run_cross_device_alarm_e2e.ps1 -WearTestClass PhoneToWearScheduledAlarmTriggerE2ETest -MobilePrepTestClass com.gabstra.myworkoutassistant.e2e.PhoneAlarmSyncPreparationTest
+pwsh ./scripts/run_cross_device_alarm_e2e.ps1 -FastTimeoutProfile -TimingOutputPath wearos/build/e2e-logs/cross_device_alarm_timing.json
+```
+
 ## Outputs
 
 - Wear logcat logs: `wearos/build/e2e-logs/logcat_*.txt` (unless `-NoLogcat`).
