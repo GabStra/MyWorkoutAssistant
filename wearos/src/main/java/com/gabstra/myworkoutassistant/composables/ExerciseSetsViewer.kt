@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -778,6 +777,22 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
         rowIndex to sideBadge
     }.toMap()
 
+    val exerciseIdsForLoadFlag: Set<UUID> = displayRows.mapNotNull { row ->
+        (row as? ExerciseSetDisplayRow.SetRow)?.state?.exerciseId
+    }.toSet()
+
+    val hasUnconfirmedLoadByExerciseId: Map<UUID, Boolean> =
+        if (exerciseIdsForLoadFlag.isEmpty()) {
+            emptyMap()
+        } else {
+            exerciseIdsForLoadFlag.associateWith { exerciseId ->
+                CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+                    allWorkoutStates = viewModel.allWorkoutStates,
+                    exerciseId = exerciseId
+                )
+            }
+        }
+
     val scrollKey = supersetId ?: exercise.id
 
     @Composable
@@ -828,10 +843,8 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
                     index = rowIndex,
                     isCurrentSet = rowIndex == setIndex,
                     textColor = textColor,
-                    hasUnconfirmedLoadSelectionForExercise = CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
-                        allWorkoutStates = viewModel.allWorkoutStates,
-                        exerciseId = displayRow.state.exerciseId
-                    )
+                    hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadByExerciseId[displayRow.state.exerciseId]
+                        ?: false
                 )
                 is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
                     modifier = rowModifier,

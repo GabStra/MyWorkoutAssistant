@@ -1206,19 +1206,18 @@ fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Bo
 suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, phoneNode: Node, appHelper: WearDataLayerAppHelper) : Boolean {
     try {
         val result = appHelper.startRemoteOwnApp(phoneNode.id)
-        if(result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS){
+        val pageRequestSucceeded = sendOpenPageRequestToPhone(dataClient, "settings")
+
+        if (
+            result != AppHelperResultCode.APP_HELPER_RESULT_SUCCESS &&
+            !pageRequestSucceeded
+        ) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Couldn't open the app on your phone.", Toast.LENGTH_SHORT).show()
             }
             return false
         }
 
-        val request = PutDataMapRequest.create("/openPagePath").apply {
-            dataMap.putString("page","settings")
-            dataMap.putString("timestamp",System.currentTimeMillis().toString())
-        }.asPutDataRequest().setUrgent()
-
-        dataClient.putDataItem(request)
         return true
 
     } catch (cancellationException: CancellationException) {
@@ -1227,6 +1226,24 @@ suspend fun openSettingsOnPhoneApp(context: Context, dataClient: DataClient, pho
     } catch (exception: Exception) {
         exception.printStackTrace()
         return false
+    }
+}
+
+private fun sendOpenPageRequestToPhone(
+    dataClient: DataClient,
+    page: String
+): Boolean {
+    return try {
+        val request = PutDataMapRequest.create("/openPagePath").apply {
+            dataMap.putString("page", page)
+            dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        }.asPutDataRequest().setUrgent()
+
+        Tasks.await(dataClient.putDataItem(request))
+        true
+    } catch (exception: Exception) {
+        Log.w("DataLayerSync", "Failed to enqueue phone page request for $page", exception)
+        false
     }
 }
 

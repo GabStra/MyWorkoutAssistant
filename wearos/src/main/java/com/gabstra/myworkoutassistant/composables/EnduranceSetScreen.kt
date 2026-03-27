@@ -46,6 +46,8 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.timer.canResumeRunningEnduranceTimer
+import com.gabstra.myworkoutassistant.shared.workout.timer.elapsedMillisForEnduranceTimer
 import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -87,6 +89,10 @@ fun EnduranceSetScreen (
 
     val set = state.set as EnduranceSet
 
+    fun hasRecoverableEnduranceProgress(setData: EnduranceSetData?): Boolean {
+        return setData?.canResumeRunningEnduranceTimer(set.autoStop) == true
+    }
+
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
@@ -96,9 +102,7 @@ fun EnduranceSetScreen (
     var countdownInitiated by remember(set.id) { mutableStateOf(false) }
 
     val restoredEnduranceData = state.currentSetData as? EnduranceSetData
-    val hasRecoveredProgress = restoredEnduranceData != null &&
-        restoredEnduranceData.endTimer > 0 &&
-        restoredEnduranceData.endTimer < restoredEnduranceData.startTimer
+    val hasRecoveredProgress = hasRecoverableEnduranceProgress(restoredEnduranceData)
     var showStartButton by remember(set.id) {
         mutableStateOf(!set.autoStart && state.startTime == null && !hasRecoveredProgress)
     }
@@ -146,8 +150,8 @@ fun EnduranceSetScreen (
             return
         }
 
-        val elapsedMillis = setData.endTimer.coerceIn(0, setData.startTimer)
-        wasTimerRunningBeforeEditMode = elapsedMillis < setData.startTimer
+        val elapsedMillis = setData.elapsedMillisForEnduranceTimer()
+        wasTimerRunningBeforeEditMode = true
         pausedElapsedMillisForEditMode = elapsedMillis
         state.currentSetData = setData.copy(endTimer = elapsedMillis)
 
@@ -160,12 +164,7 @@ fun EnduranceSetScreen (
         if (!wasTimerRunningBeforeEditMode) return
 
         val setData = state.currentSetData as? EnduranceSetData ?: return
-        val elapsedMillis = pausedElapsedMillisForEditMode.coerceIn(0, setData.startTimer)
-        if (elapsedMillis >= setData.startTimer) {
-            wasTimerRunningBeforeEditMode = false
-            pausedElapsedMillisForEditMode = -1
-            return
-        }
+        val elapsedMillis = pausedElapsedMillisForEditMode.coerceAtLeast(0)
 
         state.startTime = LocalDateTime.now().minusNanos(elapsedMillis.toLong() * 1_000_000L)
         state.currentSetData = setData.copy(endTimer = elapsedMillis)
@@ -395,12 +394,12 @@ fun EnduranceSetScreen (
         }
 
         val recoveredSetData = state.currentSetData as? EnduranceSetData
-        val hasRecoverableProgress = recoveredSetData != null &&
-            recoveredSetData.endTimer > 0 &&
-            recoveredSetData.endTimer < recoveredSetData.startTimer
+        val hasRecoverableProgress = hasRecoverableEnduranceProgress(recoveredSetData)
         if (hasRecoverableProgress) {
+            val elapsedMillis = recoveredSetData?.elapsedMillisForEnduranceTimer()
+                ?: return@LaunchedEffect
             state.startTime = LocalDateTime.now()
-                .minusNanos(recoveredSetData.endTimer.toLong() * 1_000_000L)
+                .minusNanos(elapsedMillis.toLong() * 1_000_000L)
             showStartButton = false
             showRepeatButton = false
             if (!isPaused && !viewModel.workoutTimerService.isTimerRegistered(set.id)) {
