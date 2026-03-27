@@ -34,6 +34,21 @@ class PhoneAppDriver(
         device.waitForIdle(1_500)
     }
 
+    fun waitForAppForeground(timeoutMs: Long = defaultTimeoutMs): Boolean {
+        return device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)), timeoutMs)
+    }
+
+    fun waitForForegroundText(text: String, timeoutMs: Long = defaultTimeoutMs): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (device.hasObject(By.pkg(context.packageName).depth(0)) && device.hasObject(By.text(text))) {
+                return true
+            }
+            device.waitForIdle(250)
+        }
+        return false
+    }
+
     /**
      * Handles startup permission dialogs that can block app interaction.
      * We prefer allowing Downloads access to avoid blocking sync-related flows.
@@ -107,7 +122,7 @@ class PhoneAppDriver(
                 if (!obj.isClickable) {
                     return@forEach
                 }
-                val ownerPackage = obj.applicationPackage?.toString().orEmpty()
+                val ownerPackage = obj.applicationPackage.orEmpty()
                 if (
                     (text == "Allow" || text == "ALLOW") &&
                     ownerPackage != "com.android.permissioncontroller" &&

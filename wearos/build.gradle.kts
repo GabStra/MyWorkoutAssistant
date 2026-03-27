@@ -18,6 +18,7 @@ val releaseStorePassword = rootProject.extra["releaseStorePassword"] as String
 val releaseKeyAlias = rootProject.extra["releaseKeyAlias"] as String
 val releaseKeyPassword = rootProject.extra["releaseKeyPassword"] as String
 val hasReleaseSigning = rootProject.extra["hasReleaseSigning"] as Boolean
+val e2eTestBuildType = providers.gradleProperty("e2eTestBuildType").orElse("debug").get()
 
 val isReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("Release", ignoreCase = true)
@@ -41,6 +42,7 @@ android {
     }
     namespace = "com.gabstra.myworkoutassistant"
     compileSdk = 36
+    testBuildType = e2eTestBuildType
 
     defaultConfig {
         applicationId = "com.gabstra.myworkoutassistant"
@@ -63,6 +65,7 @@ android {
                 "proguard-rules.pro",
                 "proguard-release-fast.pro"
             )
+            testProguardFiles(rootProject.file("proguard-android-test.pro"))
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }

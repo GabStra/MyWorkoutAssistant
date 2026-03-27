@@ -10,7 +10,9 @@ Param(
     [switch]$SkipInstall = $false,
     [switch]$NoLogcat = $false,
     [string]$TimingOutputPath,
-    [switch]$FastTimeoutProfile = $false
+    [switch]$FastTimeoutProfile = $false,
+    [ValidateSet("debug", "release")]
+    [string]$BuildType = "debug"
 )
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -25,6 +27,25 @@ function Resolve-RepoPath([string]$path) {
         return $path
     }
     return Join-Path $repoRoot $path
+}
+
+function Get-ExecutablePath([object]$commandPath) {
+    $normalizedPath = if ($commandPath -is [System.Array]) {
+        $commandPath -join ""
+    } else {
+        [string]$commandPath
+    }
+
+    return (Get-Item -LiteralPath $normalizedPath).FullName
+}
+
+function Invoke-ExternalCommand {
+    param(
+        [string]$commandPath,
+        [string[]]$arguments = @()
+    )
+
+    & (Get-ExecutablePath $commandPath) @arguments
 }
 
 function Get-AndroidSdkRoot {
@@ -91,6 +112,22 @@ $timings["skipAssemble"] = $SkipAssemble.IsPresent
 $timings["skipInstall"] = $SkipInstall.IsPresent
 $timings["logcatEnabled"] = (-not $NoLogcat)
 $timings["installFallbackUsed"] = $false
+$timings["buildType"] = $BuildType
+
+function Get-BuildTypePascalCase([string]$buildType) {
+    return (Get-Culture).TextInfo.ToTitleCase($buildType)
+}
+
+function Get-AppPackageForBuildType([string]$buildType) {
+    if ($buildType -eq "release") {
+        return "com.gabstra.myworkoutassistant"
+    }
+    return "com.gabstra.myworkoutassistant.debug"
+}
+
+function Get-InstrumentationRunnerForBuildType([string]$buildType) {
+    return ("{0}.test/androidx.test.runner.AndroidJUnitRunner" -f (Get-AppPackageForBuildType $buildType))
+}
 
 function Save-TimingOutput {
     param(
@@ -113,7 +150,7 @@ function Save-TimingOutput {
 }
 
 function Get-ConnectedDevices {
-    $lines = & $adb devices
+    $lines = Invoke-ExternalCommand -commandPath $adb -arguments @("devices")
     $devices = @()
     $lines | Select-Object -Skip 1 | ForEach-Object {
         $line = $_.Trim()
@@ -128,7 +165,7 @@ function Get-ConnectedDevices {
 }
 
 function Get-DeviceCharacteristics([string]$serial) {
-    return (& $adb -s $serial shell getprop ro.build.characteristics 2>$null).Trim()
+    return (Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "shell", "getprop", "ro.build.characteristics") 2>$null).Trim()
 }
 
 function Is-WearEmulator([string]$serial) {
@@ -142,7 +179,7 @@ function Is-WearEmulator([string]$serial) {
 function Wait-ForEmulatorBoot([string]$serial, [int]$timeoutSeconds = 240) {
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $bootCompleted = (& $adb -s $serial shell getprop sys.boot_completed 2>$null).Trim()
+        $bootCompleted = (Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "shell", "getprop", "sys.boot_completed") 2>$null).Trim()
         if ($bootCompleted -eq "1") {
             return $true
         }
@@ -159,13 +196,13 @@ function Resolve-EmulatorPath {
     ) | Where-Object { $_ -and (Test-Path $_) }
 
     if ($candidates.Count -eq 0) {
-        $candidates = Get-AndroidSdkRoot |
+        $candidates = @(Get-AndroidSdkRoot |
             ForEach-Object { Join-Path $_ "emulator\emulator.exe" } |
-            Where-Object { Test-Path $_ }
+            Where-Object { Test-Path $_ })
     }
 
     if ($candidates.Count -gt 0) {
-        return $candidates[0]
+        return $candidates | Select-Object -First 1
     }
 
     $cmd = Get-Command emulator -ErrorAction SilentlyContinue
@@ -185,7 +222,7 @@ function Start-WearEmulator {
 
     $avdNameToUse = $WearAvdName
     if (-not $avdNameToUse) {
-        $avds = & $emulatorPath -list-avds
+        $avds = Invoke-ExternalCommand -commandPath $emulatorPath -arguments @("-list-avds")
         $avdNameToUse = ($avds | Where-Object { $_ -match "wear|watch" } | Select-Object -First 1)
         if (-not $avdNameToUse) {
             $avdNameToUse = ($avds | Select-Object -First 1)
@@ -199,7 +236,7 @@ function Start-WearEmulator {
 
     Write-Host "Starting emulator AVD: $avdNameToUse" -ForegroundColor Yellow
     $before = (Get-ConnectedDevices | Where-Object { $_.Serial -like "emulator-*" }).Serial
-    Start-Process -FilePath $emulatorPath -ArgumentList @("-avd", $avdNameToUse) | Out-Null
+    Start-Process -FilePath (Get-ExecutablePath $emulatorPath) -ArgumentList @("-avd", $avdNameToUse) | Out-Null
 
     $deadline = (Get-Date).AddMinutes(5)
     while ((Get-Date) -lt $deadline) {
@@ -225,10 +262,10 @@ function Install-WearApks {
     )
 
     Write-Host "Installing APKs on $serial..." -ForegroundColor Cyan
-    & $adb -s $serial install -r $appApk 2>&1 | Out-Host
+    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "install", "-r", $appApk) 2>&1 | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Failed to install app APK on $serial" }
 
-    & $adb -s $serial install -r $testApk 2>&1 | Out-Host
+    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $serial, "install", "-r", $testApk) 2>&1 | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Failed to install test APK on $serial" }
 }
 
@@ -237,10 +274,10 @@ function Invoke-Instrumentation {
         [string]$serial,
         [string]$classArgument,
         [string]$notClassArgument,
-        [bool]$fastProfile
+        [bool]$fastProfile,
+        [string]$runner
     )
 
-    $runner = "com.gabstra.myworkoutassistant.debug.test/androidx.test.runner.AndroidJUnitRunner"
     $instrumentArgs = @("-s", $serial, "shell", "am", "instrument", "-w", "-r")
     if ($classArgument) {
         $instrumentArgs += @("-e", "class", $classArgument)
@@ -255,7 +292,7 @@ function Invoke-Instrumentation {
     Write-Host "Executing instrumentation on $serial..." -ForegroundColor Yellow
     Write-Host ("adb " + ($instrumentArgs -join " ")) -ForegroundColor Gray
 
-    $instrumentOutput = & $adb $instrumentArgs 2>&1
+    $instrumentOutput = Invoke-ExternalCommand -commandPath $adb -arguments $instrumentArgs 2>&1
     $instrumentOutput | Out-Host
 
     $exitCode = $LASTEXITCODE
@@ -325,10 +362,10 @@ if (-not $NoLogcat) {
     New-Item -ItemType File -Path $logFile -Force | Out-Null
 
     Write-Host "Starting logcat capture..." -ForegroundColor Cyan
-    & $adb -s $targetWearSerial logcat -c | Out-Null
+    Invoke-ExternalCommand -commandPath $adb -arguments @("-s", $targetWearSerial, "logcat", "-c") | Out-Null
     $logcatJob = Start-Job -ScriptBlock {
         param($adbPath, $serial, $logFilePath)
-        & $adbPath -s $serial logcat -v threadtime *:V *>&1 |
+        & (Get-Item $adbPath).FullName -s $serial logcat -v threadtime *:V *>&1 |
             Out-File -FilePath $logFilePath -Encoding utf8 -Append
     } -ArgumentList $adb, $targetWearSerial, $logFile
 
@@ -401,12 +438,18 @@ trap {
 }
 
 try {
-    $appApk = Resolve-RepoPath "wearos/build/outputs/apk/debug/wearos-debug.apk"
-    $testApk = Resolve-RepoPath "wearos/build/outputs/apk/androidTest/debug/wearos-debug-androidTest.apk"
+    $buildTypePascal = Get-BuildTypePascalCase $BuildType
+    $appApk = Resolve-RepoPath "wearos/build/outputs/apk/$BuildType/wearos-$BuildType.apk"
+    $testApk = Resolve-RepoPath "wearos/build/outputs/apk/androidTest/$BuildType/wearos-$BuildType-androidTest.apk"
+    $runner = Get-InstrumentationRunnerForBuildType $BuildType
 
     if (-not $SkipAssemble) {
         $assemblePhase = [System.Diagnostics.Stopwatch]::StartNew()
-        $gradleArgs = @(":wearos:assembleDebug", ":wearos:assembleDebugAndroidTest")
+        $gradleArgs = @(
+            ":wearos:assemble${buildTypePascal}",
+            ":wearos:assemble${buildTypePascal}AndroidTest",
+            "-Pe2eTestBuildType=$BuildType"
+        )
         $cmdDisplay = "$gradlewPath " + ($gradleArgs -join " ")
         Write-Host "Executing: $cmdDisplay" -ForegroundColor Yellow
         Write-Host "Press Ctrl+C to cancel the test execution" -ForegroundColor Gray
@@ -440,7 +483,7 @@ try {
     }
 
     $instrumentPhase = [System.Diagnostics.Stopwatch]::StartNew()
-    $result = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile
+    $result = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile -runner $runner
     $instrumentPhase.Stop()
     $timings["instrumentationSeconds"] = [math]::Round($instrumentPhase.Elapsed.TotalSeconds, 3)
     $exitCode = $result.ExitCode
@@ -454,7 +497,7 @@ try {
         $timings["installFallbackUsed"] = $true
 
         $retryInstrumentPhase = [System.Diagnostics.Stopwatch]::StartNew()
-        $retryResult = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile
+        $retryResult = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile -runner $runner
         $retryInstrumentPhase.Stop()
         $timings["retryInstrumentationSeconds"] = [math]::Round($retryInstrumentPhase.Elapsed.TotalSeconds, 3)
         $exitCode = $retryResult.ExitCode

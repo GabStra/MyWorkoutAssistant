@@ -1,0 +1,10 @@
+-keep class androidx.test.** { *; }
+-keep class androidx.test.ext.** { *; }
+-keep class androidx.test.runner.** { *; }
+-keep class androidx.test.internal.runner.** { *; }
+-keep class androidx.test.platform.** { *; }
+-keep class androidx.test.services.** { *; }
+-keep class androidx.test.uiautomator.** { *; }
+-keep class org.junit.** { *; }
+-keep class junit.** { *; }
+-keep class com.gabstra.myworkoutassistant.e2e.** { *; }
