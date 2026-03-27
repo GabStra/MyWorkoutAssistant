@@ -21,6 +21,7 @@ object AlarmTriggerWorkoutStoreFixture {
     val EXERCISE_ID: UUID = UUID.fromString("f6bf08f1-e1be-4d4c-b01a-dfd7279357f0")
     val SET_ID: UUID = UUID.fromString("e844d996-4e39-4351-95bd-91b1ac6da882")
     val SCHEDULE_ID: UUID = UUID.fromString("1e4a430f-9771-4da6-a08d-b0fa53a33542")
+    val RECURRING_SCHEDULE_ID: UUID = UUID.fromString("59a5237b-7cc7-4ee8-8f82-4da4b77e30c0")
 
     fun setupWorkoutStore(context: Context) {
         TestWorkoutStoreSeeder.seedWorkoutStore(context, createWorkoutStore())
@@ -90,6 +91,21 @@ object AlarmTriggerWorkoutStoreFixture {
             isEnabled = true,
             daysOfWeek = 0,
             specificDate = triggerAt.toLocalDate(),
+            hasExecuted = false,
+            lastNotificationSentAt = null
+        )
+    }
+
+    fun createRecurringSchedule(triggerAt: LocalDateTime, daysOfWeek: Int): WorkoutSchedule {
+        return WorkoutSchedule(
+            id = RECURRING_SCHEDULE_ID,
+            workoutId = WORKOUT_GLOBAL_ID,
+            label = SCHEDULE_LABEL,
+            hour = triggerAt.hour,
+            minute = triggerAt.minute,
+            isEnabled = true,
+            daysOfWeek = daysOfWeek,
+            specificDate = null,
             hasExecuted = false,
             lastNotificationSentAt = null
         )

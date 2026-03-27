@@ -3,15 +3,19 @@ package com.gabstra.myworkoutassistant.receivers
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import androidx.annotation.RequiresApi
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            val scheduler = WorkoutAlarmScheduler(context)
-            scheduler.rescheduleAllWorkouts()
+        when (intent.action) {
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_DATE_CHANGED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_TIME_CHANGED -> {
+                val scheduler = WorkoutAlarmScheduler(context)
+                scheduler.rescheduleAllWorkouts()
+            }
         }
     }
 }

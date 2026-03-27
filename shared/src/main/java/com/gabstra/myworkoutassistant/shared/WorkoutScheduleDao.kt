@@ -38,7 +38,7 @@ interface WorkoutScheduleDao {
     @Query("DELETE FROM workout_schedule")
     suspend fun deleteAll()
     
-    @Query("SELECT * FROM workout_schedule WHERE isEnabled = 1 AND (specificDate IS NULL OR hasExecuted = 0)")
+    @Query("SELECT * FROM workout_schedule WHERE isEnabled = 1 AND (specificDate IS NOT NULL OR daysOfWeek > 0) AND (specificDate IS NULL OR hasExecuted = 0)")
     suspend fun getActiveSchedules(): List<WorkoutSchedule>
     
     @Query("UPDATE workout_schedule SET hasExecuted = 1 WHERE id = :id")

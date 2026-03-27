@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.delay
 
@@ -27,11 +28,17 @@ object WearAlarmTriggerHelper {
     private const val EXACT_ALARM_APP_OP = "SCHEDULE_EXACT_ALARM"
     private const val APP_OP_ALLOW = "allow"
     private const val LOCAL_TRIGGER_MIN_LEAD_SECONDS = 20L
-    private const val CROSS_DEVICE_TRIGGER_MIN_LEAD_SECONDS = 75L
+    private const val CROSS_DEVICE_TRIGGER_MIN_LEAD_SECONDS = 180L
 
     data class AlarmExpectation(
         val schedule: WorkoutSchedule,
         val triggerAt: LocalDateTime
+    )
+
+    data class RecurringAlarmExpectation(
+        val schedule: WorkoutSchedule,
+        val triggerAt: LocalDateTime,
+        val nextTriggerAt: LocalDateTime
     )
 
     fun createLocalAlarmExpectation(
@@ -50,6 +57,19 @@ object WearAlarmTriggerHelper {
         minLeadSeconds = CROSS_DEVICE_TRIGGER_MIN_LEAD_SECONDS,
         now = now
     )
+
+    fun createLocalRecurringAlarmExpectation(
+        now: LocalDateTime = LocalDateTime.now()
+    ): RecurringAlarmExpectation {
+        val triggerAt = nextMinuteBoundaryAfter(now, LOCAL_TRIGGER_MIN_LEAD_SECONDS)
+        val recurringDays =
+            dayBitFor(triggerAt.toLocalDate()) or dayBitFor(triggerAt.toLocalDate().plusDays(1))
+        return RecurringAlarmExpectation(
+            schedule = AlarmTriggerWorkoutStoreFixture.createRecurringSchedule(triggerAt, recurringDays),
+            triggerAt = triggerAt,
+            nextTriggerAt = triggerAt.plusDays(1)
+        )
+    }
 
     fun ensurePostNotificationsGranted(context: Context) {
         require(
@@ -93,6 +113,13 @@ object WearAlarmTriggerHelper {
         }
     }
 
+    fun setWorkoutInProgress(context: Context, isInProgress: Boolean) {
+        context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("isWorkoutInProgress", isInProgress)
+            .commit()
+    }
+
     suspend fun waitForSchedulePreTriggerState(
         context: Context,
         scheduleId: UUID,
@@ -116,8 +143,10 @@ object WearAlarmTriggerHelper {
             delay(500)
         }
 
+        val finalSchedule = dao.getScheduleById(scheduleId)
         error(
-            "Schedule $scheduleId did not reach a fresh pre-trigger state within ${timeoutMs}ms."
+            "Schedule $scheduleId did not reach a fresh pre-trigger state within ${timeoutMs}ms. " +
+                "Observed=$finalSchedule earliestTriggerAt=$earliestTriggerAt"
         )
     }
 
@@ -172,6 +201,70 @@ object WearAlarmTriggerHelper {
         )
     }
 
+    suspend fun waitForRecurringScheduleAdvanced(
+        context: Context,
+        scheduleId: UUID,
+        expectedNotificationDate: LocalDate,
+        timeoutMs: Long
+    ): WorkoutSchedule {
+        val db = AppDatabase.getDatabase(context)
+        val dao = db.workoutScheduleDao()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val schedule = dao.getScheduleById(scheduleId)
+            if (schedule != null &&
+                !schedule.hasExecuted &&
+                schedule.lastNotificationSentAt == expectedNotificationDate &&
+                schedule.daysOfWeek > 0 &&
+                schedule.specificDate == null
+            ) {
+                return schedule
+            }
+            delay(500)
+        }
+
+        error(
+            "Recurring schedule $scheduleId was not advanced with notification date " +
+                "$expectedNotificationDate within ${timeoutMs}ms."
+        )
+    }
+
+    suspend fun assertAlarmUiDoesNotAppear(timeoutMs: Long) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (resumedAlarmActivityOrNull() != null) {
+                error("WorkoutAlarmActivity became visible while workout-in-progress suppression was expected.")
+            }
+            delay(250)
+        }
+    }
+
+    suspend fun waitForNextAlarmClockTrigger(
+        context: Context,
+        expectedTriggerAt: LocalDateTime,
+        timeoutMs: Long,
+        toleranceMs: Long = 60_000
+    ): Long {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val expectedTriggerMs =
+            expectedTriggerAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            val nextAlarmClock = alarmManager.nextAlarmClock
+            val triggerTime = nextAlarmClock?.triggerTime
+            if (triggerTime != null && kotlin.math.abs(triggerTime - expectedTriggerMs) <= toleranceMs) {
+                return triggerTime
+            }
+            delay(500)
+        }
+
+        error(
+            "AlarmManager.nextAlarmClock did not advance to $expectedTriggerAt " +
+                "within ${timeoutMs}ms."
+        )
+    }
+
     private fun createAlarmExpectation(
         scheduleFactory: (LocalDateTime) -> WorkoutSchedule,
         minLeadSeconds: Long,
@@ -190,6 +283,11 @@ object WearAlarmTriggerHelper {
             candidate = candidate.plusMinutes(1)
         }
         return candidate
+    }
+
+    private fun dayBitFor(date: LocalDate): Int {
+        val zeroBasedDayOfWeek = date.dayOfWeek.value % 7
+        return 1 shl zeroBasedDayOfWeek
     }
 
     private fun waitForExactAlarmAccess(context: Context, timeoutMs: Long) {

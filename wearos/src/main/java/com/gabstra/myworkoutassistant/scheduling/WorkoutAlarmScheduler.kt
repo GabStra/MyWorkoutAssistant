@@ -37,6 +37,9 @@ class WorkoutAlarmScheduler(private val context: Context) {
 
     @SuppressLint("ScheduleExactAlarm")
     fun scheduleWorkout(schedule: WorkoutSchedule) {
+        if (schedule.specificDate == null && schedule.daysOfWeek <= 0) {
+            return
+        }
 
         val pendingIntent = getWorkoutSchedulePendingIntent(schedule,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)!!
 

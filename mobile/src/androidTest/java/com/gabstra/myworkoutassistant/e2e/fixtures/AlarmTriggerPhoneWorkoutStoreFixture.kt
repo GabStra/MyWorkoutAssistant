@@ -14,7 +14,11 @@ import java.util.UUID
 object AlarmTriggerPhoneWorkoutStoreFixture {
     const val WORKOUT_NAME = "Alarm Trigger Workout"
     const val SCHEDULE_LABEL = "Alarm Trigger Reminder"
-    private const val CROSS_DEVICE_TRIGGER_MIN_LEAD_SECONDS = 75L
+    /**
+     * Keep the synced alarm close enough that the Wear verifier can stay within a stable
+     * instrumentation session, while still leaving enough room for phone-to-watch sync.
+     */
+    private const val CROSS_DEVICE_TRIGGER_MIN_LEAD_SECONDS = 180L
 
     val WORKOUT_ID: UUID = UUID.fromString("d41b2245-6af2-458e-8a70-c6ad9db52e9c")
     val WORKOUT_GLOBAL_ID: UUID = UUID.fromString("6d9849b0-9f92-4ea6-acbe-c6c69e1d8163")

@@ -78,6 +78,7 @@ import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
@@ -519,29 +520,46 @@ fun ScheduleDialog(
                 }
             } else null
 
-            val newSchedule = WorkoutSchedule(
-                id = schedule?.id ?: UUID.randomUUID(),
-                workoutId = workoutId,
-                label = labelState.value,
+            val validationError = validateAlarmScheduleInput(
+                useSpecificDate = useSpecificDate.value,
+                specificDate = specificDate,
                 hour = hourState.intValue,
                 minute = minuteState.intValue,
-                isEnabled = isEnabledState.value,
-                daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
-                specificDate = specificDate,
-                hasExecuted = schedule?.hasExecuted ?: false
+                daysOfWeek = daysOfWeekState.intValue
             )
 
-            // Check for conflicts
-            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                newSchedules = listOf(newSchedule),
-                existingSchedules = existingSchedules.filter { it.id != newSchedule.id }
-            )
-
-            if (conflicts.isNotEmpty()) {
-                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+            if (validationError != null) {
+                Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
             } else {
-                onSave(newSchedule)
+                val newSchedule = WorkoutSchedule(
+                    id = schedule?.id ?: UUID.randomUUID(),
+                    workoutId = workoutId,
+                    label = labelState.value,
+                    hour = hourState.intValue,
+                    minute = minuteState.intValue,
+                    isEnabled = isEnabledState.value,
+                    daysOfWeek = if (useSpecificDate.value) 0 else daysOfWeekState.intValue,
+                    specificDate = specificDate,
+                    hasExecuted = resolveEditedScheduleHasExecuted(
+                        existingSchedule = schedule,
+                        specificDate = specificDate,
+                        hour = hourState.intValue,
+                        minute = minuteState.intValue
+                    )
+                )
+
+                // Check for conflicts
+                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                    newSchedules = listOf(newSchedule),
+                    existingSchedules = existingSchedules.filter { it.id != newSchedule.id }
+                )
+
+                if (conflicts.isNotEmpty()) {
+                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                } else {
+                    onSave(newSchedule)
+                }
             }
         },
         dismissText = "Cancel",
@@ -577,6 +595,47 @@ fun ScheduleDialog(
             }
         ) { DatePicker(state = datePickerState) }
     }
+}
+
+internal fun validateAlarmScheduleInput(
+    useSpecificDate: Boolean,
+    specificDate: LocalDate?,
+    hour: Int,
+    minute: Int,
+    daysOfWeek: Int,
+    now: LocalDateTime = LocalDateTime.now()
+): String? {
+    if (!useSpecificDate && daysOfWeek <= 0) {
+        return "Select at least one day for recurring alarms."
+    }
+
+    if (useSpecificDate) {
+        val triggerDate = specificDate ?: return "Pick a date for the alarm."
+        if (!triggerDate.atTime(hour, minute).isAfter(now)) {
+            return "Pick a future date and time for one-time alarms."
+        }
+    }
+
+    return null
+}
+
+internal fun resolveEditedScheduleHasExecuted(
+    existingSchedule: WorkoutSchedule?,
+    specificDate: LocalDate?,
+    hour: Int,
+    minute: Int
+): Boolean {
+    if (existingSchedule == null || specificDate == null) {
+        return false
+    }
+
+    val isSameOneTimeTrigger =
+        existingSchedule.daysOfWeek == 0 &&
+            existingSchedule.specificDate == specificDate &&
+            existingSchedule.hour == hour &&
+            existingSchedule.minute == minute
+
+    return existingSchedule.hasExecuted && isSameOneTimeTrigger
 }
 
 @Composable
@@ -906,17 +965,35 @@ fun BatchScheduleDialog(
                 count++
             }
 
-            // Check for conflicts
-            val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
-                newSchedules = list,
-                existingSchedules = existingSchedules
-            )
+            val validationError =
+                when {
+                    list.isEmpty() -> "Choose a time range that creates at least one alarm."
+                    else -> list.firstNotNullOfOrNull { schedule ->
+                        validateAlarmScheduleInput(
+                            useSpecificDate = schedule.specificDate != null,
+                            specificDate = schedule.specificDate,
+                            hour = schedule.hour,
+                            minute = schedule.minute,
+                            daysOfWeek = schedule.daysOfWeek
+                        )
+                    }
+                }
 
-            if (conflicts.isNotEmpty()) {
-                val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
-                Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+            if (validationError != null) {
+                Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
             } else {
-                onSave(list)
+                // Check for conflicts
+                val conflicts = ScheduleConflictChecker.checkScheduleConflicts(
+                    newSchedules = list,
+                    existingSchedules = existingSchedules
+                )
+
+                if (conflicts.isNotEmpty()) {
+                    val errorMessage = ScheduleConflictChecker.formatConflictMessage(conflicts)
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                } else {
+                    onSave(list)
+                }
             }
         },
         dismissText = "Cancel",
