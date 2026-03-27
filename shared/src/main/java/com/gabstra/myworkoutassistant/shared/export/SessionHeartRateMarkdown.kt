@@ -22,6 +22,8 @@ internal fun appendSessionHeartRateMarkdown(
     val records = workoutHistory.heartBeatRecords
     val valid = records.filter { it > 0 }
     if (valid.isEmpty()) return
+    val storedSampleCount = records.size
+    val recordedSpanSeconds = storedSampleCount
 
     val zoneBounds = heartRateZoneBoundsBpm(
         userAge,
@@ -36,7 +38,7 @@ internal fun appendSessionHeartRateMarkdown(
         workoutStore.restingHeartRate
     ) ?: return
 
-    markdown.append("#### Heart rate\n\n")
+    markdown.append("#### Session Heart Rate\n\n")
     markdown.append("- Mean: ${derived.mean} bpm\n")
     derived.median?.let { markdown.append("- Median: $it bpm\n") }
     markdown.append("- Min–Max: ${derived.min}–${derived.max} bpm\n")
@@ -74,13 +76,18 @@ internal fun appendSessionHeartRateMarkdown(
         )
     }
 
+    markdown.append("- Stored HR samples: $storedSampleCount\n")
     markdown.append("- Valid HR samples: ${derived.validSampleCount}\n")
+    if (storedSampleCount > 0) {
+        val coveragePct = (derived.validSampleCount.toDouble() / storedSampleCount.toDouble() * 100.0).roundToInt()
+        markdown.append("- Valid HR coverage: $coveragePct% of stored samples\n")
+    }
     markdown.append(
-        "- Approx. trace duration (from samples): ${formatDurationForSessionHr(derived.approxTraceSeconds)} (~0.5 s between samples)\n"
+        "- Approx. recorded HR span (from stored samples): ${formatDurationForSessionHr(recordedSpanSeconds)} (~1.0 s between samples)\n"
     )
-    if (workoutHistory.duration > 0 && derived.approxTraceSeconds < workoutHistory.duration - 30) {
+    if (workoutHistory.duration > 0 && recordedSpanSeconds < workoutHistory.duration - 30) {
         markdown.append(
-            "- Workout duration: ${formatDurationForSessionHr(workoutHistory.duration)} (HR trace may be shorter if the watch was off or samples were missing)\n"
+            "- Workout duration: ${formatDurationForSessionHr(workoutHistory.duration)} (stored HR span may be shorter if the sensor stream paused or samples were not captured)\n"
         )
     }
 
@@ -111,15 +118,12 @@ internal fun appendSessionHeartRateMarkdown(
     }
 
     val maxHrResolved = getEffectiveMaxHeartRate(userAge, workoutStore.measuredMaxHeartRate)
-    val maxHrExplanation = if (workoutStore.measuredMaxHeartRate != null) {
-        "measured ${workoutStore.measuredMaxHeartRate} bpm"
+    markdown.append("- Max HR reference: ")
+    if (workoutStore.measuredMaxHeartRate != null) {
+        markdown.append("measured ${workoutStore.measuredMaxHeartRate} bpm\n\n")
     } else {
-        "age-based estimate ($maxHrResolved bpm)"
+        markdown.append("age-based estimate ($maxHrResolved bpm)\n\n")
     }
-    markdown.append("\n")
-    markdown.append(
-        "_HR stats use non-zero BPM samples only. Sample spacing ~0.5 s (2 Hz). Max HR: $maxHrExplanation._\n\n"
-    )
 }
 
 private fun formatDurationForSessionHr(seconds: Int): String {

@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -90,7 +91,7 @@ class WorkoutTimerService(
         }
 
         val initialElapsedMs = when (setData) {
-            is EnduranceSetData -> setData.endTimer.coerceIn(0, setData.startTimer).toLong()
+            is EnduranceSetData -> setData.elapsedMillisForEnduranceTimer().toLong()
             is TimedDurationSetData -> (setData.startTimer - setData.endTimer).coerceAtLeast(0).toLong()
             else -> 0L
         }
@@ -277,29 +278,31 @@ class WorkoutTimerService(
         when (timer.type) {
             TimerType.ENDURANCE_SET -> {
                 val state = timer.setState ?: return false
-                val currentSetData = state.currentSetData
-                // EnduranceSet: count up from 0
-                val setData = currentSetData as? EnduranceSetData ?: return false
-                val newEndTimer = elapsedMs.coerceAtMost(setData.startTimer.toLong()).toInt()
-                val previousSeconds = (setData.endTimer / 1000).coerceAtLeast(0)
-                val nextSeconds = (newEndTimer / 1000).coerceAtLeast(0)
-                val reachedLimit = newEndTimer >= setData.startTimer
+                val set = state.set as? EnduranceSet ?: return false
+                val setData = state.currentSetData as? EnduranceSetData ?: return false
+                val nextElapsedMillis = elapsedMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+                val reachedTarget = nextElapsedMillis >= setData.startTimer
 
-                // Only update if value changed to avoid unnecessary recompositions
-                if (setData.endTimer != newEndTimer && (nextSeconds != previousSeconds || reachedLimit)) {
-                    state.currentSetData = setData.copy(endTimer = newEndTimer)
-                    onTimerProgressChanged?.invoke()
+                if (reachedTarget && set.autoStop) {
+                    val completedData = setData.copy(
+                        endTimer = setData.startTimer,
+                        hasBeenExecuted = true
+                    )
+                    if (completedData != setData) {
+                        state.currentSetData = completedData
+                        onTimerProgressChanged?.invoke()
+                    }
+                    return true
                 }
 
-                // Check if timer reached startTimer (for autoStop) or exceeded it
-                if (reachedLimit) {
-                    if (state.set.let { it is com.gabstra.myworkoutassistant.shared.sets.EnduranceSet && it.autoStop }) {
-                        state.currentSetData = setData.copy(
-                            endTimer = setData.startTimer,
-                            hasBeenExecuted = true
-                        )
-                        return true
-                    }
+                val previousSeconds = (setData.endTimer / 1000).coerceAtLeast(0)
+                val nextSeconds = (nextElapsedMillis / 1000).coerceAtLeast(0)
+
+                // Endurance sets only need whole-second UI updates, but non-auto-stop sets
+                // must keep accruing elapsed time after the programmed target.
+                if (setData.endTimer != nextElapsedMillis && nextSeconds != previousSeconds) {
+                    state.currentSetData = setData.copy(endTimer = nextElapsedMillis)
+                    onTimerProgressChanged?.invoke()
                 }
                 return false
             }

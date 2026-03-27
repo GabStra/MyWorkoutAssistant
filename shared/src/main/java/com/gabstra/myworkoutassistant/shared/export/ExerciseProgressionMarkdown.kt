@@ -7,7 +7,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
-import kotlin.math.abs
 
 internal fun appendExerciseProgressionMarkdown(
     markdown: StringBuilder,
@@ -15,17 +14,13 @@ internal fun appendExerciseProgressionMarkdown(
     activeSetHistories: List<SetHistory>,
     achievableWeights: List<Double>?,
 ) {
-    markdown.append("### Progression\n")
+    markdown.append("#### Progression Context\n")
     markdown.append("- State: ${progression.progressionState.name}\n")
 
     val executedSets = activeSetHistories.mapNotNull { setHistory ->
         when (val setData = setHistory.setData) {
             is WeightSetData -> {
-                val (adjustedWeight, _) = adjustWeightAndVolumeProgression(
-                    setData.actualWeight,
-                    setData.actualReps,
-                    achievableWeights
-                )
+                val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
                 SimpleSet(adjustedWeight, setData.actualReps)
             }
             is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
@@ -89,28 +84,9 @@ internal fun appendExerciseProgressionMarkdown(
         Ternary.BELOW -> "↓"
         Ternary.MIXED -> "~"
     }
-    markdown.append("- Comparison: vs Exp ${progression.vsExpected.name} $vsExpectedIcon | vs Prev ${progression.vsPrevious.name} $vsPreviousIcon\n")
-    markdown.append("- Vol: Prev ${formatNumber(progression.previousSessionVolume)}kg | Exp ${formatNumber(progression.expectedVolume)}kg | Exec ${formatNumber(progression.executedVolume)}kg\n")
+    markdown.append("- Comparison vs expected: ${progression.vsExpected.name} $vsExpectedIcon\n")
+    markdown.append("- Comparison vs previous successful baseline: ${progression.vsPrevious.name} $vsPreviousIcon\n")
+    markdown.append("- Volume: Prev ${formatNumber(progression.previousSessionVolume)}kg | Exp ${formatNumber(progression.expectedVolume)}kg | Exec ${formatNumber(progression.executedVolume)}kg\n")
 
     markdown.append("\n")
-}
-
-private fun adjustWeightAndVolumeProgression(
-    actualWeight: Double,
-    reps: Int,
-    achievableWeights: List<Double>?
-): Pair<Double, Double> {
-    if (actualWeight <= 0.0 || reps <= 0) {
-        return actualWeight to (actualWeight * reps)
-    }
-    val adjustedWeight = findClosestAchievableWeightProgression(actualWeight, achievableWeights)
-    return adjustedWeight to adjustedWeight * reps
-}
-
-private fun findClosestAchievableWeightProgression(
-    targetWeight: Double,
-    achievableWeights: List<Double>?
-): Double {
-    if (achievableWeights.isNullOrEmpty()) return targetWeight
-    return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
 }

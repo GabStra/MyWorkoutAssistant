@@ -105,9 +105,10 @@ suspend fun buildWorkoutSessionMarkdown(
     markdown.append(
         "${workoutHistory.date} ${workoutHistory.time} | Dur: ${formatDurationForExport(workoutHistory.duration)}\n"
     )
-    markdown.append(
-        "Session: start at ${workoutHistory.startTime} | sessionId: ${workoutHistory.id} | globalId: ${workoutHistory.globalId}\n\n"
-    )
+    if (workout.description.isNotBlank()) {
+        markdown.append("${workout.description}\n")
+    }
+    markdown.append("\n")
     appendLlmExportContextMarkdown(markdown, workoutStore, userAge)
     appendSessionHeartRateMarkdown(
         markdown = markdown,
@@ -125,16 +126,84 @@ suspend fun buildWorkoutSessionMarkdown(
                 val active = allSets.filter { it.setData !is RestSetData }
                 if (active.isEmpty()) continue
                 markdown.append("### ${exercise.name}\n")
+                val comparableSessions = loadComparableExerciseSessions(
+                    exercise = exercise,
+                    workouts = workoutStore.workouts,
+                    workoutHistoryDao = workoutHistoryDao,
+                    setHistoryDao = setHistoryDao,
+                    exerciseSessionProgressionDao = exerciseSessionProgressionDao
+                )
                 val progression = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(
                     workoutHistory.id,
                     exercise.id
                 )
                 val equipment = resolveEquipmentForExercise(exercise, active, workoutStore)
                 val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
+                val selectedSessionIndex = comparableSessions.indexOfFirst {
+                    it.workoutHistory.id == workoutHistory.id
+                }
+                val selectedSession = if (selectedSessionIndex >= 0) {
+                    comparableSessions[selectedSessionIndex]
+                } else {
+                    ComparableExerciseSession(
+                        workoutHistory = workoutHistory,
+                        workout = workout,
+                        activeSetHistories = active,
+                        progression = progression
+                    )
+                }
+                val sessionsThroughSelected = if (selectedSessionIndex >= 0) {
+                    comparableSessions.take(selectedSessionIndex + 1)
+                } else {
+                    listOf(selectedSession)
+                }
+                val previousSession = if (selectedSessionIndex > 0) {
+                    comparableSessions[selectedSessionIndex - 1]
+                } else {
+                    null
+                }
+                val bestSession = if (selectedSessionIndex >= 0) {
+                    findBestSessionThroughIndex(comparableSessions, selectedSessionIndex, achievableWeights)
+                } else {
+                    selectedSession
+                }
+                appendExerciseContextMarkdown(markdown, exercise, workoutStore, equipment?.name)
+                appendPlannedMarkdown(markdown, exercise)
+                appendExecutedSummaryMarkdown(markdown, selectedSession, achievableWeights)
+                appendHistoricalSessionBlockMarkdown(
+                    markdown = markdown,
+                    heading = "Previous Session",
+                    session = previousSession,
+                    achievableWeights = achievableWeights
+                )
+                appendHistoricalSessionBlockMarkdown(
+                    markdown = markdown,
+                    heading = "Best To Date",
+                    session = bestSession,
+                    achievableWeights = achievableWeights,
+                    includeSelectionNote = bestSession?.workoutHistory?.id == workoutHistory.id
+                )
                 progression?.let {
                     appendExerciseProgressionMarkdown(markdown, it, active, achievableWeights)
                 }
                 val rests = restHistoryDao.getByWorkoutHistoryIdAndExerciseId(workoutHistory.id, exercise.id)
+                appendExerciseRecoveryContextMarkdown(
+                    markdown = markdown,
+                    workoutHistory = workoutHistory,
+                    activeSetHistories = active,
+                    restsForExercise = rests,
+                    exercise = exercise,
+                    userAge = userAge,
+                    workoutStore = workoutStore
+                )
+                appendExerciseCoachingSignalsMarkdown(
+                    markdown = markdown,
+                    selectedSession = selectedSession,
+                    previousSession = previousSession,
+                    bestSession = bestSession,
+                    sessionsThroughSelected = sessionsThroughSelected,
+                    achievableWeights = achievableWeights
+                )
                 appendExerciseTimelineToMarkdown(
                     markdown = markdown,
                     exercise = exercise,
@@ -145,6 +214,12 @@ suspend fun buildWorkoutSessionMarkdown(
                     userAge = userAge,
                     achievableWeights = achievableWeights,
                     equipmentNameForHeader = equipment?.name
+                )
+                appendExerciseTrendMarkdown(
+                    markdown = markdown,
+                    sessionsThroughSelected = sessionsThroughSelected,
+                    selectedSessionId = workoutHistory.id,
+                    achievableWeights = achievableWeights
                 )
                 markdown.append("\n")
             }
@@ -167,10 +242,78 @@ suspend fun buildWorkoutSessionMarkdown(
                     )
                     val equipment = resolveEquipmentForExercise(ex, active, workoutStore)
                     val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
+                    val comparableSessions = loadComparableExerciseSessions(
+                        exercise = ex,
+                        workouts = workoutStore.workouts,
+                        workoutHistoryDao = workoutHistoryDao,
+                        setHistoryDao = setHistoryDao,
+                        exerciseSessionProgressionDao = exerciseSessionProgressionDao
+                    )
+                    val selectedSessionIndex = comparableSessions.indexOfFirst {
+                        it.workoutHistory.id == workoutHistory.id
+                    }
+                    val selectedSession = if (selectedSessionIndex >= 0) {
+                        comparableSessions[selectedSessionIndex]
+                    } else {
+                        ComparableExerciseSession(
+                            workoutHistory = workoutHistory,
+                            workout = workout,
+                            activeSetHistories = active,
+                            progression = progression
+                        )
+                    }
+                    val sessionsThroughSelected = if (selectedSessionIndex >= 0) {
+                        comparableSessions.take(selectedSessionIndex + 1)
+                    } else {
+                        listOf(selectedSession)
+                    }
+                    val previousSession = if (selectedSessionIndex > 0) {
+                        comparableSessions[selectedSessionIndex - 1]
+                    } else {
+                        null
+                    }
+                    val bestSession = if (selectedSessionIndex >= 0) {
+                        findBestSessionThroughIndex(comparableSessions, selectedSessionIndex, achievableWeights)
+                    } else {
+                        selectedSession
+                    }
+                    appendExerciseContextMarkdown(markdown, ex, workoutStore, equipment?.name)
+                    appendPlannedMarkdown(markdown, ex)
+                    appendExecutedSummaryMarkdown(markdown, selectedSession, achievableWeights)
+                    appendHistoricalSessionBlockMarkdown(
+                        markdown = markdown,
+                        heading = "Previous Session",
+                        session = previousSession,
+                        achievableWeights = achievableWeights
+                    )
+                    appendHistoricalSessionBlockMarkdown(
+                        markdown = markdown,
+                        heading = "Best To Date",
+                        session = bestSession,
+                        achievableWeights = achievableWeights,
+                        includeSelectionNote = bestSession?.workoutHistory?.id == workoutHistory.id
+                    )
                     progression?.let {
                         appendExerciseProgressionMarkdown(markdown, it, active, achievableWeights)
                     }
                     val restsForExercise = restsForSuperset.filter { it.exerciseId == ex.id }
+                    appendExerciseRecoveryContextMarkdown(
+                        markdown = markdown,
+                        workoutHistory = workoutHistory,
+                        activeSetHistories = active,
+                        restsForExercise = restsForExercise,
+                        exercise = ex,
+                        userAge = userAge,
+                        workoutStore = workoutStore
+                    )
+                    appendExerciseCoachingSignalsMarkdown(
+                        markdown = markdown,
+                        selectedSession = selectedSession,
+                        previousSession = previousSession,
+                        bestSession = bestSession,
+                        sessionsThroughSelected = sessionsThroughSelected,
+                        achievableWeights = achievableWeights
+                    )
                     appendExerciseTimelineToMarkdown(
                         markdown = markdown,
                         exercise = ex,
@@ -181,6 +324,12 @@ suspend fun buildWorkoutSessionMarkdown(
                         userAge = userAge,
                         achievableWeights = achievableWeights,
                         equipmentNameForHeader = equipment?.name
+                    )
+                    appendExerciseTrendMarkdown(
+                        markdown = markdown,
+                        sessionsThroughSelected = sessionsThroughSelected,
+                        selectedSessionId = workoutHistory.id,
+                        achievableWeights = achievableWeights
                     )
                     markdown.append("\n")
                 }

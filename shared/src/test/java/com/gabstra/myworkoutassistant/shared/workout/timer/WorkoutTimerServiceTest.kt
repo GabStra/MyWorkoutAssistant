@@ -1,8 +1,10 @@
 package com.gabstra.myworkoutassistant.shared.workout.timer
 
 import androidx.compose.runtime.mutableStateOf
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -21,6 +23,126 @@ import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkoutTimerServiceTest {
+
+    @Test
+    fun enduranceWithoutAutoStop_continuesPastTarget() = runTest {
+        val setId = UUID.randomUUID()
+        val state = WorkoutState.Set(
+            exerciseId = UUID.randomUUID(),
+            set = EnduranceSet(setId, timeInMillis = 5_000, autoStart = false, autoStop = false),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(EnduranceSetData(5_000, 0, autoStart = false, autoStop = false)),
+            hasNoHistory = true,
+            startTime = LocalDateTime.now(),
+            skipped = false,
+            currentBodyWeight = 70.0,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null
+        )
+
+        val service = WorkoutTimerService(
+            viewModelScope = backgroundScope,
+            isPaused = { false },
+            monotonicNowMs = { testScheduler.currentTime }
+        )
+
+        service.registerTimer(
+            state = state,
+            callbacks = WorkoutTimerService.TimerCallbacks({}, {}, {})
+        )
+
+        advanceTimeBy(6_200)
+        runCurrent()
+
+        val setData = state.currentSetData as EnduranceSetData
+        val uiState = service.timerUiStates.value[setId]
+        assertEquals(6_000, setData.endTimer)
+        assertFalse(setData.hasBeenExecuted)
+        assertEquals(6_000, uiState?.displayMillis)
+        assertEquals(6, uiState?.displaySeconds)
+        assertTrue(service.isTimerRegistered(setId))
+    }
+
+    @Test
+    fun enduranceWithoutAutoStop_preservesRecoveredOverLimitElapsedTime() = runTest {
+        val setId = UUID.randomUUID()
+        val state = WorkoutState.Set(
+            exerciseId = UUID.randomUUID(),
+            set = EnduranceSet(setId, timeInMillis = 5_000, autoStart = false, autoStop = false),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(EnduranceSetData(5_000, 6_000, autoStart = false, autoStop = false)),
+            hasNoHistory = true,
+            startTime = LocalDateTime.now(),
+            skipped = false,
+            currentBodyWeight = 70.0,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null
+        )
+
+        val service = WorkoutTimerService(
+            viewModelScope = backgroundScope,
+            isPaused = { false },
+            monotonicNowMs = { testScheduler.currentTime }
+        )
+
+        service.registerTimer(
+            state = state,
+            callbacks = WorkoutTimerService.TimerCallbacks({}, {}, {})
+        )
+
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        val setData = state.currentSetData as EnduranceSetData
+        assertEquals(7_000, setData.endTimer)
+        assertTrue(service.isTimerRegistered(setId))
+    }
+
+    @Test
+    fun enduranceWithAutoStop_completesAtTarget() = runTest {
+        val setId = UUID.randomUUID()
+        val state = WorkoutState.Set(
+            exerciseId = UUID.randomUUID(),
+            set = EnduranceSet(setId, timeInMillis = 5_000, autoStart = false, autoStop = true),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = mutableStateOf(EnduranceSetData(5_000, 0, autoStart = false, autoStop = true)),
+            hasNoHistory = true,
+            startTime = LocalDateTime.now(),
+            skipped = false,
+            currentBodyWeight = 70.0,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null
+        )
+
+        val service = WorkoutTimerService(
+            viewModelScope = backgroundScope,
+            isPaused = { false },
+            monotonicNowMs = { testScheduler.currentTime }
+        )
+
+        service.registerTimer(
+            state = state,
+            callbacks = WorkoutTimerService.TimerCallbacks({}, {}, {})
+        )
+
+        advanceTimeBy(6_200)
+        runCurrent()
+
+        val setData = state.currentSetData as EnduranceSetData
+        assertEquals(5_000, setData.endTimer)
+        assertTrue(setData.hasBeenExecuted)
+        assertFalse(service.isTimerRegistered(setId))
+        assertNull(service.timerUiStates.value[setId])
+    }
 
     @Test
     fun timedDuration_usesMonotonicProgression_andRespectsPauseResume() = runTest {

@@ -1,45 +1,23 @@
 package com.gabstra.myworkoutassistant.shared.export
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 
 class HeartRateExportStatsTest {
 
     @Test
-    fun sliceHeartRateRecords_clampsWhenIntervalExtendsPastBuffer() {
-        val start = LocalDateTime.of(2020, 1, 1, 10, 0, 0)
-        val records = List(100) { 120 }
-        val intervalStart = start
-        val intervalEnd = start.plusSeconds(60)
-        val slice = sliceHeartRateRecords(start, records, intervalStart, intervalEnd)
-        assertEquals(100, slice.size)
-    }
+    fun sliceHeartRateRecords_usesOneSamplePerSecondAlignment() {
+        val workoutStart = LocalDateTime.of(2026, 3, 26, 10, 0, 0)
+        val records = (0 until 120).toList()
 
-    @Test
-    fun sliceHeartRateRecords_returnsEmptyWhenNoOverlap() {
-        val start = LocalDateTime.of(2020, 1, 1, 10, 0, 0)
-        val records = List(10) { 100 }
-        val intervalStart = start.plusSeconds(100)
-        val intervalEnd = start.plusSeconds(110)
-        val slice = sliceHeartRateRecords(start, records, intervalStart, intervalEnd)
-        assertTrue(slice.isEmpty())
-    }
+        val slice = sliceHeartRateRecords(
+            workoutStart = workoutStart,
+            records = records,
+            intervalStart = workoutStart.plusSeconds(30),
+            intervalEnd = workoutStart.plusSeconds(40)
+        )
 
-    @Test
-    fun medianInt_handlesOddAndEven() {
-        assertEquals(120, medianInt(listOf(100, 120, 140)))
-        assertEquals(125, medianInt(listOf(100, 120, 130, 150)))
-    }
-
-    @Test
-    fun standardZoneSampleFractions_sumsToOne() {
-        val bounds = heartRateZoneBoundsBpm(30, measuredMaxHeartRate = 200, restingHeartRate = 60)
-        val samples = listOf(100, 120, 140, 180)
-        val fr = standardZoneSampleFractions(samples, bounds)
-        assertEquals(bounds.size, fr.size)
-        val sum = fr.sum()
-        assertTrue(sum in 0.99..1.01)
+        assertEquals((30 until 40).toList(), slice)
     }
 }

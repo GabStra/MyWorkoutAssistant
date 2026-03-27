@@ -16,7 +16,6 @@ import com.gabstra.myworkoutassistant.shared.workout.history.formatRestLineForMa
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDateTime
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -37,6 +36,7 @@ internal fun appendExerciseTimelineToMarkdown(
     var totalDuration = 0
     val timeline = mergeSessionTimeline(activeSetHistories, restsForExercise)
     var workSetOrdinal = 0
+    markdown.append("#### Executed Timeline\n")
     for (step in timeline) {
         when (step) {
             is SessionTimelineItem.RestStep -> {
@@ -63,11 +63,8 @@ internal fun appendExerciseTimelineToMarkdown(
                 setLine.append("S$workSetOrdinal: ")
                 when (val setData = setHistory.setData) {
                     is WeightSetData -> {
-                        val (adjustedWeight, adjustedVolume) = adjustWeightAndVolumeForExport(
-                            setData.actualWeight,
-                            setData.actualReps,
-                            achievableWeights
-                        )
+                        val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
+                        val adjustedVolume = adjustedWeight * setData.actualReps
                         setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
                         if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
                         totalVolume += adjustedVolume
@@ -177,24 +174,4 @@ internal fun formatDurationForExport(seconds: Int): String {
     } else {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
-}
-
-private fun adjustWeightAndVolumeForExport(
-    actualWeight: Double,
-    reps: Int,
-    achievableWeights: List<Double>?
-): Pair<Double, Double> {
-    if (actualWeight <= 0.0 || reps <= 0) {
-        return actualWeight to (actualWeight * reps)
-    }
-    val adjustedWeight = findClosestAchievableWeightForExport(actualWeight, achievableWeights)
-    return adjustedWeight to adjustedWeight * reps
-}
-
-private fun findClosestAchievableWeightForExport(
-    targetWeight: Double,
-    achievableWeights: List<Double>?
-): Double {
-    if (achievableWeights.isNullOrEmpty()) return targetWeight
-    return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
 }

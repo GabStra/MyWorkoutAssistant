@@ -100,7 +100,7 @@ internal fun populationStdDevInt(values: List<Int>): Double? {
 
 /**
  * Samples from [records] for [intervalStart]..[intervalEnd] relative to [workoutStart],
- * ~2 samples per second, indices clamped to array bounds. Empty if interval invalid.
+ * ~1 sample per second, indices clamped to array bounds. Empty if interval invalid.
  */
 internal fun sliceHeartRateRecords(
     workoutStart: LocalDateTime,
@@ -112,8 +112,8 @@ internal fun sliceHeartRateRecords(
     if (!intervalEnd.isAfter(intervalStart)) return emptyList()
     val offsetSec = Duration.between(workoutStart, intervalStart).seconds.toInt().coerceAtLeast(0)
     val durationSec = Duration.between(intervalStart, intervalEnd).seconds.toInt().coerceAtLeast(0)
-    val startIdx = (offsetSec * 2).coerceIn(0, records.size)
-    val endIdx = ((offsetSec + durationSec) * 2).coerceIn(0, records.size)
+    val startIdx = offsetSec.coerceIn(0, records.size)
+    val endIdx = (offsetSec + durationSec).coerceIn(0, records.size)
     if (startIdx >= endIdx) return emptyList()
     return records.subList(startIdx, endIdx)
 }
@@ -143,7 +143,6 @@ internal data class SessionHrDerived(
     val fractionAbove85PctMax: Double?,
     val fractionAbove90PctMax: Double?,
     val validSampleCount: Int,
-    val approxTraceSeconds: Int,
 )
 
 internal fun computeSessionHrDerived(
@@ -170,7 +169,6 @@ internal fun computeSessionHrDerived(
     val f85 = fractionAboveFractionOfMaxHr(validSamples, maxHr, 0.85)
     val f90 = fractionAboveFractionOfMaxHr(validSamples, maxHr, 0.90)
     val n = validSamples.size
-    val approxTrace = n / 2
     return SessionHrDerived(
         mean = mean,
         median = median,
@@ -184,6 +182,5 @@ internal fun computeSessionHrDerived(
         fractionAbove85PctMax = f85,
         fractionAbove90PctMax = f90,
         validSampleCount = n,
-        approxTraceSeconds = approxTrace,
     )
 }

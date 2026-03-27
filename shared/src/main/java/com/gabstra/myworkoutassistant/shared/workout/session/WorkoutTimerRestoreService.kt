@@ -8,6 +8,8 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateQueries
+import com.gabstra.myworkoutassistant.shared.workout.timer.canResumeRunningEnduranceTimer
+import com.gabstra.myworkoutassistant.shared.workout.timer.elapsedMillisForEnduranceTimer
 import java.time.LocalDateTime
 
 class WorkoutTimerRestoreService {
@@ -78,6 +80,7 @@ class WorkoutTimerRestoreService {
         now: LocalDateTime,
         logTag: String
     ) {
+        val set = state.set as? EnduranceSet ?: return
         val setData = if (setHistory?.setData is EnduranceSetData) {
             setHistory.setData as EnduranceSetData
         } else {
@@ -91,11 +94,15 @@ class WorkoutTimerRestoreService {
             }
         }
 
-        if (setData.endTimer > 0 && setData.endTimer <= setData.startTimer) {
-            state.startTime = now.minusNanos((setData.endTimer * 1_000_000L).toLong())
-            Log.d(logTag, "Restored EnduranceSet timer: elapsed=${setData.endTimer}ms")
+        if (setData.canResumeRunningEnduranceTimer(set.autoStop)) {
+            val elapsedMillis = setData.elapsedMillisForEnduranceTimer()
+            state.startTime = now.minusNanos(elapsedMillis.toLong() * 1_000_000L)
+            Log.d(logTag, "Restored EnduranceSet timer: elapsed=${elapsedMillis}ms")
         } else {
-            Log.d(logTag, "Timer not running or invalid: endTimer=${setData.endTimer}, startTimer=${setData.startTimer}")
+            Log.d(
+                logTag,
+                "Timer not running or completed: endTimer=${setData.endTimer}, startTimer=${setData.startTimer}, hasBeenExecuted=${setData.hasBeenExecuted}"
+            )
         }
     }
 }

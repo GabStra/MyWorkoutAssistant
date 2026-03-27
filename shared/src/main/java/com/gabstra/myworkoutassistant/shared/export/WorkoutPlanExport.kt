@@ -16,12 +16,8 @@ import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
-import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
-import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
-import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
-import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -334,7 +330,7 @@ private fun appendExerciseDetails(
         exercise.sets.forEachIndexed { index, set ->
             if (set !is RestSet) {
                 workSetNumber++
-                val setStr = formatSetInline(set, workSetNumber)
+                val setStr = formatSetInline(set)
                 
                 if (hasIntraSetRest) {
                     markdown.append("    Set $workSetNumber (Side A): $setStr\n")
@@ -391,7 +387,7 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
         superset.exercises.forEachIndexed { exerciseIndex, exercise ->
             if (round < exerciseWorkSets[exerciseIndex].size) {
                 val set = exerciseWorkSets[exerciseIndex][round]
-                val setStr = formatSetInline(set, round + 1)
+                val setStr = formatSetInline(set)
                 val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
                 
                 if (hasIntraSetRest) {
@@ -421,46 +417,12 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
 
 private fun formatSet(set: Set, setNumber: Int): String {
     val prefix = "Set $setNumber: "
-    val setStr = formatSetInline(set, setNumber)
+    val setStr = formatSetInlineForExport(set)
     return prefix + setStr
 }
 
-private fun formatSetInline(set: Set, setNumber: Int): String {
-    return when (set) {
-        is WeightSet -> {
-            var str = "${formatNumber(set.weight)} kg × ${set.reps} reps"
-            if (set.subCategory != SetSubCategory.WorkSet) {
-                str += " [${set.subCategory.name}]"
-            }
-            str
-        }
-        is BodyWeightSet -> {
-            var str = "Body weight"
-            if (set.additionalWeight > 0) {
-                str += " + ${formatNumber(set.additionalWeight)} kg"
-            } else if (set.additionalWeight < 0) {
-                str += " - ${formatNumber(-set.additionalWeight)} kg"
-            }
-            str += " × ${set.reps} reps"
-            if (set.subCategory != SetSubCategory.WorkSet) {
-                str += " [${set.subCategory.name}]"
-            }
-            str
-        }
-        is TimedDurationSet -> {
-            val minutes = set.timeInMillis / 60000
-            val seconds = (set.timeInMillis % 60000) / 1000
-            "${minutes}:${String.format("%02d", seconds)}"
-        }
-        is EnduranceSet -> {
-            val minutes = set.timeInMillis / 60000
-            val seconds = (set.timeInMillis % 60000) / 1000
-            "${minutes}:${String.format("%02d", seconds)} (endurance)"
-        }
-        is RestSet -> {
-            "${set.timeInSeconds} seconds rest"
-        }
-    }
+private fun formatSetInline(set: Set): String {
+    return formatSetInlineForExport(set)
 }
 
 private fun EquipmentType.toDisplayText(): String {
