@@ -39,7 +39,7 @@ android {
 
 
 dependencies {
-    implementation("androidx.compose.ui:ui-graphics:1.10.5")
+    implementation("androidx.compose.ui:ui-graphics:1.10.6")
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
