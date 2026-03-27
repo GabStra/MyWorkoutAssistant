@@ -35,17 +35,20 @@ class WorkoutNotificationHelper(private val context: Context) {
 
         notificationManager.createNotificationChannel(channel)
     }
-    
-    fun buildWorkoutNotification(schedule: WorkoutSchedule, workout: Workout): Notification {
-        val fullScreenIntent = Intent(context, WorkoutAlarmActivity::class.java).apply {
+
+    fun createAlarmActivityIntent(schedule: WorkoutSchedule): Intent {
+        return Intent(context, WorkoutAlarmActivity::class.java).apply {
             putExtra("WORKOUT_ID", schedule.workoutId.toString())
             putExtra("SCHEDULE_ID", schedule.id.toString())
-        }
 
-        if (schedule.label.isNotEmpty()){
-            fullScreenIntent.putExtra("LABEL", schedule.label)
+            if (schedule.label.isNotEmpty()) {
+                putExtra("LABEL", schedule.label)
+            }
         }
+    }
 
+    fun buildWorkoutNotification(schedule: WorkoutSchedule, workout: Workout): Notification {
+        val fullScreenIntent = createAlarmActivityIntent(schedule)
 
         val fullScreenPI = PendingIntent.getActivity(
             context, schedule.id.hashCode(), fullScreenIntent,
