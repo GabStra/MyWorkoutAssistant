@@ -82,6 +82,7 @@ import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.getNewSetFromRestHistory
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
+import com.gabstra.myworkoutassistant.shared.utils.averageValidHeartRateOrNull
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -672,8 +673,8 @@ fun WorkoutHistoryScreen(
             sectionMap.putAll(remainingByExerciseId)
             setHistoriesByExerciseId = sectionMap
 
-
-            val avgHeartRate = selectedWorkoutHistory!!.heartBeatRecords.average()
+            val avgHeartRate =
+                selectedWorkoutHistory!!.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0
 
             val currentYear = Calendar.getInstance().get(Calendar.YEAR)
             val age = currentYear - appViewModel.workoutStore.birthDateYear

@@ -35,8 +35,10 @@ import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
@@ -97,6 +99,8 @@ class DataLayerListenerService : WearableListenerService() {
         .registerTypeAdapter(Set::class.java, SetAdapter())
         .registerTypeAdapter(SetData::class.java, SetDataAdapter())
         .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
         .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
@@ -962,44 +966,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                 "DataLayerSync",
                                                 "Parsing JSON workout history (length: ${workoutHistoryStoreJson.length} chars) for transaction: $transactionId"
                                             )
-                                            val gson = GsonBuilder()
-                                                .registerTypeAdapter(
-                                                    LocalDate::class.java,
-                                                    LocalDateAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    LocalTime::class.java,
-                                                    LocalTimeAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    LocalDateTime::class.java,
-                                                    LocalDateTimeAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    Set::class.java,
-                                                    SetAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    SetData::class.java,
-                                                    SetDataAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    BodyWeightSetData::class.java,
-                                                    SetDataAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    RestSetData::class.java,
-                                                    SetDataAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    WeightSetData::class.java,
-                                                    SetDataAdapter()
-                                                )
-                                                .registerTypeAdapter(
-                                                    ExerciseSessionSnapshot::class.java,
-                                                    ExerciseSessionSnapshotAdapter()
-                                                )
-                                                .create()
 
                                             val workoutHistoryStore = workoutHistoryGson.fromJson(
                                                 workoutHistoryStoreJson,
@@ -1307,16 +1273,23 @@ class DataLayerListenerService : WearableListenerService() {
                             dataMap.getString(PAGE) // Replace "key" with your actual key
                         val context = this
                         scope.launch(Dispatchers.IO) {
-                            // Start an activity and pass the extracted value
-                            val intent = Intent(context, MainActivity::class.java).apply {
-                                putExtra(
-                                    PAGE,
-                                    valueToPass
-                                ) // Replace "extra_key" with your actual extra key
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // Required for starting an activity from a service
-                                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // This flag helps to reuse the existing instance
+                            val launchIntent = context.packageManager
+                                .getLaunchIntentForPackage(context.packageName)
+                                ?.apply {
+                                    putExtra(PAGE, valueToPass)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                }
+                                ?: Intent(context, MainActivity::class.java).apply {
+                                    putExtra(PAGE, valueToPass)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                }
+                            withContext(Dispatchers.Main) {
+                                startActivity(launchIntent)
                             }
-                            startActivity(intent)
                         }
                     }
 

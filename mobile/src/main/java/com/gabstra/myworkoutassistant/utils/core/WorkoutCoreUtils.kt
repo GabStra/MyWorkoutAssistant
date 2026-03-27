@@ -86,6 +86,7 @@ import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.averageValidHeartRateOrNull
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -308,7 +309,8 @@ suspend fun sendWorkoutsToHealthConnect(
         val totalCaloriesBurnedRecords = batch
             .filter { it.heartBeatRecords.isNotEmpty() }
             .mapNotNull { workoutHistory ->
-                val avgHeartRate = workoutHistory.heartBeatRecords.average()
+                val avgHeartRate = workoutHistory.heartBeatRecords.averageValidHeartRateOrNull()
+                    ?: return@mapNotNull null
 
                 val durationMinutes = workoutHistory.duration.toDouble() / 60
                 val kiloCaloriesBurned = calculateKiloCaloriesBurned(
