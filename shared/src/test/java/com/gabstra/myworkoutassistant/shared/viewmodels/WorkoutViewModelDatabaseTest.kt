@@ -581,13 +581,13 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Bench press export should succeed", benchResult is ExerciseHistoryMarkdownResult.Success)
         val benchMarkdown = (benchResult as ExerciseHistoryMarkdownResult.Success).markdown
         assertTrue("Bench export should include header", benchMarkdown.contains("# Bench Press"))
-        assertTrue("Bench export should include export context", benchMarkdown.contains("#### Export context"))
+        assertTrue("Bench export should include athlete context", benchMarkdown.contains("#### Athlete Context"))
         assertTrue("Bench export should list available weights", benchMarkdown.contains("Weights:") && (benchMarkdown.contains("20,") || benchMarkdown.contains("20 kg") || benchMarkdown.contains("20.0 kg")))
         assertTrue("Bench export should include first set", benchMarkdown.contains("S1: 97.5kg×10 Vol:975kg"))
         assertTrue("Bench export should include second set", benchMarkdown.contains("S2: 97.5kg×8 Vol:780kg"))
         assertTrue("Bench export should include total volume", benchMarkdown.contains("Total Vol: 1.76Kkg"))
         assertTrue("Bench export should include session metadata line", benchMarkdown.contains("Session: start at"))
-        assertTrue("Bench export should include heart rate subsection", benchMarkdown.contains("#### Heart rate"))
+        assertTrue("Bench export should include heart rate subsection", benchMarkdown.contains("#### Session Heart Rate"))
         assertTrue("Bench export should include mean HR line", benchMarkdown.contains("- Mean:"))
 
         val squats = viewModel.exercisesById[testExercise2Id]!!
@@ -606,14 +606,14 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Squats export should include set details", squatsMarkdown.contains("S1: 80kg×13 Vol:1.04Kkg"))
         assertTrue("Squats export should include total volume", squatsMarkdown.contains("Total Vol: 1.04Kkg"))
         assertTrue("Squats export should include session metadata line", squatsMarkdown.contains("Session: start at"))
-        assertTrue("Squats export should include heart rate subsection", squatsMarkdown.contains("#### Heart rate"))
+        assertTrue("Squats export should include heart rate subsection", squatsMarkdown.contains("#### Session Heart Rate"))
 
         // Phase 8: Verify Progression Markdown Format
         // Verify progression section exists when progression data is present
-        assertTrue("Bench export should include progression section", benchMarkdown.contains("### Progression"))
+        assertTrue("Bench export should include progression section", benchMarkdown.contains("#### Progression Context"))
         
         // Verify no bold formatting is used in progression section
-        val progressionSectionStart = benchMarkdown.indexOf("### Progression")
+        val progressionSectionStart = benchMarkdown.indexOf("#### Progression Context")
         val progressionSectionEnd = benchMarkdown.indexOf("\n\n", progressionSectionStart)
         val progressionSection = if (progressionSectionEnd != -1) {
             benchMarkdown.substring(progressionSectionStart, progressionSectionEnd)
@@ -644,19 +644,19 @@ class WorkoutViewModelDatabaseTest {
             progressionSection.contains("↑") || progressionSection.contains("=") || 
             progressionSection.contains("↓") || progressionSection.contains("~"))
         
-        // Verify labels use shortened format (e.g., "vs Exp" instead of "vs Expected")
-        assertTrue("Progression should use shortened label 'vs Exp'", progressionSection.contains("vs Exp"))
-        assertTrue("Progression should use shortened label 'vs Prev'", progressionSection.contains("vs Prev"))
-        assertTrue("Progression should use shortened label 'Vol'", progressionSection.contains("- Vol:"))
-        assertTrue("Progression should not use verbose label 'vs Expected'", !progressionSection.contains("vs Expected"))
-        assertTrue("Progression should not use verbose label 'vs Previous'", !progressionSection.contains("vs Previous"))
-        assertTrue("Progression should not use verbose label 'Volumes'", !progressionSection.contains("- Volumes:"))
+        // Verify labels match the current explicit wording
+        assertTrue("Progression should include comparison vs expected label", progressionSection.contains("- Comparison vs expected:"))
+        assertTrue(
+            "Progression should include comparison vs previous baseline label",
+            progressionSection.contains("- Comparison vs previous successful baseline:")
+        )
+        assertTrue("Progression should use volume label", progressionSection.contains("- Volume:"))
         
         // Verify comparison line format
-        assertTrue("Progression should show comparison line", progressionSection.contains("- Comparison:"))
+        assertTrue("Progression should show comparison line", progressionSection.contains("- Comparison vs expected:"))
         
         // Verify volumes line format
-        assertTrue("Progression should show volumes line", progressionSection.contains("- Vol:"))
+        assertTrue("Progression should show volumes line", progressionSection.contains("- Volume:"))
         assertTrue("Progression volumes should include Prev", progressionSection.contains("Prev"))
         assertTrue("Progression volumes should include Exp", progressionSection.contains("Exp"))
         assertTrue("Progression volumes should include Exec", progressionSection.contains("Exec"))

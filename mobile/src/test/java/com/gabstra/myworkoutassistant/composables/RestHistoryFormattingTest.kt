@@ -20,7 +20,7 @@ class RestHistoryFormattingTest {
             endTime = end
         )
 
-        assertEquals("01:15 elapsed (01:30 planned)", formatHistoricalRestValue(history))
+        assertEquals("REST 01:15 elapsed (01:30 planned)", formatHistoricalRestValue(history))
     }
 
     @Test

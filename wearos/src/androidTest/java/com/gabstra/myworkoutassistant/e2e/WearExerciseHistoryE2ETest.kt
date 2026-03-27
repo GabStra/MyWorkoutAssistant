@@ -40,6 +40,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Ignore
 import org.junit.Before
@@ -362,17 +363,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         waitForWorkoutCompletion()
 
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-            ?: error("WorkoutHistory not found for completed workout")
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
-
-        val setHistory = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            .firstOrNull { it.setId == set.id }
-            ?: error("SetHistory not found for set ${set.id}")
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
+        val setHistory = waitForSetHistory(workoutHistory.id, set.id)
 
         val setData = setHistory.setData as? WeightSetData
             ?: error("Expected WeightSetData, got ${setHistory.setData::class.simpleName}")
@@ -419,17 +411,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         waitForWorkoutCompletion()
 
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-            ?: error("WorkoutHistory not found for completed workout")
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
-
-        val setHistory = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            .firstOrNull { it.setId == set.id }
-            ?: error("SetHistory not found for set ${set.id}")
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
+        val setHistory = waitForSetHistory(workoutHistory.id, set.id)
 
         require(setHistory.skipped) {
             "Expected skipped=true for set ${set.id}, got skipped=${setHistory.skipped}"
@@ -510,17 +493,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         waitForWorkoutCompletion()
 
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-            ?: error("WorkoutHistory not found for completed workout")
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
-
-        val setHistory = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            .firstOrNull { it.setId == set.id }
-            ?: error("SetHistory not found for set ${set.id}")
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
+        val setHistory = waitForSetHistory(workoutHistory.id, set.id)
 
         val setData = setHistory.setData as? BodyWeightSetData
             ?: error("Expected BodyWeightSetData, got ${setHistory.setData::class.simpleName}")
@@ -578,17 +552,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         waitForWorkoutCompletion()
 
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-            ?: error("WorkoutHistory not found for completed workout")
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
-
-        val setHistory = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            .firstOrNull { it.setId == set.id }
-            ?: error("SetHistory not found for set ${set.id}")
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
+        val setHistory = waitForSetHistory(workoutHistory.id, set.id)
 
         val setData = setHistory.setData as? TimedDurationSetData
             ?: error("Expected TimedDurationSetData, got ${setHistory.setData::class.simpleName}")
@@ -640,17 +605,8 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
 
         waitForWorkoutCompletion()
 
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-            ?: error("WorkoutHistory not found for completed workout")
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
-
-        val setHistory = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
-            .firstOrNull { it.setId == set.id }
-            ?: error("SetHistory not found for set ${set.id}")
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
+        val setHistory = waitForSetHistory(workoutHistory.id, set.id)
 
         val setData = setHistory.setData as? EnduranceSetData
             ?: error("Expected EnduranceSetData, got ${setHistory.setData::class.simpleName}")
@@ -679,10 +635,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         waitForWorkoutCompletion()
 
         // Query database and verify
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
         val workoutName = ComprehensiveHistoryWorkoutStoreFixture.getWorkoutName()
         // Read workout store from file (it was seeded by the fixture)
         val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
@@ -691,12 +643,10 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             ?: error("Workout not found: $workoutName")
 
         // Get the completed workout history
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-        require(workoutHistory != null) { "WorkoutHistory not found for completed workout" }
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
 
         // Get all set histories for this workout
-        val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+        val setHistories = waitForSetHistories(workoutHistory.id)
 
         // Verify basic structure
         verifySetHistoryStructure(workoutHistory, setHistories, workout)
@@ -730,10 +680,6 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         waitForWorkoutCompletion()
 
         // Query database and verify
-        val db = AppDatabase.getDatabase(context)
-        val workoutHistoryDao = db.workoutHistoryDao()
-        val setHistoryDao = db.setHistoryDao()
-
         // Read workout store from file (it was seeded by the fixture)
         val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
         val workoutStore = workoutStoreRepository.getWorkoutStore()
@@ -741,12 +687,10 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             ?: error("Workout not found: $workoutName")
 
         // Get the completed workout history
-        val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workout.id, isDone = true)
-        require(workoutHistory != null) { "WorkoutHistory not found for completed workout" }
-        require(workoutHistory.isDone) { "WorkoutHistory isDone should be true" }
+        val workoutHistory = waitForCompletedWorkoutHistory(workout.id)
 
         // Get all set histories for this workout
-        val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistory.id)
+        val setHistories = waitForSetHistories(workoutHistory.id)
 
         // Get the exercise from the workout
         val exercise = workout.workoutComponents
@@ -1994,6 +1938,66 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         require(dbCompletion) { "Workout completion screen did not appear" }
     }
 
+    private suspend fun waitForCompletedWorkoutHistory(
+        workoutId: UUID,
+        timeoutMs: Long = 10_000
+    ): WorkoutHistory {
+        val workoutHistoryDao = AppDatabase.getDatabase(context).workoutHistoryDao()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val workoutHistory = workoutHistoryDao.getLatestWorkoutHistoryByWorkoutId(workoutId, isDone = true)
+            if (workoutHistory != null && workoutHistory.isDone) {
+                return workoutHistory
+            }
+            delay(250)
+        }
+
+        error("WorkoutHistory not found for completed workoutId=$workoutId within ${timeoutMs}ms")
+    }
+
+    private suspend fun waitForSetHistory(
+        workoutHistoryId: UUID,
+        setId: UUID,
+        timeoutMs: Long = 10_000
+    ): SetHistory {
+        val setHistoryDao = AppDatabase.getDatabase(context).setHistoryDao()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastSetHistories = emptyList<SetHistory>()
+
+        while (System.currentTimeMillis() < deadline) {
+            lastSetHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistoryId)
+            val matchingSetHistory = lastSetHistories.firstOrNull { it.setId == setId }
+            if (matchingSetHistory != null) {
+                return matchingSetHistory
+            }
+            delay(250)
+        }
+
+        error(
+            "SetHistory not found for set $setId in workoutHistoryId=$workoutHistoryId within " +
+                "${timeoutMs}ms. Observed setIds=${lastSetHistories.map { it.setId }}"
+        )
+    }
+
+    private suspend fun waitForSetHistories(
+        workoutHistoryId: UUID,
+        timeoutMs: Long = 10_000
+    ): List<SetHistory> {
+        val setHistoryDao = AppDatabase.getDatabase(context).setHistoryDao()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastSetHistories = emptyList<SetHistory>()
+
+        while (System.currentTimeMillis() < deadline) {
+            lastSetHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(workoutHistoryId)
+            if (lastSetHistories.isNotEmpty()) {
+                return lastSetHistories
+            }
+            delay(250)
+        }
+
+        error("No SetHistory rows found for workoutHistoryId=$workoutHistoryId within ${timeoutMs}ms")
+    }
+
     /**
      * Completes a set by triggering the "Complete Set" dialog and confirming.
      */
@@ -2246,5 +2250,3 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
         }
     }
 }
-
-

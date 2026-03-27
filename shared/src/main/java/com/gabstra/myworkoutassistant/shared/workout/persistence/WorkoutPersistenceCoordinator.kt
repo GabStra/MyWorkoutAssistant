@@ -302,12 +302,18 @@ internal class WorkoutPersistenceCoordinator(
         }
         val workoutHistoryForThisPush = currentWorkoutHistorySnapshot ?: error("WorkoutHistory snapshot is null")
 
-        val newExecutedSetsHistory = snapshot.executedSetsHistory.map {
-            it.copy(
-                workoutHistoryId = workoutHistoryForThisPush.id,
-                setData = copySetData(it.setData)
-            )
-        }
+        val newExecutedSetsHistory = snapshot.executedSetsHistory
+            .asSequence()
+            .filterNot { history ->
+                isDone && isWarmupSetData(history.setData)
+            }
+            .map {
+                it.copy(
+                    workoutHistoryId = workoutHistoryForThisPush.id,
+                    setData = copySetData(it.setData)
+                )
+            }
+            .toList()
 
         val newExecutedRestHistories = snapshot.executedRestHistories.map {
             it.copy(
