@@ -55,7 +55,6 @@ object TestWorkoutStoreSeeder {
         return WorkoutStore(
             workouts = listOf(workout),
             equipments = listOf(equipment),
-            polarDeviceId = null,
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0
@@ -149,7 +148,7 @@ object TestWorkoutStoreSeeder {
             workoutComponents = listOf(exercise1, exercise2),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,

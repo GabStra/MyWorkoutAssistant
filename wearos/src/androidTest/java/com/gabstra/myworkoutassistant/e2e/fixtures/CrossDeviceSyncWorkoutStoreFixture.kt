@@ -162,7 +162,7 @@ object CrossDeviceSyncWorkoutStoreFixture {
             workoutComponents = listOf(exerciseA, exerciseB, exerciseC, exerciseD),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -207,7 +207,7 @@ object CrossDeviceSyncWorkoutStoreFixture {
             workoutComponents = listOf(calibrationExercise),
             order = 1,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -220,7 +220,6 @@ object CrossDeviceSyncWorkoutStoreFixture {
         val workoutStore = WorkoutStore(
             workouts = listOf(workout, calibrationWorkout),
             equipments = listOf(equipment),
-            polarDeviceId = null,
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0

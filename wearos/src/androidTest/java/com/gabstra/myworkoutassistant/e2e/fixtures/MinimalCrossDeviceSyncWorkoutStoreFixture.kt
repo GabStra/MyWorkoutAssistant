@@ -65,7 +65,7 @@ object MinimalCrossDeviceSyncWorkoutStoreFixture {
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -80,7 +80,6 @@ object MinimalCrossDeviceSyncWorkoutStoreFixture {
             WorkoutStore(
                 workouts = listOf(workout),
                 equipments = listOf(equipment),
-                polarDeviceId = null,
                 birthDateYear = 1990,
                 weightKg = 75.0,
                 progressionPercentageAmount = 0.0

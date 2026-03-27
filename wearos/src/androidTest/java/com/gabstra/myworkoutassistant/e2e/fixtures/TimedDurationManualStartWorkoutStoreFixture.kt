@@ -54,7 +54,7 @@ object TimedDurationManualStartWorkoutStoreFixture {
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -67,7 +67,6 @@ object TimedDurationManualStartWorkoutStoreFixture {
         val workoutStore = WorkoutStore(
             workouts = listOf(workout),
             equipments = emptyList(),
-            polarDeviceId = null,
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0
