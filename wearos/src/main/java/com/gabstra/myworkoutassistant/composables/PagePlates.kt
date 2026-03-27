@@ -64,6 +64,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.isEqualTo
 import com.gabstra.myworkoutassistant.shared.round
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -72,7 +73,6 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 import java.util.UUID
-import androidx.compose.runtime.mutableStateOf
 
 private fun Double.compact(): String {
     val s = String.format("%.2f", this).replace(',', '.')
@@ -1038,6 +1038,16 @@ private fun PagePlatesPreview() {
         previousPlates = listOf(20.0),
         currentPlates = listOf(20.0, 10.0)
     )
+    val previewSetDataState = remember {
+        mutableStateOf(
+            WeightSetData(
+                actualReps = 5,
+                actualWeight = 100.0,
+                volume = 500.0,
+                subCategory = SetSubCategory.WorkSet
+            ) as SetData
+        )
+    }
     val previewState = WorkoutState.Set(
         exerciseId = UUID.randomUUID(),
         set = WeightSet(
@@ -1048,14 +1058,7 @@ private fun PagePlatesPreview() {
         ),
         setIndex = 0u,
         previousSetData = null,
-        currentSetDataState = mutableStateOf(
-            WeightSetData(
-                actualReps = 5,
-                actualWeight = 100.0,
-                volume = 500.0,
-                subCategory = SetSubCategory.WorkSet
-            )
-        ),
+        currentSetDataState = previewSetDataState,
         hasNoHistory = false,
         skipped = false,
         currentBodyWeight = 0.0,
