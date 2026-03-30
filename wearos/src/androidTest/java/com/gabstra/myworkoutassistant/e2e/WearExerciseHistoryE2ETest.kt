@@ -665,7 +665,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
     }
 
     @Test
-    fun exerciseHistory_warmupSetsExcludedFromHistory() = runBlocking {
+    fun exerciseHistory_warmupSetsIncludedInHistory() = runBlocking {
         // Setup workout store with warmup sets enabled
         WarmupSetWorkoutStoreFixture.setupWorkoutStore(context)
         launchAppFromHome()
@@ -698,10 +698,10 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             .firstOrNull() ?: error("Expected a single exercise in $workoutName")
 
         // The exercise should have generateWarmUpSets = true, so warmup sets were generated
-        // We should only have the work sets in history, not warmup sets
+        // and should now be preserved in SetHistory alongside work sets.
         val exerciseSetHistories = setHistories.filter { it.exerciseId == exercise.id }
 
-        // Verify that no warmup sets are in SetHistory
+        // Verify that warmup sets are persisted in SetHistory
         val warmupSetsInHistory = exerciseSetHistories.filter { setHistory ->
             when (val setData = setHistory.setData) {
                 is WeightSetData -> setData.subCategory == SetSubCategory.WarmupSet
@@ -709,12 +709,11 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 else -> false
             }
         }
-        require(warmupSetsInHistory.isEmpty()) {
-            "Expected no warmup sets in SetHistory, but found ${warmupSetsInHistory.size} warmup sets"
+        require(warmupSetsInHistory.isNotEmpty()) {
+            "Expected warmup sets in SetHistory, but found none"
         }
 
-        // Verify that we only have the work sets in history
-        // The fixture defines 1 work set (10 reps at 100.0 kg)
+        // Verify that the work sets are still present.
         val expectedWorkSetCount = exercise.sets.count { set ->
             when (set) {
                 is WeightSet -> set.subCategory != SetSubCategory.WarmupSet
@@ -723,16 +722,52 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
             }
         }
 
-        require(exerciseSetHistories.size == expectedWorkSetCount) {
-            "Expected $expectedWorkSetCount work set(s) in SetHistory, but found ${exerciseSetHistories.size}"
+        val workSetsInHistory = exerciseSetHistories.filter { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> setData.subCategory != SetSubCategory.WarmupSet
+                is BodyWeightSetData -> setData.subCategory != SetSubCategory.WarmupSet
+                else -> true
+            }
         }
 
-        // Verify that all SetHistory entries have valid work set data (not warmup)
-        exerciseSetHistories.forEach { setHistory ->
+        require(workSetsInHistory.size == expectedWorkSetCount) {
+            "Expected $expectedWorkSetCount work set(s) in SetHistory, but found ${workSetsInHistory.size}"
+        }
+
+        require(exerciseSetHistories.size > expectedWorkSetCount) {
+            "Expected SetHistory to contain warmup rows in addition to work sets"
+        }
+
+        warmupSetsInHistory.forEach { setHistory ->
+            when (val setData = setHistory.setData) {
+                is WeightSetData -> {
+                    require(setData.subCategory == SetSubCategory.WarmupSet) {
+                        "SetHistory entry ${setHistory.id} should be marked as WarmupSet"
+                    }
+                    require(setData.actualReps > 0) {
+                        "Warmup WeightSetData should have positive reps"
+                    }
+                    require(setData.actualWeight > 0) {
+                        "Warmup WeightSetData should have positive weight"
+                    }
+                }
+                is BodyWeightSetData -> {
+                    require(setData.subCategory == SetSubCategory.WarmupSet) {
+                        "SetHistory entry ${setHistory.id} should be marked as WarmupSet"
+                    }
+                    require(setData.actualReps > 0) {
+                        "Warmup BodyWeightSetData should have positive reps"
+                    }
+                }
+                else -> error("Warmup set history should use weight or bodyweight data")
+            }
+        }
+
+        workSetsInHistory.forEach { setHistory ->
             when (val setData = setHistory.setData) {
                 is WeightSetData -> {
                     require(setData.subCategory != SetSubCategory.WarmupSet) {
-                        "SetHistory entry ${setHistory.id} has WarmupSet subCategory, but warmup sets should be excluded"
+                        "Work SetHistory entry ${setHistory.id} should not be marked as WarmupSet"
                     }
                     require(setData.actualReps > 0) {
                         "SetHistory WeightSetData should have positive reps"
@@ -743,7 +778,7 @@ class WearExerciseHistoryE2ETest : WearBaseE2ETest() {
                 }
                 is BodyWeightSetData -> {
                     require(setData.subCategory != SetSubCategory.WarmupSet) {
-                        "SetHistory entry ${setHistory.id} has WarmupSet subCategory, but warmup sets should be excluded"
+                        "Work SetHistory entry ${setHistory.id} should not be marked as WarmupSet"
                     }
                     require(setData.actualReps > 0) {
                         "SetHistory BodyWeightSetData should have positive reps"

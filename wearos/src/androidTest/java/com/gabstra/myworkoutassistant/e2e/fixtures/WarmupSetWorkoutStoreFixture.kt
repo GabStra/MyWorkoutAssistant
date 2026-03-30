@@ -12,7 +12,7 @@ import java.util.UUID
 
 /**
  * Fixture for creating a workout store with a workout that has warmup sets enabled.
- * This is used for tests that verify warmup sets are excluded from SetHistory storage.
+ * This is used for tests that verify warmup sets are preserved in SetHistory storage.
  */
 object WarmupSetWorkoutStoreFixture {
     private const val WORKOUT_NAME = "Warmup Set Test Workout"
@@ -55,7 +55,7 @@ object WarmupSetWorkoutStoreFixture {
         val workout = Workout(
             id = UUID.randomUUID(),
             name = WORKOUT_NAME,
-            description = "Test workout for warmup set exclusion verification",
+            description = "Test workout for warmup set history verification",
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
