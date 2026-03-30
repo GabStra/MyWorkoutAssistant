@@ -27,11 +27,9 @@ import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
-import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
@@ -330,6 +328,7 @@ fun HeartRateChartContent(
 
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb()
     val shapeComponent = rememberShapeComponent(Fill(Color.White), RoundedCornerShape(percent = 50))
+    val markerGuideline = rememberPressedChartGuideline()
     val marker = rememberDefaultCartesianMarker(
         valueFormatter = remember {
             DefaultValueFormatter({
@@ -340,7 +339,7 @@ fun HeartRateChartContent(
             style = TextStyle(color = Color.White, textAlign = TextAlign.Center),
             padding = Insets(8.dp),
         ),
-        guideline = rememberAxisGuidelineComponent(Fill(MaterialTheme.colorScheme.background)),
+        guideline = markerGuideline,
         indicatorSize = 10.dp,
         indicator = { _ -> shapeComponent }
     )
@@ -369,7 +368,9 @@ fun HeartRateChartContent(
     val lines = if (effectiveLineZoneIndices != null) {
         effectiveLineZoneIndices.map { zoneIndex ->
             LineCartesianLayer.rememberLine(
-                fill = LineCartesianLayer.LineFill.single(Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])),
+                fill = LineCartesianLayer.LineFill.single(
+                    Fill(colorsByZone[zoneIndex.coerceIn(0, colorsByZone.lastIndex)])
+                ),
                 areaFill = null,
                 pointProvider = null,
                 pointConnector = LineCartesianLayer.PointConnector.Sharp,
@@ -379,11 +380,7 @@ fun HeartRateChartContent(
         listOf(
             LineCartesianLayer.rememberLine(
                 fill = LineCartesianLayer.LineFill.single(
-                    Fill(
-                        Color(
-                            0xFFff6700
-                        )
-                    )
+                    Fill(Color(0xFFff6700))
                 ),
                 areaFill = null,
                 pointProvider = null,
@@ -403,13 +400,14 @@ fun HeartRateChartContent(
         ),
         scrollState = rememberVicoScrollState(scrollEnabled = true),
         chart = rememberCartesianChart(
-            rememberLineCartesianLayer(
+            rememberBottomPaddedLineCartesianLayer(
                 LineCartesianLayer.LineProvider.series(lines),
-
+                pointSpacing = 32.dp,
                 rangeProvider = CartesianLayerRangeProvider.fixed(
                     minY = effectiveMinY,
                     maxY = effectiveMaxY
                 ),
+                bottomPadding = BottomPaddedChartVerticalOffset,
             ),
             decorations = guideLines.map { (zoneColor, threshold) ->
                 rememberHorizontalLine(
@@ -417,7 +415,7 @@ fun HeartRateChartContent(
                     y = threshold,
                 )
             },
-            startAxis = VerticalAxis.rememberStart(
+            startAxis = rememberBottomPaddedStartVerticalAxis(
                 line = null,
                 tick = null,
                 tickLength = 0.dp,
@@ -433,6 +431,8 @@ fun HeartRateChartContent(
                 ),
                 valueFormatter = CartesianValueFormatter { _, value, _ -> "${value.toInt()}" },
                 itemPlacer = remember(zoneValues) { FixedValuesVerticalAxisItemPlacer(zoneValues) },
+                size = com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size.Auto(),
+                bottomPadding = BottomPaddedChartVerticalOffset,
             ),
             bottomAxis = HorizontalAxis.rememberBottom(
                 line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),
@@ -446,4 +446,3 @@ fun HeartRateChartContent(
         model = cartesianChartModel,
     )
 }
-

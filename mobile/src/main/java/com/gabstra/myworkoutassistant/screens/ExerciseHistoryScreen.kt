@@ -166,6 +166,15 @@ fun ExerciseHistoryScreen(
     var selectedWorkoutHistory by remember { mutableStateOf<WorkoutHistory?>(null) }
     var setHistoriesByWorkoutHistoryId by remember { mutableStateOf<Map<UUID, ExerciseHistoryDisplayData>>(emptyMap()) }
 
+    fun resolveSelectedWorkoutHistory(
+        requestedWorkoutHistoryId: UUID?,
+        availableWorkoutHistories: List<WorkoutHistory>,
+    ): WorkoutHistory? {
+        return requestedWorkoutHistoryId
+            ?.let { id -> availableWorkoutHistories.find { it.id == id } }
+            ?: availableWorkoutHistories.lastOrNull()
+    }
+
     suspend fun ensureMinimumLoadingDuration(
         startedAtMillis: Long,
         minimumDurationMillis: Long = 1_000L,
@@ -280,9 +289,10 @@ fun ExerciseHistoryScreen(
 
         if(setHistoriesByWorkoutHistoryId.isEmpty()) return
 
-        selectedWorkoutHistory =
-            workoutHistoryId?.let { id -> chartWorkoutHistories.find { it.id == id } }
-                ?: chartWorkoutHistories.lastOrNull()
+        selectedWorkoutHistory = resolveSelectedWorkoutHistory(
+            requestedWorkoutHistoryId = workoutHistoryId,
+            availableWorkoutHistories = pointsWorkoutHistories,
+        )
 
         if (volumes.any { it.second != 0.0 }) {
             if (volumes.count() == 1) {
@@ -346,7 +356,7 @@ fun ExerciseHistoryScreen(
         hasLoadedWorkoutHistories = true
     }
 
-    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories, workoutHistoryId) {
+    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories) {
         if (!hasLoadedWorkoutHistories) {
             return@LaunchedEffect
         }
@@ -371,8 +381,35 @@ fun ExerciseHistoryScreen(
         isLoading = false
     }
 
-    LaunchedEffect(selectedWorkoutHistory) {
-        onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
+    LaunchedEffect(workoutHistoryId, chartWorkoutHistories) {
+        val resolvedWorkoutHistory = resolveSelectedWorkoutHistory(
+            requestedWorkoutHistoryId = workoutHistoryId,
+            availableWorkoutHistories = chartWorkoutHistories,
+        )
+        if (selectedWorkoutHistory?.id != resolvedWorkoutHistory?.id) {
+            selectedWorkoutHistory = resolvedWorkoutHistory
+        }
+    }
+
+    LaunchedEffect(
+        hasLoadedWorkoutHistories,
+        isLoading,
+        selectedWorkoutHistory?.id,
+        chartWorkoutHistories,
+        workoutHistoryId,
+    ) {
+        if (!hasLoadedWorkoutHistories || isLoading) {
+            return@LaunchedEffect
+        }
+
+        val selectedWorkoutHistoryId = selectedWorkoutHistory?.id
+        if (selectedWorkoutHistoryId == null && chartWorkoutHistories.isNotEmpty()) {
+            return@LaunchedEffect
+        }
+
+        if (selectedWorkoutHistoryId != workoutHistoryId) {
+            onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistoryId)
+        }
     }
 
     val workoutSelector = @Composable {
@@ -461,12 +498,17 @@ fun ExerciseHistoryScreen(
             .background(MaterialTheme.colorScheme.background),
         verticalArrangement = Arrangement.Top,
     ) {
+        val isSetHistorySelectionPending =
+            selectedHistoryMode.coerceIn(0, 1) == 1 &&
+                    setHistoriesByWorkoutHistoryId.isNotEmpty() &&
+                    selectedWorkoutHistory == null
+
         Spacer(modifier = Modifier.height(10.dp))
         RangeDropdown(selectedRange) { selectedRange = it }
         Spacer(modifier = Modifier.height(12.dp))
 
         when {
-            isLoading -> {
+            isLoading || isSetHistorySelectionPending -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,

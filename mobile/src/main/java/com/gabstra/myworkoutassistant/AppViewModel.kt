@@ -136,6 +136,39 @@ sealed class ScreenData() {
             is EditEquipment -> "EditEquipment_${equipmentId}_${equipmentType.name}"
         }
     }
+
+    /**
+     * Stable identity for a rendered screen. This stays constant across internal tab/session
+     * changes so AnimatedContent and SaveableStateHolder do not create duplicate screen trees.
+     */
+    fun screenIdentityKey(): String {
+        return when (this) {
+            is Workouts -> "Workouts"
+            is Settings -> "Settings"
+            is ErrorLogs -> "ErrorLogs"
+            is NewWorkout -> "NewWorkout_${workoutPlanId?.toString() ?: "null"}"
+            is Workout -> "Workout_${workoutId}"
+            is EditWorkout -> "EditWorkout_${workoutId}"
+            is WorkoutDetail -> "WorkoutDetail_${workoutId}"
+            is WorkoutHistory -> "WorkoutDetail_${workoutId}"
+            is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
+            is ExerciseHistory -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
+            is NewExercise -> "NewExercise_${workoutId}"
+            is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
+            is NewSuperset -> "NewSuperset_${workoutId}"
+            is EditSuperset -> "EditSuperset_${workoutId}_${selectedSupersetId}"
+            is NewRest -> "NewRest_${workoutId}_${parentExerciseId?.toString() ?: "null"}"
+            is EditRest -> "EditRest_${workoutId}_${selectedRest.id}"
+            is NewRestSet -> "NewRestSet_${workoutId}_${parentExerciseId}"
+            is EditRestSet -> "EditRestSet_${workoutId}_${selectedRestSet.id}_${parentExerciseId}"
+            is InsertRestSetAfter -> "InsertRestSetAfter_${workoutId}_${exerciseId}_${afterSetId}"
+            is InsertRestAfter -> "InsertRestAfter_${workoutId}_${afterComponentId}"
+            is NewSet -> "NewSet_${workoutId}_${parentExerciseId}"
+            is EditSet -> "EditSet_${workoutId}_${selectedSet.id}"
+            is NewEquipment -> "NewEquipment_${equipmentType.name}"
+            is EditEquipment -> "EditEquipment_${equipmentId}_${equipmentType.name}"
+        }
+    }
 }
 
 private fun emptyWorkoutStore(): WorkoutStore {
@@ -192,6 +225,7 @@ class AppViewModel(
                     migrateWorkoutStoreSetIdsIfNeeded(store, db, repo)
                 }
                 setWorkoutStoreState(migrated, triggerSend = false)
+                refreshWorkoutHistories(migrated.workouts)
                 _isInitialDataLoaded.value = true
             } catch (e: Exception) {
                 _isInitialDataLoaded.value = true
@@ -373,78 +407,87 @@ class AppViewModel(
         // #region agent log
         Log.d(DEBUG_TAG, "loadWorkoutHistories entry H1 workoutCount=${workoutsForHistory.size}")
         // #endregion
-        refreshWorkoutHistories(workoutsForHistory)
+        viewModelScope.launch {
+            refreshWorkoutHistories(workoutsForHistory)
+        }
     }
 
-    private fun refreshWorkoutHistories(workoutsForHistory: List<Workout>) {
+    private suspend fun refreshWorkoutHistories(workoutsForHistory: List<Workout>) {
         val viewModelId = System.identityHashCode(this)
-        viewModelScope.launch {
-            // #region agent log
-            Log.d(DEBUG_TAG, "refreshWorkoutHistories job started ViewModelId=$viewModelId")
-            // #endregion
-            try {
-                val grouped = withContext(Dispatchers.IO) {
-                    val db = AppDatabase.getDatabase(getApplication<Application>())
-                    val workoutHistoryDao = db.workoutHistoryDao()
-                    val setHistoryDao = db.setHistoryDao()
-                    val all = workoutHistoryDao.getAllWorkoutHistories()
-                    val preferredWorkoutByGlobalId = workoutsForHistory
-                        .groupBy { it.globalId }
-                        .mapValues { (_, workoutsForGlobalId) ->
-                            workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
-                        }
-                    val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
-                        .mapNotNull { it.workoutHistoryId }
-                        .toSet()
-                    val filtered = all.filter { history ->
-                        workoutHistoryIdsWithSets.contains(history.id) &&
-                            history.globalId in preferredWorkoutByGlobalId
-                    }
-                    val groupedMap = filtered.groupBy { it.date }
-                    val recordsByHistoryId =
-                        db.workoutRecordDao().getAll().associateBy { it.workoutHistoryId }
-                    val sessionStatuses = filtered.associate { history ->
-                        history.id to runCatching {
-                            resolveWorkoutSessionStatus(history, recordsByHistoryId[history.id])
-                        }.onFailure { e ->
-                            Log.e(
-                                DEBUG_TAG,
-                                "resolveWorkoutSessionStatus failed historyId=${history.id}",
-                                e
-                            )
-                        }.getOrNull()
-                    }
-                // #region agent log
-                Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} workoutCount=${workoutsForHistory.size} groupedSize=${groupedMap.size}")
-                // #endregion
-                    groupedMap to sessionStatuses
-                }
-                val byId = workoutsForHistory.associateBy { it.id }.toMutableMap()
+        // #region agent log
+        Log.d(DEBUG_TAG, "refreshWorkoutHistories job started ViewModelId=$viewModelId")
+        // #endregion
+        try {
+            val grouped = withContext(Dispatchers.IO) {
+                val db = AppDatabase.getDatabase(getApplication<Application>())
+                val workoutHistoryDao = db.workoutHistoryDao()
+                val setHistoryDao = db.setHistoryDao()
+                val all = workoutHistoryDao.getAllWorkoutHistories()
                 val preferredWorkoutByGlobalId = workoutsForHistory
                     .groupBy { it.globalId }
                     .mapValues { (_, workoutsForGlobalId) ->
                         workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
                     }
-
-                grouped.first.values.asSequence()
-                    .flatten()
-                    .forEach { history ->
-                        val resolvedWorkout = preferredWorkoutByGlobalId[history.globalId]
-                        if (resolvedWorkout != null) {
-                            byId.putIfAbsent(history.workoutId, resolvedWorkout)
-                        }
-                    }
-                _groupedWorkoutHistories.value = grouped.first
-                _workoutHistorySessionStatuses.value = grouped.second
-                _workoutByIdForHistories.value = byId
+                val workoutHistoryIdsWithSets = setHistoryDao.getAllSetHistories()
+                    .mapNotNull { it.workoutHistoryId }
+                    .toSet()
+                val filtered = all.filter { history ->
+                    workoutHistoryIdsWithSets.contains(history.id) &&
+                        history.globalId in preferredWorkoutByGlobalId
+                }
+                val groupedMap = filtered.groupBy { it.date }
+                val recordsByHistoryId =
+                    db.workoutRecordDao().getAll().associateBy { it.workoutHistoryId }
+                val sessionStatuses = filtered.associate { history ->
+                    history.id to runCatching {
+                        resolveWorkoutSessionStatus(history, recordsByHistoryId[history.id])
+                    }.onFailure { e ->
+                        Log.e(
+                            DEBUG_TAG,
+                            "resolveWorkoutSessionStatus failed historyId=${history.id}",
+                            e
+                        )
+                    }.getOrNull()
+                }
                 // #region agent log
-                Log.d(DEBUG_TAG, "refreshWorkoutHistories set groupedSize=${grouped.first.size}")
+                Log.d(DEBUG_TAG, "refreshWorkoutHistories H2 allCount=${all.size} workoutCount=${workoutsForHistory.size} groupedSize=${groupedMap.size}")
                 // #endregion
-            } catch (e: Exception) {
-                // #region agent log
-                Log.e(DEBUG_TAG, "refreshWorkoutHistories error ViewModelId=$viewModelId (ViewModel cleared = Activity destroyed; look for MainActivity.finish log for stack trace)", e)
-                // #endregion
+                groupedMap to sessionStatuses
             }
+            val byId = workoutsForHistory.associateBy { it.id }.toMutableMap()
+            val preferredWorkoutByGlobalId = workoutsForHistory
+                .groupBy { it.globalId }
+                .mapValues { (_, workoutsForGlobalId) ->
+                    workoutsForGlobalId.firstOrNull { it.isActive } ?: workoutsForGlobalId.first()
+                }
+
+            grouped.first.values.asSequence()
+                .flatten()
+                .forEach { history ->
+                    val resolvedWorkout = preferredWorkoutByGlobalId[history.globalId]
+                    if (resolvedWorkout != null) {
+                        byId.putIfAbsent(history.workoutId, resolvedWorkout)
+                    }
+                }
+            _groupedWorkoutHistories.value = grouped.first
+            _workoutHistorySessionStatuses.value = grouped.second
+            _workoutByIdForHistories.value = byId
+            // #region agent log
+            Log.d(DEBUG_TAG, "refreshWorkoutHistories set groupedSize=${grouped.first.size}")
+            // #endregion
+        } catch (e: Exception) {
+            if (_groupedWorkoutHistories.value == null) {
+                _groupedWorkoutHistories.value = emptyMap()
+            }
+            if (_workoutHistorySessionStatuses.value == null) {
+                _workoutHistorySessionStatuses.value = emptyMap()
+            }
+            if (_workoutByIdForHistories.value == null) {
+                _workoutByIdForHistories.value = workoutsForHistory.associateBy { it.id }
+            }
+            // #region agent log
+            Log.e(DEBUG_TAG, "refreshWorkoutHistories error ViewModelId=$viewModelId (ViewModel cleared = Activity destroyed; look for MainActivity.finish log for stack trace)", e)
+            // #endregion
         }
     }
 

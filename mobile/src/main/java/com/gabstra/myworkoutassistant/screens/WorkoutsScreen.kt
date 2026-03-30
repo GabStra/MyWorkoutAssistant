@@ -108,7 +108,8 @@ fun WorkoutsScreen(
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
 
-    var isLoading by remember { mutableStateOf(true) }
+    var isDaySelectionLoading by remember { mutableStateOf(false) }
+    var hasInitializedSelectedDate by remember { mutableStateOf(false) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
 
@@ -222,6 +223,11 @@ fun WorkoutsScreen(
         initial = null
     )
     val workoutById by appViewModel.workoutByIdForHistories.collectAsState(initial = null)
+    val isHistoryStateReady =
+        groupedWorkoutsHistories != null &&
+            workoutHistorySessionStatuses != null &&
+            workoutById != null
+    val isLoading = !isHistoryStateReady || isDaySelectionLoading
 
     val selectedWeekStart = remember(selectedWeekAnchorDate) { getStartOfWeek(selectedWeekAnchorDate) }
     val selectedWeekEnd = remember(selectedWeekAnchorDate) { getEndOfWeek(selectedWeekAnchorDate) }
@@ -337,35 +343,32 @@ fun WorkoutsScreen(
         // #region agent log
         Log.d(TAG, "LaunchedEffect H3 effect run workoutCount=${workouts.size}")
         // #endregion
-        if (workouts.isNotEmpty()) {
-            appViewModel.loadWorkoutHistories(workouts)
-        }
+        appViewModel.loadWorkoutHistories(workouts)
     }
 
     LaunchedEffect(updateMessage, workouts.map { it.id }.toSet()) {
-        if (updateMessage != null && workouts.isNotEmpty()) {
+        if (updateMessage != null) {
             appViewModel.loadWorkoutHistories(workouts)
         }
     }
 
-    LaunchedEffect(groupedWorkoutsHistories) {
-        // #region agent log
-        Log.d(TAG, "observeGrouped H4 isNull=${groupedWorkoutsHistories == null} groupedSize=${groupedWorkoutsHistories?.size ?: -1}")
-        // #endregion
-        if (groupedWorkoutsHistories != null) {
-            isLoading = false
+    LaunchedEffect(selectedDate, isHistoryStateReady) {
+        if (!isHistoryStateReady) {
+            isDaySelectionLoading = false
+            return@LaunchedEffect
         }
-    }
-
-    LaunchedEffect(selectedDate) {
-        isLoading = true
+        if (!hasInitializedSelectedDate) {
+            hasInitializedSelectedDate = true
+            return@LaunchedEffect
+        }
+        isDaySelectionLoading = true
         delay(500)
-        isLoading = false
+        isDaySelectionLoading = false
     }
 
     fun onDayClicked(calendarState: CalendarState, day: CalendarDay) {
         scope.launch(Dispatchers.Main) {
-            if (groupedWorkoutsHistories == null || workoutById == null) return@launch
+            if (!isHistoryStateReady) return@launch
             // Do nothing when clicking a day within the already selected week
             if (!day.date.isBefore(selectedWeekStart) && !day.date.isAfter(selectedWeekEnd)) {
                 return@launch
@@ -373,7 +376,7 @@ fun WorkoutsScreen(
             val willChangeSelection = selectedDate != day || selectedWeekAnchorDate != day.date
             if (!willChangeSelection) return@launch
 
-            isLoading = true
+            isDaySelectionLoading = true
             selectedWeekAnchorDate = day.date
             if (day.position != DayPosition.MonthDate) {
                 calendarState.scrollToMonth(day.date.yearMonth)

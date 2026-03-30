@@ -74,7 +74,7 @@ fun SwipeableTabs(
         initialPage = clampedSelectedIndex,
         pageCount = { tabTitles.size }
     )
-    val activeTabIndex = if (renderPager) pagerState.currentPage else clampedSelectedIndex
+    val activeTabIndex = clampedSelectedIndex
 
     if (renderPager) {
         LaunchedEffect(clampedSelectedIndex, tabTitles.size) {
@@ -89,9 +89,10 @@ fun SwipeableTabs(
             }
         }
 
-        LaunchedEffect(pagerState.currentPage) {
-            if (pagerState.currentPage != clampedSelectedIndex) {
-                onTabSelected(pagerState.currentPage)
+        // Avoid feeding transient page changes back into parent state during restore/animation.
+        LaunchedEffect(pagerState.settledPage) {
+            if (pagerState.settledPage != clampedSelectedIndex) {
+                onTabSelected(pagerState.settledPage)
             }
         }
     }

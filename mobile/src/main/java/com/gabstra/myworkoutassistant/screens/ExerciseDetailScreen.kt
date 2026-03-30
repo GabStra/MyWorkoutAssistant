@@ -714,6 +714,21 @@ fun ExerciseDetailScreen(
                 var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
                     mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
                 }
+                var displayedWorkoutHistoryId by remember(workout.id, exercise.id) {
+                    mutableStateOf(initialWorkoutHistoryId)
+                }
+
+                LaunchedEffect(initialWorkoutHistoryId) {
+                    if (initialWorkoutHistoryId != displayedWorkoutHistoryId) {
+                        displayedWorkoutHistoryId = initialWorkoutHistoryId
+                    }
+                }
+
+                LaunchedEffect(selectedTopTab) {
+                    if (selectedTopTab == 0 && displayedWorkoutHistoryId != null) {
+                        displayedWorkoutHistoryId = null
+                    }
+                }
 
                 SwipeableTabs(
                     tabTitles = tabTitles,
@@ -724,7 +739,7 @@ fun ExerciseDetailScreen(
                             workoutId = workout.id,
                             selectedExerciseId = exercise.id,
                             selectedTabIndex = index,
-                            workoutHistoryId = if (index in 1..2) initialWorkoutHistoryId else null,
+                            workoutHistoryId = if (index in 1..2) displayedWorkoutHistoryId else null,
                         )
                         if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
                             appViewModel.updateScreenData(targetScreenData)
@@ -770,31 +785,35 @@ fun ExerciseDetailScreen(
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
                             exercise = exercise,
-                            workoutHistoryId = initialWorkoutHistoryId,
+                            workoutHistoryId = displayedWorkoutHistoryId,
                             pageIndex = pageIndex,
                             selectedTopTab = selectedTopTab,
                             selectedHistoryMode = pageIndex - 1,
                             onGoBack = onGoBack,
                             onDisplayedWorkoutHistoryIdChange = { id ->
-                                appViewModel.updateScreenData(
-                                    ScreenData.ExerciseDetail(
-                                        workoutId = workout.id,
-                                        selectedExerciseId = exercise.id,
-                                        selectedTabIndex = selectedTopTab,
-                                        workoutHistoryId = id,
-                                    )
+                                if (displayedWorkoutHistoryId != id) {
+                                    displayedWorkoutHistoryId = id
+                                }
+                                val targetScreenData = ScreenData.ExerciseDetail(
+                                    workoutId = workout.id,
+                                    selectedExerciseId = exercise.id,
+                                    selectedTabIndex = selectedTopTab,
+                                    workoutHistoryId = id,
                                 )
+                                if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
+                                    appViewModel.updateScreenData(targetScreenData)
+                                }
                             },
                         )
                     }
                 }
 
-                LaunchedEffect(selectedTopTab, workout.id, exercise.id, initialWorkoutHistoryId) {
+                LaunchedEffect(selectedTopTab, workout.id, exercise.id, displayedWorkoutHistoryId) {
                     val targetScreenData = ScreenData.ExerciseDetail(
                         workoutId = workout.id,
                         selectedExerciseId = exercise.id,
                         selectedTabIndex = selectedTopTab,
-                        workoutHistoryId = if (selectedTopTab in 1..2) initialWorkoutHistoryId else null,
+                        workoutHistoryId = if (selectedTopTab in 1..2) displayedWorkoutHistoryId else null,
                     )
                     if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
                         appViewModel.updateScreenData(targetScreenData)

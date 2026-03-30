@@ -1226,12 +1226,16 @@ fun MyWorkoutAssistantNavHost(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
             targetState = appViewModel.currentScreenData,
+            // Keep AnimatedContent's notion of screen identity aligned with SaveableStateHolder.
+            // Equivalent ScreenData instances can be new objects, but they must not register
+            // duplicate saveable-state buckets while both old/new content are composed.
+            contentKey = { screen -> screen.screenIdentityKey() },
             transitionSpec = {
                 // Use instant transition to eliminate black screen during fade
                 EnterTransition.None togetherWith ExitTransition.None
             }, label = ""
         ) { currentScreen ->
-            saveableStateHolder.SaveableStateProvider(currentScreen.toSaveableKey()) {
+            saveableStateHolder.SaveableStateProvider(currentScreen.screenIdentityKey()) {
                 when (currentScreen) {
                     is ScreenData.Workouts -> {
                         WorkoutsScreen(

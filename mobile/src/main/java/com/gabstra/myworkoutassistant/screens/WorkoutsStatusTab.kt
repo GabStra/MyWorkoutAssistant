@@ -220,20 +220,7 @@ fun WorkoutsStatusTab(
                 DateTimeFormatter.ofPattern("d MMM yyyy", currentLocale)
             )
         }
-        StyledCard {
-            WorkoutsCalendar(
-                selectedDate = selectedDate,
-                selectedWeekStart = selectedWeekStart,
-                selectedWeekEnd = selectedWeekEnd,
-                completedWeekStarts = completedWeekStarts,
-                onDayClicked = { calendarState, day ->
-                    onDayClicked(calendarState, day)
-                },
-                shouldHighlight = { day -> highlightDay(day) },
-                groupedWorkoutsHistories = groupedWorkoutsHistories
-            )
-        }
-        if (isLoading) {
+        if (groupedWorkoutsHistories == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -247,7 +234,33 @@ fun WorkoutsStatusTab(
                 )
             }
         } else {
-            if (hasObjectives) {
+            StyledCard {
+                WorkoutsCalendar(
+                    selectedDate = selectedDate,
+                    selectedWeekStart = selectedWeekStart,
+                    selectedWeekEnd = selectedWeekEnd,
+                    completedWeekStarts = completedWeekStarts,
+                    onDayClicked = { calendarState, day ->
+                        onDayClicked(calendarState, day)
+                    },
+                    shouldHighlight = { day -> highlightDay(day) },
+                    groupedWorkoutsHistories = groupedWorkoutsHistories
+                )
+            }
+            if (isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                }
+            } else if (hasObjectives) {
                 StyledCard {
                     Column(
                         modifier = Modifier

@@ -19,11 +19,11 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Velocity
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisGuidelineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
@@ -37,6 +37,7 @@ import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.compose.cartesian.CartesianMeasuringContext
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
+import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
@@ -46,6 +47,12 @@ import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.Insets
+import com.patrykandpatrick.vico.compose.common.Position
+import com.patrykandpatrick.vico.compose.common.component.LineComponent
+import com.patrykandpatrick.vico.compose.common.component.TextComponent
+import com.patrykandpatrick.vico.compose.common.data.ExtraStore
+
+internal val BottomPaddedChartVerticalOffset = 10.dp
 
 private class FixedValuesHorizontalAxisItemPlacer(
     values: List<Double>,
@@ -137,6 +144,300 @@ private class FixedValuesHorizontalAxisItemPlacer(
     }
 }
 
+internal inline fun <T : com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerModel.Entry> List<T>.forEachWithPadding(
+    minX: Double,
+    maxX: Double,
+    padding: Int = 0,
+    action: (T, T?) -> Unit,
+) {
+    var start = 0
+    var end = 0
+    for (entry in this) {
+        when {
+            entry.x < minX -> start++
+            entry.x > maxX -> break
+        }
+        end++
+    }
+    start = (start - padding).coerceAtLeast(0)
+    end = (end + padding).coerceAtMost(lastIndex)
+    for (index in start..end) {
+        action(this[index], getOrNull(index + 1))
+    }
+}
+
+internal class BottomPaddedLineCartesianLayer(
+    lineProvider: LineCartesianLayer.LineProvider,
+    pointSpacing: Dp,
+    rangeProvider: CartesianLayerRangeProvider,
+    private val bottomPadding: Dp,
+) : LineCartesianLayer(
+    lineProvider = lineProvider,
+    pointSpacing = pointSpacing,
+    rangeProvider = rangeProvider,
+) {
+    override fun CartesianDrawingContext.forEachPointInBounds(
+        series: List<com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel.Entry>,
+        drawingStart: Float,
+        pointInfoMap: Map<Double, com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerDrawingModel.Entry>?,
+        drawFullLineLength: Boolean,
+        action: (
+            entry: com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel.Entry,
+            x: Float,
+            y: Float,
+            previousX: Float?,
+            nextX: Float?,
+        ) -> Unit,
+    ) {
+        val minX = ranges.minX
+        val maxX = ranges.maxX
+        val xStep = ranges.xStep
+
+        var x: Float? = null
+        var nextX: Float? = null
+
+        val boundsStart = if (isLtr) layerBounds.left else layerBounds.right
+        val boundsEnd = boundsStart + layoutDirectionMultiplier * layerBounds.width
+        val bottomPaddingPx =
+            bottomPadding.pixels.coerceIn(0f, (layerBounds.height - 1f).coerceAtLeast(0f))
+        val effectiveBottom = layerBounds.bottom - bottomPaddingPx
+        val effectiveHeight = (layerBounds.height - bottomPaddingPx).coerceAtLeast(1f)
+
+        fun getDrawX(entry: com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel.Entry): Float =
+            drawingStart +
+                layoutDirectionMultiplier *
+                layerDimensions.xSpacing *
+                ((entry.x - minX) / xStep).toFloat()
+
+        fun getDrawY(entry: com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel.Entry): Float {
+            val yRange = ranges.getYRange(null)
+            return effectiveBottom -
+                (pointInfoMap?.get(entry.x)?.y ?: ((entry.y - yRange.minY) / yRange.length).toFloat()) *
+                effectiveHeight
+        }
+
+        series.forEachWithPadding(minX = minX, maxX = maxX, padding = 1) { entry, next ->
+            val previousX = x
+            val immutableX = nextX ?: getDrawX(entry)
+            val immutableNextX = next?.let(::getDrawX)
+            x = immutableX
+            nextX = immutableNextX
+            if (
+                drawFullLineLength.not() &&
+                immutableNextX != null &&
+                (isLtr && immutableX < boundsStart || !isLtr && immutableX > boundsStart) &&
+                (isLtr && immutableNextX < boundsStart || !isLtr && immutableNextX > boundsStart)
+            ) {
+                return@forEachWithPadding
+            }
+            action(entry, immutableX, getDrawY(entry), previousX, nextX)
+            if (isLtr && immutableX > boundsEnd || isLtr.not() && immutableX < boundsEnd) return
+        }
+    }
+}
+
+internal class BottomPaddedStartVerticalAxis(
+    line: LineComponent?,
+    label: TextComponent?,
+    labelRotationDegrees: Float,
+    horizontalLabelPosition: VerticalAxis.HorizontalLabelPosition,
+    verticalLabelPosition: Position.Vertical,
+    valueFormatter: CartesianValueFormatter,
+    tick: LineComponent?,
+    tickLength: Dp,
+    guideline: LineComponent?,
+    itemPlacer: VerticalAxis.ItemPlacer,
+    size: com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size,
+    titleComponent: TextComponent?,
+    title: (ExtraStore) -> CharSequence?,
+    private val bottomPadding: Dp,
+) : VerticalAxis<Axis.Position.Vertical.Start>(
+    position = Axis.Position.Vertical.Start,
+    line = line,
+    label = label,
+    labelRotationDegrees = labelRotationDegrees,
+    horizontalLabelPosition = horizontalLabelPosition,
+    verticalLabelPosition = verticalLabelPosition,
+    valueFormatter = valueFormatter,
+    tick = tick,
+    tickLength = tickLength,
+    guideline = guideline,
+    itemPlacer = itemPlacer,
+    size = size,
+    titleComponent = titleComponent,
+    title = title,
+) {
+    override fun drawUnderLayers(
+        context: CartesianDrawingContext,
+        axisDimensions: Map<Axis.Position, com.patrykandpatrick.vico.compose.cartesian.axis.AxisDimensions>,
+    ) {
+        with(context) {
+            val yRange = ranges.getYRange(position)
+            val maxLabelHeight = getMaxLabelHeight()
+            val lineValues =
+                itemPlacer.getLineValues(this, bounds.height, maxLabelHeight, position)
+                    ?: itemPlacer.getLabelValues(this, bounds.height, maxLabelHeight, position)
+            val bottomPaddingPx =
+                bottomPadding.pixels.coerceIn(0f, (bounds.height - 1f).coerceAtLeast(0f))
+            val effectiveBottom = bounds.bottom - bottomPaddingPx
+            val effectiveHeight = (bounds.height - bottomPaddingPx).coerceAtLeast(1f)
+
+            lineValues.forEach { lineValue ->
+                val centerY =
+                    effectiveBottom -
+                        effectiveHeight * ((lineValue - yRange.minY) / yRange.length).toFloat() +
+                        getLineCanvasYCorrection(guidelineThickness, lineValue)
+
+                guideline
+                    ?.takeIf {
+                        isNotInRestrictedBounds(
+                            left = layerBounds.left,
+                            top = centerY - guidelineThickness / 2f,
+                            right = layerBounds.right,
+                            bottom = centerY + guidelineThickness / 2f,
+                        )
+                    }
+                    ?.drawHorizontal(
+                        context = context,
+                        left = layerBounds.left,
+                        right = layerBounds.right,
+                        y = centerY,
+                    )
+            }
+
+            val topExtension = if (itemPlacer.getShiftTopLines(this)) tickThickness else 0f
+            val bottomExtension = tickThickness
+            line?.drawVertical(
+                context = context,
+                x = if (isLtr) bounds.right - lineThickness / 2f else bounds.left + lineThickness / 2f,
+                top = bounds.top - topExtension,
+                bottom = bounds.bottom + bottomExtension,
+            )
+        }
+    }
+
+    override fun drawOverLayers(
+        context: CartesianDrawingContext,
+        axisDimensions: Map<Axis.Position, com.patrykandpatrick.vico.compose.cartesian.axis.AxisDimensions>,
+    ) {
+        with(context) {
+            val label = label
+            val labelValues =
+                itemPlacer.getLabelValues(this, bounds.height, getMaxLabelHeight(), position)
+            val tickLeftX = getTickLeftX()
+            val tickRightX = tickLeftX + lineThickness + this.tickLength
+            val labelX =
+                if (areLabelsOutsideAtStartOrInsideAtEnd == isLtr) tickLeftX else tickRightX
+            val yRange = ranges.getYRange(position)
+            val bottomPaddingPx =
+                bottomPadding.pixels.coerceIn(0f, (bounds.height - 1f).coerceAtLeast(0f))
+            val effectiveBottom = bounds.bottom - bottomPaddingPx
+            val effectiveHeight = (bounds.height - bottomPaddingPx).coerceAtLeast(1f)
+
+            labelValues.forEach { labelValue ->
+                val tickCenterY =
+                    effectiveBottom -
+                        effectiveHeight * ((labelValue - yRange.minY) / yRange.length).toFloat() +
+                        getLineCanvasYCorrection(tickThickness, labelValue)
+
+                tick?.drawHorizontal(
+                    context = context,
+                    left = tickLeftX,
+                    right = tickRightX,
+                    y = tickCenterY,
+                )
+
+                label ?: return@forEach
+                drawLabel(
+                    context = this,
+                    labelComponent = label,
+                    label = valueFormatter.format(this, labelValue, position),
+                    labelX = labelX,
+                    tickCenterY = tickCenterY,
+                )
+            }
+
+            title(model.extraStore)?.let { titleText ->
+                titleComponent?.draw(
+                    context = this,
+                    text = titleText,
+                    x = if (isLtr) bounds.left else bounds.right,
+                    y = bounds.center.y,
+                    horizontalPosition = Position.Horizontal.End,
+                    verticalPosition = Position.Vertical.Center,
+                    rotationDegrees = -90f,
+                    maxHeight = bounds.height.toInt(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun rememberBottomPaddedLineCartesianLayer(
+    lineProvider: LineCartesianLayer.LineProvider,
+    pointSpacing: Dp,
+    rangeProvider: CartesianLayerRangeProvider,
+    bottomPadding: Dp,
+): LineCartesianLayer = remember(lineProvider, pointSpacing, rangeProvider, bottomPadding) {
+    BottomPaddedLineCartesianLayer(
+        lineProvider = lineProvider,
+        pointSpacing = pointSpacing,
+        rangeProvider = rangeProvider,
+        bottomPadding = bottomPadding,
+    )
+}
+
+@Composable
+internal fun rememberBottomPaddedStartVerticalAxis(
+    line: LineComponent?,
+    label: TextComponent?,
+    labelRotationDegrees: Float = 0f,
+    horizontalLabelPosition: VerticalAxis.HorizontalLabelPosition = VerticalAxis.HorizontalLabelPosition.Outside,
+    verticalLabelPosition: Position.Vertical = Position.Vertical.Center,
+    valueFormatter: CartesianValueFormatter,
+    tick: LineComponent?,
+    tickLength: Dp = 4.dp,
+    guideline: LineComponent?,
+    itemPlacer: VerticalAxis.ItemPlacer,
+    size: com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size,
+    titleComponent: TextComponent? = null,
+    title: (ExtraStore) -> CharSequence? = { null },
+    bottomPadding: Dp,
+): VerticalAxis<Axis.Position.Vertical.Start> = remember(
+    line,
+    label,
+    labelRotationDegrees,
+    horizontalLabelPosition,
+    verticalLabelPosition,
+    valueFormatter,
+    tick,
+    tickLength,
+    guideline,
+    itemPlacer,
+    size,
+    titleComponent,
+    title,
+    bottomPadding,
+) {
+    BottomPaddedStartVerticalAxis(
+        line = line,
+        label = label,
+        labelRotationDegrees = labelRotationDegrees,
+        horizontalLabelPosition = horizontalLabelPosition,
+        verticalLabelPosition = verticalLabelPosition,
+        valueFormatter = valueFormatter,
+        tick = tick,
+        tickLength = tickLength,
+        guideline = guideline,
+        itemPlacer = itemPlacer,
+        size = size,
+        titleComponent = titleComponent,
+        title = title,
+        bottomPadding = bottomPadding,
+    )
+}
+
 @Composable
 fun StandardChart(
     modifier: Modifier = Modifier,
@@ -171,13 +472,14 @@ fun StandardChart(
         }
     }
     val shapeComponent = rememberShapeComponent(Fill(onBackgroundColor), RoundedCornerShape(percent = 50))
+    val markerGuideline = rememberPressedChartGuideline()
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
             style = TextStyle(color = onBackgroundColor, textAlign = TextAlign.Center),
             padding = Insets(8.dp),
         ),
-        guideline = rememberAxisGuidelineComponent(Fill(onBackgroundColor)),
+        guideline = markerGuideline,
         indicatorSize = 10.dp,
         valueFormatter = { _, targets ->
             val target = targets.first() as LineCartesianLayerMarkerTarget
@@ -232,7 +534,7 @@ fun StandardChart(
                         zoomEnabled = isZoomEnabled
                     ),
                     chart = rememberCartesianChart(
-                        rememberLineCartesianLayer(
+                        rememberBottomPaddedLineCartesianLayer(
                             LineCartesianLayer.LineProvider.series(
                                 listOf(
                                     LineCartesianLayer.rememberLine(
@@ -243,9 +545,11 @@ fun StandardChart(
                                     )
                                 )
                             ),
-                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY)
+                            pointSpacing = 32.dp,
+                            rangeProvider = CartesianLayerRangeProvider.fixed(minY = minY, maxY = maxY),
+                            bottomPadding = BottomPaddedChartVerticalOffset,
                         ),
-                        startAxis = VerticalAxis.rememberStart(
+                        startAxis = rememberBottomPaddedStartVerticalAxis(
                             line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
                                 style = TextStyle(
@@ -259,6 +563,8 @@ fun StandardChart(
                             itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
                             tick = rememberAxisTickComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             guideline = null,
+                            size = com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size.Auto(),
+                            bottomPadding = BottomPaddedChartVerticalOffset,
                         ),
                         bottomAxis = HorizontalAxis.rememberBottom(
                             line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
