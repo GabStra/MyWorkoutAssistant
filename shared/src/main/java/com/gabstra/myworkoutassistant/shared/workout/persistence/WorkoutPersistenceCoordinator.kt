@@ -304,9 +304,6 @@ internal class WorkoutPersistenceCoordinator(
 
         val newExecutedSetsHistory = snapshot.executedSetsHistory
             .asSequence()
-            .filterNot { history ->
-                isDone && isWarmupSetData(history.setData)
-            }
             .map {
                 it.copy(
                     workoutHistoryId = workoutHistoryForThisPush.id,
