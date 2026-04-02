@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -35,6 +36,11 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
+import com.gabstra.myworkoutassistant.composables.SetPreviewTableRow
+import com.gabstra.myworkoutassistant.composables.SetTableHeaderRow
+import com.gabstra.myworkoutassistant.composables.StyledCard
+import com.gabstra.myworkoutassistant.composables.buildExerciseTemplateRows
+import com.gabstra.myworkoutassistant.composables.inferSetTableHeader
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -152,9 +158,23 @@ fun ExerciseOverviewTab(
                 }
             }
 
+            val displaySets = if (!showRest) sets.filter { it !is RestSet } else sets
+            val equipment = selectedEquipmentId?.let { id -> equipments.find { it.id == id } }
+            val tableRows = remember(displaySets, exercise.id, equipment?.id) {
+                buildExerciseTemplateRows(displaySets, exercise, equipment)
+            }
+            val tableHeader = remember(tableRows) { inferSetTableHeader(tableRows) }
+            val headerColor = MaterialTheme.colorScheme.onSurfaceVariant
+            val tableDividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
+
+            if (displaySets.isNotEmpty()) {
+                SetTableHeaderRow(header = tableHeader, headerColor = headerColor)
+                HorizontalDivider(color = tableDividerColor)
+            }
+
             GenericSelectableList(
                 it = null,
-                items = if (!showRest) sets.filter { it !is RestSet } else sets,
+                items = displaySets,
                 selectedItems = selectedSets,
                 isSelectionModeActive = isSelectionModeActive,
                 onItemClick = {
@@ -197,10 +217,9 @@ fun ExerciseOverviewTab(
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            ComponentRenderer(
-                                set,
-                                appViewModel,
-                                exercise,
+                            val rowIndex = displaySets.indexOfFirst { it.id == set.id }
+                            val rowModel = tableRows[rowIndex]
+                            StyledCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .then(
@@ -209,8 +228,14 @@ fun ExerciseOverviewTab(
                                     .combinedClickable(
                                         onClick = onItemClick,
                                         onLongClick = onItemLongClick
-                                    )
-                            )
+                                    ),
+                                enabled = exercise.enabled,
+                            ) {
+                                SetPreviewTableRow(
+                                    row = rowModel,
+                                    enabled = exercise.enabled,
+                                )
+                            }
                             if (showRest && !isSelectionModeActive && set !is RestSet) {
                                 val currentIndex = sets.indexOfFirst { it.id == set.id }
                                 val isNotLast = currentIndex >= 0 && currentIndex < sets.size - 1

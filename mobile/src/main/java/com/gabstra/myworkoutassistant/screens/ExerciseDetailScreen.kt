@@ -62,13 +62,10 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
-import com.gabstra.myworkoutassistant.composables.SetRestRowCard
-import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
-import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
@@ -81,8 +78,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
-import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -128,163 +123,6 @@ private fun ExerciseDetailMenu(
                 }
             )
         }
-    }
-}
-
-@Composable
-fun ComponentRenderer(
-    set: Set,
-    appViewModel: AppViewModel,
-    exercise: Exercise,
-    modifier: Modifier = Modifier
-) {
-    // Observe equipmentsFlow to fix race condition - recompose when equipments are loaded
-    val equipments by appViewModel.equipmentsFlow.collectAsState()
-
-    when (set) {
-        is WeightSet -> {
-            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-            val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                exercise = exercise,
-                set = set
-            )
-
-            StyledCard(modifier = modifier, enabled = exercise.enabled) {
-                Column(
-                    modifier = Modifier.padding(15.dp)
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            if (!isCalibrationManagedWorkSet) {
-                                Text(
-                                    text = if (equipment != null) {
-                                        "Weight (KG): ${equipment.formatWeight(set.weight)}"
-                                    } else {
-                                        "Weight (KG): ${set.weight}"
-                                    },
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            } else {
-                                Text(
-                                    text = CalibrationUiLabels.Tbd,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            Text(
-                                text = "Reps: ${set.reps}",
-                                color = MaterialTheme.colorScheme.onBackground,
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.End
-                            )
-                        }
-                    }
-                }
-            }
-
-        }
-
-        is BodyWeightSet -> {
-            val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-            val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                exercise = exercise,
-                set = set
-            )
-
-            StyledCard(modifier = modifier, enabled = exercise.enabled) {
-                Column(
-                    modifier = Modifier.padding(15.dp)
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            if (!isCalibrationManagedWorkSet) {
-                                if(set.additionalWeight != 0.0 && equipment != null) {
-                                    Text(
-                                        text = "Weight (KG): ${equipment.formatWeight(set.additionalWeight)}",
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                }
-                            } else {
-                                Text(
-                                    text = CalibrationUiLabels.Tbd,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            Text(
-                                text = "Reps: ${set.reps}",
-                                color = MaterialTheme.colorScheme.onBackground,
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.End
-                            )
-                        }
-                    }
-                }
-            }
-
-        }
-
-        is EnduranceSet -> {
-            StyledCard(modifier = modifier, enabled = exercise.enabled) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = formatTime(set.timeInMillis / 1000),
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-
-        }
-
-        is TimedDurationSet -> {
-            StyledCard(modifier = modifier, enabled = exercise.enabled) {
-                Row(
-                    modifier = Modifier.padding(15.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        modifier = Modifier.weight(1f),
-                        text = formatTime(set.timeInMillis / 1000),
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-
-
-        }
-
-        is RestSet -> {
-            SetRestRowCard(
-                modifier = modifier,
-                enabled = exercise.enabled,
-                restText = "REST ${formatTime(set.timeInSeconds)}"
-            )
-        }
-
     }
 }
 

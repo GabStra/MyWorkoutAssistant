@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -121,12 +123,13 @@ fun SetTable(
 }
 
 @Composable
-private fun SetTableHeaderRow(
+fun SetTableHeaderRow(
     header: SetTableHeaderUiModel,
     headerColor: androidx.compose.ui.graphics.Color,
 ) {
     val hasSecondaryColumn = header.secondaryLabel != null
     val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
+    val labelStyle = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
 
     Row(
         modifier = Modifier
@@ -136,24 +139,27 @@ private fun SetTableHeaderRow(
         Text(
             text = header.setLabel,
             modifier = Modifier.weight(SetColumnWeight),
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = labelStyle,
             color = headerColor,
             textAlign = TextAlign.Center,
         )
         Text(
             text = header.primaryLabel,
             modifier = Modifier.weight(primaryColumnWeight),
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            style = labelStyle,
             color = headerColor,
             textAlign = TextAlign.Center,
         )
-        Text(
-            text = header.secondaryLabel ?: "",
-            modifier = Modifier.weight(RepsColumnWeight),
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = headerColor,
-            textAlign = TextAlign.Center,
-        )
+        val secondaryLabel = header.secondaryLabel
+        if (secondaryLabel != null) {
+            Text(
+                text = secondaryLabel,
+                modifier = Modifier.weight(RepsColumnWeight),
+                style = labelStyle,
+                color = headerColor,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -176,6 +182,10 @@ private fun SetTableDataRow(
             .padding(horizontal = 12.dp, vertical = 9.dp)
     }
 
+    val primaryStyle = MaterialTheme.typography.bodyMedium.let { base ->
+        if (row.monospacePrimary) base.copy(fontFamily = FontFamily.Monospace) else base
+    }
+
     Column(modifier = rowModifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
@@ -188,17 +198,19 @@ private fun SetTableDataRow(
             Text(
                 text = row.primaryValue,
                 modifier = Modifier.weight(primaryColumnWeight),
-                style = MaterialTheme.typography.bodyMedium,
+                style = primaryStyle,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
-            Text(
-                text = row.secondaryValue.orEmpty(),
-                modifier = Modifier.weight(RepsColumnWeight),
-                style = MaterialTheme.typography.bodyMedium,
-                color = textColor,
-                textAlign = TextAlign.Center,
-            )
+            if (hasSecondaryColumn) {
+                Text(
+                    text = row.secondaryValue.orEmpty(),
+                    modifier = Modifier.weight(RepsColumnWeight),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = textColor,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
 
     }
@@ -218,6 +230,32 @@ private fun SetTableRestRow(
         color = textColor,
         textAlign = TextAlign.Center,
     )
+}
+
+/**
+ * One row of the exercise set table (same layout as [SetTable]), for use in selectable lists
+ * where each set is a separate item (e.g. exercise detail overview).
+ */
+@Composable
+fun SetPreviewTableRow(
+    row: SetTableRowUiModel,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val contentColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    }
+    Box(modifier = modifier.fillMaxWidth()) {
+        when (row) {
+            is SetTableRowUiModel.Data -> {
+                val rowForDisplay = if (row.onClick != null) row.copy(onClick = null) else row
+                SetTableDataRow(row = rowForDisplay, textColor = contentColor)
+            }
+            is SetTableRowUiModel.Rest -> SetTableRestRow(row = row, textColor = contentColor)
+        }
+    }
 }
 
 data class SetMetricUiModel(

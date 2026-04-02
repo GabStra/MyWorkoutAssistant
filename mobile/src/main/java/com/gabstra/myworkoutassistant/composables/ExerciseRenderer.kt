@@ -32,7 +32,7 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
-private fun buildExerciseTemplateRows(
+fun buildExerciseTemplateRows(
     sets: List<Set>,
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
@@ -49,7 +49,6 @@ private fun buildExerciseTemplateRows(
 
             is WeightSet -> {
                 index += 1
-                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
                     set = set
@@ -60,7 +59,10 @@ private fun buildExerciseTemplateRows(
                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
+                    identifier = buildSetRowIdentifier(
+                        baseIdentifier = index,
+                        setSubCategory = resolveSetSubCategory(set),
+                    ),
                     primaryValue = weightText,
                     secondaryValue = "${set.reps}",
                 )
@@ -68,7 +70,6 @@ private fun buildExerciseTemplateRows(
 
             is BodyWeightSet -> {
                 index += 1
-                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
                     set = set
@@ -77,10 +78,13 @@ private fun buildExerciseTemplateRows(
                     isCalibrationManagedWorkSet -> CalibrationUiLabels.Tbd
                     set.additionalWeight > 0 -> equipment?.formatWeight(set.additionalWeight)
                         ?: "${set.additionalWeight} kg"
-                    else -> "-"
+                    else -> "BW"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
+                    identifier = buildSetRowIdentifier(
+                        baseIdentifier = index,
+                        setSubCategory = resolveSetSubCategory(set),
+                    ),
                     primaryValue = weightText,
                     secondaryValue = "${set.reps}",
                 )
@@ -158,7 +162,10 @@ private fun buildExerciseHistoryRows(
                     "${set.reps}"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
+                    identifier = buildSetRowIdentifier(
+                        baseIdentifier = index,
+                        setSubCategory = resolveSetSubCategory(set),
+                    ),
                     primaryValue = weightText,
                     secondaryValue = secondaryReps,
                 )
@@ -202,7 +209,10 @@ private fun buildExerciseHistoryRows(
                     "${set.reps}"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = if (isCalibrationSet) "Cal" else index.toString(),
+                    identifier = buildSetRowIdentifier(
+                        baseIdentifier = index,
+                        setSubCategory = resolveSetSubCategory(set),
+                    ),
                     primaryValue = weightText,
                     secondaryValue = secondaryReps,
                 )

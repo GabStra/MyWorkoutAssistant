@@ -79,6 +79,10 @@ fun SetHistoriesRenderer(
             }
 
             index += 1
+            val identifier = buildSetRowIdentifier(
+                baseIdentifier = index,
+                setSubCategory = resolveSetSubCategory(setData),
+            )
             when (setData) {
                 is WeightSetData -> {
                     val isCal = setData.subCategory == SetSubCategory.CalibrationSet
@@ -88,7 +92,7 @@ fun SetHistoriesRenderer(
                         "${setData.actualReps}"
                     }
                     rows += SetTableRowUiModel.Data(
-                        identifier = if (isCal) "Cal" else index.toString(),
+                        identifier = identifier,
                         primaryValue = equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg",
                         secondaryValue = secondary,
                     )
@@ -102,7 +106,7 @@ fun SetHistoriesRenderer(
                         "${setData.actualReps}"
                     }
                     rows += SetTableRowUiModel.Data(
-                        identifier = if (isCal) "Cal" else index.toString(),
+                        identifier = identifier,
                         primaryValue = formatHistoricalBodyWeightSetValue(
                             setData = setData,
                             equipment = equipment
@@ -118,7 +122,7 @@ fun SetHistoriesRenderer(
                         "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
                     }
                     rows += SetTableRowUiModel.Data(
-                        identifier = index.toString(),
+                        identifier = identifier,
                         primaryValue = primaryTime,
                         secondaryValue = null,
                         monospacePrimary = true,
@@ -132,7 +136,7 @@ fun SetHistoriesRenderer(
                         "${formatTime(setData.startTimer / 1000)} - ${formatTime(setData.endTimer / 1000)}"
                     }
                     rows += SetTableRowUiModel.Data(
-                        identifier = index.toString(),
+                        identifier = identifier,
                         primaryValue = primaryTime,
                         secondaryValue = null,
                         monospacePrimary = true,
