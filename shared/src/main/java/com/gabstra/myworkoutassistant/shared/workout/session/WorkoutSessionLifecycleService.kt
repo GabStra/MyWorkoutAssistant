@@ -66,25 +66,20 @@ internal class WorkoutSessionLifecycleService(
         val latestByExerciseId = mutableMapOf<UUID, List<SetHistory>>()
         val latestByExerciseAndSet = mutableMapOf<Pair<UUID, UUID>, SetHistory>()
         val exercises = flattenExercises(workout)
+        val latestCompletedWorkoutHistory = workoutHistories.firstOrNull()
 
         exercises.forEach { exercise ->
-            var selectedSetHistories: List<SetHistory> = emptyList()
-            for (workoutHistory in workoutHistories) {
-                val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(
-                    workoutHistory.id,
-                    exercise.id
-                )
-                if (setHistories.isEmpty()) continue
-
-                val sanitized = sanitizeRestPlacementInSetHistories(setHistories.sortedBy { it.order })
-                val comparable = sanitized
-                    .filterNot { it.isExcludedFromProgressionComparison() }
-                    .distinctBy { it.setId }
-                if (comparable.isNotEmpty()) {
-                    selectedSetHistories = comparable
-                    break
+            val selectedSetHistories = latestCompletedWorkoutHistory
+                ?.let { workoutHistory ->
+                    val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseIdOrdered(
+                        workoutHistory.id,
+                        exercise.id
+                    )
+                    sanitizeRestPlacementInSetHistories(setHistories)
+                        .filterNot { it.isExcludedFromProgressionComparison() }
+                        .distinctBy { it.setId }
                 }
-            }
+                ?: emptyList()
 
             for (setHistoryFound in selectedSetHistories) {
                 latestByExerciseAndSet[exercise.id to setHistoryFound.setId] = setHistoryFound
