@@ -1,16 +1,11 @@
 package com.gabstra.myworkoutassistant
 
-import android.Manifest
-import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -50,7 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -89,7 +83,6 @@ import com.gabstra.myworkoutassistant.screens.equipments.PlateLoadedCableForm
 import com.gabstra.myworkoutassistant.screens.equipments.WeightVestForm
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
-import com.gabstra.myworkoutassistant.shared.BackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
@@ -100,7 +93,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.detectBackupFileType
-import com.gabstra.myworkoutassistant.shared.determineBackupCleanupAction
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbells
@@ -194,47 +186,11 @@ class MainActivity : ComponentActivity() {
 
     private val healthConnectClient by lazy { HealthConnectClient.getOrCreate(this) }
 
-    private var backupCleanupAttempted = false
-
     /** Scope for restore operations; not tied to lifecycle so restore can complete even if activity is recreated (e.g. rotation). */
     internal val restoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val readStoragePermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                runBackupCleanup()
-            } else {
-                Toast.makeText(
-                    this,
-                    "Backup cleanup was skipped because storage access was not allowed.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-
-    private val manageAllFilesAccessLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (hasDownloadsAccess()) {
-                runBackupCleanup()
-            } else {
-                Toast.makeText(
-                    this,
-                    "Backup cleanup was skipped because Downloads access was not allowed.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-
     override fun onStart() {
         super.onStart()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Safety check: if permissions are available but cleanup hasn't run, run it now
-        if (!backupCleanupAttempted && hasDownloadsAccess()) {
-            runBackupCleanup()
-        }
     }
 
     override fun onPause() {
@@ -318,9 +274,6 @@ class MainActivity : ComponentActivity() {
             }
         )
 
-        // Clean up duplicate backup files once at app startup (after storage access check)
-        requestBackupCleanup()
-
         PhoneToWatchSyncCoordinator.install(applicationContext)
 
         setContent {
@@ -347,56 +300,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
         MainActivityIntentRouter.route(intent, appViewModel)
-    }
-
-    private fun requestBackupCleanup() {
-        when (
-            determineBackupCleanupAction(
-                hasDownloadsAccess = hasDownloadsAccess(),
-                sdkInt = Build.VERSION.SDK_INT
-            )
-        ) {
-            BackupCleanupAction.RUN_CLEANUP -> runBackupCleanup()
-            BackupCleanupAction.SHOW_ALL_FILES_RATIONALE -> Unit
-            BackupCleanupAction.REQUEST_READ_STORAGE_PERMISSION -> {
-                readStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-        }
-    }
-
-    private fun runBackupCleanup() {
-        backupCleanupAttempted = true
-        lifecycleScope.launch(Dispatchers.IO) {
-            cleanupDuplicateBackupFilesByContent(this@MainActivity)
-        }
-    }
-
-    internal fun hasDownloadsAccess(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    internal fun requestDownloadsAccess() {
-        launchAllFilesAccessSettings()
-    }
-
-    private fun launchAllFilesAccessSettings() {
-        val uri = Uri.parse("package:$packageName")
-        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-            data = uri
-        }
-        try {
-            manageAllFilesAccessLauncher.launch(intent)
-        } catch (e: ActivityNotFoundException) {
-            val fallbackIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            manageAllFilesAccessLauncher.launch(fallbackIntent)
-        }
     }
 
 }
@@ -483,15 +386,10 @@ fun MyWorkoutAssistantNavHost(
         )
     }
 
-    var downloadsAccessGranted by remember {
-        mutableStateOf((context as? MainActivity)?.hasDownloadsAccess() ?: false)
-    }
     var hasHealthPermissions by remember { mutableStateOf(false) }
     var showPrerequisitesDialog by remember { mutableStateOf(false) }
 
     suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
-        downloadsAccessGranted = (context as? MainActivity)?.hasDownloadsAccess() ?: false
-
         val grantedPermissions = try {
             healthConnectClient.permissionController.getGrantedPermissions()
         } catch (_: Exception) {
@@ -503,11 +401,7 @@ fun MyWorkoutAssistantNavHost(
         appViewModel.setHealthPermissionsChecked()
 
         if (showDialogWhenMissing) {
-            if (downloadsAccessGranted && hasHealthPermissions) {
-                showPrerequisitesDialog = false
-            } else {
-                showPrerequisitesDialog = true
-            }
+            showPrerequisitesDialog = !hasHealthPermissions
         }
     }
 
@@ -585,10 +479,6 @@ fun MyWorkoutAssistantNavHost(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("To use the app, grant the following permissions:")
                     PermissionRequirementRow(
-                        label = "Downloads folder access",
-                        granted = downloadsAccessGranted
-                    )
-                    PermissionRequirementRow(
                         label = "Health Connect permissions",
                         granted = hasHealthPermissions
                     )
@@ -597,25 +487,20 @@ fun MyWorkoutAssistantNavHost(
             confirmText = "Continue",
             onConfirm = {
                 showPrerequisitesDialog = false
-                when {
-                    !downloadsAccessGranted -> {
-                        (context as? MainActivity)?.requestDownloadsAccess()
-                    }
-                    !hasHealthPermissions -> {
-                        try {
-                            healthPermissionLauncher.launch(requiredHealthPermissions)
-                        } catch (e: Exception) {
-                            Toast.makeText(
-                                context,
-                                e.toMainActivityToastMessage(
-                                    intro = "Couldn't open the Health Connect permission prompt.",
-                                    fallbackDetail = "Please try again."
-                                ),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            scope.launch {
-                                refreshPermissionState(showDialogWhenMissing = true)
-                            }
+                if (!hasHealthPermissions) {
+                    try {
+                        healthPermissionLauncher.launch(requiredHealthPermissions)
+                    } catch (e: Exception) {
+                        Toast.makeText(
+                            context,
+                            e.toMainActivityToastMessage(
+                                intro = "Couldn't open the Health Connect permission prompt.",
+                                fallbackDetail = "Please try again."
+                            ),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        scope.launch {
+                            refreshPermissionState(showDialogWhenMissing = true)
                         }
                     }
                 }
@@ -1014,8 +899,8 @@ fun MyWorkoutAssistantNavHost(
         }
     }
 
-    LaunchedEffect(initialDataLoaded, downloadsAccessGranted) {
-        if (!initialDataLoaded || !downloadsAccessGranted) return@LaunchedEffect
+    LaunchedEffect(initialDataLoaded) {
+        if (!initialDataLoaded) return@LaunchedEffect
 
         val prefs = context.getSharedPreferences("startup_restore", Context.MODE_PRIVATE)
         val alreadyChecked = prefs.getBoolean("auto_restore_checked", false)
@@ -1052,6 +937,7 @@ fun MyWorkoutAssistantNavHost(
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri?.let {
+                setAutomaticRestoreDocumentUri(context, it)
                 try {
                     context.contentResolver.openInputStream(it)?.use { inputStream ->
                         val reader = inputStream.bufferedReader()
@@ -1137,6 +1023,8 @@ fun MyWorkoutAssistantNavHost(
     val backupSaveLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
             uri?.let {
+                setAutomaticBackupDocumentUri(context, it)
+                setAutomaticRestoreDocumentUri(context, it)
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
@@ -1159,7 +1047,7 @@ fun MyWorkoutAssistantNavHost(
                         }
                         Toast.makeText(
                             context,
-                            "Backup saved.",
+                            "Backup saved. Future automatic backups will update this file.",
                             Toast.LENGTH_SHORT
                         ).show()
                     } catch (e: Exception) {

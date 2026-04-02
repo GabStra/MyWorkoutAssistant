@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -35,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -128,6 +131,99 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import java.security.MessageDigest
 private val backupFileWriteMutex = Mutex()
+private const val BACKUP_STORAGE_PREFS = "backup_storage_prefs"
+private const val AUTO_BACKUP_DOCUMENT_URI_KEY = "auto_backup_document_uri"
+private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
+
+private fun backupStoragePrefs(context: Context) =
+    context.getSharedPreferences(BACKUP_STORAGE_PREFS, Context.MODE_PRIVATE)
+
+private fun persistUriPermission(
+    context: Context,
+    uri: Uri,
+    readOnly: Boolean = false
+) {
+    val modeFlags = if (readOnly) {
+        Intent.FLAG_GRANT_READ_URI_PERMISSION
+    } else {
+        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    }
+    try {
+        context.contentResolver.takePersistableUriPermission(uri, modeFlags)
+    } catch (_: SecurityException) {
+        // Some providers do not expose persistable grants. Keeping the URI still enables
+        // same-session access, and startup restore will safely skip invalid grants later.
+    }
+}
+
+fun setAutomaticBackupDocumentUri(context: Context, uri: Uri) {
+    persistUriPermission(context, uri, readOnly = false)
+    backupStoragePrefs(context)
+        .edit()
+        .putString(AUTO_BACKUP_DOCUMENT_URI_KEY, uri.toString())
+        .apply()
+}
+
+fun setAutomaticRestoreDocumentUri(context: Context, uri: Uri) {
+    persistUriPermission(context, uri, readOnly = true)
+    backupStoragePrefs(context)
+        .edit()
+        .putString(AUTO_RESTORE_DOCUMENT_URI_KEY, uri.toString())
+        .apply()
+}
+
+private fun readConfiguredBackupUri(context: Context, key: String): Uri? {
+    val value = backupStoragePrefs(context).getString(key, null) ?: return null
+    return runCatching { Uri.parse(value) }.getOrNull()
+}
+
+private fun clearConfiguredBackupUri(context: Context, key: String) {
+    backupStoragePrefs(context).edit().remove(key).apply()
+}
+
+private fun readTextFromUri(context: Context, uri: Uri): String? {
+    return context.contentResolver.openInputStream(uri)?.use { inputStream ->
+        inputStream.bufferedReader().use { reader ->
+            reader.readText()
+        }
+    }
+}
+
+private fun writeTextToUri(
+    context: Context,
+    uri: Uri,
+    content: String
+): Boolean {
+    return context.contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+        outputStream.write(content.toByteArray())
+        outputStream.flush()
+        true
+    } ?: false
+}
+
+private suspend fun loadAppBackupFromConfiguredUri(
+    context: Context,
+    key: String
+): AppBackup? {
+    val uri = readConfiguredBackupUri(context, key) ?: return null
+    return try {
+        val jsonString = withContext(Dispatchers.IO) {
+            readTextFromUri(context, uri)
+        } ?: return null
+        fromJSONtoAppBackup(jsonString)
+    } catch (e: SecurityException) {
+        Log.w("Utils", "Lost persisted access to backup URI for key=$key", e)
+        clearConfiguredBackupUri(context, key)
+        null
+    } catch (e: Exception) {
+        Log.w("Utils", "Couldn't load backup from configured URI for key=$key", e)
+        null
+    }
+}
+
+fun hasAutomaticBackupDocument(context: Context): Boolean {
+    return readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY) != null
+}
 
 fun formatSecondsToMinutesSeconds(seconds: Int): String {
     val minutes = (seconds % 3600) / 60
@@ -1038,104 +1134,23 @@ suspend fun saveWorkoutStoreToExternalStorage(
                 }
 
                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
-                val backupFileName = "workout_store_backup.json"
-                
-                // Save to Downloads folder (persists after uninstall)
-                val resolver = context.contentResolver
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                }
-
-                // Find ALL backup files (including any duplicates that might exist)
-                val allBackupFiles = findAllBackupFilesInDownloadsFolder(context, backupFileName)
-                
-                // Find the target file to use (exact match preferred, or most recent)
-                val exactMatch = allBackupFiles.firstOrNull { it.name == backupFileName }
-                val targetFile = exactMatch ?: allBackupFiles.maxByOrNull { it.dateModified }
-                val targetUri = targetFile?.uri
-                
-                // Check if content has changed by comparing with target file
-                var shouldSave = true
-                if (targetUri != null) {
-                    // Read existing content and compare
-                    val existingContent = readFileContentFromDownloadsFolder(context, targetUri)
-                    if (existingContent != null && existingContent == jsonString) {
-                        Log.d("Utils", "Backup content unchanged, skipping save")
-                        shouldSave = false
-                        
-                        // Still clean up any other duplicates
-                        if (allBackupFiles.size > 1) {
-                            cleanupDuplicateBackupFiles(context)
-                        }
-                    }
-                }
-
-                if (!shouldSave) {
+                val backupUri = readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
+                if (backupUri == null) {
+                    Log.d("Utils", "Automatic backup skipped because no backup document is configured")
                     return@withContext
                 }
 
-                val targetSaveUri = if (targetUri != null) {
-                    if (targetFile.name != backupFileName) {
-                        try {
-                            val renameValues = ContentValues().apply {
-                                put(MediaStore.MediaColumns.DISPLAY_NAME, backupFileName)
-                            }
-                            resolver.update(targetUri, renameValues, null, null)
-                        } catch (e: Exception) {
-                            Log.w("Utils", "Failed to normalize backup file name", e)
-                        }
-                    }
-                    targetUri
-                } else {
-                    try {
-                        resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                    } catch (e: Exception) {
-                        Log.e("Utils", "Failed to create backup file", e)
-                        null
-                    }
+                val existingContent = readTextFromUri(context, backupUri)
+                if (existingContent == jsonString) {
+                    Log.d("Utils", "Automatic backup content unchanged, skipping save")
+                    return@withContext
                 }
 
-                targetSaveUri?.let { uri ->
-                    try {
-                        // Write the content
-                        val wroteContent = resolver.openOutputStream(uri, "wt")?.use { outputStream ->
-                            outputStream.write(jsonString.toByteArray())
-                            outputStream.flush()
-                            true
-                        } ?: false
-                        if (wroteContent) {
-                            Log.d("Utils", "Backup saved to Downloads folder: $backupFileName")
-                            
-                            // Final cleanup after save to catch any duplicates that might have been created
-                            kotlinx.coroutines.delay(200) // Give MediaStore time to index
-                            cleanupDuplicateBackupFiles(context)
-                        } else {
-                            Log.e("Utils", "Failed to open output stream for backup file")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Utils", "Error writing to backup file", e)
-                        // Try to clean up the failed file
-                        try {
-                            resolver.delete(uri, null, null)
-                        } catch (deleteException: Exception) {
-                            Log.e("Utils", "Error cleaning up failed file", deleteException)
-                        }
-                    }
-                } ?: run {
-                    Log.e("Utils", "Failed to create backup file in Downloads folder")
-                }
-                
-                // Also try to migrate old backup from external files dir (one-time migration)
-                try {
-                    val externalDir = context.getExternalFilesDir(null)
-                    val oldBackupFile = externalDir?.let { java.io.File(it, backupFileName) }
-                    oldBackupFile?.takeIf { it.exists() }?.delete()
-                    Log.d("Utils", "Cleaned up old backup file from external files dir")
-                } catch (e: Exception) {
-                    // Ignore migration errors
-                    Log.d("Utils", "Could not clean up old backup file", e)
+                val wroteContent = writeTextToUri(context, backupUri, jsonString)
+                if (wroteContent) {
+                    Log.d("Utils", "Automatic backup saved to persisted SAF document")
+                } else {
+                    Log.e("Utils", "Failed to open output stream for automatic backup document")
                 }
             } catch (e: Exception) {
                 when (e) {
@@ -1158,12 +1173,15 @@ suspend fun saveWorkoutStoreToExternalStorage(
 }
 
 /**
- * Checks if an external backup file exists.
- * Checks both Downloads folder (new location) and external files dir (old location).
- * Note: This is a synchronous check, so it only checks the old location for performance.
- * For accurate results including Downloads folder, use loadExternalBackup() and check for null.
+ * Checks if an external backup is available from a configured SAF document or the legacy file path.
  */
 fun hasExternalBackup(context: Context): Boolean {
+    if (readConfiguredBackupUri(context, AUTO_RESTORE_DOCUMENT_URI_KEY) != null) {
+        return true
+    }
+    if (readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY) != null) {
+        return true
+    }
     // Check old location (external files dir) synchronously
     val externalDir = context.getExternalFilesDir(null)
     val oldBackupFile = externalDir?.let { java.io.File(it, "workout_store_backup.json") }
@@ -1178,49 +1196,29 @@ fun hasExternalBackup(context: Context): Boolean {
 
 /**
  * Loads the external backup file and parses it as AppBackup.
- * First tries Downloads folder (new location), then falls back to external files dir (old location).
- * Returns null if the file doesn't exist or parsing fails.
+ * Prefers persisted SAF document access and falls back to the legacy external files dir.
  */
 suspend fun loadExternalBackup(context: Context): AppBackup? {
     return withContext(Dispatchers.IO) {
         try {
-            val backupFileName = "workout_store_backup.json"
-            
-            // First try Downloads folder (new location - persists after uninstall)
-            val jsonString = readJsonFromDownloadsFolder(context, backupFileName)
-            if (jsonString != null) {
-                try {
-                    val appBackup = fromJSONtoAppBackup(jsonString)
-                    Log.d("Utils", "Backup loaded successfully from Downloads folder")
-                    return@withContext appBackup
-                } catch (e: Exception) {
-                    when (e) {
-                        is CancellationException -> {
-                            Log.e("Utils", "Error parsing backup from Downloads folder: Job was cancelled. " +
-                                    "Message: ${e.message}, " +
-                                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
-                                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
-                        }
-                        else -> {
-                            Log.e("Utils", "Error parsing backup from Downloads folder: ${e.javaClass.simpleName}. " +
-                                    "Message: ${e.message}, " +
-                                    "Cause: ${e.cause?.javaClass?.simpleName ?: "none"}, " +
-                                    "Stack trace:\n${Log.getStackTraceString(e)}", e)
-                        }
-                    }
-                    // Continue to fallback location
-                }
+            loadAppBackupFromConfiguredUri(context, AUTO_RESTORE_DOCUMENT_URI_KEY)?.let {
+                Log.d("Utils", "Backup loaded successfully from configured restore document")
+                return@withContext it
             }
-            
-            // Fallback to old location (external files dir) for backward compatibility
+            loadAppBackupFromConfiguredUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)?.let {
+                Log.d("Utils", "Backup loaded successfully from configured backup document")
+                return@withContext it
+            }
+
             val externalDir = context.getExternalFilesDir(null)
             if (externalDir == null) {
-                Log.d("Utils", "External storage not available and no backup in Downloads")
+                Log.d("Utils", "No configured backup document and external storage is unavailable")
                 return@withContext null
             }
+            val backupFileName = "workout_store_backup.json"
             val backupFile = java.io.File(externalDir, backupFileName)
             if (!backupFile.exists()) {
-                Log.d("Utils", "Backup file does not exist in either location")
+                Log.d("Utils", "Backup file does not exist in any configured location")
                 return@withContext null
             }
 
@@ -1249,34 +1247,10 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
 }
 
 /**
- * Loads the most recent valid backup from Downloads folder.
- * Scans both automatic and manual backup naming patterns, newest first.
+ * Loads the latest available backup from the configured SAF documents.
  */
 suspend fun loadLatestBackupFromDownloads(context: Context): AppBackup? {
-    return withContext(Dispatchers.IO) {
-        try {
-            val backupFiles = findAllBackupFiles(context)
-                .sortedByDescending { it.dateModified }
-            if (backupFiles.isEmpty()) {
-                return@withContext null
-            }
-
-            for (file in backupFiles) {
-                val jsonString = readFileContentFromDownloadsFolder(context, file.uri) ?: continue
-                try {
-                    val appBackup = fromJSONtoAppBackup(jsonString)
-                    Log.d("Utils", "Loaded latest backup from Downloads: ${file.name}")
-                    return@withContext appBackup
-                } catch (e: Exception) {
-                    Log.w("Utils", "Skipping invalid backup file: ${file.name}", e)
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.e("Utils", "Error loading latest backup from Downloads", e)
-            null
-        }
-    }
+    return loadExternalBackup(context)
 }
 
 suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {
