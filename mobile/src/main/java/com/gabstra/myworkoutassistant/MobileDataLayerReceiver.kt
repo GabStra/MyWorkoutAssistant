@@ -9,7 +9,8 @@ import android.widget.Toast
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
-import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,13 +47,24 @@ internal class MobileDataLayerReceiver(
         val workoutHistoryDao = db.workoutHistoryDao()
 
         CoroutineScope(Dispatchers.IO).launch {
-            val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                workoutStore,
-                db,
-                workoutStoreRepository
-            )
-            appViewModel.updateWorkoutStore(migratedWorkoutStore, false)
-            workoutViewModel.applyExternalSyncWorkoutStore(migratedWorkoutStore)
+            try {
+                validateWorkoutStoreForRuntimeUse(workoutStore)
+            } catch (exception: WorkoutStoreValidationException) {
+                Log.e(
+                    "MyWorkoutAssistant",
+                    "Ignoring synced workout update because workout-store validation failed: ${exception.userMessage}"
+                )
+                activity.runOnUiThread {
+                    Toast.makeText(
+                        activity,
+                        "Ignored synced workout update: ${exception.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@launch
+            }
+            appViewModel.updateWorkoutStore(workoutStore, false)
+            workoutViewModel.applyExternalSyncWorkoutStore(workoutStore)
             appViewModel.triggerUpdate()
 
             try {

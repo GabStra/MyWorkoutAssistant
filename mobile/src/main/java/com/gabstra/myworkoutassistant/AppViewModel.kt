@@ -18,13 +18,14 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
 import com.gabstra.myworkoutassistant.shared.WorkoutObjectiveVersionResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
-import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Generic
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -208,6 +209,7 @@ class AppViewModel(
 
     private val _state = MutableStateFlow(AppState())
     private val _isInitialDataLoaded = MutableStateFlow(false)
+    private val _workoutStoreValidationError = MutableStateFlow<String?>(null)
     private var _userAge = mutableIntStateOf(0)
 
     /**
@@ -219,13 +221,15 @@ class AppViewModel(
             try {
                 val app = getApplication<Application>()
                 val repo = WorkoutStoreRepository(app.filesDir)
-                val db = AppDatabase.getDatabase(app)
-                val migrated = withContext(Dispatchers.IO) {
-                    val store = repo.getWorkoutStore()
-                    migrateWorkoutStoreSetIdsIfNeeded(store, db, repo)
-                }
-                setWorkoutStoreState(migrated, triggerSend = false)
-                refreshWorkoutHistories(migrated.workouts)
+                val store = withContext(Dispatchers.IO) { repo.getWorkoutStore() }
+                validateWorkoutStoreForRuntimeUse(store)
+                _workoutStoreValidationError.value = null
+                setWorkoutStoreState(store, triggerSend = false)
+                refreshWorkoutHistories(store.workouts)
+                _isInitialDataLoaded.value = true
+            } catch (e: WorkoutStoreValidationException) {
+                Log.e(TAG, "Workout store validation failed during startup load: ${e.userMessage}")
+                _workoutStoreValidationError.value = e.userMessage
                 _isInitialDataLoaded.value = true
             } catch (e: Exception) {
                 _isInitialDataLoaded.value = true
@@ -295,6 +299,7 @@ class AppViewModel(
 
     private val _updateNotificationFlow = MutableStateFlow<String?>(null)
     val updateNotificationFlow = _updateNotificationFlow.asStateFlow()
+    val workoutStoreValidationError: StateFlow<String?> = _workoutStoreValidationError.asStateFlow()
 
     var selectedHomeTab by mutableIntStateOf(0)
         private set
@@ -307,6 +312,10 @@ class AppViewModel(
 
     fun triggerUpdate() {
         _updateNotificationFlow.value = System.currentTimeMillis().toString()
+    }
+
+    fun clearWorkoutStoreValidationError() {
+        _workoutStoreValidationError.value = null
     }
 
     var checkedHealthPermission by mutableStateOf(false)
@@ -1071,6 +1080,7 @@ class AppViewModel(
         conflictResolution: ConflictResolution = ConflictResolution.SKIP_DUPLICATES
     ) {
         val merged = mergeWorkoutStore(workoutStore, importedWorkoutStore, conflictResolution)
+        validateWorkoutStoreForRuntimeUse(merged)
         updateWorkoutStore(merged)
     }
 

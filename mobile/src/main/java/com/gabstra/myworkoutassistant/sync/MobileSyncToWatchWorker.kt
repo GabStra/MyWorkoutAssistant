@@ -14,6 +14,8 @@ import com.gabstra.myworkoutassistant.sendAppBackup
 import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
@@ -35,6 +37,7 @@ class MobileSyncToWatchWorker(
             val db = AppDatabase.getDatabase(context)
             val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
             val workoutStore = workoutStoreRepository.getWorkoutStore()
+            validateWorkoutStoreForRuntimeUse(workoutStore)
 
             val workoutHistoryDao = db.workoutHistoryDao()
             val setHistoryDao = db.setHistoryDao()
@@ -135,6 +138,10 @@ class MobileSyncToWatchWorker(
             PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(context.applicationContext)
             Result.success()
         }.getOrElse { exception ->
+            if (exception is WorkoutStoreValidationException) {
+                Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
+                return Result.failure()
+            }
             Log.e(TAG, "Mobile sync worker failed", exception)
             PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
             Result.retry()

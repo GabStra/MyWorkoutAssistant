@@ -52,7 +52,6 @@ fun ScalableFadingText(
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
     scaleDownOnly: Boolean = true,
-    fadeInMillis: Int = 250,
 ) {
     ScalableFadingText(
         text = AnnotatedString(text),
@@ -64,7 +63,6 @@ fun ScalableFadingText(
         onClick = onClick,
         minTextSize = minTextSize,
         scaleDownOnly = scaleDownOnly,
-        fadeInMillis = fadeInMillis
     )
 }
 
@@ -80,7 +78,6 @@ fun ScalableFadingText(
     onClick: (() -> Unit)? = null,
     minTextSize: TextUnit = 12.sp,
     scaleDownOnly: Boolean = true,
-    fadeInMillis: Int = 250,
 ) {
     val density = LocalDensity.current
     val fadeWidthPx = with(density) { fadeWidth.toPx() }
@@ -238,7 +235,6 @@ fun ScalableFadingText(
             textAlign = textAlign,
             minTextSize = minTextSize,
             scaleDownOnly = scaleDownOnly,
-            fadeInMillis = fadeInMillis
         )
     }
 }

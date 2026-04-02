@@ -112,9 +112,9 @@ import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
-import com.gabstra.myworkoutassistant.shared.migrateWorkoutStoreSetIdsIfNeeded
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
+import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -441,6 +441,7 @@ fun MyWorkoutAssistantNavHost(
     val updateMobileSignal by updateMobileFlow.collectAsState()
 
     val initialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState(initial = false)
+    val workoutStoreValidationError by appViewModel.workoutStoreValidationError.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
 
     val clearAllIncompleteSessions: () -> Unit = {
@@ -721,12 +722,6 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.importWorkoutStore(importedWorkoutStoreWithPlan)
 
                                 workoutStoreRepository.saveWorkoutStore(appViewModel.workoutStore)
-                                val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                                    appViewModel.workoutStore,
-                                    db,
-                                    workoutStoreRepository
-                                )
-                                appViewModel.updateWorkoutStore(migratedWorkoutStore)
 
                                 val newWorkoutsCount = appViewModel.workouts.size
                                 val newEquipmentCount = appViewModel.equipments.size
@@ -775,6 +770,17 @@ fun MyWorkoutAssistantNavHost(
             body = { Text(message) },
             confirmText = "OK",
             onConfirm = { importPlanResultMessage = null },
+            showDismiss = false
+        )
+    }
+
+    workoutStoreValidationError?.let { message ->
+        StandardDialog(
+            onDismissRequest = { appViewModel.clearWorkoutStoreValidationError() },
+            title = "Workout Data Error",
+            body = { Text(message) },
+            confirmText = "OK",
+            onConfirm = { appViewModel.clearWorkoutStoreValidationError() },
             showDismiss = false
         )
     }
@@ -949,17 +955,12 @@ fun MyWorkoutAssistantNavHost(
                 try {
                     val planMigratedWorkoutStore =
                         workoutStoreRepository.migrateWorkoutStore(newWorkoutStore)
-                    val migratedWorkoutStore = migrateWorkoutStoreSetIdsIfNeeded(
-                        planMigratedWorkoutStore,
-                        db,
-                        workoutStoreRepository
-                    )
-
-                    workoutStoreRepository.saveWorkoutStore(migratedWorkoutStore)
+                    validateWorkoutStoreForRuntimeUse(planMigratedWorkoutStore)
+                    workoutStoreRepository.saveWorkoutStore(planMigratedWorkoutStore)
 
                     withContext(Dispatchers.Main) {
-                        appViewModel.updateWorkoutStore(migratedWorkoutStore)
-                        workoutViewModel.updateWorkoutStore(migratedWorkoutStore)
+                        appViewModel.updateWorkoutStore(planMigratedWorkoutStore)
+                        workoutViewModel.updateWorkoutStore(planMigratedWorkoutStore)
                         appViewModel.triggerUpdate()
 
                         // Show the success toast after all operations are complete
