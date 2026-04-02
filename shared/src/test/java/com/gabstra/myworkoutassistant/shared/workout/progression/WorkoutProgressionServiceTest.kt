@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
@@ -29,7 +30,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
@@ -318,5 +321,39 @@ class WorkoutProgressionServiceTest {
         assertEquals(3, updatedExercise.sets.size)
         assertNotNull(updatedExercise.sets[1] as? RestSet)
         assertEquals(90, (updatedExercise.sets[1] as RestSet).timeInSeconds)
+    }
+
+    @Test
+    fun computeSessionDecision_sameWeekRepeatWithoutFailures_stillProgresses() {
+        val exerciseId = UUID.randomUUID()
+        val today = LocalDate.now()
+        val sameWeekDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = exerciseSessionSnapshotFromSets(emptyList()),
+                    lastSuccessfulSession = exerciseSessionSnapshotFromSets(emptyList()),
+                    successfulSessionCounter = 2u,
+                    sessionFailedCounter = 0u,
+                    lastSessionWasDeload = false,
+                    timesCompletedInAWeek = 2,
+                    weeklyCompletionUpdateDate = sameWeekDate
+                )
+            )
+        }
+        val service = WorkoutProgressionService(
+            exerciseInfoDao = { database.exerciseInfoDao() },
+            setHistoryDao = { database.setHistoryDao() },
+            workoutHistoryDao = { database.workoutHistoryDao() },
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+        )
+
+        val decision = kotlinx.coroutines.runBlocking {
+            service.computeSessionDecision(exerciseId)
+        }
+
+        assertEquals(ProgressionState.PROGRESS, decision.progressionState)
+        assertEquals(false, decision.shouldLoadLastSuccessfulSession)
     }
 }

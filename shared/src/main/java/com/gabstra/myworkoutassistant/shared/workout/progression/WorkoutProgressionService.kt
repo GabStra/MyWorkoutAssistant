@@ -26,9 +26,6 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import java.time.DayOfWeek
-import java.time.LocalDate
-import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
 data class SessionDecision(
@@ -52,19 +49,9 @@ class WorkoutProgressionService(
         val exerciseInfo = exerciseInfoDao().getExerciseInfoById(exerciseId)
         val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
         val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
-        val today = LocalDate.now()
-        var weeklyCount = 0
-
-        exerciseInfo?.weeklyCompletionUpdateDate?.let { lastUpdate ->
-            val startOfThisWeek = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            val startOfLastUpdateWeek = lastUpdate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            if (startOfThisWeek.isEqual(startOfLastUpdateWeek)) {
-                weeklyCount = exerciseInfo.timesCompletedInAWeek
-            }
-        }
 
         val shouldDeload = false
-        val shouldRetry = !lastWasDeload && (fails >= 1 || weeklyCount > 1)
+        val shouldRetry = !lastWasDeload && fails >= 1
         val shouldLoadLastSuccessfulSession = lastWasDeload || shouldRetry
         val progressionState =
             if (shouldDeload) ProgressionState.DELOAD else if (shouldRetry) ProgressionState.RETRY else ProgressionState.PROGRESS
