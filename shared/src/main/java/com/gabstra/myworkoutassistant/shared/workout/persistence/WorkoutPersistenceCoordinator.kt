@@ -133,6 +133,13 @@ internal class WorkoutPersistenceCoordinator(
             workoutStore.equipments.find { it.id == equipmentId }
         }
 
+        val recordedEndTime = LocalDateTime.now()
+        val persistedEndTime = resolvePersistedHistoryEndTime(
+            setData = setDataSnapshot,
+            startTime = startTime,
+            recordedEndTime = recordedEndTime,
+        )
+
         val newSetHistory = SetHistory(
             id = UUID.randomUUID(),
             equipmentIdSnapshot = equipmentIdFromState,
@@ -144,7 +151,7 @@ internal class WorkoutPersistenceCoordinator(
             skipped = skipped,
             exerciseId = historyIdentity.exerciseId,
             startTime = startTime,
-            endTime = LocalDateTime.now(),
+            endTime = persistedEndTime,
             supersetId = supersetMetadata?.supersetId,
             supersetRound = supersetMetadata?.supersetRound,
             supersetExerciseIndex = supersetMetadata?.supersetExerciseIndex,
@@ -176,6 +183,13 @@ internal class WorkoutPersistenceCoordinator(
         val workoutComponentId =
             if (scope == RestHistoryScope.BETWEEN_WORKOUT_COMPONENTS) currentState.set.id else null
         val nextExecutionSequence = nextExecutionSequenceValue()
+        val recordedEndTime = LocalDateTime.now()
+        val persistedEndTime = resolvePersistedHistoryEndTime(
+            setData = setDataSnapshot,
+            startTime = startTime,
+            recordedEndTime = recordedEndTime,
+        )
+
         val newRestHistory = RestHistory(
             id = UUID.randomUUID(),
             workoutHistoryId = null,
@@ -183,7 +197,7 @@ internal class WorkoutPersistenceCoordinator(
             executionSequence = nextExecutionSequence.toUInt(),
             setData = setDataSnapshot,
             startTime = startTime,
-            endTime = LocalDateTime.now(),
+            endTime = persistedEndTime,
             workoutComponentId = workoutComponentId,
             exerciseId = historyIdentity.exerciseId,
             restSetId = historyIdentity.setId,
