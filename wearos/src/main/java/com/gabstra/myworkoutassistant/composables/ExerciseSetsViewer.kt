@@ -40,124 +40,33 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
-import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
+import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
+import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
+import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutRestRowLabel
+import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutSetDisplayIdentifier
+import com.gabstra.myworkoutassistant.shared.workout.display.findDisplayRowIndex
+import com.gabstra.myworkoutassistant.shared.workout.display.setLikeIdOrNull
+import com.gabstra.myworkoutassistant.shared.workout.display.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
 enum class ProgressState { PAST, CURRENT, FUTURE }
 
-/**
- * Display model for one row in the exercise set viewer. Each row corresponds to one state
- * from the exercise's container in the workout state machine.
- */
-sealed class ExerciseSetDisplayRow {
-    data class SetRow(val state: WorkoutState.Set) : ExerciseSetDisplayRow()
-    data class RestRow(val state: WorkoutState.Rest) : ExerciseSetDisplayRow()
-    data class CalibrationLoadSelectRow(val state: WorkoutState.CalibrationLoadSelection) : ExerciseSetDisplayRow()
-    data class CalibrationRIRRow(val state: WorkoutState.CalibrationRIRSelection) : ExerciseSetDisplayRow()
-
-    fun workoutState(): WorkoutState = when (this) {
-        is SetRow -> state
-        is RestRow -> state
-        is CalibrationLoadSelectRow -> state
-        is CalibrationRIRRow -> state
-    }
-}
-
-internal fun toExerciseSetDisplayRowOrNull(state: WorkoutState): ExerciseSetDisplayRow? {
-    return when (state) {
-        is WorkoutState.Set -> ExerciseSetDisplayRow.SetRow(state)
-        is WorkoutState.Rest -> ExerciseSetDisplayRow.RestRow(state)
-        is WorkoutState.CalibrationLoadSelection ->
-            if (state.isLoadConfirmed) null else ExerciseSetDisplayRow.CalibrationLoadSelectRow(state)
-        is WorkoutState.CalibrationRIRSelection -> ExerciseSetDisplayRow.CalibrationRIRRow(state)
-        is WorkoutState.AutoRegulationRIRSelection -> null
-        else -> null
-    }
-}
-
-internal fun buildExerciseSetDisplayRows(
+internal fun buildSetIdentifier(
     viewModel: AppViewModel,
     exerciseId: UUID,
-): List<ExerciseSetDisplayRow> {
-    return viewModel.getStatesForExercise(exerciseId).mapNotNull(::toExerciseSetDisplayRowOrNull)
-}
+    setState: WorkoutState.Set,
+): String? = buildWorkoutSetDisplayIdentifier(viewModel, exerciseId, setState)
 
-internal fun buildSupersetSetDisplayRows(
-    viewModel: AppViewModel,
-    supersetId: UUID,
-): List<ExerciseSetDisplayRow> {
-    return viewModel.getStatesForSuperset(supersetId).mapNotNull(::toExerciseSetDisplayRowOrNull)
-}
-
-internal fun ExerciseSetDisplayRow.setLikeIdOrNull(): UUID? = when (this) {
-    is ExerciseSetDisplayRow.SetRow -> state.set.id
-    is ExerciseSetDisplayRow.RestRow -> state.set.id
-    is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> state.calibrationSet.id
-    is ExerciseSetDisplayRow.CalibrationRIRRow -> state.calibrationSet.id
-}
-
-private data class DisplayRowIdentity(
-    val exerciseId: UUID?,
-    val setId: UUID?,
-    val order: UInt?
-)
-
-private fun WorkoutState.displayRowIdentityOrNull(): DisplayRowIdentity? = when (this) {
-    is WorkoutState.Set -> DisplayRowIdentity(
-        exerciseId = exerciseId,
-        setId = set.id,
-        order = setIndex
-    )
-    is WorkoutState.Rest -> DisplayRowIdentity(
-        exerciseId = exerciseId,
-        setId = set.id,
-        order = order
-    )
-    is WorkoutState.CalibrationLoadSelection -> DisplayRowIdentity(
-        exerciseId = exerciseId,
-        setId = calibrationSet.id,
-        order = setIndex
-    )
-    is WorkoutState.CalibrationRIRSelection -> DisplayRowIdentity(
-        exerciseId = exerciseId,
-        setId = calibrationSet.id,
-        order = setIndex
-    )
-    is WorkoutState.AutoRegulationRIRSelection -> DisplayRowIdentity(
-        exerciseId = exerciseId,
-        setId = workSet.id,
-        order = setIndex
-    )
-    else -> null
-}
-
-internal fun findDisplayRowIndex(
-    displayRows: List<ExerciseSetDisplayRow>,
-    stateToMatch: WorkoutState,
-    fallbackSetId: UUID?,
-): Int {
-    val byReference = displayRows.indexOfFirst { it.workoutState() === stateToMatch }
-    if (byReference >= 0) return byReference
-
-    val targetIdentity = stateToMatch.displayRowIdentityOrNull()
-    if (targetIdentity != null) {
-        val byIdentity = displayRows.indexOfFirst { row ->
-            row.workoutState().displayRowIdentityOrNull() == targetIdentity
-        }
-        if (byIdentity >= 0) return byIdentity
-    }
-
-    if (fallbackSetId != null) {
-        val bySetId = displayRows.indexOfFirst { it.setLikeIdOrNull() == fallbackSetId }
-        if (bySetId >= 0) return bySetId
-    }
-
-    return 0
-}
+internal fun buildUnilateralSideBadge(
+    sideIndex: UInt?,
+    intraSetTotal: UInt?,
+): String? = buildUnilateralSideLabel(sideIndex, intraSetTotal)
 
 internal fun resolveExerciseSetsScrollTargetIndex(
     viewModel: AppViewModel,
@@ -184,72 +93,6 @@ internal fun resolveExerciseSetsScrollTargetIndex(
     return (firstSetListItemIndex + setIndex).coerceAtLeast(firstSetListItemIndex)
 }
 
-private fun toSupersetLetter(index: Int): String {
-    if (index < 0) return ""
-    var value = index
-    val builder = StringBuilder()
-    do {
-        val remainder = value % 26
-        builder.append(('A'.code + remainder).toChar())
-        value = (value / 26) - 1
-    } while (value >= 0)
-    return builder.reverse().toString()
-}
-
-internal fun buildSetIdentifier(
-    viewModel: AppViewModel,
-    exerciseId: UUID,
-    setState: WorkoutState.Set,
-): String? {
-    val (current, _) = viewModel.getSetCounterForExercise(exerciseId, setState) ?: return null
-
-    val supersetPrefix = viewModel.supersetIdByExerciseId[exerciseId]
-        ?.let { supersetId -> viewModel.exercisesBySupersetId[supersetId] }
-        ?.indexOfFirst { it.id == exerciseId }
-        ?.takeIf { it >= 0 }
-        ?.let(::toSupersetLetter)
-
-    val baseIdentifier = if (supersetPrefix != null) {
-        "$supersetPrefix$current"
-    } else {
-        current.toString()
-    }
-
-    return when {
-        CalibrationHelper.isWarmupSet(setState.set) -> "W$baseIdentifier"
-        else -> baseIdentifier
-    }
-}
-
-internal fun buildUnilateralSideBadge(
-    sideIndex: UInt?,
-    intraSetTotal: UInt?,
-): String? {
-    return buildUnilateralSideLabel(sideIndex, intraSetTotal)
-}
-
-internal fun buildUnilateralSideLabel(
-    sideIndex: UInt?,
-    intraSetTotal: UInt?,
-): String? {
-    val resolvedSideIndex = sideIndex?.toInt() ?: return null
-    val resolvedTotal = intraSetTotal?.toInt() ?: return null
-    if (resolvedTotal != 2) return null
-
-    val normalizedSideIndex = resolvedSideIndex.coerceIn(1, resolvedTotal)
-
-    return when (normalizedSideIndex) {
-        1 -> "-L"
-        2 -> "-R"
-        else -> null
-    }
-}
-
-private fun buildRestLabel(restState: WorkoutState.Rest): String {
-    val seconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
-    return "REST ${FormatTime(seconds)}"
-}
-
 internal data class SetTrendIndicator(
     val glyph: String,
     val color: Color,
@@ -274,11 +117,6 @@ internal fun resolveSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndic
     if (!isWorkSet) return null
     return buildSetTrendIndicator(setState)
 }
-
-private fun resolveTrendValueColor(
-    defaultColor: Color,
-    trend: SetTrendIndicator?,
-): Color = trend?.color ?: defaultColor
 
 internal fun userEditedTrendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
     val previousSetData = setState.previousSetData ?: return null
@@ -560,10 +398,6 @@ fun SetTableRow(
             when (setState.currentSetData) {
                 is WeightSetData -> {
                     val weightSetData = (setState.currentSetData as WeightSetData)
-                    val weightTrend = userEditedTrendForWeight(setState)
-                    val repsTrend = userEditedTrendForReps(setState)
-                    val weightValueColor = resolveTrendValueColor(textColor, weightTrend)
-                    val repsValueColor = resolveTrendValueColor(textColor, repsTrend)
 
                     val weightText = equipment?.formatWeight(weightSetData.actualWeight) ?: "-"
                     val displayWeightText = when {
@@ -581,7 +415,7 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = displayWeightText,
                             style = itemStyle,
-                            color = weightValueColor,
+                            color = textColor,
                         )
                     }
                     Row(
@@ -592,17 +426,13 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = "${weightSetData.actualReps}",
                             style = itemStyle,
-                            color = repsValueColor,
+                            color = textColor,
                         )
                     }
                 }
 
                 is BodyWeightSetData -> {
                     val bodyWeightSetData = (setState.currentSetData as BodyWeightSetData)
-                    val weightTrend = userEditedTrendForWeight(setState)
-                    val repsTrend = userEditedTrendForReps(setState)
-                    val weightValueColor = resolveTrendValueColor(textColor, weightTrend)
-                    val repsValueColor = resolveTrendValueColor(textColor, repsTrend)
 
                     val baseWeightText = if(equipment != null && bodyWeightSetData.additionalWeight != 0.0) {
                         equipment.formatWeight(bodyWeightSetData.additionalWeight)
@@ -624,7 +454,7 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = displayWeightText,
                             style = itemStyle,
-                            color = weightValueColor
+                            color = textColor
                         )
                     }
                     Row(
@@ -635,14 +465,13 @@ fun SetTableRow(
                         ScalableFadingText(
                             text = "${bodyWeightSetData.actualReps}",
                             style = itemStyle,
-                            color = repsValueColor
+                            color = textColor
                         )
                     }
                 }
 
                 is TimedDurationSetData -> {
                     val timedDurationSetData = (setState.currentSetData as TimedDurationSetData)
-                    val timeTrend = userEditedTrendForTime(setState)
 
                     Row(
                         modifier = Modifier.weight(3f),
@@ -654,19 +483,11 @@ fun SetTableRow(
                             style = itemStyle,
                             color = textColor
                         )
-                        if (timeTrend != null) {
-                            ScalableFadingText(
-                                text = timeTrend.glyph,
-                                style = itemStyle,
-                                color = timeTrend.color,
-                            )
-                        }
                     }
                 }
 
                 is EnduranceSetData -> {
                     val enduranceSetData = (setState.currentSetData as EnduranceSetData)
-                    val timeTrend = userEditedTrendForTime(setState)
 
                     Row(
                         modifier = Modifier.weight(3f),
@@ -678,13 +499,6 @@ fun SetTableRow(
                             style = itemStyle,
                             color = textColor
                         )
-                        if (timeTrend != null) {
-                            ScalableFadingText(
-                                text = timeTrend.glyph,
-                                style = itemStyle,
-                                color = timeTrend.color,
-                            )
-                        }
                     }
                 }
 
@@ -832,7 +646,7 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
                 )
                 is ExerciseSetDisplayRow.RestRow -> CenteredLabelRow(
                     modifier = rowModifier,
-                    text = buildRestLabel(displayRow.state),
+                    text = buildWorkoutRestRowLabel(displayRow.state),
                     textColor = textColor
                 )
                 is ExerciseSetDisplayRow.CalibrationRIRRow -> CenteredLabelRow(

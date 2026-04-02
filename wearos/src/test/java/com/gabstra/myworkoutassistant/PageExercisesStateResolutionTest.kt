@@ -8,7 +8,7 @@ import com.gabstra.myworkoutassistant.composables.resolvePageExercisesActiveStat
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesItemIndex
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesDisplayCounter
 import com.gabstra.myworkoutassistant.composables.resolvePageExercisesCurrentItemIndex
-import com.gabstra.myworkoutassistant.composables.toExerciseSetDisplayRowOrNull
+import com.gabstra.myworkoutassistant.shared.workout.display.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.screens.setCurrentWorkoutState
 import com.gabstra.myworkoutassistant.screens.setFieldValue

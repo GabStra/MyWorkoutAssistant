@@ -68,6 +68,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
+import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
@@ -399,7 +401,7 @@ private fun ExercisePageFixedHeader(
                     style = titleStyle,
                     textAlign = TextAlign.Center
                 )
-                is PageExercisesItem.RestPage -> Unit
+                is PageExercisesItem.RestPage -> error("Rest pages use RestPageFixedHeader")
             }
         }
 
@@ -420,7 +422,7 @@ private fun ExercisePageFixedHeader(
                         currentSideIndex = null
                     )
                 }
-                is PageExercisesItem.RestPage -> Unit
+                is PageExercisesItem.RestPage -> error("Rest pages use RestPageFixedHeader")
             }
         }
 
@@ -428,52 +430,62 @@ private fun ExercisePageFixedHeader(
     }
 }
 
+@Composable
+private fun RestPageFixedHeader(
+    modifier: Modifier = Modifier,
+    pageItem: PageExercisesItem.RestPage,
+) {
+    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+    val previousPlain = pageItem.previousDisplayName.text
+    val nextPlain = pageItem.nextDisplayName.text
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        ExerciseNameText(
+            text = pageItem.previousDisplayName,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = PageExercisesRestSemantics.previousExerciseDescription(previousPlain)
+                },
+            style = titleStyle,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "\u2193",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics {
+                contentDescription = PageExercisesRestSemantics.BetweenExercisesTransitionDescription
+            }
+        )
+        ExerciseNameText(
+            text = pageItem.nextDisplayName,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = PageExercisesRestSemantics.nextExerciseDescription(nextPlain)
+                },
+            style = titleStyle,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
 private fun TransformingLazyColumnScope.RestPageContent(
     restState: WorkoutState.Rest,
-    previousDisplayName: AnnotatedString,
-    nextDisplayName: AnnotatedString,
     progressState: ProgressState,
     transformationSpec: androidx.wear.compose.material3.lazy.TransformationSpec,
 ) {
     val restSeconds = (restState.set as? RestSet)?.timeInSeconds ?: 0
+    val formattedRest = FormatTime(restSeconds)
 
     item {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .transformedHeight(this, transformationSpec)
-                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                modifier = Modifier.graphicsLayer {
-                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
-                },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.5.dp)
-            ) {
-                val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = "FROM",
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center
-                )
-                ExerciseNameText(
-                    text = previousDisplayName,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = titleStyle,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-
-    item {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 5.dp)
                 .transformedHeight(this, transformationSpec)
                 .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
             contentAlignment = Alignment.Center
@@ -489,46 +501,17 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     .fillMaxWidth()
                     .graphicsLayer { with(transformationSpec) { applyContentTransformation(scrollProgress) } }
                     .height(25.dp)
-                    .border(BorderStroke(1.dp, borderColor), shape),
+                    .border(BorderStroke(1.dp, borderColor), shape)
+                    .semantics {
+                        contentDescription = PageExercisesRestSemantics.restDurationRowDescription(formattedRest)
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 ScalableText(
                     modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
-                    text = "REST ${FormatTime(restSeconds)}",
+                    text = "REST $formattedRest",
                     style = MaterialTheme.typography.numeralMedium,
                     color = borderColor,
-                )
-            }
-        }
-    }
-
-    item {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .transformedHeight(this, transformationSpec)
-                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                modifier = Modifier.graphicsLayer {
-                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
-                },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.5.dp)
-            ) {
-                val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-                Text(
-                    text = "TO",
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center
-                )
-                ExerciseNameText(
-                    text = nextDisplayName,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = titleStyle,
-                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -661,11 +644,6 @@ fun PageExercises(
     val headerOverlayHeightDp = with(LocalDensity.current) {
         if (headerOverlayHeightPx == 0) 60.dp else headerOverlayHeightPx.toDp()
     }
-    val customAlignment = if (selectedPageItem is PageExercisesItem.RestPage) {
-        Alignment.CenterVertically
-    } else {
-        Alignment.Top
-    }
 
     Box(
         modifier = Modifier
@@ -690,13 +668,18 @@ fun PageExercises(
                     modifier = Modifier.padding(horizontal = 20.dp),
                     state = transformingLazyColumnState,
                     userScrollEnabled = !isAutoScrolling,
-                    verticalArrangement = Arrangement.spacedBy(5.dp, customAlignment),
+                    verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
                     contentPadding = WorkoutPagerPageSafeAreaPadding
                 ) {
+                    item {
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(headerOverlayHeightDp)
+                        )
+                    }
                     RestPageContent(
                         restState = selectedPageItem.restState,
-                        previousDisplayName = selectedPageItem.previousDisplayName,
-                        nextDisplayName = selectedPageItem.nextDisplayName,
                         progressState = selectedProgressState,
                         transformationSpec = transformationSpec
                     )
@@ -734,7 +717,7 @@ fun PageExercises(
             }
         }
 
-        if (selectedPageItem != null && selectedPageItem !is PageExercisesItem.RestPage) {
+        if (selectedPageItem != null) {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -743,12 +726,18 @@ fun PageExercises(
                     .padding(horizontal = 20.dp)
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                ExercisePageFixedHeader(
-                    modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
-                    pageItem = selectedPageItem,
-                    displayCounter = displayCounter,
-                    useWeightHeader = useWeightHeader
-                )
+                when (selectedPageItem) {
+                    is PageExercisesItem.RestPage -> RestPageFixedHeader(
+                        modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
+                        pageItem = selectedPageItem
+                    )
+                    else -> ExercisePageFixedHeader(
+                        modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
+                        pageItem = selectedPageItem,
+                        displayCounter = displayCounter,
+                        useWeightHeader = useWeightHeader
+                    )
+                }
             }
         }
 
