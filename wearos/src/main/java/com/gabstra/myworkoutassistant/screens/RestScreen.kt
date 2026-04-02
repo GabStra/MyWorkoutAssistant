@@ -620,7 +620,7 @@ fun RestScreen(
 
     CustomDialogYesOnLongPress(
         show = showSkipDialog,
-        title = "Skip rest?",
+        title = "Skip rest",
         message = "Move on to the next set now?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()

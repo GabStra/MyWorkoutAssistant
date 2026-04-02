@@ -77,9 +77,10 @@ fun WeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
-    val historicalPreviousSetHistory =
-        viewModel.getAllSetHistoriesByExerciseId(state.exerciseId)
-            .firstOrNull { it.setId == state.set.id }
+    val historicalPreviousSetHistory = resolveHistoricalPreviousSetHistory(
+        viewModel = viewModel,
+        state = state
+    )
     val historicalPreviousSetData = historicalPreviousSetHistory?.setData as? WeightSetData
 
     val plateauReason = remember(state.exerciseId) {

@@ -618,7 +618,7 @@ fun TimedDurationSetScreen(
 
         CustomDialogYesOnLongPress(
             show = showStopDialog,
-            title = "Stop exercise?",
+            title = "Stop exercise",
             message = "End this timed set now?",
             handleYesClick = {
                 hapticsViewModel.doGentleVibration()

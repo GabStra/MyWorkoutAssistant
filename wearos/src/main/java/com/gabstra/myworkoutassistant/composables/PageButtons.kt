@@ -49,6 +49,7 @@ import com.gabstra.myworkoutassistant.shared.MediumLightGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.launch
 
@@ -347,14 +348,15 @@ fun PageButtons(
                             )
                         ),
                     transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
-                    text = "Return home",
+                    text = "Go Home",
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
                         // Save workout record (updatedState is already WorkoutState.Set)
                         viewModel.upsertWorkoutRecord(
                             updatedState.exerciseId,
-                            updatedState.setIndex
+                            updatedState.setIndex,
+                            WATCH_SESSION_STATE_RETURNED_HOME
                         )
 
                         // Clear ongoing workout notification/icon
@@ -376,7 +378,7 @@ fun PageButtons(
 
     CustomDialogYesOnLongPress(
         show = showGoBackDialog,
-        title = "Go back one set?",
+        title = "Go back one set",
         message = "Return to the previous set?",
         handleYesClick = {
             hapticsViewModel.doGentleVibration()

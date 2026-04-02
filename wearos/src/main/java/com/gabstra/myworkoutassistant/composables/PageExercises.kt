@@ -28,9 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -435,12 +433,13 @@ private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem.RestPage,
 ) {
-    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+    val titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
     val previousPlain = pageItem.previousDisplayName.text
     val nextPlain = pageItem.nextDisplayName.text
     Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
         ExerciseNameText(
             text = pageItem.previousDisplayName,
@@ -590,7 +589,8 @@ fun PageExercises(
     LaunchedEffect(selectedPageIndex.value, selectedRestPageId) {
         transformingLazyColumnState.scrollToItem(0)
     }
-    val firstSetListItemIndex = 0
+    // Item 0 is the spacer used to reserve room for the fixed header overlay.
+    val firstSetListItemIndex = 1
     val selectedProgressState = when {
         selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
         selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
@@ -629,7 +629,7 @@ fun PageExercises(
         if (isAutoScrolling) return@LaunchedEffect
         isAutoScrolling = true
         try {
-            transformingLazyColumnState.animateScrollToItem(targetIndex)
+            transformingLazyColumnState.scrollToItem(targetIndex)
         } finally {
             isAutoScrolling = false
         }
@@ -640,10 +640,7 @@ fun PageExercises(
             shouldUseWeightHeader(viewModel = viewModel, pageItem = pageItem)
         } ?: false
     }
-    var headerOverlayHeightPx by remember { mutableStateOf(0) }
-    val headerOverlayHeightDp = with(LocalDensity.current) {
-        if (headerOverlayHeightPx == 0) 60.dp else headerOverlayHeightPx.toDp()
-    }
+    val headerOverlayHeightDp =  60.dp
 
     Box(
         modifier = Modifier
@@ -728,11 +725,11 @@ fun PageExercises(
             ) {
                 when (selectedPageItem) {
                     is PageExercisesItem.RestPage -> RestPageFixedHeader(
-                        modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
+                        modifier = Modifier.height(headerOverlayHeightDp),
                         pageItem = selectedPageItem
                     )
                     else -> ExercisePageFixedHeader(
-                        modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
+                        modifier = Modifier.height(headerOverlayHeightDp),
                         pageItem = selectedPageItem,
                         displayCounter = displayCounter,
                         useWeightHeader = useWeightHeader

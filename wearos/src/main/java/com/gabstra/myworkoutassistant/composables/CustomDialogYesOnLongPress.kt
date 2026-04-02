@@ -56,7 +56,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CustomDialogYesOnLongPress(
     show: Boolean = false,
-    title: String = "Exit workout?",
+    title: String = "Exit workout",
     message: String = "Do you want to leave this workout?",
     handleNoClick: () -> Unit,
     handleYesClick: () -> Unit,
@@ -186,6 +186,7 @@ fun CustomDialogYesOnLongPress(
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
                         )
                         Spacer(modifier = Modifier.height(10.dp))
 
