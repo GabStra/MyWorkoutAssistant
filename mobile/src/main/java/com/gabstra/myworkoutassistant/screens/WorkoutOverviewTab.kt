@@ -350,6 +350,7 @@ private fun WorkoutSessionActionCard(
     val sessionStatus = workoutResumeInfo?.sessionStatus
     val hasResumeAction = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+        WorkoutSessionStatus.STOPPED_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR,
         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> true
         WorkoutSessionStatus.COMPLETED,
@@ -357,6 +358,9 @@ private fun WorkoutSessionActionCard(
     }
     val titleText = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Workout in progress on watch"
+        WorkoutSessionStatus.STOPPED_ON_WEAR ->
+            workoutSessionDisplayLabel(WorkoutSessionStatus.STOPPED_ON_WEAR)
+                ?: WorkoutSessionDisplayLabels.STOPPED_ON_WATCH
         WorkoutSessionStatus.STALE_ON_WEAR ->
             workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
                 ?: WorkoutSessionDisplayLabels.STALE_ON_WATCH
@@ -366,6 +370,7 @@ private fun WorkoutSessionActionCard(
     }
     val primaryActionText = when (sessionStatus) {
         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+        WorkoutSessionStatus.STOPPED_ON_WEAR,
         WorkoutSessionStatus.STALE_ON_WEAR -> "Resume on phone"
         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Resume workout"
         WorkoutSessionStatus.COMPLETED,
@@ -523,6 +528,7 @@ private fun buildResumeDescription(
     return buildString {
         when (workoutResumeInfo.sessionStatus) {
             WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> append("This workout is still running on your watch. Resume on phone at ")
+            WorkoutSessionStatus.STOPPED_ON_WEAR -> append("You returned home on your watch. Resume on phone at ")
             WorkoutSessionStatus.STALE_ON_WEAR -> append("Your watch stopped communicating. Resume on phone at ")
             WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
             WorkoutSessionStatus.COMPLETED -> append("Resume at ")

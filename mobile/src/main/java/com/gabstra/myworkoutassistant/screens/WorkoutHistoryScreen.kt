@@ -1110,6 +1110,7 @@ fun WorkoutHistoryScreen(
                     when (selectedWorkoutSessionStatus) {
                         WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
                         WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+                        WorkoutSessionStatus.STOPPED_ON_WEAR,
                         WorkoutSessionStatus.STALE_ON_WEAR -> selectedWorkoutRecord?.exerciseId
 
                         else -> null
