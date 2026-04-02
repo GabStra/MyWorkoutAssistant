@@ -1,5 +1,7 @@
 package com.gabstra.myworkoutassistant.data
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -13,10 +15,12 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
@@ -158,6 +162,151 @@ private class WhoopBleClient(
     private var manualDisconnect = false
     private val loggedScanDeviceAddresses = mutableSetOf<String>()
 
+    private fun hasPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasBluetoothScanPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
+                hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
+
+    private fun hasBluetoothConnectPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    }
+
+    private fun ensureBluetoothScanPermission(): Boolean {
+        if (hasBluetoothScanPermission()) return true
+        failTerminal("Bluetooth scan permission is required to find your WHOOP.")
+        return false
+    }
+
+    private fun ensureBluetoothConnectPermission(): Boolean {
+        if (hasBluetoothConnectPermission()) return true
+        failTerminal("Bluetooth connect permission is required to connect to your WHOOP.")
+        return false
+    }
+
+    private fun configuredDeviceLabel(): String {
+        return config.displayName?.trim()?.takeIf { it.isNotEmpty() } ?: "your WHOOP"
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun bluetoothDeviceAddress(device: BluetoothDevice): String = device.address
+
+    @SuppressLint("MissingPermission")
+    private fun bluetoothDeviceName(device: BluetoothDevice): String? = device.name
+
+    private fun deviceAddressOrUnknown(device: BluetoothDevice): String {
+        val configuredAddress = config.deviceId?.trim().orEmpty()
+        return if (hasBluetoothConnectPermission()) {
+            bluetoothDeviceAddress(device)
+        } else {
+            configuredAddress.ifBlank { "<unknown>" }
+        }
+    }
+
+    private fun deviceNameOrNull(device: BluetoothDevice): String? {
+        return if (hasBluetoothConnectPermission()) {
+            bluetoothDeviceName(device)
+        } else {
+            config.displayName?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    private fun deviceLabel(device: BluetoothDevice): String = deviceNameOrNull(device) ?: configuredDeviceLabel()
+
+    @SuppressLint("MissingPermission")
+    private fun gattDeviceAddress(gatt: BluetoothGatt): String = gatt.device.address
+
+    @SuppressLint("MissingPermission")
+    private fun gattDeviceName(gatt: BluetoothGatt): String? = gatt.device.name
+
+    private fun gattAddressOrUnknown(gatt: BluetoothGatt): String {
+        val configuredAddress = config.deviceId?.trim().orEmpty()
+        return if (hasBluetoothConnectPermission()) {
+            gattDeviceAddress(gatt)
+        } else {
+            configuredAddress.ifBlank { "<unknown>" }
+        }
+    }
+
+    private fun gattLabel(gatt: BluetoothGatt): String {
+        if (!hasBluetoothConnectPermission()) {
+            return config.displayName?.trim()?.takeIf { it.isNotEmpty() }
+                ?: config.deviceId?.trim()?.takeIf { it.isNotEmpty() }
+                ?: "your WHOOP"
+        }
+
+        return gattDeviceName(gatt) ?: gattDeviceAddress(gatt)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun disconnectGattQuietly(gatt: BluetoothGatt) {
+        runCatching { gatt.disconnect() }
+        runCatching { gatt.close() }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startScan(
+        scanner: BluetoothLeScanner,
+        settings: ScanSettings,
+        callback: ScanCallback,
+    ) {
+        scanner.startScan(emptyList<ScanFilter>(), settings, callback)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScan(
+        scanner: BluetoothLeScanner?,
+        callback: ScanCallback,
+    ) {
+        scanner?.stopScan(callback)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectGatt(device: BluetoothDevice): BluetoothGatt? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } else {
+            device.connectGatt(context, false, gattCallback)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun setCharacteristicNotification(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        enabled: Boolean,
+    ): Boolean = gatt.setCharacteristicNotification(characteristic, enabled)
+
+    @SuppressLint("MissingPermission")
+    private fun writeDescriptor(
+        gatt: BluetoothGatt,
+        descriptor: BluetoothGattDescriptor,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(
+                descriptor,
+                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(descriptor)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun discoverServices(gatt: BluetoothGatt) {
+        gatt.discoverServices()
+    }
+
     override fun bpmStream(deviceId: String): Flowable<Int> {
         return Flowable.create({ emitter ->
             flowEmitter = emitter
@@ -180,8 +329,9 @@ private class WhoopBleClient(
         stopScan()
         handler.removeCallbacksAndMessages(null)
         bluetoothGatt?.let { gatt ->
-            runCatching { gatt.disconnect() }
-            runCatching { gatt.close() }
+            if (hasBluetoothConnectPermission()) {
+                disconnectGattQuietly(gatt)
+            }
         }
         bluetoothGatt = null
         flowEmitter = null
@@ -203,9 +353,13 @@ private class WhoopBleClient(
         if (explicitDeviceId.isNotEmpty()) {
             val device = runCatching { adapter.getRemoteDevice(explicitDeviceId) }.getOrNull()
             if (device != null) {
-                connectGatt(device)
+                connectToGatt(device)
                 return
             }
+        }
+
+        if (!ensureBluetoothScanPermission() || !ensureBluetoothConnectPermission()) {
+            return
         }
 
         val scanner = adapter.bluetoothLeScanner
@@ -231,12 +385,19 @@ private class WhoopBleClient(
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                if (!ensureBluetoothScanPermission() || !ensureBluetoothConnectPermission()) {
+                    return
+                }
                 val didMatch = matchesDevice(result)
                 logDiscoveredDevice(result, didMatch)
                 if (!didMatch) return
-                Log.d(TAG, "WHOOP scan matched device ${result.device.address}; stopping scan and connecting")
+                Log.d(
+                    TAG,
+                    "WHOOP scan matched device ${deviceAddressOrUnknown(result.device)}; " +
+                        "stopping scan and connecting"
+                )
                 stopScan()
-                connectGatt(result.device)
+                connectToGatt(result.device)
             }
 
             override fun onScanFailed(errorCode: Int) {
@@ -250,7 +411,7 @@ private class WhoopBleClient(
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        scanner.startScan(emptyList<ScanFilter>(), settings, callback)
+        startScan(scanner, settings, callback)
         handler.postDelayed({
             if (scanCallback === callback) {
                 Log.d(TAG, "WHOOP scan timed out after ${SCAN_TIMEOUT_MS}ms without a match")
@@ -262,10 +423,13 @@ private class WhoopBleClient(
 
     private fun matchesDevice(result: ScanResult): Boolean {
         val device = result.device
-        val deviceName = result.scanRecord?.deviceName ?: device.name
+        if (!hasBluetoothConnectPermission()) {
+            return false
+        }
+        val deviceName = result.scanRecord?.deviceName ?: deviceNameOrNull(device)
         val explicitDeviceId = config.deviceId?.trim().orEmpty()
         if (explicitDeviceId.isNotEmpty()) {
-            return device.address.equals(explicitDeviceId, ignoreCase = true)
+            return deviceAddressOrUnknown(device).equals(explicitDeviceId, ignoreCase = true)
         }
 
         val preferredName = config.displayName?.trim().orEmpty()
@@ -278,13 +442,13 @@ private class WhoopBleClient(
 
     private fun logDiscoveredDevice(result: ScanResult, didMatch: Boolean) {
         val device = result.device
-        val address = device.address ?: "<unknown>"
+        val address = deviceAddressOrUnknown(device)
         if (!loggedScanDeviceAddresses.add(address)) {
             return
         }
 
         val advertisedName = result.scanRecord?.deviceName
-        val deviceName = device.name
+        val deviceName = deviceNameOrNull(device)
         val serviceUuids = result.scanRecord?.serviceUuids
             ?.joinToString(prefix = "[", postfix = "]") { it.uuid.toString() }
             ?: "[]"
@@ -317,24 +481,27 @@ private class WhoopBleClient(
         )
     }
 
-    private fun connectGatt(device: BluetoothDevice) {
+    private fun connectToGatt(device: BluetoothDevice) {
+        if (!ensureBluetoothConnectPermission()) {
+            return
+        }
+
+        val address = deviceAddressOrUnknown(device)
+        val name = deviceNameOrNull(device)
+        val label = deviceLabel(device)
         Log.d(
             TAG,
-            "Connecting to GATT device address=${device.address}, name=${device.name ?: "<none>"}"
+            "Connecting to GATT device address=$address, name=${name ?: "<none>"}"
         )
         onStateChange(
             ExternalHeartRateConnectionState.Connecting(
                 source = HeartRateSource.WHOOP_BLE,
-                message = "Connecting to ${device.name ?: "your WHOOP"}..."
+                message = "Connecting to $label..."
             )
         )
-        bluetoothGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            device.connectGatt(context, false, gattCallback)
-        }
+        bluetoothGatt = connectGatt(device)
         if (bluetoothGatt == null) {
-            failTerminal("Couldn't connect to ${device.name ?: "your WHOOP"}.")
+            failTerminal("Couldn't connect to $label.")
         }
     }
 
@@ -344,7 +511,9 @@ private class WhoopBleClient(
         val scanner: BluetoothLeScanner? = adapter?.bluetoothLeScanner
         scanCallback?.let { callback ->
             Log.d(TAG, "Stopping WHOOP BLE scan")
-            runCatching { scanner?.stopScan(callback) }
+            if (hasBluetoothScanPermission()) {
+                runCatching { stopScan(scanner, callback) }
+            }
         }
         scanCallback = null
     }
@@ -365,7 +534,11 @@ private class WhoopBleClient(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
     ) {
-        if (!gatt.setCharacteristicNotification(characteristic, true)) {
+        if (!ensureBluetoothConnectPermission()) {
+            return
+        }
+
+        if (!setCharacteristicNotification(gatt, characteristic, true)) {
             failTerminal("Couldn't subscribe to WHOOP heart-rate notifications.")
             return
         }
@@ -382,14 +555,7 @@ private class WhoopBleClient(
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-        } else {
-            @Suppress("DEPRECATION")
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            @Suppress("DEPRECATION")
-            gatt.writeDescriptor(descriptor)
-        }
+        writeDescriptor(gatt, descriptor)
     }
 
     private fun parseHeartRate(value: ByteArray): Int? {
@@ -406,9 +572,15 @@ private class WhoopBleClient(
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (!hasBluetoothConnectPermission()) {
+                failTerminal("Bluetooth connect permission was removed.")
+                return
+            }
+
             Log.d(
                 TAG,
-                "GATT connection state changed: address=${gatt.device.address}, name=${gatt.device.name ?: "<none>"}, status=$status, newState=$newState"
+                "GATT connection state changed: address=${gattAddressOrUnknown(gatt)}, " +
+                    "name=${gattDeviceName(gatt) ?: "<none>"}, status=$status, newState=$newState"
             )
             if (status != BluetoothGatt.GATT_SUCCESS && newState != BluetoothGatt.STATE_CONNECTED) {
                 if (!manualDisconnect) {
@@ -422,21 +594,21 @@ private class WhoopBleClient(
                     onStateChange(
                         ExternalHeartRateConnectionState.Connected(
                             source = HeartRateSource.WHOOP_BLE,
-                            message = "Connected to ${gatt.device.name ?: "your WHOOP"}.",
-                            deviceLabel = gatt.device.name ?: gatt.device.address
+                            message = "Connected to ${gattLabel(gatt)}.",
+                            deviceLabel = gattLabel(gatt)
                         )
                     )
-                    gatt.discoverServices()
+                    discoverServices(gatt)
                 }
 
                 BluetoothGatt.STATE_DISCONNECTED -> {
                     bluetoothGatt = null
-                    runCatching { gatt.close() }
+                    disconnectGattQuietly(gatt)
                     if (!manualDisconnect) {
                         onStateChange(
                             ExternalHeartRateConnectionState.Error(
                                 source = HeartRateSource.WHOOP_BLE,
-                                message = "Disconnected from ${gatt.device.name ?: "your WHOOP"}."
+                                message = "Disconnected from ${gattLabel(gatt)}."
                             )
                         )
                     }
@@ -445,12 +617,18 @@ private class WhoopBleClient(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (!hasBluetoothConnectPermission()) {
+                failTerminal("Bluetooth connect permission was removed.")
+                return
+            }
+
             val discoveredServiceUuids = gatt.services.joinToString(prefix = "[", postfix = "]") {
                 it.uuid.toString()
             }
             Log.d(
                 TAG,
-                "WHOOP services discovered: address=${gatt.device.address}, status=$status, services=$discoveredServiceUuids"
+                "WHOOP services discovered: address=${gattAddressOrUnknown(gatt)}, " +
+                    "status=$status, services=$discoveredServiceUuids"
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failTerminal("Couldn't discover WHOOP heart-rate services.")
@@ -470,9 +648,15 @@ private class WhoopBleClient(
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
+            if (!hasBluetoothConnectPermission()) {
+                failTerminal("Bluetooth connect permission was removed.")
+                return
+            }
+
             Log.d(
                 TAG,
-                "WHOOP descriptor write completed: address=${gatt.device.address}, descriptor=${descriptor.uuid}, status=$status"
+                "WHOOP descriptor write completed: address=${gattAddressOrUnknown(gatt)}, " +
+                    "descriptor=${descriptor.uuid}, status=$status"
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failTerminal("Couldn't enable WHOOP heart-rate notifications.")
@@ -482,7 +666,7 @@ private class WhoopBleClient(
                 ExternalHeartRateConnectionState.Streaming(
                     source = HeartRateSource.WHOOP_BLE,
                     message = "Streaming from your WHOOP.",
-                    deviceLabel = gatt.device.name ?: gatt.device.address
+                    deviceLabel = gattLabel(gatt)
                 )
             )
         }
@@ -492,19 +676,24 @@ private class WhoopBleClient(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            if (!hasBluetoothConnectPermission()) {
+                failTerminal("Bluetooth connect permission was removed.")
+                return
+            }
+
             if (characteristic.uuid != HEART_RATE_MEASUREMENT_UUID) return
             val bpm = parseHeartRate(characteristic.value) ?: return
             if (bpm > 0) {
                 Log.d(
                     TAG,
-                    "WHOOP heart-rate notification: address=${gatt.device.address}, bpm=$bpm"
+                    "WHOOP heart-rate notification: address=${gattAddressOrUnknown(gatt)}, bpm=$bpm"
                 )
                 flowEmitter?.onNext(bpm)
                 onStateChange(
                     ExternalHeartRateConnectionState.Streaming(
                         source = HeartRateSource.WHOOP_BLE,
                         message = "Streaming from your WHOOP.",
-                        deviceLabel = gatt.device.name ?: gatt.device.address
+                        deviceLabel = gattLabel(gatt)
                     )
                 )
             }
