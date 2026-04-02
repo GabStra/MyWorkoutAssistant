@@ -68,6 +68,7 @@ class WorkoutSessionLifecycleServiceTest {
         seedHistory(
             historyId = UUID.fromString("45ddb966-b1c3-4d36-b296-64c57f38b37e"),
             date = LocalDate.of(2026, 3, 10),
+            time = LocalTime.of(9, 0),
             setId = olderMatchingSetId,
             reps = 10,
             weight = 100.0
@@ -75,6 +76,7 @@ class WorkoutSessionLifecycleServiceTest {
         seedHistory(
             historyId = UUID.fromString("f51c97be-acf7-43bb-8f78-37a79f5cd9e8"),
             date = LocalDate.of(2026, 3, 17),
+            time = LocalTime.of(9, 0),
             setId = newerChangedSetId,
             reps = 8,
             weight = 105.0
@@ -95,9 +97,38 @@ class WorkoutSessionLifecycleServiceTest {
         )
     }
 
+    @Test
+    fun loadWorkoutHistory_prefersLaterSameDayHistory() = runBlocking {
+        val day = LocalDate.of(2026, 3, 17)
+        seedHistory(
+            historyId = UUID.fromString("a5c15d0c-b0f5-4cf7-85ba-2d845bceab34"),
+            date = day,
+            time = LocalTime.of(9, 0),
+            setId = olderMatchingSetId,
+            reps = 10,
+            weight = 100.0
+        )
+        seedHistory(
+            historyId = UUID.fromString("8d975412-3057-4fc8-84ae-d0dbdf7dbd07"),
+            date = day,
+            time = LocalTime.of(18, 0),
+            setId = newerChangedSetId,
+            reps = 8,
+            weight = 105.0
+        )
+
+        val loaded = service.loadWorkoutHistory(createWorkout())
+
+        assertEquals(
+            newerChangedSetId,
+            loaded.latestSetHistoriesByExerciseId[exerciseId].orEmpty().single().setId
+        )
+    }
+
     private suspend fun seedHistory(
         historyId: UUID,
         date: LocalDate,
+        time: LocalTime,
         setId: UUID,
         reps: Int,
         weight: Double
@@ -107,8 +138,8 @@ class WorkoutSessionLifecycleServiceTest {
                 id = historyId,
                 workoutId = workoutId,
                 date = date,
-                time = LocalTime.of(9, 0),
-                startTime = LocalDateTime.of(date, LocalTime.of(8, 55)),
+                time = time,
+                startTime = LocalDateTime.of(date, time),
                 duration = 300,
                 heartBeatRecords = emptyList(),
                 isDone = true,
@@ -123,8 +154,8 @@ class WorkoutSessionLifecycleServiceTest {
                 exerciseId = exerciseId,
                 setId = setId,
                 order = 0u,
-                startTime = LocalDateTime.of(date, LocalTime.of(8, 55)),
-                endTime = LocalDateTime.of(date, LocalTime.of(8, 56)),
+                startTime = LocalDateTime.of(date, time),
+                endTime = LocalDateTime.of(date, time).plusMinutes(1),
                 setData = WeightSetData(
                     actualReps = reps,
                     actualWeight = weight,

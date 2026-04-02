@@ -20,6 +20,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWork
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.sortedLatestFirst
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -618,10 +619,7 @@ internal class WorkoutPersistenceCoordinator(
                     it.isDone &&
                     it.id != excludeWorkoutHistoryId
             }
-            .sortedWith(Comparator { a, b ->
-                val dateCompare = b.date.compareTo(a.date)
-                if (dateCompare != 0) dateCompare else b.time.compareTo(a.time)
-            })
+            .sortedLatestFirst()
 
         for (workoutHistory in workoutHistories) {
             val setHistories = setHistoryDao().getSetHistoriesByWorkoutHistoryIdAndExerciseId(

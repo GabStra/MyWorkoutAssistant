@@ -2097,4 +2097,106 @@ class WorkoutViewModelSessionTest {
         val totalUnique = viewModel.getAllExerciseWorkoutStates(testExerciseId).distinctBy { it.set.id }.size
         assertEquals("Total unique sets should be 1 for unilateral exercise", 1, totalUnique)
     }
+
+    @Test
+    fun applyExternalSyncWorkoutStore_reloadsHistoricalSetDataForActiveSession() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 80.0),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 80.0)
+            )
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertTrue(
+            "Historical set data should start empty before external sync arrives.",
+            viewModel.getAllSetHistoriesByExerciseId(testExerciseId).isEmpty()
+        )
+
+        val syncedHistoryId = UUID.randomUUID()
+        val syncedStartTime = LocalDateTime.now().minusHours(1)
+        database.workoutHistoryDao().insert(
+            WorkoutHistory(
+                id = syncedHistoryId,
+                workoutId = testWorkoutId,
+                date = syncedStartTime.toLocalDate(),
+                time = syncedStartTime.toLocalTime(),
+                startTime = syncedStartTime,
+                duration = 900,
+                heartBeatRecords = listOf(110, 114, 118),
+                isDone = true,
+                hasBeenSentToHealth = false,
+                globalId = testWorkoutGlobalId,
+                version = 2u
+            )
+        )
+        database.setHistoryDao().insertAll(
+            SetHistory(
+                id = UUID.randomUUID(),
+                workoutHistoryId = syncedHistoryId,
+                exerciseId = testExerciseId,
+                setId = firstSetId,
+                order = 0u,
+                startTime = syncedStartTime.plusMinutes(1),
+                endTime = syncedStartTime.plusMinutes(2),
+                setData = WeightSetData(
+                    actualReps = 8,
+                    actualWeight = 80.0,
+                    volume = 640.0
+                ),
+                skipped = false,
+                executionSequence = 1u,
+                version = 2u
+            ),
+            SetHistory(
+                id = UUID.randomUUID(),
+                workoutHistoryId = syncedHistoryId,
+                exerciseId = testExerciseId,
+                setId = secondSetId,
+                order = 1u,
+                startTime = syncedStartTime.plusMinutes(3),
+                endTime = syncedStartTime.plusMinutes(4),
+                setData = WeightSetData(
+                    actualReps = 8,
+                    actualWeight = 82.5,
+                    volume = 660.0
+                ),
+                skipped = false,
+                executionSequence = 2u,
+                version = 2u
+            )
+        )
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertFalse(
+            "Incoming completed history should not complete the active session when it belongs to another session.",
+            viewModel.workoutState.value is WorkoutState.Completed
+        )
+        val syncedHistories = viewModel.getAllSetHistoriesByExerciseId(testExerciseId)
+        assertEquals("Expected both synced set histories to be visible to the active session.", 2, syncedHistories.size)
+        val syncedSecondSet = syncedHistories.firstOrNull { it.setId == secondSetId }
+        assertNotNull("Expected the second set history to be loaded after external sync.", syncedSecondSet)
+        val syncedSecondSetData = syncedSecondSet?.setData as? WeightSetData
+        assertNotNull("Expected synced second-set data to be weight-based.", syncedSecondSetData)
+        assertEquals(82.5, syncedSecondSetData?.actualWeight ?: 0.0, 0.01)
+    }
 }

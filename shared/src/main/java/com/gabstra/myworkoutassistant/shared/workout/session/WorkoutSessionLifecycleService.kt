@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.sortedLatestFirst
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistories
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -60,7 +61,7 @@ internal class WorkoutSessionLifecycleService(
                 it.isDone &&
                     it.globalId == workout.globalId
             }
-            .sortedWith(compareByDescending<WorkoutHistory> { it.date }.thenByDescending { it.time })
+            .sortedLatestFirst()
 
         val latestByExerciseId = mutableMapOf<UUID, List<SetHistory>>()
         val latestByExerciseAndSet = mutableMapOf<Pair<UUID, UUID>, SetHistory>()
@@ -110,7 +111,7 @@ internal class WorkoutSessionLifecycleService(
                     it.isDone &&
                     it.id != currentWorkoutHistoryId
             }
-            .sortedWith(compareByDescending<WorkoutHistory> { it.date }.thenByDescending { it.time })
+            .sortedLatestFirst()
 
         if (workoutHistories.isEmpty()) {
             return null

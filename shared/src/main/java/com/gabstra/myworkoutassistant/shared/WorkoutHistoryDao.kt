@@ -20,7 +20,14 @@ interface WorkoutHistoryDao {
     @Query("SELECT EXISTS(SELECT * FROM workout_history WHERE workoutId = :workoutId)")
     suspend fun workoutHistoryExistsByWorkoutId(workoutId: UUID): Boolean
 
-    @Query("SELECT * FROM workout_history WHERE workoutId = :workoutId AND isDone = :isDone ORDER BY date DESC LIMIT 1")
+    @Query(
+        """
+        SELECT * FROM workout_history
+        WHERE workoutId = :workoutId AND isDone = :isDone
+        ORDER BY startTime DESC, version DESC, time DESC, date DESC, id DESC
+        LIMIT 1
+        """
+    )
     suspend fun getLatestWorkoutHistoryByWorkoutId(workoutId: UUID,isDone: Boolean = true): WorkoutHistory?
 
     @Query("SELECT * FROM workout_history WHERE hasBeenSentToHealth = :hasBeenSentToHealth")

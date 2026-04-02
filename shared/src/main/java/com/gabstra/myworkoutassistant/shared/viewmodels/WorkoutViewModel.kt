@@ -33,6 +33,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.copySetData
+import com.gabstra.myworkoutassistant.shared.latestWorkoutHistoryComparator
 import com.gabstra.myworkoutassistant.shared.coroutines.DefaultDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.coroutines.DispatcherProvider
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
@@ -504,6 +505,7 @@ open class WorkoutViewModel(
 
         val shouldAutoResumeRecord =
             recordState.hasWorkoutRecord &&
+                stateMachine == null &&
                 hadActiveSession &&
                 recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
 
@@ -515,15 +517,11 @@ open class WorkoutViewModel(
         }
 
         if (hadActiveSession && previousState !is WorkoutState.Completed) {
-            val refreshedHistory = currentWorkoutHistory?.id?.let { historyId ->
+            loadWorkoutHistory()
+            val activeHistoryId = currentWorkoutHistory?.id ?: recordState.workoutRecord?.workoutHistoryId
+            val refreshedHistory = activeHistoryId?.let { historyId ->
                 workoutHistoryDao.getWorkoutHistoryById(historyId)
-            } ?: workoutHistoryDao.getAllWorkoutHistories()
-                .asSequence()
-                .filter { history ->
-                    history.workoutId == syncedSelectedWorkout.id ||
-                        history.globalId == syncedSelectedWorkout.globalId
-                }
-                .maxByOrNull { history -> history.version.toLong() }
+            }
 
             if (refreshedHistory?.isDone == true) {
                 currentWorkoutHistory = refreshedHistory
