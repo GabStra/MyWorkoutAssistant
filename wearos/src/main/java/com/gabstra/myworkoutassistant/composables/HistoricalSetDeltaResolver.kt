@@ -10,19 +10,33 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 
-private const val HISTORICAL_SET_DELTA_TAG = "HistoricalSetDelta"
+private const val TAG = "HistoricalSetDeltaResolver"
 
 internal fun resolveHistoricalPreviousSetHistory(
     viewModel: AppViewModel,
     state: WorkoutState.Set
 ): SetHistory? {
     val historicalSetHistories = viewModel.getAllSetHistoriesByExerciseId(state.exerciseId)
+    Log.d(
+        TAG,
+        "Resolving historical delta for exercise=${state.exerciseId}, set=${state.set.id}, " +
+            "historicalCount=${historicalSetHistories.size}, historicalSetIds=${historicalSetHistories.map { it.setId }}"
+    )
     val directMatch = historicalSetHistories.firstOrNull { it.setId == state.set.id }
     if (directMatch != null) {
+        Log.d(
+            TAG,
+            "Resolved historical delta by direct setId match for exercise=${state.exerciseId}, " +
+                "set=${state.set.id}, order=${directMatch.order}, historyId=${directMatch.id}"
+        )
         return directMatch
     }
 
     if (!state.set.isHistoricalDeltaWorkSet()) {
+        Log.d(
+            TAG,
+            "Skipping historical delta resolution for non-work set exercise=${state.exerciseId}, set=${state.set.id}"
+        )
         return null
     }
 
@@ -32,7 +46,7 @@ internal fun resolveHistoricalPreviousSetHistory(
     val currentWorkSetIndex = currentWorkSetStates.indexOfFirst { it.set.id == state.set.id }
     if (currentWorkSetIndex < 0) {
         Log.w(
-            HISTORICAL_SET_DELTA_TAG,
+            TAG,
             "Unable to resolve current work-set index for exercise=${state.exerciseId}, set=${state.set.id}"
         )
         return null
@@ -45,7 +59,7 @@ internal fun resolveHistoricalPreviousSetHistory(
     val fallback = historicalWorkSets.getOrNull(currentWorkSetIndex)
 
     Log.w(
-        HISTORICAL_SET_DELTA_TAG,
+        TAG,
         "Historical delta lookup fell back to work-set order for exercise=${state.exerciseId}, " +
             "currentSet=${state.set.id}, workSetIndex=$currentWorkSetIndex, " +
             "historicalSet=${fallback?.setId}, historicalCount=${historicalWorkSets.size}"

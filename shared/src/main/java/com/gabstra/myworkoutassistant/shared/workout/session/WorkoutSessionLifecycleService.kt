@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workout.session
 
+import android.util.Log
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -26,6 +27,10 @@ internal class WorkoutSessionLifecycleService(
     private val restHistoryDao: () -> RestHistoryDao,
     private val workoutHistoryDao: () -> WorkoutHistoryDao
 ) {
+    private companion object {
+        private const val TAG = "WorkoutSessionLifecycleService"
+    }
+
     data class LoadedWorkoutHistory(
         val latestSetHistoriesByExerciseId: Map<UUID, List<SetHistory>>,
         val latestSetHistoryByExerciseAndSetId: Map<Pair<UUID, UUID>, SetHistory>
@@ -68,6 +73,13 @@ internal class WorkoutSessionLifecycleService(
         val exercises = flattenExercises(workout)
         val latestCompletedWorkoutHistory = workoutHistories.firstOrNull()
 
+        Log.d(
+            TAG,
+            "Loading workout history for workoutGlobalId=${workout.globalId}, " +
+                "latestCompletedWorkoutHistory=${latestCompletedWorkoutHistory?.id}, " +
+                "doneHistoryIds=${workoutHistories.map { it.id }}"
+        )
+
         exercises.forEach { exercise ->
             val selectedSetHistories = latestCompletedWorkoutHistory
                 ?.let { workoutHistory ->
@@ -80,6 +92,12 @@ internal class WorkoutSessionLifecycleService(
                         .distinctBy { it.setId }
                 }
                 ?: emptyList()
+
+            Log.d(
+                TAG,
+                "Selected historical sets for exercise=${exercise.id}, workoutHistory=${latestCompletedWorkoutHistory?.id}, " +
+                    "setIds=${selectedSetHistories.map { it.setId }}, orders=${selectedSetHistories.map { it.order }}"
+            )
 
             for (setHistoryFound in selectedSetHistories) {
                 latestByExerciseAndSet[exercise.id to setHistoryFound.setId] = setHistoryFound

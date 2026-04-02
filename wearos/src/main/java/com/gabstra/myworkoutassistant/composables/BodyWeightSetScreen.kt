@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -55,6 +56,8 @@ import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
+
+private const val TAG = "BodyWeightSetScreen"
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -118,6 +121,25 @@ fun BodyWeightSetScreen(
     }
     val shouldShowHistoricalDeltaBadge = remember(state.set.id) {
         (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.WorkSet
+    }
+    LaunchedEffect(
+        state.exerciseId,
+        state.set.id,
+        shouldShowHistoricalDeltaBadge,
+        historicalPreviousSetHistory?.id,
+        historicalPreviousSetData?.additionalWeight,
+        historicalPreviousSetData?.actualReps,
+        currentSetData.additionalWeight,
+        currentSetData.actualReps
+    ) {
+        Log.d(
+            TAG,
+            "BodyWeightSetScreen badge state exercise=${state.exerciseId}, set=${state.set.id}, " +
+                "showBadge=$shouldShowHistoricalDeltaBadge, historicalHistoryId=${historicalPreviousSetHistory?.id}, " +
+                "historicalSetId=${historicalPreviousSetHistory?.setId}, " +
+                "historicalAdditionalWeight=${historicalPreviousSetData?.additionalWeight}, historicalReps=${historicalPreviousSetData?.actualReps}, " +
+                "currentAdditionalWeight=${currentSetData.additionalWeight}, currentReps=${currentSetData.actualReps}"
+        )
     }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet, equipment) {
         state.isCalibrationSet && equipment != null
