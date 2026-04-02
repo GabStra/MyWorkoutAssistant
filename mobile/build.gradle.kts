@@ -142,7 +142,7 @@ dependencies {
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")
     implementation("com.patrykandpatrick.vico:compose:3.0.3")
-    implementation("com.kizitonwose.calendar:compose:2.10.0")
+    implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
     implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")

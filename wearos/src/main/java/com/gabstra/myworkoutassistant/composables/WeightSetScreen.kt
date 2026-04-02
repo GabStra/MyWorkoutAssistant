@@ -114,8 +114,9 @@ fun WeightSetScreen(
     val equipmentForDelta = remember(historicalPreviousSetHistory?.equipmentIdSnapshot, equipment) {
         historicalPreviousSetHistory?.equipmentIdSnapshot?.let { viewModel.getEquipmentById(it) } ?: equipment
     }
-    val isWorkSet = remember(state.set.id) {
-        (state.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
+    val shouldShowHistoricalDeltaBadge = remember(state.set.id, state.isCalibrationManagedWorkSet) {
+        state.isCalibrationManagedWorkSet ||
+            (state.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
     }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet) {
         state.isCalibrationSet
@@ -479,7 +480,7 @@ fun WeightSetScreen(
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
                     }
-                    if (isWorkSet && historicalPreviousSetData != null) {
+                    if (shouldShowHistoricalDeltaBadge && historicalPreviousSetData != null) {
                         HistoricalSetDeltaBadge(
                             modifier = Modifier.fillMaxWidth(),
                             previousSetData = historicalPreviousSetData,
