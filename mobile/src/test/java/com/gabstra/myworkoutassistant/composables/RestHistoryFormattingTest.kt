@@ -35,6 +35,20 @@ class RestHistoryFormattingTest {
         assertEquals("REST 01:30", formatHistoricalRestValue(history))
     }
 
+    @Test
+    fun `formatHistoricalRestValue clamps elapsed display to planned duration`() {
+        val start = LocalDateTime.of(2026, 3, 22, 10, 0, 0)
+        val end = start.plusSeconds(61)
+        val history = restHistory(
+            startTimer = 60,
+            endTimer = 0,
+            startTime = start,
+            endTime = end
+        )
+
+        assertEquals("REST 01:00 elapsed", formatHistoricalRestValue(history))
+    }
+
     private fun restHistory(
         startTimer: Int,
         endTimer: Int,

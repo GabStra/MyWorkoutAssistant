@@ -11,7 +11,10 @@ import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 fun formatRestLineForMarkdown(restHistory: RestHistory): String {
     val sd = restHistory.setData as? RestSetData ?: return "Rest: (unknown)"
     val plannedSec = sd.startTimer.coerceAtLeast(0)
-    val elapsedSec = elapsedSecondsFromHistoryBounds(restHistory.startTime, restHistory.endTime)
+    val elapsedSec = clampElapsedSecondsToPlanned(
+        elapsedSeconds = elapsedSecondsFromHistoryBounds(restHistory.startTime, restHistory.endTime),
+        plannedSeconds = plannedSec,
+    )
 
     val scopeSuffix = when (restHistory.scope) {
         RestHistoryScope.INTRA_EXERCISE -> " [intra-exercise]"

@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.workout.history.clampElapsedSecondsToPlanned
 import com.gabstra.myworkoutassistant.shared.workout.history.elapsedSecondsFromHistoryBounds
 import java.time.LocalDateTime
 
@@ -28,7 +29,10 @@ private fun formatRestIntervalForDisplay(
     endTime: LocalDateTime?,
 ): String {
     val plannedSec = restSetData.startTimer.coerceAtLeast(0)
-    val elapsedSec = elapsedSecondsFromHistoryBounds(startTime, endTime)
+    val elapsedSec = clampElapsedSecondsToPlanned(
+        elapsedSeconds = elapsedSecondsFromHistoryBounds(startTime, endTime),
+        plannedSeconds = plannedSec,
+    )
     return when {
         elapsedSec != null -> buildString {
             append("REST ${formatTime(elapsedSec)} elapsed")

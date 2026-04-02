@@ -11,3 +11,11 @@ fun elapsedSecondsFromHistoryBounds(startTime: LocalDateTime?, endTime: LocalDat
     val seconds = Duration.between(startTime, endTime).seconds
     return if (seconds >= 0L) seconds.toInt() else null
 }
+
+fun clampElapsedSecondsToPlanned(
+    elapsedSeconds: Int?,
+    plannedSeconds: Int,
+): Int? {
+    val elapsed = elapsedSeconds ?: return null
+    return elapsed.coerceIn(0, plannedSeconds.coerceAtLeast(0))
+}
