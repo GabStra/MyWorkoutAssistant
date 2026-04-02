@@ -193,7 +193,6 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             workoutComponents = listOf(exercise, exerciseB, exerciseC, exerciseD),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -238,7 +237,6 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
             workoutComponents = listOf(calibrationExercise),
             order = 1,
             enabled = true,
-            usePolarDevice = false,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -251,7 +249,6 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
         return WorkoutStore(
             workouts = listOf(workout, calibrationWorkout),
             equipments = emptyList(),
-            polarDeviceId = null,
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0

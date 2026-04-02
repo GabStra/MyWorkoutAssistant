@@ -64,7 +64,6 @@ object AlarmTriggerPhoneWorkoutStoreFixture {
             workoutComponents = listOf(exercise),
             order = 0,
             enabled = true,
-            usePolarDevice = false,
             creationDate = LocalDate.now(),
             previousVersionId = null,
             nextVersionId = null,
@@ -77,7 +76,6 @@ object AlarmTriggerPhoneWorkoutStoreFixture {
         return WorkoutStore(
             workouts = listOf(workout),
             equipments = emptyList(),
-            polarDeviceId = null,
             birthDateYear = 1990,
             weightKg = 75.0,
             progressionPercentageAmount = 0.0

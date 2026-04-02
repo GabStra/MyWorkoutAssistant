@@ -143,6 +143,47 @@ object WearWorkoutStateMutationHelper {
         return false
     }
 
+    fun completeCurrentAutoRegulationSet(device: UiDevice, timeoutMs: Long = 15_000): Boolean {
+        val currentSetId = getCurrentSetId() ?: return false
+        var invoked = false
+
+        withResumedViewModel { viewModel ->
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@withResumedViewModel
+            if (!currentState.isAutoRegulationWorkSet) return@withResumedViewModel
+            viewModel.storeSetData()
+            viewModel.completeAutoRegulationSet()
+            invoked = true
+        }
+
+        if (!invoked) {
+            return false
+        }
+
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            when (val snapshot = readCurrentStateSnapshot()) {
+                CurrentStateSnapshot.Advanced -> {
+                    device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                    return true
+                }
+                is CurrentStateSnapshot.SetState -> {
+                    if (snapshot.setId != currentSetId) {
+                        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                        return true
+                    }
+                }
+                is CurrentStateSnapshot.RestState -> {
+                    device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                    return true
+                }
+                CurrentStateSnapshot.Unavailable -> Unit
+            }
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+
+        return false
+    }
+
     fun skipCurrentRest(device: UiDevice, timeoutMs: Long = 5_000): Boolean {
         val currentRestId = when (val snapshot = readCurrentStateSnapshot()) {
             is CurrentStateSnapshot.RestState -> snapshot.setId
@@ -201,6 +242,24 @@ object WearWorkoutStateMutationHelper {
             CurrentStateSnapshot.Advanced,
             CurrentStateSnapshot.Unavailable -> null
         }
+    }
+
+    fun getHistoricalWeightSetData(exerciseId: UUID, setId: UUID): WeightSetData? {
+        var historicalSetData: WeightSetData? = null
+        withResumedViewModel { viewModel ->
+            historicalSetData = viewModel.getAllSetHistoriesByExerciseId(exerciseId)
+                .firstOrNull { it.setId == setId }
+                ?.setData as? WeightSetData
+        }
+        return historicalSetData
+    }
+
+    fun getHistoricalSetIds(exerciseId: UUID): List<UUID> {
+        var setIds: List<UUID> = emptyList()
+        withResumedViewModel { viewModel ->
+            setIds = viewModel.getAllSetHistoriesByExerciseId(exerciseId).map { it.setId }
+        }
+        return setIds
     }
 
     fun isWorkoutCompleted(): Boolean {
