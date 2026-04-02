@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -59,6 +62,7 @@ import com.gabstra.myworkoutassistant.screens.setFieldValue
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Orange
+import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
@@ -342,6 +346,88 @@ private fun buildSupersetDisplayName(exercises: List<Exercise>): AnnotatedString
     }
 }
 
+private fun shouldUseWeightHeader(
+    viewModel: AppViewModel,
+    pageItem: PageExercisesItem,
+): Boolean {
+    if (pageItem is PageExercisesItem.RestPage) return false
+
+    val supersetId = (pageItem as? PageExercisesItem.SupersetPage)?.supersetId
+        ?: viewModel.supersetIdByExerciseId[pageItem.representativeExercise.id]
+
+    if (supersetId == null) {
+        return pageItem.representativeExercise.exerciseType == ExerciseType.WEIGHT ||
+            pageItem.representativeExercise.exerciseType == ExerciseType.BODY_WEIGHT
+    }
+
+    return buildSupersetSetDisplayRows(viewModel = viewModel, supersetId = supersetId).any { row ->
+        (row as? ExerciseSetDisplayRow.SetRow)?.state?.currentSetData?.let { setData ->
+            setData is WeightSetData || setData is BodyWeightSetData
+        } ?: false
+    }
+}
+
+@Composable
+private fun ExercisePageFixedHeader(
+    modifier: Modifier = Modifier,
+    pageItem: PageExercisesItem,
+    displayCounter: String?,
+    useWeightHeader: Boolean,
+) {
+    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            when (pageItem) {
+                is PageExercisesItem.SupersetPage -> ExerciseNameText(
+                    text = buildSupersetDisplayName(pageItem.exercises),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(25.dp),
+                    style = titleStyle,
+                    textAlign = TextAlign.Center
+                )
+                is PageExercisesItem.ExercisePage -> ExerciseNameText(
+                    text = AnnotatedString(pageItem.exercise.name),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(25.dp),
+                    style = titleStyle,
+                    textAlign = TextAlign.Center
+                )
+                is PageExercisesItem.RestPage -> Unit
+            }
+        }
+
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            when (pageItem) {
+                is PageExercisesItem.SupersetPage -> {
+                    SupersetMetadataStrip(containerLabel = displayCounter)
+                }
+                is PageExercisesItem.ExercisePage -> {
+                    ExerciseMetadataStrip(
+                        exerciseLabel = displayCounter,
+                        supersetExerciseIndex = null,
+                        supersetExerciseTotal = null,
+                        sideIndicator = null,
+                        currentSideIndex = null
+                    )
+                }
+                is PageExercisesItem.RestPage -> Unit
+            }
+        }
+
+        ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
+    }
+}
+
 private fun TransformingLazyColumnScope.RestPageContent(
     restState: WorkoutState.Rest,
     previousDisplayName: AnnotatedString,
@@ -497,7 +583,6 @@ fun PageExercises(
 
     val selectedPageItem = pageItems.getOrNull(selectedPageIndex.value)
     val liveWorkoutState by viewModel.workoutState.collectAsState()
-    val titleStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
     val pageCount = pageItems.size
     val displayCounter = remember(pageItems, selectedPageIndex.value) {
         resolvePageExercisesDisplayCounter(
@@ -522,7 +607,7 @@ fun PageExercises(
     LaunchedEffect(selectedPageIndex.value, selectedRestPageId) {
         transformingLazyColumnState.scrollToItem(0)
     }
-    val firstSetListItemIndex = 2
+    val firstSetListItemIndex = 0
     val selectedProgressState = when {
         selectedPageIndex.value < currentPageIndex.value -> ProgressState.PAST
         selectedPageIndex.value > currentPageIndex.value -> ProgressState.FUTURE
@@ -567,7 +652,20 @@ fun PageExercises(
         }
     }
 
-    val customAlignment = if (selectedPageItem is PageExercisesItem.RestPage){ Alignment.CenterVertically} else { Alignment.Top }
+    val useWeightHeader = remember(selectedPageItem, viewModel.allWorkoutStates.size) {
+        selectedPageItem?.let { pageItem ->
+            shouldUseWeightHeader(viewModel = viewModel, pageItem = pageItem)
+        } ?: false
+    }
+    var headerOverlayHeightPx by remember { mutableStateOf(0) }
+    val headerOverlayHeightDp = with(LocalDensity.current) {
+        if (headerOverlayHeightPx == 0) 60.dp else headerOverlayHeightPx.toDp()
+    }
+    val customAlignment = if (selectedPageItem is PageExercisesItem.RestPage) {
+        Alignment.CenterVertically
+    } else {
+        Alignment.Top
+    }
 
     Box(
         modifier = Modifier
@@ -586,108 +684,71 @@ fun PageExercises(
                     )
                 )
             }
-        ) { contentPadding ->
-            TransformingLazyColumn(
-                modifier = Modifier.padding(horizontal = 20.dp),
-                state = transformingLazyColumnState,
-                userScrollEnabled = !isAutoScrolling,
-                verticalArrangement = Arrangement.spacedBy(5.dp, customAlignment),
-                contentPadding = WorkoutPagerPageSafeAreaPadding
-                //contentPadding = contentPadding,
-            ) {
-                if (selectedPageItem !is PageExercisesItem.RestPage) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .transformedHeight(this, transformationSpec)
-                                .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
-                        ) {
-                            when (selectedPageItem) {
-                                is PageExercisesItem.SupersetPage -> ExerciseNameText(
-                                    text = buildSupersetDisplayName(selectedPageItem.exercises),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(25.dp),
-                                    style = titleStyle,
-                                    textAlign = TextAlign.Center
-                                )
-                                is PageExercisesItem.ExercisePage -> ExerciseNameText(
-                                    text = AnnotatedString(selectedPageItem.exercise.name),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(25.dp),
-                                    style = titleStyle,
-                                    textAlign = TextAlign.Center
-                                )
-                                else -> Unit
-                            }
-                        }
-                    }
+        ) { _ ->
+            if (selectedPageItem is PageExercisesItem.RestPage) {
+                TransformingLazyColumn(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    state = transformingLazyColumnState,
+                    userScrollEnabled = !isAutoScrolling,
+                    verticalArrangement = Arrangement.spacedBy(5.dp, customAlignment),
+                    contentPadding = WorkoutPagerPageSafeAreaPadding
+                ) {
+                    RestPageContent(
+                        restState = selectedPageItem.restState,
+                        previousDisplayName = selectedPageItem.previousDisplayName,
+                        nextDisplayName = selectedPageItem.nextDisplayName,
+                        progressState = selectedProgressState,
+                        transformationSpec = transformationSpec
+                    )
                 }
-
-                item {
-                    Box(
+            } else if (selectedPageItem != null) {
+                val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
+                if (currentSet != null) {
+                    TransformingLazyColumn(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .transformedHeight(this, transformationSpec)
-                            .graphicsLayer { with(transformationSpec) { applyContainerTransformation(scrollProgress) } },
-                        contentAlignment = Alignment.Center
+                            .fillMaxSize()
+                            .padding(horizontal = 20.dp),
+                        state = transformingLazyColumnState,
+                        userScrollEnabled = !isAutoScrolling,
+                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
+                        contentPadding = WorkoutPagerPageSafeAreaPadding
                     ) {
-                        Box(
-                            modifier = Modifier.graphicsLayer {
-                                with(transformationSpec) { applyContentTransformation(scrollProgress) }
-                            }
-                        ) {
-                            when (selectedPageItem) {
-                                is PageExercisesItem.SupersetPage -> {
-                                    SupersetMetadataStrip(containerLabel = displayCounter)
-                                }
-                                is PageExercisesItem.ExercisePage -> {
-                                    ExerciseMetadataStrip(
-                                        exerciseLabel = displayCounter,
-                                        supersetExerciseIndex = null,
-                                        supersetExerciseTotal = null,
-                                        sideIndicator = null,
-                                        currentSideIndex = null
-                                    )
-                                }
-                                else -> Unit
-                            }
-                        }
-                    }
-                }
-
-                if (selectedPageItem != null) {
-                    val progressState = selectedProgressState
-                    when (selectedPageItem) {
-                        is PageExercisesItem.RestPage -> {
-                            RestPageContent(
-                                restState = selectedPageItem.restState,
-                                previousDisplayName = selectedPageItem.previousDisplayName,
-                                nextDisplayName = selectedPageItem.nextDisplayName,
-                                progressState = progressState,
-                                transformationSpec = transformationSpec
+                        item {
+                            Spacer(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(headerOverlayHeightDp)
                             )
                         }
-                        else -> {
-                            val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
-                            if (currentSet != null) {
-                                ExerciseSetsViewer(
-                                    viewModel = viewModel,
-                                    hapticsViewModel = hapticsViewModel,
-                                    exercise = selectedPageItem.representativeExercise,
-                                    currentSet = currentSet,
-                                    transformationSpec = transformationSpec,
-                                    columnState = transformingLazyColumnState,
-                                    firstSetListItemIndex = firstSetListItemIndex,
-                                    stateToMatch = selectedSetStateToMatch,
-                                    progressState = progressState,
-                                )
-                            }
-                        }
+                        ExerciseSetsViewer(
+                            viewModel = viewModel,
+                            hapticsViewModel = hapticsViewModel,
+                            exercise = selectedPageItem.representativeExercise,
+                            currentSet = currentSet,
+                            transformationSpec = transformationSpec,
+                            stateToMatch = selectedSetStateToMatch,
+                            progressState = selectedProgressState,
+                        )
                     }
                 }
+            }
+        }
+
+        if (selectedPageItem != null && selectedPageItem !is PageExercisesItem.RestPage) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
+                    .padding(horizontal = 20.dp)
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                ExercisePageFixedHeader(
+                    modifier = Modifier.onSizeChanged { headerOverlayHeightPx = it.height },
+                    pageItem = selectedPageItem,
+                    displayCounter = displayCounter,
+                    useWeightHeader = useWeightHeader
+                )
             }
         }
 

@@ -1,12 +1,8 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,7 +23,6 @@ import androidx.wear.compose.material3.LocalTextConfiguration
 import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
-import kotlinx.coroutines.delay
 import kotlin.math.min
 
 @Composable
@@ -41,7 +36,6 @@ fun ScalableText(
     overflow: TextOverflow = LocalTextConfiguration.current.overflow,
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
-    fadeInMillis: Int = 250, // Slower fade for a premium feel
     scaleDownOnly: Boolean = true
 ) {
     ScalableText(
@@ -54,7 +48,6 @@ fun ScalableText(
         overflow = overflow,
         minTextSize = minTextSize,
         contentAlignment = contentAlignment,
-        fadeInMillis = fadeInMillis,
         scaleDownOnly = scaleDownOnly
     )
 }
@@ -70,7 +63,6 @@ fun ScalableText(
     overflow: TextOverflow = LocalTextConfiguration.current.overflow,
     minTextSize: TextUnit = 12.sp,
     contentAlignment: Alignment = Alignment.Center,
-    fadeInMillis: Int = 250, // Slower fade for a premium feel
     scaleDownOnly: Boolean = true
 ) {
     val isInspectionMode = LocalInspectionMode.current
@@ -140,45 +132,22 @@ fun ScalableText(
             with(density) { result.size.width.toDp() }
         }
 
-        // 3. Handle the Initial Fade-In
-        val alphaAnim = remember { Animatable(0f) }
-
-        // Trigger ONLY on initial composition (Unit key), not when text changes
-        LaunchedEffect(Unit) {
-            if (fadeInMillis > 0) {
-                alphaAnim.snapTo(0f)
-                // Small delay ensures layout is stable before making it visible
-                delay(50)
-                alphaAnim.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(
-                        durationMillis = fadeInMillis,
-                        easing = LinearOutSlowInEasing
-                    )
-                )
-            } else {
-                alphaAnim.snapTo(1f)
-            }
-        }
-
-        val baseModifier = if(isInspectionMode){
+        val baseModifier = if (isInspectionMode) {
             textModifier
-        }else {
+        } else {
             textModifier.graphicsLayer {
-                this.alpha = if (isLayoutReady) alphaAnim.value else 0f
+                this.alpha = if (isLayoutReady) 1f else 0f
             }
         }
 
         Text(
             text = text,
-            // Use the animated size
             style = baseStyle.copy(fontSize = fittedSize),
             color = color,
             maxLines = 1,
             textAlign = textAlign,
             overflow = overflow,
-            // Use graphicsLayer for performant alpha changes
-            modifier =baseModifier.then(Modifier.width(fittedTextWidth))
+            modifier = baseModifier.then(Modifier.width(fittedTextWidth))
         )
     }
 }

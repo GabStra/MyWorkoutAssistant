@@ -77,10 +77,9 @@ fun WeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as WeightSetData)
     }
-    val historicalPreviousSetHistory = remember(state.exerciseId, state.set.id) {
+    val historicalPreviousSetHistory =
         viewModel.getAllSetHistoriesByExerciseId(state.exerciseId)
             .firstOrNull { it.setId == state.set.id }
-    }
     val historicalPreviousSetData = historicalPreviousSetHistory?.setData as? WeightSetData
 
     val plateauReason = remember(state.exerciseId) {
@@ -114,9 +113,8 @@ fun WeightSetScreen(
     val equipmentForDelta = remember(historicalPreviousSetHistory?.equipmentIdSnapshot, equipment) {
         historicalPreviousSetHistory?.equipmentIdSnapshot?.let { viewModel.getEquipmentById(it) } ?: equipment
     }
-    val shouldShowHistoricalDeltaBadge = remember(state.set.id, state.isCalibrationManagedWorkSet) {
-        state.isCalibrationManagedWorkSet ||
-            (state.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
+    val shouldShowHistoricalDeltaBadge = remember(state.set.id) {
+        (state.set as? WeightSet)?.subCategory == SetSubCategory.WorkSet
     }
     val shouldLockCalibrationEdits = remember(state.isCalibrationSet) {
         state.isCalibrationSet

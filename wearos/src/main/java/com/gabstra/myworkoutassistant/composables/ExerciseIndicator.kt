@@ -252,6 +252,10 @@ fun ExerciseIndicator(
         flatExerciseOrder.withIndex().associate { (i, eid) -> eid to i }
     }
     val exerciseCount = flatExerciseOrder.size
+    if (exerciseCount == 0) {
+        Box(modifier = modifier)
+        return
+    }
 
     // Focus (by selected or current)
     val focusId = selectedExerciseId?.takeIf { flatExerciseOrder.contains(it) } ?: currentExerciseId

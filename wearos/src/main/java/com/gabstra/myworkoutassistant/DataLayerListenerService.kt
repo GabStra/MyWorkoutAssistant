@@ -22,6 +22,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
+import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.sync.WearBackupSyncEventPolicy
@@ -1283,14 +1284,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                             }
                                                         }
 
-                                                    val insertWorkoutRecordsJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                workoutRecordDao.deleteAll()
-                                                                workoutRecordDao.insertAll(*appBackup.WorkoutRecords.toTypedArray())
-                                                            }
-                                                        }
-
                                                     val insertExerciseSessionProgressionsJob =
                                                         scope.launch(start = CoroutineStart.LAZY) {
                                                             withContext(NonCancellable) {
@@ -1310,17 +1303,17 @@ class DataLayerListenerService : WearableListenerService() {
                                                         insertRestHistoriesJob,
                                                         insertExerciseInfosJob,
                                                         insertWorkoutSchedulesJob,
-                                                        insertWorkoutRecordsJob,
                                                         insertExerciseSessionProgressionsJob
                                                     )
 
                                                     // Clean up workout histories that are no longer needed
-                                                        cleanupUnusedWorkoutHistories(
-                                                            appBackup.WorkoutStore.workouts,
-                                                            appBackup.WorkoutHistories.map { it.id }
-                                                                .toSet()
-                                                        )
-                                                    }
+                                                    cleanupUnusedWorkoutHistories(
+                                                        appBackup.WorkoutStore.workouts,
+                                                        appBackup.WorkoutHistories.map { it.id }.toSet()
+                                                    )
+                                                    mergeIncomingWorkoutRecords(appBackup)
+                                                    workoutRecordDao.deleteOrphanedRecords()
+                                                }
 
                                                 // Re-register alarms here so sync completes reliably when MainActivity
                                                 // is not running (dynamic WearDataLayerReceiver would not receive APP_BACKUP_END).
@@ -1672,6 +1665,23 @@ class DataLayerListenerService : WearableListenerService() {
         } catch (e: Exception) {
             Log.e("DataLayerListenerService", "Error cleaning up unused workout histories", e)
             // Don't throw - cleanup failure shouldn't break the sync
+        }
+    }
+
+    private suspend fun mergeIncomingWorkoutRecords(appBackup: com.gabstra.myworkoutassistant.shared.AppBackup) {
+        val existingHistoriesById = workoutHistoryDao.getAllWorkoutHistories().associateBy { it.id }
+        val existingRecords = workoutRecordDao.getAll()
+        val incomingHistoriesById = appBackup.WorkoutHistories.associateBy { it.id }
+        val mergedRecords = mergeWorkoutRecordsForBackup(
+            existingRecords = existingRecords,
+            existingHistoriesById = existingHistoriesById,
+            incomingRecords = appBackup.WorkoutRecords,
+            incomingHistoriesById = incomingHistoriesById
+        )
+
+        workoutRecordDao.deleteAll()
+        if (mergedRecords.isNotEmpty()) {
+            workoutRecordDao.insertAll(*mergedRecords.toTypedArray())
         }
     }
 

@@ -10,6 +10,9 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 internal class WearDataLayerReceiver(
     private val navController: NavController,
@@ -57,8 +60,10 @@ internal class WearDataLayerReceiver(
         if (workoutStoreJson == null && appBackupEndJson == null) {
             return
         }
-        appViewModel.resetWorkoutStore()
-        appViewModel.updateWorkoutStore(workoutStoreRepository.getWorkoutStore())
+        val refreshedWorkoutStore = workoutStoreRepository.getWorkoutStore()
+        CoroutineScope(Dispatchers.IO).launch {
+            appViewModel.applyExternalSyncWorkoutStore(refreshedWorkoutStore)
+        }
 /*        if (workoutStoreJson != null) {
             Toast.makeText(activity, "Workouts updated on your watch.", Toast.LENGTH_SHORT).show()
         }*/
