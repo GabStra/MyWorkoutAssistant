@@ -64,6 +64,7 @@ import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSetStateFac
 import com.gabstra.myworkoutassistant.shared.workout.assembly.WorkoutSupersetAssemblyService
 import com.gabstra.myworkoutassistant.shared.workout.plates.PlateRecalculationDebouncer
 import com.gabstra.myworkoutassistant.shared.workout.model.SessionOwnerDevice
+import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workout.model.ownerDeviceOrDefault
 import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
@@ -1045,12 +1046,17 @@ open class WorkoutViewModel(
         }
     }
 
-    fun upsertWorkoutRecord(exerciseId : UUID,setIndex: UInt) {
+    fun upsertWorkoutRecord(
+        exerciseId: UUID,
+        setIndex: UInt,
+        lastKnownSessionStateOverride: String? = null
+    ) {
         val selectedWorkoutIdSnapshot = selectedWorkout.value.id
         val workoutHistoryIdSnapshot = currentWorkoutHistory?.id
         val existingRecordSnapshot = _workoutRecord
         val ownerDevice = activeSessionOwnerDevice()
-        val lastKnownSessionState = workoutState.value::class.simpleName
+        val lastKnownSessionState =
+            lastKnownSessionStateOverride ?: workoutState.value::class.simpleName
         launchIO {
             var updatedRecord: WorkoutRecord? = null
             workoutRecordMutex.withLock {
@@ -1076,7 +1082,13 @@ open class WorkoutViewModel(
                         startedAt = currentWorkoutHistory?.startTime,
                         sessionStatus = when (ownerDevice) {
                             SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
-                            SessionOwnerDevice.WEAR -> WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
+                            SessionOwnerDevice.WEAR -> {
+                                if (lastKnownSessionState == WATCH_SESSION_STATE_RETURNED_HOME) {
+                                    WorkoutSessionStatus.STOPPED_ON_WEAR
+                                } else {
+                                    WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
+                                }
+                            }
                         },
                         lastActiveSyncAt = updatedRecord?.lastActiveSyncAt,
                     )

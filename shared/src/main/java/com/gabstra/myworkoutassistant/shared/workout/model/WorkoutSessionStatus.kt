@@ -6,6 +6,7 @@ import java.time.Duration
 import java.time.LocalDateTime
 
 const val ACTIVE_SESSION_STALE_TIMEOUT_MS = 90_000L
+const val WATCH_SESSION_STATE_RETURNED_HOME = "RETURNED_HOME"
 
 enum class SessionOwnerDevice {
     PHONE,
@@ -16,6 +17,7 @@ enum class WorkoutSessionStatus {
     COMPLETED,
     IN_PROGRESS_ON_WEAR,
     IN_PROGRESS_ON_PHONE,
+    STOPPED_ON_WEAR,
     STALE_ON_WEAR,
 }
 
@@ -31,6 +33,11 @@ fun isWorkoutRecordFresh(
     val lastActiveSyncAt = workoutRecord.lastActiveSyncAt ?: return false
     val elapsedMs = Duration.between(lastActiveSyncAt, now).toMillis()
     return elapsedMs <= staleTimeoutMs
+}
+
+fun isWatchWorkoutRecordStopped(workoutRecord: WorkoutRecord): Boolean {
+    return workoutRecord.ownerDeviceOrDefault() == SessionOwnerDevice.WEAR &&
+        workoutRecord.lastKnownSessionState == WATCH_SESSION_STATE_RETURNED_HOME
 }
 
 fun resolveWorkoutSessionStatus(
@@ -52,7 +59,9 @@ fun resolveWorkoutSessionStatus(
     return when (record.ownerDeviceOrDefault()) {
         SessionOwnerDevice.PHONE -> WorkoutSessionStatus.IN_PROGRESS_ON_PHONE
         SessionOwnerDevice.WEAR -> {
-            if (isWorkoutRecordFresh(record, now, staleTimeoutMs)) {
+            if (isWatchWorkoutRecordStopped(record)) {
+                WorkoutSessionStatus.STOPPED_ON_WEAR
+            } else if (isWorkoutRecordFresh(record, now, staleTimeoutMs)) {
                 WorkoutSessionStatus.IN_PROGRESS_ON_WEAR
             } else {
                 WorkoutSessionStatus.STALE_ON_WEAR
@@ -64,6 +73,7 @@ fun resolveWorkoutSessionStatus(
 /** User-visible strings for compact session labels (Status tab, history headers). */
 object WorkoutSessionDisplayLabels {
     const val IN_PROGRESS = "In progress"
+    const val STOPPED_ON_WATCH = "Stopped"
     /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
     const val STALE_ON_WATCH = "Stale"
 }
@@ -77,5 +87,6 @@ fun workoutSessionDisplayLabel(status: WorkoutSessionStatus?): String? = when (s
     null, WorkoutSessionStatus.COMPLETED -> null
     WorkoutSessionStatus.IN_PROGRESS_ON_PHONE, WorkoutSessionStatus.IN_PROGRESS_ON_WEAR ->
         WorkoutSessionDisplayLabels.IN_PROGRESS
+    WorkoutSessionStatus.STOPPED_ON_WEAR -> WorkoutSessionDisplayLabels.STOPPED_ON_WATCH
     WorkoutSessionStatus.STALE_ON_WEAR -> WorkoutSessionDisplayLabels.STALE_ON_WATCH
 }

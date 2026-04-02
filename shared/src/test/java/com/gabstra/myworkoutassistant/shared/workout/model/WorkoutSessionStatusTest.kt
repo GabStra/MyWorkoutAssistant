@@ -77,6 +77,21 @@ class WorkoutSessionStatusTest {
     }
 
     @Test
+    fun `returned home watch record resolves to stopped on wear`() {
+        val history = workoutHistory(isDone = false)
+        val record = workoutRecord(
+            history.id,
+            SessionOwnerDevice.WEAR,
+            now.minusMinutes(5)
+        ).copy(lastKnownSessionState = WATCH_SESSION_STATE_RETURNED_HOME)
+
+        assertEquals(
+            WorkoutSessionStatus.STOPPED_ON_WEAR,
+            resolveWorkoutSessionStatus(history, record, now = now)
+        )
+    }
+
+    @Test
     fun `missing active record throws`() {
         val history = workoutHistory(isDone = false)
 
