@@ -371,6 +371,11 @@ function Ensure-PhonePackageState([string]$phoneSerial) {
     & adb -s $phoneSerial uninstall com.gabstra.myworkoutassistant | Out-Null
 }
 
+function Reset-WearAppState([string]$watchSerial, [string]$appPackage) {
+    Write-Host "Clearing Wear app data for deterministic cross-device state..." -ForegroundColor Cyan
+    & adb -s $watchSerial shell pm clear $appPackage | Out-Null
+}
+
 function Invoke-WearRunnerClass {
     param(
         [string]$className,
@@ -450,6 +455,7 @@ try {
     $timings["mobileBuildInstallSeconds"] = [math]::Round($mobileInstallPhase.Elapsed.TotalSeconds, 3)
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+    Reset-WearAppState -watchSerial $watchSerial -appPackage $AppPackage
 
     $mobilePrepPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "Preparing phone app state (seed workout store + dismiss startup dialogs)..." -ForegroundColor Cyan
