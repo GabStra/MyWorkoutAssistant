@@ -1456,6 +1456,66 @@ open class WorkoutViewModel(
         return latestSetHistoriesByExerciseId[exerciseId] ?: emptyList()
     }
 
+    fun getProgressionComparisonBaselineSets(exerciseId: UUID): List<SimpleSet>? {
+        val baselineExercise =
+            (lastSessionWorkout?.workoutComponents?.filterIsInstance<Exercise>().orEmpty() +
+                lastSessionWorkout?.workoutComponents
+                    ?.filterIsInstance<Superset>()
+                    .orEmpty()
+                    .flatMap { it.exercises })
+                .firstOrNull { it.id == exerciseId }
+                ?: return null
+
+        return baselineExercise.sets.mapNotNull { set ->
+            when (set) {
+                is WeightSet -> {
+                    if (set.subCategory != SetSubCategory.WorkSet) return@mapNotNull null
+                    SimpleSet(set.weight, set.reps)
+                }
+                is BodyWeightSet -> {
+                    if (set.subCategory != SetSubCategory.WorkSet) return@mapNotNull null
+                    val relativeBodyWeight = bodyWeight.value * ((baselineExercise.bodyWeightPercentage ?: 0.0) / 100)
+                    SimpleSet(set.getWeight(relativeBodyWeight), set.reps)
+                }
+                else -> null
+            }
+        }
+    }
+
+    private fun getProgressionComparisonBaselineSet(
+        exerciseId: UUID,
+        setId: UUID
+    ): Set? {
+        return (lastSessionWorkout?.workoutComponents?.filterIsInstance<Exercise>().orEmpty() +
+            lastSessionWorkout?.workoutComponents
+                ?.filterIsInstance<Superset>()
+                .orEmpty()
+                .flatMap { it.exercises })
+            .firstOrNull { it.id == exerciseId }
+            ?.sets
+            ?.firstOrNull { it.id == setId }
+    }
+
+    private fun buildProgressionComparisonBaselineSetData(
+        exercise: Exercise,
+        set: Set
+    ): SetData {
+        var baselineSetData = initializeSetData(set)
+        baselineSetData = when (baselineSetData) {
+            is BodyWeightSetData -> {
+                val percentage = exercise.bodyWeightPercentage ?: 0.0
+                baselineSetData.copy(
+                    relativeBodyWeightInKg = bodyWeight.value * (percentage / 100),
+                    bodyWeightPercentageSnapshot = percentage,
+                    volume = baselineSetData.calculateVolume()
+                )
+            }
+            is WeightSetData -> baselineSetData.copy(volume = baselineSetData.calculateVolume())
+            else -> baselineSetData
+        }
+        return baselineSetData
+    }
+
     /**
      * Gets the actual executed sets from the last completed workout for a given exercise.
      * Returns null if no completed workout exists.
@@ -2011,7 +2071,10 @@ open class WorkoutViewModel(
                 selectedWorkout = selectedWorkout.value,
                 currentWorkoutHistory = currentWorkoutHistory,
                 heartBeatRecords = heartBeatHistory.toList(),
-                progressionByExerciseId = exerciseProgressionByExerciseId.toMap()
+                progressionByExerciseId = exerciseProgressionByExerciseId.toMap(),
+                comparisonBaselineByExerciseId = exercisesById.keys.associateWith { exerciseId ->
+                    getProgressionComparisonBaselineSets(exerciseId).orEmpty()
+                }
             ) ?: return@launchIO
             val workoutHistoryForThisPush = workoutPersistenceCoordinator.pushWorkoutData(
                 snapshot = snapshot,
@@ -2339,13 +2402,23 @@ open class WorkoutViewModel(
                 }
 
                 var previousSetData = copySetData(currentSetData)
+                val baselineSet = getProgressionComparisonBaselineSet(exercise.id, set.id)
+                if (baselineSet != null) {
+                    previousSetData = buildProgressionComparisonBaselineSetData(exercise, baselineSet)
+                }
 
                 val historySet = latestSetHistoryMap[SetKey(exercise.id, set.id)]
 
                 if (historySet != null) {
                     val historySetData = historySet.setData
-                    if (isSetDataValid(set, historySetData) && exerciseProgression == null) {
+                    if (
+                        set.shouldReapplyHistoryToSet &&
+                        isSetDataValid(set, historySetData) &&
+                        exerciseProgression == null
+                    ) {
                         currentSetData = resetTimeSetProgressForNewSession(copySetData(historySetData))
+                        previousSetData = historySet.setData
+                    } else if (baselineSet == null && isSetDataValid(set, historySetData)) {
                         previousSetData = historySet.setData
                     }
                 }

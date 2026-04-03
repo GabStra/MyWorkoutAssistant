@@ -84,6 +84,7 @@ internal class WorkoutPersistenceCoordinator(
         val executedSetsHistory: List<SetHistory>,
         val executedRestHistories: List<RestHistory>,
         val progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
+        val comparisonBaselineByExerciseId: Map<UUID, List<SimpleSet>>,
         val capturedAt: LocalDateTime
     )
 
@@ -258,7 +259,8 @@ internal class WorkoutPersistenceCoordinator(
         selectedWorkout: Workout,
         currentWorkoutHistory: WorkoutHistory?,
         heartBeatRecords: List<Int>,
-        progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>
+        progressionByExerciseId: Map<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>,
+        comparisonBaselineByExerciseId: Map<UUID, List<SimpleSet>>
     ): PushWorkoutDataSnapshot? {
         val startTime = startWorkoutTime ?: return null
         val executedSetsSnapshot = cloneSetHistories(executedSetStore.executedSets.value)
@@ -271,6 +273,7 @@ internal class WorkoutPersistenceCoordinator(
             executedSetsHistory = executedSetsSnapshot,
             executedRestHistories = executedRestSnapshot,
             progressionByExerciseId = progressionByExerciseId,
+            comparisonBaselineByExerciseId = comparisonBaselineByExerciseId,
             capturedAt = LocalDateTime.now()
         )
     }
@@ -282,6 +285,7 @@ internal class WorkoutPersistenceCoordinator(
     ): WorkoutHistory {
         val selectedWorkoutSnapshot = snapshot.selectedWorkout
         val progressionByExerciseIdSnapshot = snapshot.progressionByExerciseId
+        val comparisonBaselineByExerciseIdSnapshot = snapshot.comparisonBaselineByExerciseId
         val duration = Duration.between(snapshot.startWorkoutTime, snapshot.capturedAt)
         val workoutHistoryDaoRef = workoutHistoryDao()
         val setHistoryDaoRef = setHistoryDao()
@@ -412,28 +416,8 @@ internal class WorkoutPersistenceCoordinator(
                     Ternary.EQUAL
                 }
 
-                val lastSessionFromHistory = getLastSessionFromHistory(
-                    exerciseId,
-                    selectedWorkoutSnapshot.globalId,
-                    workoutHistoryForThisPush.id
-                )
-                val previousSessionSets = if (lastSessionFromHistory.isNotEmpty()) {
-                    lastSessionFromHistory.mapNotNull { setHistory ->
-                        when (val setData = setHistory.setData) {
-                            is WeightSetData -> {
-                                if (isNonWorkSetData(setData)) return@mapNotNull null
-                                SimpleSet(setData.getWeight(), setData.actualReps)
-                            }
-                            is BodyWeightSetData -> {
-                                if (isNonWorkSetData(setData)) return@mapNotNull null
-                                SimpleSet(setData.getWeight(), setData.actualReps)
-                            }
-                            else -> null
-                        }
-                    }
-                } else {
-                    emptyList()
-                }
+                val previousSessionSets =
+                    comparisonBaselineByExerciseIdSnapshot[exerciseId].orEmpty()
 
                 val vsPrevious = if (previousSessionSets.isNotEmpty()) {
                     compareSetListsUnordered(executedSets, previousSessionSets)

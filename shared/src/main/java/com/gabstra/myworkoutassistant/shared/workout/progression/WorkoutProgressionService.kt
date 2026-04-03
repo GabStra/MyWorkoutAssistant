@@ -141,10 +141,20 @@ class WorkoutProgressionService(
             val newSet = when (exercise.exerciseType) {
                 ExerciseType.BODY_WEIGHT -> {
                     val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
-                    BodyWeightSet(setId, setInfo.reps, setInfo.weight - relativeBodyWeight)
+                    BodyWeightSet(
+                        id = setId,
+                        reps = setInfo.reps,
+                        additionalWeight = setInfo.weight - relativeBodyWeight,
+                        shouldReapplyHistoryToSet = false
+                    )
                 }
 
-                ExerciseType.WEIGHT -> WeightSet(setId, setInfo.reps, setInfo.weight)
+                ExerciseType.WEIGHT -> WeightSet(
+                    id = setId,
+                    reps = setInfo.reps,
+                    weight = setInfo.weight,
+                    shouldReapplyHistoryToSet = false
+                )
                 else -> throw IllegalArgumentException("Unknown exercise type")
             }
             newSets.add(newSet)

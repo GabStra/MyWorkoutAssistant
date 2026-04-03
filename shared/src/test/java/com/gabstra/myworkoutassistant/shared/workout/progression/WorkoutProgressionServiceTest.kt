@@ -23,6 +23,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutManager
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -267,6 +268,48 @@ class WorkoutProgressionServiceTest {
         assertEquals(3, roundTrip.size)
         assertTrue(roundTrip[1] is RestSet)
         assertEquals(90, (roundTrip[1] as RestSet).timeInSeconds)
+    }
+
+    @Test
+    fun buildExerciseWithProgression_marksProgressedWorkSetsToKeepProgrammedTargets() {
+        val setId = UUID.randomUUID()
+        val exercise = Exercise(
+            id = UUID.randomUUID(),
+            enabled = true,
+            name = "Bench",
+            notes = "",
+            sets = listOf(WeightSet(setId, 8, 80.0)),
+            exerciseType = ExerciseType.WEIGHT,
+            minLoadPercent = 0.0,
+            maxLoadPercent = 100.0,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = UUID.randomUUID(),
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null
+        )
+        val service = WorkoutProgressionService(
+            exerciseInfoDao = { database.exerciseInfoDao() },
+            setHistoryDao = { database.setHistoryDao() },
+            workoutHistoryDao = { database.workoutHistoryDao() },
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+        )
+        val plan = DoubleProgressionHelper.Plan(
+            sets = listOf(SimpleSet(82.5, 9)),
+            state = ProgressionState.PROGRESS,
+            increment = 2.5,
+            previousVolume = 640.0
+        )
+
+        val progressed = service.buildExerciseWithProgression(exercise, plan, bodyWeightKg = 80.0)
+        val progressedSet = progressed.sets.single() as WeightSet
+
+        assertFalse(progressedSet.shouldReapplyHistoryToSet)
     }
 
     @Test

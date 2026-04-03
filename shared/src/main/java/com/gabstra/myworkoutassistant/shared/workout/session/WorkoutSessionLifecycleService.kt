@@ -77,7 +77,9 @@ internal class WorkoutSessionLifecycleService(
             TAG,
             "Loading workout history for workoutGlobalId=${workout.globalId}, " +
                 "latestCompletedWorkoutHistory=${latestCompletedWorkoutHistory?.id}, " +
-                "doneHistoryIds=${workoutHistories.map { it.id }}"
+                "latestCompletedDate=${latestCompletedWorkoutHistory?.date}, " +
+                "latestCompletedTime=${latestCompletedWorkoutHistory?.time}, " +
+                "doneHistories=${workoutHistories.map { "${it.id}@${it.date}T${it.time}" }}"
         )
 
         exercises.forEach { exercise ->
@@ -96,6 +98,7 @@ internal class WorkoutSessionLifecycleService(
             Log.d(
                 TAG,
                 "Selected historical sets for exercise=${exercise.id}, workoutHistory=${latestCompletedWorkoutHistory?.id}, " +
+                    "historyDate=${latestCompletedWorkoutHistory?.date}, historyTime=${latestCompletedWorkoutHistory?.time}, " +
                     "setIds=${selectedSetHistories.map { it.setId }}, orders=${selectedSetHistories.map { it.order }}"
             )
 

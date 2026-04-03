@@ -2199,4 +2199,83 @@ class WorkoutViewModelSessionTest {
         assertNotNull("Expected synced second-set data to be weight-based.", syncedSecondSetData)
         assertEquals(82.5, syncedSecondSetData?.actualWeight ?: 0.0, 0.01)
     }
+
+    @Test
+    fun applyExternalSyncWorkoutStore_preservesProgrammedCurrentSetWhenHistoryReplayIsDisabled() = runTest(testDispatcher) {
+        val setId = UUID.randomUUID()
+        val programmedSet = WeightSet(
+            id = setId,
+            reps = 9,
+            weight = 85.0,
+            shouldReapplyHistoryToSet = false
+        )
+        val exercise = createTestExercise(sets = listOf(programmedSet))
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val syncedHistoryId = UUID.randomUUID()
+        val syncedStartTime = LocalDateTime.now().minusHours(1)
+        database.workoutHistoryDao().insert(
+            WorkoutHistory(
+                id = syncedHistoryId,
+                workoutId = testWorkoutId,
+                date = syncedStartTime.toLocalDate(),
+                time = syncedStartTime.toLocalTime(),
+                startTime = syncedStartTime,
+                duration = 900,
+                heartBeatRecords = listOf(110, 114, 118),
+                isDone = true,
+                hasBeenSentToHealth = false,
+                globalId = testWorkoutGlobalId,
+                version = 2u
+            )
+        )
+        database.setHistoryDao().insertAll(
+            SetHistory(
+                id = UUID.randomUUID(),
+                workoutHistoryId = syncedHistoryId,
+                exerciseId = testExerciseId,
+                setId = setId,
+                order = 0u,
+                startTime = syncedStartTime.plusMinutes(1),
+                endTime = syncedStartTime.plusMinutes(2),
+                setData = WeightSetData(
+                    actualReps = 8,
+                    actualWeight = 80.0,
+                    volume = 640.0
+                ),
+                skipped = false,
+                executionSequence = 1u,
+                version = 2u
+            )
+        )
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val currentSetState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Expected an active set state after external sync.", currentSetState)
+        val currentSetData = currentSetState?.currentSetData as? WeightSetData
+        val previousSetData = currentSetState?.previousSetData as? WeightSetData
+        assertNotNull("Expected current set data to remain weight-based.", currentSetData)
+        assertNotNull("Expected previous set data to be loaded from history.", previousSetData)
+        assertEquals(85.0, currentSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(9, currentSetData?.actualReps)
+        assertEquals(80.0, previousSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(8, previousSetData?.actualReps)
+    }
 }
