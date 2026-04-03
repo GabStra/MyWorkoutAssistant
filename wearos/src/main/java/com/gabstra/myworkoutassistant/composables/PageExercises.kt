@@ -39,7 +39,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.ScrollIndicator
@@ -572,23 +572,6 @@ fun PageExercises(
             selectedPageIndex = selectedPageIndex.value
         )
     }
-    val transformingLazyColumnState = rememberTransformingLazyColumnState()
-    val transformationSpec = rememberTransformationSpec(
-        ResponsiveTransformationSpec.smallScreen(
-            containerAlpha = TransformationVariableSpec(1f),
-            contentAlpha = TransformationVariableSpec(1f),
-            scale = TransformationVariableSpec(0.75f)
-        ),
-        ResponsiveTransformationSpec.largeScreen(
-            containerAlpha = TransformationVariableSpec(1f),
-            contentAlpha = TransformationVariableSpec(1f),
-            scale = TransformationVariableSpec(0.6f)
-        )
-    )
-
-    LaunchedEffect(selectedPageIndex.value, selectedRestPageId) {
-        transformingLazyColumnState.scrollToItem(0)
-    }
     // Item 0 is the spacer used to reserve room for the fixed header overlay.
     val firstSetListItemIndex = 1
     val selectedProgressState = when {
@@ -623,6 +606,25 @@ fun PageExercises(
             )
         }
     }
+    val initialAnchorItemIndex = targetItemIndex ?: -1
+    val transformingLazyColumnState: TransformingLazyColumnState = remember(
+        selectedPageIndex.value,
+        initialAnchorItemIndex
+    ) {
+        TransformingLazyColumnState(initialAnchorItemIndex = initialAnchorItemIndex)
+    }
+    val transformationSpec = rememberTransformationSpec(
+        ResponsiveTransformationSpec.smallScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.75f)
+        ),
+        ResponsiveTransformationSpec.largeScreen(
+            containerAlpha = TransformationVariableSpec(1f),
+            contentAlpha = TransformationVariableSpec(1f),
+            scale = TransformationVariableSpec(0.6f)
+        )
+    )
     var isAutoScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(targetItemIndex, selectedPageIndex.value) {
         val targetIndex = targetItemIndex ?: return@LaunchedEffect
