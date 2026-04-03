@@ -856,6 +856,22 @@ internal fun ExerciseScreenPreviewScenario(scenario: ExercisePreviewScenario) {
 }
 
 @Preview(
+    name = "Weight Work Set Badge",
+    group = "ExerciseScreen/States",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun ExerciseScreenPreviewWeightWorkSetBadge() {
+    ExerciseScreenPreviewScenario(
+        ExercisePreviewScenario(
+            name = "weight_work_badge",
+            setType = ExercisePreviewSetType.WEIGHT
+        )
+    )
+}
+
+@Preview(
     name = "Weight Work Set",
     group = "ExerciseScreen/States",
     device = WearDevices.LARGE_ROUND,
