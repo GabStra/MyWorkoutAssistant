@@ -339,21 +339,44 @@ class WearWorkoutDriver(
     ): String {
         val openWorkoutDesc = "Open workout: $workoutName"
         val detailDesc = "Workout detail: $workoutName"
-        val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 2_000)
-            ?: device.wait(Until.findObject(By.text(workoutName)), 2_000)
-        require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
-        clickObjectOrAncestorInternal(openWorkout)
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastDetailVisible = false
 
-        val detailAppeared =
-            device.wait(Until.hasObject(By.desc(detailDesc)), timeoutMs) ||
-                device.wait(Until.hasObject(By.text(workoutName)), timeoutMs)
-        require(detailAppeared) { "Workout detail with '$workoutName' not visible" }
+        while (System.currentTimeMillis() < deadline) {
+            val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 1_000)
+                ?: device.wait(Until.findObject(By.text(workoutName)), 1_000)
+            require(openWorkout != null) { "Workout '$workoutName' not visible to tap" }
 
-        val action = findWorkoutDetailPrimaryAction()
-            ?: error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
-        clickObjectOrAncestorInternal(action.second)
-        return action.first
+            clickObjectOrAncestorInternal(openWorkout)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+            val remainingForDetail = (deadline - System.currentTimeMillis()).coerceAtLeast(1_000L)
+            lastDetailVisible =
+                device.wait(Until.hasObject(By.desc(detailDesc)), remainingForDetail.coerceAtMost(4_000L)) ||
+                    device.wait(Until.hasObject(By.text(workoutName)), remainingForDetail.coerceAtMost(2_000L))
+
+            if (!lastDetailVisible) {
+                continue
+            }
+
+            val action = findWorkoutDetailPrimaryAction(
+                timeoutMs = (deadline - System.currentTimeMillis()).coerceAtMost(5_000L)
+            )
+            if (action != null) {
+                clickObjectOrAncestorInternal(action.second)
+                return action.first
+            }
+
+            // Back out and retry reopening the detail page. Wear detail screens can transiently
+            // render without the primary action after sync-driven recomposition.
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        }
+
+        if (!lastDetailVisible) {
+            error("Workout detail with '$workoutName' not visible")
+        }
+        error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
     }
 
     fun killAppProcess(packageName: String, settleMs: Long = 1_000) {
@@ -1111,7 +1134,7 @@ class WearWorkoutDriver(
         return false
     }
 
-    private fun findWorkoutDetailPrimaryAction(): Pair<String, UiObject2>? {
+    private fun findWorkoutDetailPrimaryAction(timeoutMs: Long = 3_000): Pair<String, UiObject2>? {
         fun findVisibleAction(): Pair<String, UiObject2>? {
             val startButton = device.findObject(By.desc("Start workout"))
                 ?: device.findObject(By.text("Start"))
@@ -1126,15 +1149,21 @@ class WearWorkoutDriver(
             return null
         }
 
-        findVisibleAction()?.let { return it }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var attempts = 0
+        while (System.currentTimeMillis() < deadline) {
+            findVisibleAction()?.let { return it }
 
-        val scrollable = device.findObject(By.scrollable(true))
-        if (scrollable != null) {
-            runCatching { scrollable.scroll(Direction.DOWN, 0.75f) }
-        } else {
-            verticalSwipe(Direction.DOWN)
+            val direction = if (attempts % 2 == 0) Direction.DOWN else Direction.UP
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                runCatching { scrollable.scroll(direction, 0.75f) }
+            } else {
+                verticalSwipe(direction)
+            }
+            attempts++
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
         return findVisibleAction()
     }

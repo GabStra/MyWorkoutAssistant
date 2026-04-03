@@ -262,6 +262,15 @@ object WearWorkoutStateMutationHelper {
         return setIds
     }
 
+    fun getCurrentWeightSetData(): WeightSetData? {
+        var currentSetData: WeightSetData? = null
+        withResumedViewModel { viewModel ->
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@withResumedViewModel
+            currentSetData = currentState.currentSetData as? WeightSetData
+        }
+        return currentSetData
+    }
+
     fun isWorkoutCompleted(): Boolean {
         var completed = false
         withResumedViewModel { viewModel ->
