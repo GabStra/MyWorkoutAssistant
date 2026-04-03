@@ -79,12 +79,6 @@ fun BodyWeightSetScreen(
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
-    val historicalPreviousSetHistory = resolveHistoricalPreviousSetHistory(
-        viewModel = viewModel,
-        state = state
-    )
-    val historicalPreviousSetData = historicalPreviousSetHistory?.setData as? BodyWeightSetData
-
     val exercise = remember(state.exerciseId) {
         viewModel.exercisesById[state.exerciseId]!!
     }
@@ -116,9 +110,6 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
-    val equipmentForDelta = remember(historicalPreviousSetHistory?.equipmentIdSnapshot, equipment) {
-        historicalPreviousSetHistory?.equipmentIdSnapshot?.let { viewModel.getEquipmentById(it) } ?: equipment
-    }
     val shouldShowHistoricalDeltaBadge = remember(state.set.id) {
         (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.WorkSet
     }
@@ -126,18 +117,16 @@ fun BodyWeightSetScreen(
         state.exerciseId,
         state.set.id,
         shouldShowHistoricalDeltaBadge,
-        historicalPreviousSetHistory?.id,
-        historicalPreviousSetData?.additionalWeight,
-        historicalPreviousSetData?.actualReps,
+        previousSetData.additionalWeight,
+        previousSetData.actualReps,
         currentSetData.additionalWeight,
         currentSetData.actualReps
     ) {
         Log.d(
             TAG,
             "BodyWeightSetScreen badge state exercise=${state.exerciseId}, set=${state.set.id}, " +
-                "showBadge=$shouldShowHistoricalDeltaBadge, historicalHistoryId=${historicalPreviousSetHistory?.id}, " +
-                "historicalSetId=${historicalPreviousSetHistory?.setId}, " +
-                "historicalAdditionalWeight=${historicalPreviousSetData?.additionalWeight}, historicalReps=${historicalPreviousSetData?.actualReps}, " +
+                "showBadge=$shouldShowHistoricalDeltaBadge, " +
+                "baselineAdditionalWeight=${previousSetData.additionalWeight}, baselineReps=${previousSetData.actualReps}, " +
                 "currentAdditionalWeight=${currentSetData.additionalWeight}, currentReps=${currentSetData.actualReps}"
         )
     }
@@ -516,12 +505,12 @@ fun BodyWeightSetScreen(
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
                     }
-                    if (shouldShowHistoricalDeltaBadge && historicalPreviousSetData != null) {
+                    if (shouldShowHistoricalDeltaBadge) {
                         HistoricalSetDeltaBadge(
                             modifier = Modifier.fillMaxWidth(),
-                            previousSetData = historicalPreviousSetData,
+                            previousSetData = previousSetData,
                             currentSetData = currentSetData,
-                            equipment = equipmentForDelta
+                            equipment = equipment
                         )
                     }
                     if (isPlateauDetected) {

@@ -49,6 +49,8 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private const val EXTERNAL_HR_SKIP_DELAY_MS = 30_000
+
 @Composable
 fun PreparingExternalHeartRateScreen(
     viewModel: AppViewModel,
@@ -82,7 +84,7 @@ fun PreparingExternalHeartRateScreen(
             while (true) {
                 delay(1000)
                 currentMillis += 1000
-                if (currentMillis >= 5000 && !hasTriggeredNextState && !connectionState.isReady) {
+                if (currentMillis >= EXTERNAL_HR_SKIP_DELAY_MS && !hasTriggeredNextState && !connectionState.isReady) {
                     canSkip = true
                     break
                 }

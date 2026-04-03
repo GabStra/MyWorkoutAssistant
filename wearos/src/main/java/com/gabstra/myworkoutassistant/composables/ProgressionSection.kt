@@ -176,7 +176,7 @@ fun ProgressionSection(
 
                 if(progressionState == ProgressionState.DELOAD || progressionState == ProgressionState.FAILED) return@mapNotNull null
 
-                val lastSessionSets = viewModel.getLastCompletedWorkoutExecutedSets(exerciseId)
+                val lastSessionSets = viewModel.getProgressionComparisonBaselineSets(exerciseId)
 
                 val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
                 val vsLast = if (lastSessionSets != null) {
