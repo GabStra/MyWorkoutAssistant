@@ -1,7 +1,11 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +26,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -42,13 +47,11 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import androidx.wear.tooling.preview.devices.WearDevices
-import com.gabstra.myworkoutassistant.data.repeatActionOnLongPress
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -67,21 +70,16 @@ fun CustomDialogYesOnLongPress(
 ) {
     val systemLongPressTimeout = LocalViewConfiguration.current.longPressTimeoutMillis
     val effectiveHoldTime = if (holdTimeInMillis > 0) holdTimeInMillis else systemLongPressTimeout
+    val holdDurationMillis = effectiveHoldTime.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     var hasBeenShownOnce by remember { mutableStateOf(false) }
     var closeDialogJob by remember { mutableStateOf<Job?>(null) }
+    var confirmHoldJob by remember { mutableStateOf<Job?>(null) }
     val coroutineScope = rememberWearCoroutineScope()
-    val longPressCoroutineScope = rememberWearCoroutineScope()
+    val holdProgress = remember { Animatable(0f) }
+    val latestHandleYesClick by rememberUpdatedState(handleYesClick)
 
-    var currentMillis by remember { mutableLongStateOf(0) }
     var hasBeenPressedLongEnough by remember { mutableStateOf(false) }
-    var startTime by remember { mutableLongStateOf(0) }
-
-    val progress = if (effectiveHoldTime > 0) {
-        (currentMillis.toFloat() / effectiveHoldTime.toFloat()).coerceAtMost(1f)
-    } else {
-        0f
-    }
 
     fun startAutomaticCloseTimer() {
         closeDialogJob?.cancel()
@@ -104,42 +102,45 @@ fun CustomDialogYesOnLongPress(
             startAutomaticCloseTimer()
         }
 
+        confirmHoldJob?.cancel()
         hasBeenPressedLongEnough = false
-        currentMillis = 0
+        holdProgress.snapTo(0f)
     }
 
-    LaunchedEffect(currentMillis) {
-        if (show && currentMillis >= effectiveHoldTime && !hasBeenPressedLongEnough) {
-            hasBeenPressedLongEnough = true
-            longPressCoroutineScope.coroutineContext.cancelChildren()
-            coroutineScope.launch {
-                delay(100)
-                handleYesClick()
-                currentMillis = 0
+    fun startConfirmHold() {
+        closeDialogJob?.cancel()
+        confirmHoldJob?.cancel()
+        hasBeenPressedLongEnough = false
+        confirmHoldJob = coroutineScope.launch {
+            holdProgress.snapTo(0f)
+            holdProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = holdDurationMillis,
+                    easing = LinearEasing
+                )
+            )
+
+            if (show && !hasBeenPressedLongEnough) {
+                hasBeenPressedLongEnough = true
+                latestHandleYesClick()
+                holdProgress.snapTo(0f)
             }
         }
     }
 
-    fun onBeforeLongPressRepeat() {
-        closeDialogJob?.cancel()
-        hasBeenPressedLongEnough = false
-        currentMillis = 0
-        startTime = System.currentTimeMillis()
-    }
+    fun stopConfirmHold() {
+        confirmHoldJob?.cancel()
+        confirmHoldJob = null
+        coroutineScope.launch {
+            holdProgress.snapTo(0f)
+        }
 
-    fun onLongPressRepeat() {
-        val currentTime = System.currentTimeMillis()
-        currentMillis = currentTime - startTime
-    }
-
-    fun onRelease() {
-        currentMillis = 0
-        startTime = 0
-        hasBeenPressedLongEnough = false
-
-        if (show && closeTimerInMillis > 0) {
+        if (show && closeTimerInMillis > 0 && !hasBeenPressedLongEnough) {
             startAutomaticCloseTimer()
         }
+
+        hasBeenPressedLongEnough = false
     }
 
     if (show) {
@@ -158,10 +159,8 @@ fun CustomDialogYesOnLongPress(
                         .fillMaxSize(),
                     scrollState = scrollState,
                     overscrollEffect = null,
-                    scrollIndicator =  if(progress > 0) {
-                        null
-                    }else{
-                        {
+                    scrollIndicator = {
+                        if (holdProgress.value == 0f) {
                             ScrollIndicator(
                                 state = scrollState,
                                 colors = ScrollIndicatorDefaults.colors(
@@ -177,7 +176,7 @@ fun CustomDialogYesOnLongPress(
                             .fillMaxSize()
                             .padding(top = contentPadding.calculateTopPadding())
                             .padding(horizontal = 30.dp)
-                            .padding(top = 5.dp),
+                            .padding(top = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
@@ -188,7 +187,7 @@ fun CustomDialogYesOnLongPress(
                                 .fillMaxWidth()
                                 .padding(horizontal = 20.dp)
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(5.dp))
 
                         Column(
                             modifier = Modifier
@@ -204,15 +203,15 @@ fun CustomDialogYesOnLongPress(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-
+                        Spacer(modifier = Modifier.height(2.5.dp))
                         val contentColor = MaterialTheme.colorScheme.onSurface
                         Row(
                             horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 15.dp)
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 22.5.dp)
                         ) {
                             EnhancedIconButton(
                                 buttonSize = 50.dp,
-                                hitBoxScale = 1.5f,
+                                hitBoxScale = 1.25f,
                                 onClick = {
                                     closeDialogJob?.cancel()
                                     handleNoClick()
@@ -226,19 +225,22 @@ fun CustomDialogYesOnLongPress(
                                     tint = contentColor
                                 )
                             }
-                            Spacer(modifier = Modifier.width(5.dp))
+                            Spacer(modifier = Modifier.width(20.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(75.dp)
-                                    .repeatActionOnLongPress(
-                                        longPressCoroutineScope,
-                                        thresholdMillis = 0,
-                                        intervalMillis = 16,
-                                        onPressStart = { },
-                                        onBeforeLongPressRepeat = { onBeforeLongPressRepeat() },
-                                        onLongPressRepeat = { onLongPressRepeat() },
-                                        onRelease = { onRelease() }
-                                    ),
+                                    .size(62.5.dp)
+                                    .pointerInput(show, holdDurationMillis) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                startConfirmHold()
+                                                try {
+                                                    tryAwaitRelease()
+                                                } finally {
+                                                    stopConfirmHold()
+                                                }
+                                            }
+                                        )
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Box(
@@ -260,9 +262,9 @@ fun CustomDialogYesOnLongPress(
                     }
                 }
 
-                if(progress > 0){
+                if (holdProgress.value > 0f) {
                     androidx.wear.compose.material.CircularProgressIndicator(
-                        progress = progress,
+                        progress = holdProgress.value,
                         modifier = Modifier
                             .fillMaxSize(),
                         strokeWidth = 4.dp,
