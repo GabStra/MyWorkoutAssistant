@@ -474,6 +474,15 @@ open class WorkoutViewModel(
         val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
         val selectedWorkoutSnapshot = _selectedWorkout.value
         val previousState = _workoutState.value
+        val previousMachine = stateMachine
+        val previousActiveHistoryId = currentWorkoutHistory?.id ?: _workoutRecord?.workoutHistoryId
+        val refreshRequest = previousMachine?.let { machine ->
+            workoutRefreshService.createRefreshRequest(
+                isRefreshing = _isRefreshing.value,
+                currentState = previousState,
+                oldHistory = machine.history
+            )
+        }
         val hadActiveSession =
             stateMachine != null ||
                 _hasWorkoutRecord.value ||
@@ -519,8 +528,47 @@ open class WorkoutViewModel(
 
         if (hadActiveSession && previousState !is WorkoutState.Completed) {
             loadWorkoutHistory()
-            val activeHistoryId = currentWorkoutHistory?.id ?: recordState.workoutRecord?.workoutHistoryId
-            val refreshedHistory = activeHistoryId?.let { historyId ->
+            if (previousMachine != null && refreshRequest != null) {
+                val currentSetState = previousState as? WorkoutState.Set
+                val preservedSetData = currentSetState?.currentSetData?.let(::copySetData)
+                val preservedStartTime = currentSetState?.startTime
+                val preservedSkipped = currentSetState?.skipped
+
+                val workoutSequence = generateWorkoutStates()
+                val initialMachine = initializeStateMachine(workoutSequence, 0)
+                populateNextStateForRest(initialMachine)
+
+                val targetIndex = workoutRefreshService.findTargetIndex(
+                    allStates = initialMachine.allStates,
+                    request = refreshRequest
+                )
+                val repositionIndex = if (targetIndex >= 0) {
+                    targetIndex
+                } else {
+                    previousMachine.currentIndex.coerceIn(0, initialMachine.allStates.lastIndex)
+                }
+
+                var rebuiltMachine = initializeStateMachine(workoutSequence, repositionIndex)
+                populateNextStateForRest(rebuiltMachine)
+
+                val rebuiltCurrentSet = rebuiltMachine.currentState as? WorkoutState.Set
+                if (currentSetState != null &&
+                    rebuiltCurrentSet != null &&
+                    rebuiltCurrentSet.exerciseId == currentSetState.exerciseId &&
+                    rebuiltCurrentSet.set.id == currentSetState.set.id
+                ) {
+                    rebuiltCurrentSet.currentSetData = preservedSetData ?: rebuiltCurrentSet.currentSetData
+                    rebuiltCurrentSet.startTime = preservedStartTime
+                    rebuiltCurrentSet.skipped = preservedSkipped ?: rebuiltCurrentSet.skipped
+                    rebuiltMachine = rebuiltMachine.updateCurrentState(rebuiltCurrentSet)
+                }
+
+                stateMachine = rebuiltMachine
+                populateNextStateSets()
+                updateStateFlowsFromMachine()
+            }
+
+            val refreshedHistory = previousActiveHistoryId?.let { historyId ->
                 workoutHistoryDao.getWorkoutHistoryById(historyId)
             }
 
@@ -1007,6 +1055,13 @@ open class WorkoutViewModel(
      */
     open fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
         _selectedWorkoutId.value = workoutId
+        workoutSessionOrchestrator.selectWorkout(
+            workouts = _workouts.value,
+            selectedWorkoutId = workoutId
+        )?.let { selectedWorkout ->
+            _selectedWorkout.value = selectedWorkout
+            rebuildScreenState()
+        }
         pendingResumeWorkoutHistoryId = workoutHistoryId
         _enableWorkoutNotificationFlow.value = null
     }

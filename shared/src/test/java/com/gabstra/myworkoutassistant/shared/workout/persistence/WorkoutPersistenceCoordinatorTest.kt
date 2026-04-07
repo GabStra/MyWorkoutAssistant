@@ -130,7 +130,8 @@ class WorkoutPersistenceCoordinatorTest {
             selectedWorkout = workout,
             currentWorkoutHistory = null,
             heartBeatRecords = emptyList(),
-            progressionByExerciseId = emptyMap()
+            progressionByExerciseId = emptyMap(),
+            comparisonBaselineByExerciseId = emptyMap()
         ) ?: error("Expected snapshot")
 
         val persistedWorkoutHistory = coordinator.pushWorkoutData(

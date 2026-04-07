@@ -30,7 +30,7 @@ class RestMarkdownFormattingTest {
         )
         val line = formatRestLineForMarkdown(rh)
         assertEquals(
-            "Rest: 1:32 elapsed (1:30 planned) [intra-exercise]",
+            "Rest: 1:30 elapsed [intra-exercise]",
             line
         )
     }

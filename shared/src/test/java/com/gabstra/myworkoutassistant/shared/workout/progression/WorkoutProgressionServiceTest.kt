@@ -301,8 +301,7 @@ class WorkoutProgressionServiceTest {
         )
         val plan = DoubleProgressionHelper.Plan(
             sets = listOf(SimpleSet(82.5, 9)),
-            state = ProgressionState.PROGRESS,
-            increment = 2.5,
+            newVolume = 742.5,
             previousVolume = 640.0
         )
 

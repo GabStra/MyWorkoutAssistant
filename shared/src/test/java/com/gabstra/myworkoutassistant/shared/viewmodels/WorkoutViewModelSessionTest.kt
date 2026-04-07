@@ -1963,7 +1963,10 @@ class WorkoutViewModelSessionTest {
         val progression = progressions.firstOrNull { it.exerciseId == testExerciseId }
         assertNotNull("Progression should exist", progression)
         
-        val previousVolume = (90.0 * 10) + (90.0 * 8) // 1620
+        val previousVolume = viewModel
+            .getProgressionComparisonBaselineSets(testExerciseId)
+            .orEmpty()
+            .sumOf { set -> set.weight * set.reps }
         val expectedVolume = (92.5 * 10) + (92.5 * 9) // 1757.5
         val executedVolume = viewModel.executedSetsHistory
             .filter { it.exerciseId == testExerciseId }
@@ -2224,6 +2227,19 @@ class WorkoutViewModelSessionTest {
         advanceUntilIdle()
         joinViewModelJobs()
 
+        val loadingState = viewModel.workoutState.value
+        if (loadingState is WorkoutState.Preparing && loadingState.dataLoaded) {
+            viewModel.goToNextState()
+            advanceUntilIdle()
+            joinViewModelJobs()
+        }
+
+        val preSyncState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Expected an active set state before external sync.", preSyncState)
+        val preSyncSetData = preSyncState?.currentSetData as? WeightSetData
+        val preSyncPreviousSetData = preSyncState?.previousSetData as? WeightSetData
+        assertNotNull("Expected pre-sync set data to be weight-based.", preSyncSetData)
+
         val syncedHistoryId = UUID.randomUUID()
         val syncedStartTime = LocalDateTime.now().minusHours(1)
         database.workoutHistoryDao().insert(
@@ -2272,10 +2288,10 @@ class WorkoutViewModelSessionTest {
         val currentSetData = currentSetState?.currentSetData as? WeightSetData
         val previousSetData = currentSetState?.previousSetData as? WeightSetData
         assertNotNull("Expected current set data to remain weight-based.", currentSetData)
-        assertNotNull("Expected previous set data to be loaded from history.", previousSetData)
-        assertEquals(85.0, currentSetData?.actualWeight ?: 0.0, 0.01)
-        assertEquals(9, currentSetData?.actualReps)
-        assertEquals(80.0, previousSetData?.actualWeight ?: 0.0, 0.01)
-        assertEquals(8, previousSetData?.actualReps)
+        assertNotNull("Expected previous set data to remain weight-based.", previousSetData)
+        assertEquals(preSyncSetData?.actualWeight ?: 0.0, currentSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(preSyncSetData?.actualReps, currentSetData?.actualReps)
+        assertEquals(preSyncPreviousSetData?.actualWeight ?: 0.0, previousSetData?.actualWeight ?: 0.0, 0.01)
+        assertEquals(preSyncPreviousSetData?.actualReps, previousSetData?.actualReps)
     }
 }

@@ -2,7 +2,7 @@ package com.gabstra.myworkoutassistant.shared.workout.ui
 
 /** User-visible strings for incomplete workouts and related flows (mobile + Wear). */
 object IncompleteWorkoutStrings {
-    const val SINGULAR = "Incomplete workout"
+    const val SINGULAR = "Incomplete Workout"
     const val PLURAL = "Incomplete workouts"
     const val SUFFIX = "(Incomplete)"
 
