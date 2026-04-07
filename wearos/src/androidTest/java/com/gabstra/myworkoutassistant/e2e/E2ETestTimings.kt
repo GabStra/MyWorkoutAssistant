@@ -1,48 +1,33 @@
 package com.gabstra.myworkoutassistant.e2e
 
-import androidx.test.platform.app.InstrumentationRegistry
-
 object E2ETestTimings {
-    private val fastProfile: Boolean by lazy {
-        runCatching {
-            InstrumentationRegistry.getArguments().getString("e2e_profile")?.equals("fast", true) == true
-        }.getOrDefault(false)
-    }
-
-    val DEFAULT_TIMEOUT_MS: Long
-        get() = if (fastProfile) 2_000 else 4_000
+    const val DEFAULT_TIMEOUT_MS: Long = 2_000
 
     /** Per-attempt timeout for app window to appear. Used with retry for reliability. */
-    val APP_LAUNCH_WINDOW_TIMEOUT_MS: Long
-        get() = if (fastProfile) 4_000 else 10_000
+    const val APP_LAUNCH_WINDOW_TIMEOUT_MS: Long = 4_000
 
     /** Max time to wait for main screen content after window is visible. */
-    val APP_LAUNCH_CONTENT_READY_MS: Long
-        get() = if (fastProfile) 6_000 else 15_000
+    const val APP_LAUNCH_CONTENT_READY_MS: Long = 6_000
 
-    val SHORT_IDLE_MS: Long
-        get() = if (fastProfile) 100 else 200
+    const val SHORT_IDLE_MS: Long = 100
 
-    val MEDIUM_IDLE_MS: Long
-        get() = if (fastProfile) 200 else 400
+    const val MEDIUM_IDLE_MS: Long = 200
 
-    val LONG_IDLE_MS: Long
-        get() = if (fastProfile) 350 else 700
+    const val LONG_IDLE_MS: Long = 350
 
-    val CROSS_DEVICE_SYNC_TIMEOUT_MS: Long
-        get() = if (fastProfile) 45_000 else 120_000
+    const val CROSS_DEVICE_SYNC_TIMEOUT_MS: Long = 45_000
 
-    val CROSS_DEVICE_WORKOUT_TIMEOUT_MS: Long
-        get() = if (fastProfile) 180_000 else 420_000
+    const val CROSS_DEVICE_WORKOUT_TIMEOUT_MS: Long = 180_000
 
-    val CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS: Long
-        get() = if (fastProfile) 25_000 else 75_000
+    const val CROSS_DEVICE_REST_AUTO_ADVANCE_TIMEOUT_MS: Long = 25_000
+
+    const val WORKOUT_HISTORY_SYNC_DEBOUNCE_MS: Long = 600
 
     /**
-     * Intermediate cross-device sync is debounced on Wear for 5 seconds in AppViewModel.
+     * Intermediate cross-device sync is debounced on Wear through E2E runtime preferences.
      * The producer must pause longer than that debounce so the phone can observe each
      * cumulative checkpoint before the next set is completed.
      */
-    val CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS: Long
-        get() = if (fastProfile) 6_000 else 7_000
+    const val CROSS_DEVICE_INTERMEDIATE_SYNC_SETTLE_MS: Long =
+        WORKOUT_HISTORY_SYNC_DEBOUNCE_MS + 400
 }

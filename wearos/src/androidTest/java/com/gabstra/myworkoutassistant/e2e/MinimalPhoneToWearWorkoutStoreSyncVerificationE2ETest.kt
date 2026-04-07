@@ -17,12 +17,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MinimalPhoneToWearWorkoutStoreSyncVerificationE2ETest {
-    private fun resolvedSyncTimeoutMs(): Long {
-        val fastProfile = InstrumentationRegistry.getArguments()
-            .getString("e2e_profile")
-            ?.equals("fast", true) == true
-        return if (fastProfile) 45_000 else 120_000
-    }
+    private fun resolvedSyncTimeoutMs(): Long = 45_000
 
     @Test
     fun phoneSync_sendsMinimalWorkoutDefinitionToWear() = runBlocking {

@@ -108,7 +108,7 @@ class CrossDeviceWorkoutFlowHelper(
                 continue
             }
 
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
         }
 
         require(isCompletionVisible() || isCompletionStateFromViewModel()) {
@@ -172,7 +172,7 @@ class CrossDeviceWorkoutFlowHelper(
                 continue
             }
 
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
         }
 
         require(sawCalibrationLoad) {
@@ -187,12 +187,12 @@ class CrossDeviceWorkoutFlowHelper(
     }
 
     private fun isWeightSetScreenVisible(): Boolean {
-        return device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
-            1_000
-        ) || device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)),
-            1_000
+        return waitForAny(
+            timeoutMs = 1_000,
+            selectors = arrayOf(
+                By.descContains(SetValueSemantics.WeightSetTypeDescription),
+                By.descContains(SetValueSemantics.BodyWeightSetTypeDescription)
+            )
         )
     }
 
@@ -218,8 +218,13 @@ class CrossDeviceWorkoutFlowHelper(
     }
 
     private fun isCompletionVisible(): Boolean {
-        return device.wait(Until.hasObject(By.text("Completed")), 500) ||
-            device.wait(Until.hasObject(By.text("Workout completed")), 500)
+        return waitForAny(
+            timeoutMs = 500,
+            selectors = arrayOf(
+                By.text("Completed"),
+                By.text("Workout completed")
+            )
+        )
     }
 
     private fun isCompletionStateFromViewModel(): Boolean {
@@ -237,14 +242,10 @@ class CrossDeviceWorkoutFlowHelper(
     }
 
     private fun waitForCompletionState(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (isCompletionVisible() || isCompletionStateFromViewModel()) {
-                return true
-            }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        whileWithin(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            isCompletionVisible() || isCompletionStateFromViewModel()
         }
-        return false
+        return isCompletionVisible() || isCompletionStateFromViewModel()
     }
 
     private fun isWorkoutSelectionVisible(): Boolean {
@@ -259,14 +260,46 @@ class CrossDeviceWorkoutFlowHelper(
     }
 
     private fun waitForRestAutoAdvance(timeoutMs: Long) {
+        whileWithin(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            if (!isRestScreenVisible()) {
+                return@whileWithin true
+            }
+            false
+        }
+        if (isRestScreenVisible()) {
+            error("Rest screen did not auto-advance within ${timeoutMs}ms.")
+        }
+    }
+
+    private fun waitForAny(timeoutMs: Long, selectors: Array<androidx.test.uiautomator.BySelector>): Boolean {
+        whileWithin(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            if (selectors.any(device::hasObject)) {
+                return@whileWithin true
+            }
+            false
+        }
+        return selectors.any(device::hasObject)
+    }
+
+    private inline fun whileWithin(
+        timeoutMs: Long,
+        intervalMs: Long = E2ETestTimings.SHORT_IDLE_MS,
+        block: () -> Boolean
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            if (!isRestScreenVisible()) {
-                return
+            if (block()) {
+                return true
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            sleepForPoll(intervalMs)
         }
-        error("Rest screen did not auto-advance within ${timeoutMs}ms.")
+        return false
+    }
+
+    private fun sleepForPoll(durationMs: Long) {
+        if (durationMs > 0) {
+            SystemClock.sleep(durationMs)
+        }
     }
 
     private fun modifyRepsByPlusOne(): Boolean {

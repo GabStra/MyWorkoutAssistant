@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.e2e.driver
 
 import android.content.Intent
+import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.test.uiautomator.By
@@ -12,6 +13,7 @@ import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import com.gabstra.myworkoutassistant.composables.SetValueSemantics
 import com.gabstra.myworkoutassistant.e2e.E2ETestTimings
+import com.gabstra.myworkoutassistant.e2e.helpers.WearWorkoutStateMutationHelper
 import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import java.util.regex.Pattern
 
@@ -134,14 +136,14 @@ class WearWorkoutDriver(
         val exercisesPageSelector = By.desc("Exercise sets viewer")
         var swipeCount = 0
         while (swipeCount < maxSwipes) {
-            if (device.wait(Until.hasObject(exercisesPageSelector), 1_000)) {
+            if (waitForAnyObject(timeoutMs = 1_000, selectors = arrayOf(exercisesPageSelector))) {
                 return true
             }
             navigateToPagerPage(Direction.LEFT)
             device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
             swipeCount++
         }
-        return device.wait(Until.hasObject(exercisesPageSelector), 2_000)
+        return waitForAnyObject(timeoutMs = 2_000, selectors = arrayOf(exercisesPageSelector))
     }
 
     fun clickWorkoutActionOnPager(actionText: String, maxSwipes: Int = 4, timeoutMs: Long = 8_000) {
@@ -213,12 +215,9 @@ class WearWorkoutDriver(
      * Returns true if any of the recovery dialog indicators appear within [timeoutMs].
      */
     fun waitForRecoveryDialog(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (isRecoveryDialogVisible()) return true
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            isRecoveryDialogVisible()
         }
-        return false
     }
 
     /**
@@ -496,8 +495,13 @@ class WearWorkoutDriver(
 
     private fun tryConfirmLongPressDialog(timeoutMs: Long): Boolean {
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
-        val hasDone = device.wait(Until.hasObject(By.desc("Done")), timeoutMs)
-        if (!hasDone) return false
+        val hasDone = waitForAnyObject(
+            timeoutMs = timeoutMs,
+            selectors = arrayOf(By.desc("Done"))
+        )
+        if (!hasDone) {
+            return false
+        }
         longPressByDesc("Done", timeoutMs)
         device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
 
@@ -556,12 +560,12 @@ class WearWorkoutDriver(
      * Waits until the Weight Set screen or weight value is visible (e.g. after pager settles).
      */
     fun waitForWeightSetScreen(timeoutMs: Long): Boolean {
-        return device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.WeightValueDescription)),
-            timeoutMs
-        ) || device.wait(
-            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
-            timeoutMs
+        return waitForAnyObject(
+            timeoutMs = timeoutMs,
+            selectors = arrayOf(
+                By.descContains(SetValueSemantics.WeightValueDescription),
+                By.descContains(SetValueSemantics.WeightSetTypeDescription)
+            )
         )
     }
 
@@ -625,12 +629,20 @@ class WearWorkoutDriver(
     }
 
     fun skipRest(timeoutMs: Long = 3_000) {
-        device.pressBack()
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
-        device.pressBack()
-        device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        if (WearWorkoutStateMutationHelper.skipCurrentRest(device, timeoutMs = timeoutMs)) {
+            return
+        }
 
-        val dialogAppeared = device.wait(Until.hasObject(By.text("Skip rest?")), timeoutMs)
+        if (!device.hasObject(By.text("Skip rest?"))) {
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        if (!device.hasObject(By.text("Skip rest?"))) {
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+
+        val dialogAppeared = waitForAnyObject(timeoutMs = timeoutMs, selectors = arrayOf(By.text("Skip rest?")))
         require(dialogAppeared) { "Skip rest dialog did not appear" }
         longPressByDesc("Done", timeoutMs)
     }
@@ -645,7 +657,6 @@ class WearWorkoutDriver(
                     device.hasObject(By.text("Workout completed")) ||
                     device.hasObject(By.text("Go Home")) ||
                     device.hasObject(By.desc("Go Home")) ||
-                    // Some flows auto-return to selection quickly after completion.
                     device.hasObject(By.text("My Workout Assistant"))
             if (!completedVisible) {
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
@@ -664,6 +675,80 @@ class WearWorkoutDriver(
             inWorkoutSelector = inWorkoutSelector,
             timeoutMs = timeoutMs
         ).enteredWorkout
+    }
+
+    fun clickRecoveryResume(
+        timeoutMs: Long = 10_000,
+        useRestartTimer: Boolean = false,
+        useRestartCalibration: Boolean = false
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var timerChoiceSelected = false
+        var calibrationChoiceSelected = false
+        var optionalChoiceSearchPasses = 0
+        val maxOptionalChoiceSearchPasses = 4
+
+        while (System.currentTimeMillis() < deadline) {
+            val timerChoiceClicked = if (useRestartTimer) {
+                clickRestartTimerIfVisible()
+            } else {
+                clickContinueTimerIfVisible()
+            }
+            timerChoiceSelected = timerChoiceClicked || timerChoiceSelected
+
+            val calibrationChoiceClicked = if (useRestartCalibration) {
+                clickRestartCalibrationIfVisible()
+            } else {
+                clickContinueCalibrationIfVisible()
+            }
+            calibrationChoiceSelected = calibrationChoiceClicked || calibrationChoiceSelected
+
+            if (useRestartTimer && hasRestartTimerSelectedVisible()) {
+                timerChoiceSelected = true
+            }
+            if (useRestartCalibration && hasRestartCalibrationSelectedVisible()) {
+                calibrationChoiceSelected = true
+            }
+
+            val shouldSearchForOptionalChoices = isRecoveryDialogVisible() &&
+                optionalChoiceSearchPasses < maxOptionalChoiceSearchPasses &&
+                ((!useRestartTimer && !timerChoiceSelected && hasTimerChoiceVisible()) ||
+                    (!useRestartCalibration && !calibrationChoiceSelected && hasCalibrationChoiceVisible()))
+
+            if ((useRestartTimer && !timerChoiceSelected) ||
+                (useRestartCalibration && !calibrationChoiceSelected) ||
+                shouldSearchForOptionalChoices
+            ) {
+                scrollRecoveryDialogDown()
+                optionalChoiceSearchPasses += 1
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                continue
+            }
+
+            val resumeButton = findResumeButton()
+            if (resumeButton != null) {
+                clickObjectOrAncestorInternal(resumeButton)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                if (device.wait(Until.gone(By.desc("Recovery resume action")), 1_500) ||
+                    !isRecoveryDialogVisible()
+                ) {
+                    return true
+                }
+
+                clickBestEffortOnObjectOrAncestor(resumeButton)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                if (device.wait(Until.gone(By.desc("Recovery resume action")), 1_500) ||
+                    !isRecoveryDialogVisible()
+                ) {
+                    return true
+                }
+            }
+
+            scrollRecoveryDialogDown()
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        }
+
+        return false
     }
 
     fun resumeOrEnterRecoveredWorkoutTimed(
@@ -904,14 +989,9 @@ class WearWorkoutDriver(
     }
 
     private fun waitForActiveWorkoutEntry(inWorkoutSelector: BySelector, timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (isLikelyInActiveWorkout(inWorkoutSelector)) {
-                return true
-            }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            isLikelyInActiveWorkout(inWorkoutSelector)
         }
-        return false
     }
 
     /**
@@ -1109,10 +1189,9 @@ class WearWorkoutDriver(
             val stepTimeout = if (remaining > 1_000L) 1_000L else remaining
             val button = waitForButtonByLabel(label, stepTimeout)
             if (button != null && clickBestEffort(button)) {
-                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
                 return true
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            sleepForPoll(E2ETestTimings.SHORT_IDLE_MS)
         }
         return false
     }
@@ -1122,16 +1201,15 @@ class WearWorkoutDriver(
     }
 
     private fun waitForAnyControl(timeoutMs: Long, labels: Array<String>): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
             if (labels.any { label ->
                     device.findObject(By.desc(label)) != null || device.findObject(By.text(label)) != null
                 }) {
-                return true
+                true
+            } else {
+                false
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
-        return false
     }
 
     private fun findWorkoutDetailPrimaryAction(timeoutMs: Long = 3_000): Pair<String, UiObject2>? {
@@ -1218,6 +1296,36 @@ class WearWorkoutDriver(
     private fun dismissGotItIfPresent() {
         val gotIt = device.findObject(By.text("Got it")) ?: return
         clickBestEffort(gotIt)
+    }
+
+    private fun waitForAnyObject(timeoutMs: Long, selectors: Array<BySelector>): Boolean {
+        if (selectors.any(device::hasObject)) {
+            return true
+        }
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            selectors.any(device::hasObject)
+        }
+    }
+
+    private fun pollUntil(
+        timeoutMs: Long,
+        intervalMs: Long = E2ETestTimings.SHORT_IDLE_MS,
+        predicate: () -> Boolean
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) {
+                return true
+            }
+            sleepForPoll(intervalMs)
+        }
+        return predicate()
+    }
+
+    private fun sleepForPoll(durationMs: Long) {
+        if (durationMs > 0) {
+            SystemClock.sleep(durationMs)
+        }
     }
 
     private fun findTimerText(root: UiObject2): String? {

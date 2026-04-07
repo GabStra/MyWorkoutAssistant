@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.e2e
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -146,6 +147,10 @@ abstract class WearBaseE2ETest {
             context = context,
             disabled = shouldDisableStartupUnsyncedHistorySync()
         )
+        E2eRuntimePreferences.setWorkoutHistorySyncDebounceMs(
+            context = context,
+            debounceMs = E2ETestTimings.WORKOUT_HISTORY_SYNC_DEBOUNCE_MS
+        )
     }
 
     /**
@@ -196,13 +201,8 @@ abstract class WearBaseE2ETest {
     }
 
     private fun waitForTargetAppToLeaveForeground(packageName: String, timeoutMs: Long = 5_000) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (!isTargetAppResumed(packageName)) {
-                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
-                return
-            }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+        pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            !isTargetAppResumed(packageName)
         }
     }
 
@@ -233,19 +233,15 @@ abstract class WearBaseE2ETest {
         device.waitForIdle(E2ETestTimings.LONG_IDLE_MS)
         dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION)
 
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
+        val ready = pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
             dismissAnyTutorialOverlayIfPresent()
-            if (device.hasObject(By.text("My Workout Assistant")) ||
+            device.hasObject(By.text("My Workout Assistant")) ||
                 isRecoveryDialogVisible() ||
                 device.hasObject(By.textContains("Resuming workout")) ||
                 device.hasObject(By.textContains("Reloading workout")) ||
                 isActiveWorkoutVisible()
-            ) {
-                return true
-            }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
+        if (ready) return true
 
         // Process-death/resume scenarios can transiently show intermediate frames where
         // selectors are not yet stable. Allow callers to continue with their own recovery waits.
@@ -282,6 +278,14 @@ abstract class WearBaseE2ETest {
             device.hasObject(By.text("0 = Form Breaks")) ||
             device.hasObject(By.text("Start")) ||
             device.hasObject(By.text("Stop"))
+    }
+
+    private fun isExternalHeartRatePrepVisible(): Boolean {
+        return device.hasObject(By.textContains("Getting your Polar ready")) ||
+            device.hasObject(By.textContains("Getting your WHOOP ready")) ||
+            device.hasObject(By.textContains("Polar device")) ||
+            device.hasObject(By.textContains("Streaming from your Polar device")) ||
+            device.hasObject(By.textContains("Connecting to your Polar device"))
     }
 
     private fun isRecoveryDialogVisible(): Boolean {
@@ -413,15 +417,15 @@ abstract class WearBaseE2ETest {
 
         if (hasSeenTutorial) return
 
-        val deadline = System.currentTimeMillis() + maxWaitMs
-        while (System.currentTimeMillis() < deadline) {
+        pollUntil(timeoutMs = maxWaitMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
             val gotIt = device.findObject(By.text("Got it")) ?: device.findObject(By.desc("Got it"))
             if (gotIt != null) {
                 runCatching { interactionDriver.clickObjectOrAncestor(gotIt) }
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
-                return
+                true
+            } else {
+                false
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
     }
 
@@ -493,14 +497,13 @@ abstract class WearBaseE2ETest {
     }
 
     private fun waitForWorkoutSelectionVisible(workoutName: String, timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
         val workoutSelector = By.desc("Open workout: $workoutName")
-        while (System.currentTimeMillis() < deadline) {
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
             dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 500)
             dismissAnyTutorialOverlayIfPresent()
 
             if (device.hasObject(workoutSelector) || device.hasObject(By.text(workoutName))) {
-                return true
+                return@pollUntil true
             }
 
             if (device.hasObject(By.text("My Workout Assistant"))) {
@@ -508,44 +511,69 @@ abstract class WearBaseE2ETest {
                     selector = workoutSelector,
                     initialWaitMs = E2ETestTimings.SHORT_IDLE_MS,
                     directions = listOf(Direction.DOWN, Direction.UP)
-                )?.let { return true }
+                )?.let { return@pollUntil true }
 
                 interactionDriver.findWithScrollFallback(
                     selector = By.text(workoutName),
                     initialWaitMs = E2ETestTimings.SHORT_IDLE_MS,
                     directions = listOf(Direction.DOWN, Direction.UP)
-                )?.let { return true }
+                )?.let { return@pollUntil true }
 
-                val workoutAppeared = device.wait(
-                    Until.hasObject(By.text(workoutName)),
-                    E2ETestTimings.SHORT_IDLE_MS
+                if (waitForAnyObject(
+                        timeoutMs = E2ETestTimings.SHORT_IDLE_MS,
+                        selectors = arrayOf(By.text(workoutName))
+                    )
                 )
-                if (workoutAppeared) {
-                    return true
+                {
+                    return@pollUntil true
                 }
             }
 
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            false
         }
-        return false
     }
 
     private fun waitForPostStartWorkoutState(timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
             dismissAnyTutorialOverlayIfPresent()
-            if (device.hasObject(By.textContains("Preparing")) ||
+            device.hasObject(By.textContains("Preparing")) ||
+                isExternalHeartRatePrepVisible() ||
                 device.hasObject(By.textContains("Set load for")) ||
                 device.hasObject(By.text("0 = Form Breaks")) ||
                 device.hasObject(By.textContains("Resuming workout")) ||
                 device.hasObject(By.textContains("Reloading workout")) ||
                 isActiveWorkoutVisible() ||
                 device.hasObject(By.text("Go Home"))
-            ) {
+        }
+    }
+
+    private fun waitForAnyObject(timeoutMs: Long, selectors: Array<androidx.test.uiautomator.BySelector>): Boolean {
+        if (selectors.any(device::hasObject)) {
+            return true
+        }
+        return pollUntil(timeoutMs = timeoutMs, intervalMs = E2ETestTimings.SHORT_IDLE_MS) {
+            selectors.any(device::hasObject)
+        }
+    }
+
+    private fun pollUntil(
+        timeoutMs: Long,
+        intervalMs: Long = E2ETestTimings.SHORT_IDLE_MS,
+        predicate: () -> Boolean
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) {
                 return true
             }
-            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+            sleepForPoll(intervalMs)
         }
-        return false
+        return predicate()
+    }
+
+    private fun sleepForPoll(durationMs: Long) {
+        if (durationMs > 0) {
+            SystemClock.sleep(durationMs)
+        }
     }
 }

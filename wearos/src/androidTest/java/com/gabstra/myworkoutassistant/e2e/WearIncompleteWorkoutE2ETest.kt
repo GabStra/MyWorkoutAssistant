@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.CalibrationRequiredWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.fixtures.MultipleSetsAndRestsWorkoutStoreFixture
+import com.gabstra.myworkoutassistant.e2e.fixtures.PolarRecoveryWorkoutStoreFixture
 import com.gabstra.myworkoutassistant.e2e.helpers.WearWorkoutStateMutationHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -17,6 +18,7 @@ import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
+import java.util.regex.Pattern
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -248,6 +250,59 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
         }
     }
 
+    @Test
+    fun recoveryDialog_resumeForPolarWorkout_reconnectsExternalPrepAndSkipResumesWorkout() {
+        PolarRecoveryWorkoutStoreFixture.setupWorkoutStore(context)
+        launchAppFromHome()
+        startWorkout(PolarRecoveryWorkoutStoreFixture.getWorkoutName())
+
+        require(waitForPolarPreparingScreen(10_000)) {
+            "Polar preparation screen did not appear after starting workout"
+        }
+        require(waitForExternalSkipButton(40_000)) {
+            "Skip button did not appear on Polar preparation screen"
+        }
+
+        workoutDriver.clickText("Skip", 5_000)
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 3_000)
+
+        val setVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
+            10_000
+        )
+        require(setVisible) { "Workout set screen did not appear after skipping Polar connection" }
+
+        workoutDriver.killAppProcessTimed(packageName = context.packageName, settleMs = 0)
+        launchAppFromHome()
+
+        val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
+        require(dialogAppeared) { "Recovery dialog did not appear after process death" }
+
+        val recoveryResumeClicked = workoutDriver.clickRecoveryResume(timeoutMs = 8_000)
+        require(recoveryResumeClicked) { "Could not click Resume in the recovery dialog" }
+
+        require(waitForPolarPreparingScreen(10_000)) {
+            "Recovery resume should return to Polar preparation instead of generic heart-rate preparation. Visible UI: ${describeVisibleUi()}"
+        }
+        require(!device.hasObject(By.text("Getting heart rate ready"))) {
+            "Recovery resume should not get stuck on the generic heart-rate preparation screen"
+        }
+        require(waitForExternalSkipButton(40_000)) {
+            "Skip button did not appear after resuming through the recovery dialog"
+        }
+
+        workoutDriver.clickText("Skip", 5_000)
+        dismissTutorialIfPresent(TutorialContext.HEART_RATE, 3_000)
+
+        val resumedSetVisible = device.wait(
+            Until.hasObject(By.descContains(SetValueSemantics.WeightSetTypeDescription)),
+            10_000
+        )
+        require(resumedSetVisible) {
+            "Workout did not resume to the active set after skipping Polar connection from the recovery flow"
+        }
+    }
+
     private fun completeCurrentSetDeterministically(timeoutMs: Long = 15_000) {
         val completed = WearWorkoutStateMutationHelper.completeCurrentSet(
             device = device,
@@ -289,6 +344,29 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
             device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
         }
         return readRestTimerSecondsFromScreen()
+    }
+
+    private fun waitForPolarPreparingScreen(timeoutMs: Long): Boolean {
+        return device.wait(Until.hasObject(By.text("Getting your Polar ready")), timeoutMs) ||
+            device.wait(Until.hasObject(By.textContains("Polar device")), 2_000)
+    }
+
+    private fun waitForExternalSkipButton(timeoutMs: Long): Boolean {
+        return device.wait(Until.hasObject(By.text("Skip")), timeoutMs)
+    }
+
+    private fun describeVisibleUi(): String {
+        val labels = device.findObjects(By.text(Pattern.compile(".+")))
+            .mapNotNull { runCatching { it.text }.getOrNull() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(12)
+        val descriptions = device.findObjects(By.desc(Pattern.compile(".+")))
+            .mapNotNull { runCatching { it.contentDescription }.getOrNull() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(12)
+        return "texts=$labels descs=$descriptions"
     }
 
     private fun forceActiveWorkoutIntoIncompleteState(db: AppDatabase) = runBlocking {
