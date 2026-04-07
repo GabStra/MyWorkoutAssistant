@@ -403,11 +403,17 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.WearAutoRegulationCrossDeviceSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearWorkoutHistorySyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearSetBadgeE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.AutoRegulationPhoneToWearMidSessionSetBadgeRefreshE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearOpenPhoneAppE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalPhoneToWearWorkoutStoreSyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalInsertedSetPhoneToWearWorkoutStoreSyncVerificationE2ETest",
         "com.gabstra.myworkoutassistant.e2e.MinimalInsertedRestPhoneToWearWorkoutStoreSyncVerificationE2ETest",
-        "com.gabstra.myworkoutassistant.e2e.MinimalRestPausePhoneToWearWorkoutStoreSyncVerificationE2ETest"
+        "com.gabstra.myworkoutassistant.e2e.MinimalRestPausePhoneToWearWorkoutStoreSyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.DoubleProgressionPhoneToWearWorkoutHistorySyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.DoubleProgressionNoHistoryPhoneToWearWorkoutHistorySyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.DoubleProgressionPhoneToWearWorkoutStoreSyncVerificationE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionRoundTripSetBadgeCrossDeviceE2ETest",
+        "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionNoHistoryRoundTripSetBadgeCrossDeviceE2ETest"
     )
     $notClassArgument = $excludedCrossDeviceClasses -join ","
     Write-Host "Excluding cross-device Wear E2E classes by default:" -ForegroundColor Yellow

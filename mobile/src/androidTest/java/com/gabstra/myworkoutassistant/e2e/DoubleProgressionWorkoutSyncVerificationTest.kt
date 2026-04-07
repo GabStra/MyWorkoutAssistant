@@ -22,12 +22,7 @@ class DoubleProgressionWorkoutSyncVerificationTest {
         const val POLL_INTERVAL_MS = 500L
     }
 
-    private fun resolvedSyncTimeoutMs(): Long {
-        val fastProfile = InstrumentationRegistry.getArguments()
-            .getString("e2e_profile")
-            ?.equals("fast", true) == true
-        return if (fastProfile) 60_000 else 180_000
-    }
+    private fun resolvedSyncTimeoutMs(): Long = 60_000
 
     @Test
     fun crossDeviceSync_twoRoundTripDoubleProgressionSessionsArriveOnPhone() = runBlocking {

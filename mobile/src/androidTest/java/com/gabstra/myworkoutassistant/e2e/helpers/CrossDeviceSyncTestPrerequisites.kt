@@ -11,12 +11,7 @@ object CrossDeviceSyncTestPrerequisites {
     private const val POLL_INTERVAL_MS = 500L
     private const val LIVE_OBSERVER_MODE = "observe_live"
 
-    fun resolvedTimeoutMs(fastProfileMs: Long, defaultMs: Long): Long {
-        val fastProfile = InstrumentationRegistry.getArguments()
-            .getString("e2e_profile")
-            ?.equals("fast", true) == true
-        return if (fastProfile) fastProfileMs else defaultMs
-    }
+    fun resolvedTimeoutMs(timeoutMs: Long): Long = timeoutMs
 
     fun isLiveObserverRun(): Boolean =
         InstrumentationRegistry.getArguments()

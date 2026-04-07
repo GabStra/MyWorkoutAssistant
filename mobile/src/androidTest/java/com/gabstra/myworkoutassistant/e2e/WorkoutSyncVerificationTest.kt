@@ -21,12 +21,7 @@ class WorkoutSyncVerificationTest {
         const val HISTORY_RECENCY_MINUTES = 120L
     }
 
-    private fun resolvedSyncTimeoutMs(): Long {
-        val fastProfile = InstrumentationRegistry.getArguments()
-            .getString("e2e_profile")
-            ?.equals("fast", true) == true
-        return if (fastProfile) 45_000 else 120_000
-    }
+    private fun resolvedSyncTimeoutMs(): Long = 45_000
 
     private suspend fun hasRecentCompletedCrossDeviceHistory(
         context: android.content.Context

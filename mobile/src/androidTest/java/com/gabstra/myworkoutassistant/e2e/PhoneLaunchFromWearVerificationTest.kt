@@ -22,7 +22,7 @@ class PhoneLaunchFromWearVerificationTest {
     }
 
     private fun resolvedLaunchTimeoutMs(): Long =
-        CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(fastProfileMs = 20_000, defaultMs = 60_000)
+        CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(timeoutMs = 20_000)
 
     private fun requireLiveLaunchVerificationOrSkip() {
         assumeTrue(

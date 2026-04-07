@@ -19,12 +19,7 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class MinimalInsertedRestPhoneSyncPreparationTest {
-    private fun resolvedWorkerTimeoutMs(): Long {
-        val fastProfile = InstrumentationRegistry.getArguments()
-            .getString("e2e_profile")
-            ?.equals("fast", true) == true
-        return if (fastProfile) 60_000 else 180_000
-    }
+    private fun resolvedWorkerTimeoutMs(): Long = 60_000
 
     @Test
     fun preparePhoneForMinimalInsertedRestCrossDeviceSync() = runBlocking {

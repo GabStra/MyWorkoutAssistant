@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class WorkoutIntermediateSyncObservationTest {
 
     private fun resolvedCheckpointTimeoutMs(): Long =
-        CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(fastProfileMs = 25_000, defaultMs = 75_000)
+        CrossDeviceSyncTestPrerequisites.resolvedTimeoutMs(timeoutMs = 25_000)
 
     private fun requireLiveObservationOrSkip() {
         assumeTrue(
