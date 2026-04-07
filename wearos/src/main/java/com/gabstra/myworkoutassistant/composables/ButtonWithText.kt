@@ -11,7 +11,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
-import com.gabstra.myworkoutassistant.shared.Red
 
 /**
  * Tonal filled label button — see [WearTonalButton] and the matrix in [WearAppButtons].
@@ -74,13 +73,11 @@ fun CancelButtonWithText(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    OutlinedButtonWithText(
+    ButtonWithText(
         modifier = modifier,
         transformation = transformation,
         text = text,
         enabled = enabled,
-        borderColor = Red,
-        textColor = Red,
         onClick = onClick
     )
 }

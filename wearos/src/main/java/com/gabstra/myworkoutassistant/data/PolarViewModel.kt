@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.viewModelScope
@@ -80,22 +78,6 @@ class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
                     .average()
                     .toInt()
             }
-}
-
-class PolarReconnector(
-    private val api: PolarBleApi,
-    private val context: Context,
-) : ReconnectionActions {
-    override fun onStale(deviceId: String, onReconnecting: (() -> Unit)?): Completable {
-        onReconnecting?.invoke()
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, "Reconnecting to your Polar device...", Toast.LENGTH_SHORT)
-                .show()
-        }
-        return Completable.fromAction { api.foregroundEntered() }
-            .andThen(Completable.fromAction { api.connectToDevice(deviceId) })
-            .andThen(api.waitForConnection(deviceId).timeout(20, TimeUnit.SECONDS))
-    }
 }
 
 class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE) {
@@ -330,30 +312,7 @@ class PolarViewModel : BaseExternalHeartRateViewModel(HeartRateSource.POLAR_BLE)
         }
         hrStreamDisposable = null
 
-        val applicationContext = applicationContext ?: run {
-            isHrStreamingActive.set(false)
-            return
-        }
-        val stream = StaleRetryingBpmStream(
-            deviceId = deviceId,
-            source = PolarHrBpmSource(api),
-            reconnection = PolarReconnector(api, applicationContext),
-            staleTimeoutSec = 15,
-            backoffSec = 2,
-            onReconnecting = {
-                viewModelScope.launch(appCeh) {
-                    publishHeartRate(null)
-                    if (!isSessionSkipped) {
-                        publishConnectionState(
-                            ExternalHeartRateConnectionState.Connecting(
-                                source = source,
-                                message = "Reconnecting to your Polar device..."
-                            )
-                        )
-                    }
-                }
-            }
-        ).stream()
+        val stream = PolarHrBpmSource(api).bpmStream(deviceId)
 
         val disposable = stream
             .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())

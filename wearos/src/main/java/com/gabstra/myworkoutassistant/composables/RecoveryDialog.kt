@@ -1,11 +1,14 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,7 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -34,8 +39,12 @@ import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
 import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import androidx.wear.tooling.preview.devices.WearDevices
+import com.gabstra.myworkoutassistant.presentation.theme.baseline
+import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLighterGray
+import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
@@ -43,8 +52,12 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryResumeOpti
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.ui.IncompleteWorkoutStrings
 import java.time.Duration
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale.getDefault
+import java.util.UUID
 
 @Composable
 internal fun RecoveryDialog(
@@ -148,58 +161,41 @@ internal fun RecoveryDialog(
                     }
 
                     item {
-                        RecoveryInfoBlock(
-                            label = "Workout",
-                            value = resolvedWorkoutName,
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .transformedHeight(this, spec)
                                 .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                        )
-                    }
-
-                    if (resolvedExerciseName.isNotBlank()) {
-                        item {
-                            RecoveryInfoBlock(
-                                label = "Exercise",
-                                value = resolvedExerciseName,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec)
-                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                            )
-                        }
-                    }
-
-                    if (startedText.isNotEmpty()) {
-                        item {
-                            RecoveryInfoBlock(
-                                label = "Started",
-                                value = startedText,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec)
-                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                            )
-                        }
-                    }
-
-                    if (elapsedText.isNotEmpty()) {
-                        item {
-                            RecoveryInfoBlock(
-                                label = "Elapsed",
-                                value = elapsedText,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .transformedHeight(this, spec)
-                                    .graphicsLayer { with(spec) { applyContainerTransformation(scrollProgress) } }
-                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.graphicsLayer {
+                                    with(spec) { applyContentTransformation(scrollProgress) }
+                                }
+                            ) {
+                                RecoveryInfoBlock(
+                                    entries = buildList {
+                                        add("Workout" to resolvedWorkoutName)
+                                        if (resolvedExerciseName.isNotBlank()) {
+                                            add("Exercise" to resolvedExerciseName)
+                                        }
+                                        if (startedText.isNotEmpty()) {
+                                            add("Started" to startedText)
+                                        }
+                                        if (elapsedText.isNotEmpty()) {
+                                            add("Elapsed" to elapsedText)
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
 
                     if (showTimerChoice) {
                         item {
-                            RecoverySectionLabel(
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                        item {
+                            RecoverySectionHeader(
                                 text = IncompleteWorkoutStrings.RECOVERY_SECTION_TIMER,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -237,11 +233,19 @@ internal fun RecoveryDialog(
                                 }
                             )
                         }
+                        if(!showCalibrationChoice){
+                            item {
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+                        }
                     }
 
                     if (showCalibrationChoice) {
                         item {
-                            RecoverySectionLabel(
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
+                        item {
+                            RecoverySectionHeader(
                                 text = IncompleteWorkoutStrings.RECOVERY_SECTION_CALIBRATION,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -254,7 +258,7 @@ internal fun RecoveryDialog(
                                 modifier = Modifier.transformedHeight(this, spec),
                                 transformation = SurfaceTransformation(spec),
                                 contentDescription = "Recovery calibration continue option",
-                                text =  "Continue",
+                                text = "Continue",
                                 colors = selectedRecoveryButtonColors(
                                     selected = calibrationChoice == CalibrationRecoveryChoice.CONTINUE
                                 ),
@@ -278,6 +282,9 @@ internal fun RecoveryDialog(
                                     resumeWithChoices(timerChoice, CalibrationRecoveryChoice.RESTART)
                                 }
                             )
+                        }
+                        item {
+                            Spacer(modifier = Modifier.height(10.dp))
                         }
                     }
 
@@ -323,42 +330,38 @@ internal fun RecoveryDialog(
 
 @Composable
 private fun RecoveryInfoBlock(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onBackground
+    entries: List<Pair<String, String>>,
+    modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
+    Column(
+        modifier = modifier
+            .fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.5.dp)
-        ) {
-            if (label.isNotEmpty()) {
+        entries.forEach { (label, value) ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp)
+            ) {
                 Text(
                     text = label.uppercase(getDefault()),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyExtraSmall,
-                    color =  MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    style = workoutPagerTitleTextStyle(),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = value,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center
                 )
             }
-            Text(
-                text = value,
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.bodyLarge,
-                color = valueColor,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
-
-
 }
 
 @Composable
@@ -367,7 +370,7 @@ private fun RecoveryBodyText(
     modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = modifier.padding(horizontal = 10.dp).padding(bottom = 5.dp)
+        modifier = modifier.padding(bottom = 5.dp)
     ){
         Text(
             text = text,
@@ -379,16 +382,16 @@ private fun RecoveryBodyText(
 }
 
 @Composable
-private fun RecoverySectionLabel(
+private fun RecoverySectionHeader(
     text: String,
     modifier: Modifier = Modifier
 ) {
     Text(
-        text = text,
-        textAlign = TextAlign.Center,
-        style = MaterialTheme.typography.bodyMedium,
+        text = text.uppercase(getDefault()),
+        modifier = modifier.padding(horizontal = 25.dp),
+        style = workoutPagerTitleTextStyle(),
         color = MaterialTheme.colorScheme.onBackground,
-        modifier = modifier.padding(top = 4.dp)
+        textAlign = TextAlign.Center
     )
 }
 
@@ -457,6 +460,7 @@ private fun selectedRecoveryButtonColors(selected: Boolean): androidx.wear.compo
     }
 }
 
+@SuppressLint("DefaultLocale")
 private fun formatElapsedDuration(durationSeconds: Int): String {
     if (durationSeconds <= 0) return ""
     val duration = Duration.ofSeconds(durationSeconds.toLong())
@@ -467,5 +471,45 @@ private fun formatElapsedDuration(durationSeconds: Int): String {
         String.format("%dh %02dm", totalHours, minutes)
     } else {
         String.format("%dm %02ds", minutes, seconds)
+    }
+}
+
+@Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
+@Composable
+private fun RecoveryDialogPreview() {
+    val previewStartedAt = LocalDateTime.of(2026, 4, 7, 18, 15)
+    MaterialTheme(
+        colorScheme = darkScheme,
+        typography = baseline
+    ) {
+        RecoveryDialog(
+            show = true,
+            workout = IncompleteWorkout(
+                workoutHistory = WorkoutHistory(
+                    id = UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    workoutId = UUID.fromString("22222222-2222-2222-2222-222222222222"),
+                    date = LocalDate.of(2026, 4, 7),
+                    time = LocalTime.of(18, 15),
+                    startTime = previewStartedAt,
+                    duration = 4_582,
+                    heartBeatRecords = emptyList(),
+                    isDone = false,
+                    hasBeenSentToHealth = false,
+                    globalId = UUID.fromString("33333333-3333-3333-3333-333333333333")
+                ),
+                workoutName = "Push Day A",
+                workoutId = UUID.fromString("22222222-2222-2222-2222-222222222222")
+            ),
+            uiState = RecoveryPromptUiState(
+                workoutName = "Push Day A",
+                exerciseName = "Incline Dumbbell Press",
+                workoutStartTime = previewStartedAt,
+                showTimerOptions = true,
+                showCalibrationOptions = true
+            ),
+            onDismiss = {},
+            onResume = { _, _ -> },
+            onDiscard = {}
+        )
     }
 }

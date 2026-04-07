@@ -52,6 +52,7 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDateTime
 import java.util.UUID
 import com.gabstra.myworkoutassistant.data.checkConnection
+import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
@@ -84,6 +85,7 @@ open class AppViewModel : WorkoutViewModel() {
         private const val TAG = "AppViewModel"
         private const val WORKOUT_SYNC_LOG_TAG = "WorkoutSync"
         private const val SYNC_TIMEOUT_MS = 10_000L
+        private const val DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS = 5_000L
     }
 
     private var applicationContext: android.content.Context? = null
@@ -145,13 +147,28 @@ open class AppViewModel : WorkoutViewModel() {
     private val syncMutex = Mutex()
 
     // Debouncer for batching rapid sync operations
-    private val syncDebouncer = WearOSSyncDebouncer(viewModelScope, debounceDelayMs = 5000L)
+    private val syncDebouncer by lazy {
+        WearOSSyncDebouncer(
+            viewModelScope,
+            debounceDelayMs = resolveWorkoutHistorySyncDebounceMs()
+        )
+    }
 
     val isPhoneConnectedAndHasApp: Boolean
         get() = phoneNode != null
 
     fun initDataClient(client: DataClient) {
         dataClient = client
+    }
+
+    private fun resolveWorkoutHistorySyncDebounceMs(): Long {
+        val context = applicationContext
+        return if (context != null) {
+            E2eRuntimePreferences.getWorkoutHistorySyncDebounceMs(context)
+                ?: DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS
+        } else {
+            DEFAULT_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS
+        }
     }
 
     private val _executeStartWorkout = mutableStateOf<UUID?>(null)
@@ -224,7 +241,7 @@ open class AppViewModel : WorkoutViewModel() {
 
     override fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
         super.prepareResumeWorkout(workoutId, workoutHistoryId)
-        clearRecoveryPromptState()
+        clearRecoveryPromptUiState()
     }
 
     fun prepareResumeWorkout(incompleteWorkout: IncompleteWorkout) {
@@ -232,10 +249,14 @@ open class AppViewModel : WorkoutViewModel() {
     }
 
     private fun clearRecoveryPromptState() {
-        _recoveryWorkout.value = null
-        _recoveryPromptUiState.value = RecoveryPromptUiState()
+        clearRecoveryPromptUiState()
         pendingRecoveryCheckpoint = null
         pendingRecoveryResumeOptions = RecoveryResumeOptions()
+    }
+
+    private fun clearRecoveryPromptUiState() {
+        _recoveryWorkout.value = null
+        _recoveryPromptUiState.value = RecoveryPromptUiState()
     }
 
     internal fun getSavedRecoveryCheckpoint(): WorkoutRecoveryCheckpoint? {

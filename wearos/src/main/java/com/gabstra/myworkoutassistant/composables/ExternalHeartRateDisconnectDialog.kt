@@ -29,7 +29,6 @@ import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.ScrollIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Red
 
 @Composable
 fun ExternalHeartRateDisconnectDialog(
@@ -120,11 +119,9 @@ fun ExternalHeartRateDisconnectDialog(
                             onClick = onContinueWithoutSensor
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedButtonWithText(
+                        ButtonWithText(
                             modifier = Modifier.fillMaxWidth(),
                             text = "End workout",
-                            borderColor = Red,
-                            textColor = Red,
                             onClick = onEndWorkout
                         )
                     }

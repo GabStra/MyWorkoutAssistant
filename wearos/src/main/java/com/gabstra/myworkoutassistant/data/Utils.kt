@@ -46,9 +46,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.compressString
@@ -933,9 +930,9 @@ private suspend fun sendWorkoutHistoryStoreInternal(
         val errorWaiter = SyncHandshakeManager.registerErrorWaiter(usedTransactionId)
 
         val gson = GsonBuilder()
-            .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
-            .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
-            .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+            .registerTypeAdapter(LocalDate::class.java, WearLocalDateAdapter())
+            .registerTypeAdapter(LocalTime::class.java, WearLocalTimeAdapter())
+            .registerTypeAdapter(LocalDateTime::class.java, WearLocalDateTimeAdapter())
             .registerTypeAdapter(Set::class.java, SetAdapter())
             .registerTypeAdapter(SetData::class.java, SetDataAdapter())
             .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
@@ -1185,7 +1182,7 @@ fun sendErrorLogsToMobile(dataClient: DataClient, errorLogs: List<ErrorLog>): Bo
         }
         Log.d("DataLayerSync", "Sending ${errorLogs.size} error logs to mobile")
         val gson = GsonBuilder()
-            .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+            .registerTypeAdapter(LocalDateTime::class.java, WearLocalDateTimeAdapter())
             .create()
         val jsonString = gson.toJson(errorLogs)
         val compressedData = compressString(jsonString)

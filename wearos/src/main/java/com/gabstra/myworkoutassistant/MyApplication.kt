@@ -5,10 +5,10 @@ import android.app.Application
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import com.gabstra.myworkoutassistant.data.WearLocalDateAdapter
+import com.gabstra.myworkoutassistant.data.WearLocalDateTimeAdapter
+import com.gabstra.myworkoutassistant.data.WearLocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.ErrorLog
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -29,9 +29,9 @@ class MyApplication : Application() {
     
     private val gson = GsonBuilder()
         .setPrettyPrinting()
-        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
-        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
-        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(LocalDate::class.java, WearLocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, WearLocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, WearLocalDateTimeAdapter())
         .create()
     
     /** Single CoroutineExceptionHandler for the app. Must be attached to each root scope/launch; not global. */
@@ -164,4 +164,3 @@ class MyApplication : Application() {
         return sw.toString()
     }
 }
-

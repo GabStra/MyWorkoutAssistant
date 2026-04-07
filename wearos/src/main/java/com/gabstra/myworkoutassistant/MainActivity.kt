@@ -32,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
@@ -89,6 +90,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val alarmManager by lazy { getSystemService(ALARM_SERVICE) as AlarmManager }
@@ -606,11 +608,25 @@ fun WearApp(
                 android.Manifest.permission.ACCESS_COARSE_LOCATION,
                 android.Manifest.permission.POST_NOTIFICATIONS
             )
+            val recoveryScope = rememberCoroutineScope()
+
+            suspend fun waitForWorkoutStoreEntry(
+                workoutId: UUID,
+                timeoutMs: Long = 5_000
+            ): Boolean {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    if (appViewModel.workouts.value.any { it.id == workoutId }) {
+                        return true
+                    }
+                    delay(100)
+                }
+                return appViewModel.workouts.value.any { it.id == workoutId }
+            }
 
             val resumeRecoveredWorkout = {
                 val workoutId = appViewModel.selectedWorkoutId.value
                 if (workoutId != null) {
-                    appViewModel.resumeWorkoutFromRecord()
                     val prefs = localContext.getSharedPreferences(
                         "workout_state",
                         Context.MODE_PRIVATE
@@ -618,7 +634,15 @@ fun WearApp(
                     prefs.edit()
                         .putBoolean("isWorkoutInProgress", true)
                         .apply()
-                    navController.navigate(Screen.Workout.route)
+                    recoveryScope.launch {
+                        if (waitForWorkoutStoreEntry(workoutId)) {
+                            appViewModel.resumeWorkoutFromRecord {
+                                withContext(Dispatchers.Main) {
+                                    navController.navigate(Screen.Workout.route)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

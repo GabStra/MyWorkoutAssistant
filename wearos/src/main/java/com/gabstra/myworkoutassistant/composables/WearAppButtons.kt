@@ -22,8 +22,7 @@ import androidx.wear.compose.material3.Text
  *   confirm, list rows that are the primary tap target).
  * - **Secondary (tonal)** — [WearTonalButton] and [ButtonWithText]: lower emphasis than primary
  *   filled (Back, workout list rows when list item is not a strong CTA, optional actions).
- * - **Outlined** — [OutlinedButtonWithText], [CancelButtonWithText]: dismiss, destructive outline, or
- *   when a border is needed without filling the shape.
+ * - **Outlined** — [OutlinedButtonWithText]: use when a border is needed without filling the shape.
  *
  * On small round screens, avoid mixing multiple filled primaries in one glanceable column without
  * hierarchy—use tonal for the supporting action and filled for the one main action.

@@ -6,6 +6,8 @@ object E2eRuntimePreferences {
     const val PREFS_NAME = "e2e_prefs"
     private const val KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC =
         "disable_startup_unsynced_history_sync"
+    private const val KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS =
+        "workout_history_sync_debounce_ms"
 
     fun isStartupUnsyncedHistorySyncDisabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -19,10 +21,27 @@ object E2eRuntimePreferences {
             .commit()
     }
 
+    fun getWorkoutHistorySyncDebounceMs(context: Context): Long? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return if (prefs.contains(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS)) {
+            prefs.getLong(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS, 0L)
+        } else {
+            null
+        }
+    }
+
+    fun setWorkoutHistorySyncDebounceMs(context: Context, debounceMs: Long) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS, debounceMs)
+            .commit()
+    }
+
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .remove(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC)
+            .remove(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS)
             .commit()
     }
 }
