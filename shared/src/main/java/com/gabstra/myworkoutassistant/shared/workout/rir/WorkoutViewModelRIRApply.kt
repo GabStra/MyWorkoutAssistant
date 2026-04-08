@@ -107,5 +107,6 @@ internal fun WorkoutViewModel.applyWorkSetUpdateToState(
     val newSetData = updateWorkSetStateData(state, updatedSet)
     state.set = updatedSet
     state.currentSetData = newSetData
-    return state.copy(previousSetData = newSetData)
+    // Keep the comparison baseline intact when future work sets are auto-adjusted.
+    return state.copy(previousSetData = state.previousSetData)
 }
