@@ -15,6 +15,11 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.UUID
 
 object WearWorkoutStateMutationHelper {
+    data class WeightSetComparisonSnapshot(
+        val previousSetData: WeightSetData?,
+        val currentSetData: WeightSetData?
+    )
+
     fun addRestAfterCurrent(device: UiDevice, context: Context, timeoutMs: Long = 10_000): Boolean {
         return mutateCurrentSetStructure(
             device = device,
@@ -269,6 +274,18 @@ object WearWorkoutStateMutationHelper {
             currentSetData = currentState.currentSetData as? WeightSetData
         }
         return currentSetData
+    }
+
+    fun getCurrentWeightSetComparisonSnapshot(): WeightSetComparisonSnapshot? {
+        var snapshot: WeightSetComparisonSnapshot? = null
+        withResumedViewModel { viewModel ->
+            val currentState = viewModel.workoutState.value as? WorkoutState.Set ?: return@withResumedViewModel
+            snapshot = WeightSetComparisonSnapshot(
+                previousSetData = currentState.previousSetData as? WeightSetData,
+                currentSetData = currentState.currentSetData as? WeightSetData
+            )
+        }
+        return snapshot
     }
 
     fun isWorkoutCompleted(): Boolean {

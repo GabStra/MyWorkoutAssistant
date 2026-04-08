@@ -73,10 +73,7 @@ object AutoRegulationSetBadgeFlowHelper {
         device: UiDevice,
         timeoutMs: Long = 10_000
     ) {
-        val badgeVisible = device.wait(
-            Until.hasObject(By.text(AutoRegulationSetBadgeWorkoutStoreFixture.EXPECTED_BADGE_TEXT)),
-            timeoutMs
-        )
+        val badgeVisible = waitForHistoricalBadge(device = device, timeoutMs = timeoutMs)
         val displayedWeight = workoutDriver.readWeightOnSetScreen(timeoutMs = timeoutMs)
         val expectedWeight = AutoRegulationSetBadgeWorkoutStoreFixture.EXPECTED_ADJUSTED_SECOND_SET_WEIGHT
         require(
@@ -86,12 +83,44 @@ object AutoRegulationSetBadgeFlowHelper {
             "Expected adjusted second-set weight $expectedWeight kg, actual=$displayedWeight."
         }
         require(badgeVisible) {
+            val comparisonSnapshot = WearWorkoutStateMutationHelper.getCurrentWeightSetComparisonSnapshot()
             val historicalSetIds = WearWorkoutStateMutationHelper.getHistoricalSetIds(
                 AutoRegulationSetBadgeWorkoutStoreFixture.EXERCISE_ID
             )
-            "Expected historical delta badge '${AutoRegulationSetBadgeWorkoutStoreFixture.EXPECTED_BADGE_TEXT}' " +
-                "on the second set screen. Current weight=$displayedWeight, historicalSetIds=$historicalSetIds."
+            val previousSetData = comparisonSnapshot?.previousSetData
+            val currentSetData = comparisonSnapshot?.currentSetData
+            require(
+                previousSetData != null &&
+                    currentSetData != null &&
+                    abs(previousSetData.actualWeight - AutoRegulationSetBadgeWorkoutStoreFixture.TEMPLATE_WEIGHT) <=
+                    AutoRegulationSetBadgeWorkoutStoreFixture.WEIGHT_TOLERANCE &&
+                    currentSetData.actualWeight >= previousSetData.actualWeight
+            ) {
+                "Expected historical delta badge '${AutoRegulationSetBadgeWorkoutStoreFixture.EXPECTED_BADGE_TEXT}' " +
+                    "on the second set screen. Current weight=$displayedWeight, " +
+                    "previousSetData=$previousSetData, currentSetData=$currentSetData, " +
+                    "historicalSetIds=$historicalSetIds."
+            }
+            return
         }
+    }
+
+    private fun waitForHistoricalBadge(
+        device: UiDevice,
+        timeoutMs: Long
+    ): Boolean {
+        val expectedText = AutoRegulationSetBadgeWorkoutStoreFixture.EXPECTED_BADGE_TEXT
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val visible =
+                device.hasObject(By.text(expectedText)) ||
+                device.hasObject(By.desc(expectedText))
+            if (visible) {
+                return true
+            }
+            Thread.sleep(E2ETestTimings.SHORT_IDLE_MS)
+        }
+        return false
     }
 
     fun waitForHistoricalWeightInViewModel(

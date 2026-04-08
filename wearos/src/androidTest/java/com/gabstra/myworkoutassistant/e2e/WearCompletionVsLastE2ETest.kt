@@ -240,11 +240,15 @@ class WearCompletionVsLastE2ETest : WearBaseE2ETest() {
         )
 
         data object Mixed : CompletionVsLastScenario(
-            workoutSetTemplates = CompletionVsLastWorkoutStoreFixture.defaultTemplates,
+            workoutSetTemplates = CompletionVsLastWorkoutStoreFixture.mixedTemplates,
             historySetTemplates = CompletionVsLastWorkoutStoreFixture.mixedTemplates,
             mutations = listOf(
                 SetMutation(
                     actualReps = CompletionVsLastWorkoutStoreFixture.TEMPLATE_REPS + 1,
+                    actualWeight = CompletionVsLastWorkoutStoreFixture.TEMPLATE_WEIGHT
+                ),
+                SetMutation(
+                    actualReps = CompletionVsLastWorkoutStoreFixture.SECOND_TEMPLATE_REPS - 1,
                     actualWeight = CompletionVsLastWorkoutStoreFixture.TEMPLATE_WEIGHT
                 )
             )
