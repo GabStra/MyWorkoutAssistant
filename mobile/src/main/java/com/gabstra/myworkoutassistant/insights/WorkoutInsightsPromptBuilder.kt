@@ -14,10 +14,18 @@ import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
-private const val MAX_EXERCISE_SESSIONS = 8
 private const val MIN_EXERCISE_SESSIONS = 2
-private const val TARGET_EXERCISE_SESSIONS = 3
-private const val TARGET_MARKDOWN_CHAR_BUDGET = 12_000
+private const val MODEL_CONTEXT_WINDOW_TOKENS = 4_096
+private const val RESERVED_OUTPUT_TOKENS = 512
+private const val RESERVED_SAFETY_TOKENS = 128
+private const val MAX_INPUT_TOKEN_BUDGET =
+    MODEL_CONTEXT_WINDOW_TOKENS - RESERVED_OUTPUT_TOKENS - RESERVED_SAFETY_TOKENS
+private const val ESTIMATED_CHARS_PER_TOKEN_NUMERATOR = 3
+private const val ESTIMATED_CHARS_PER_TOKEN_DENOMINATOR = 1
+private const val TARGET_MARKDOWN_CHAR_BUDGET =
+    MAX_INPUT_TOKEN_BUDGET * ESTIMATED_CHARS_PER_TOKEN_NUMERATOR / ESTIMATED_CHARS_PER_TOKEN_DENOMINATOR
+private const val MIN_MARKDOWN_CHAR_BUDGET = 1_800
+private const val MARKDOWN_BUDGET_REDUCTION_STEP = 300
 private const val MAX_SECTION_CHAR_BUDGET = 2_400
 private const val MAX_SUBSECTION_CHAR_BUDGET = 500
 private const val MAX_SESSION_HR_LINES = 5
@@ -70,6 +78,8 @@ private data class CompactWorkoutSubsectionData(
 )
 
 private val WORKOUT_SESSION_ALLOWED_SUBSECTIONS = linkedSetOf(
+    "Context",
+    "Planned",
     "Athlete Context",
     "Session Heart Rate",
     "Executed",
@@ -103,15 +113,7 @@ suspend fun buildExerciseInsightsPrompt(
         is ExerciseHistoryMarkdownResult.Success -> {
             WorkoutInsightsPromptResult.Success(
                 title = "${exercise.name} insights",
-                prompt = """
-Analyze this exercise history and provide focused training insights.
-Prioritize progression, stalling signals, recovery patterns, and the clearest next-session recommendation.
-Be concise: at most 2 short bullets per required section.
-Ground every point in the supplied data.
-
-Exercise history:
-${compactExerciseHistoryMarkdown(markdownResult.markdown)}
-                """.trimIndent()
+                prompt = buildExercisePrompt(markdownResult.markdown)
             )
         }
     }
@@ -151,7 +153,44 @@ suspend fun buildWorkoutSessionInsightsPrompt(
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
-                prompt = """
+                prompt = buildWorkoutSessionPrompt(
+                    markdown = markdownResult.markdown,
+                    workoutCategoryGuidance = workoutCategoryGuidance,
+                    workoutCategoryLine = workoutCategoryLine
+                )
+            )
+        }
+    }
+}
+
+internal fun buildExercisePrompt(
+    markdown: String,
+): String = buildPromptWithinBudget { charBudget ->
+    val compactedMarkdown = compactExerciseHistoryMarkdown(
+        markdown = markdown,
+        markdownCharBudget = charBudget
+    )
+    """
+Analyze this exercise history and provide focused training insights.
+Prioritize progression, stalling signals, recovery patterns, and the clearest next-session recommendation.
+Be concise: at most 2 short bullets per required section.
+Ground every point in the supplied data.
+
+Exercise history:
+$compactedMarkdown
+    """.trimIndent()
+}
+
+internal fun buildWorkoutSessionPrompt(
+    markdown: String,
+    workoutCategoryGuidance: String,
+    workoutCategoryLine: String,
+): String = buildPromptWithinBudget { charBudget ->
+    val compactedMarkdown = compactWorkoutSessionMarkdown(
+        markdown = markdown,
+        markdownCharBudget = charBudget
+    )
+    """
 Analyze this completed workout session and provide practical coaching insights.
 Focus on what went well, what drifted from plan, likely fatigue/recovery signals, and one clear recommendation for the next session.
 Be concise: at most 2 short bullets per required section.
@@ -164,21 +203,40 @@ Ground every point in the supplied data.
 ${workoutCategoryGuidance.trimEnd()}
 
 Workout session:
-${workoutCategoryLine}${compactWorkoutSessionMarkdown(markdownResult.markdown)}
-                """.trimIndent()
-            )
-        }
-    }
+${workoutCategoryLine}$compactedMarkdown
+    """.trimIndent()
 }
 
-internal fun compactExerciseHistoryMarkdown(markdown: String): String {
+private inline fun buildPromptWithinBudget(
+    promptBuilder: (markdownCharBudget: Int) -> String,
+): String {
+    var markdownCharBudget = TARGET_MARKDOWN_CHAR_BUDGET
+    var bestPrompt = promptBuilder(markdownCharBudget)
+
+    while (
+        estimateTokenCount(WORKOUT_INSIGHTS_SYSTEM_PROMPT) + estimateTokenCount(bestPrompt) >
+        MAX_INPUT_TOKEN_BUDGET &&
+        markdownCharBudget > MIN_MARKDOWN_CHAR_BUDGET
+    ) {
+        markdownCharBudget = (markdownCharBudget - MARKDOWN_BUDGET_REDUCTION_STEP)
+            .coerceAtLeast(MIN_MARKDOWN_CHAR_BUDGET)
+        bestPrompt = promptBuilder(markdownCharBudget)
+    }
+
+    return bestPrompt
+}
+
+internal fun compactExerciseHistoryMarkdown(
+    markdown: String,
+    markdownCharBudget: Int = TARGET_MARKDOWN_CHAR_BUDGET,
+): String {
     val trimmed = markdown.trim()
     val sessionBlocks = splitMarkdownBlocks(trimmed, Regex("(?m)^## S\\d+:"))
-    if (sessionBlocks.size <= 1) return trimmed.takeWithinBudget(TARGET_MARKDOWN_CHAR_BUDGET)
+    if (sessionBlocks.size <= 1) return trimmed.takeWithinBudget(markdownCharBudget)
 
     val header = compactExerciseHeader(sessionBlocks.first())
     val sessions = sessionBlocks.drop(1)
-    val maxSessionsToKeep = minOf(TARGET_EXERCISE_SESSIONS, sessions.size)
+    val maxSessionsToKeep = sessions.size
 
     for (sessionsToKeep in maxSessionsToKeep downTo MIN_EXERCISE_SESSIONS) {
         val recentSessions = sessions.takeLast(sessionsToKeep).mapNotNull(::compactExerciseSessionBlock)
@@ -192,7 +250,7 @@ internal fun compactExerciseHistoryMarkdown(markdown: String): String {
             }
             append(recentSessions.joinToString("\n\n") { it.trim() })
         }.trim()
-        if (candidate.length <= TARGET_MARKDOWN_CHAR_BUDGET) {
+        if (candidate.length <= markdownCharBudget) {
             return candidate
         }
     }
@@ -208,7 +266,7 @@ internal fun compactExerciseHistoryMarkdown(markdown: String): String {
         append(MIN_EXERCISE_SESSIONS)
         append(" sessions are included below, with older details trimmed to fit the local model context window._\n\n")
         append(fallbackSessions.joinToString("\n\n"))
-    }.trim().takeWithinBudget(TARGET_MARKDOWN_CHAR_BUDGET)
+    }.trim().takeWithinBudget(markdownCharBudget)
 }
 
 private fun compactExerciseHeader(
@@ -241,8 +299,21 @@ private fun compactExerciseSessionBlock(
     if (trimmed.isBlank()) return null
 
     val parts = splitMarkdownBlocks(trimmed, Regex("(?m)^#### "))
-    val heading = parts.firstOrNull()?.lineSequence()?.firstOrNull()?.trim().orEmpty()
+    val headingBlockLines = parts.firstOrNull()
+        ?.lineSequence()
+        ?.map { it.trim() }
+        ?.filter { it.isNotBlank() }
+        ?.toList()
+        .orEmpty()
+    val heading = headingBlockLines.firstOrNull().orEmpty()
     if (heading.isBlank()) return null
+
+    val metadataLines = headingBlockLines.drop(1)
+        .filter { line ->
+            line.startsWith("- Template position:") ||
+                line.startsWith("- Session BW:")
+        }
+        .take(2)
 
     val compactedSubsections = parts.drop(1).mapNotNull { subsection ->
         val normalized = subsection.trim()
@@ -250,15 +321,25 @@ private fun compactExerciseSessionBlock(
         when (title) {
             "Session Heart Rate" -> compactExerciseSessionHeartRateSubsection(normalized)
             "Progression Context" -> compactExerciseProgressionSubsection(normalized)
+            "Executed Timeline" -> compactExerciseTimelineSubsection(normalized)
             else -> null
         }
     }
 
-    if (compactedSubsections.isEmpty()) return heading
+    if (compactedSubsections.isEmpty()) {
+        return listOf(heading)
+            .plus(metadataLines)
+            .joinToString("\n")
+            .takeWithinBudget(MAX_SECTION_CHAR_BUDGET)
+    }
 
     return buildString {
-        append(heading)
+        append(compactExerciseSessionHeading(heading))
         append('\n')
+        metadataLines.forEach { line ->
+            append(compactStructuredMetadataLine(line))
+            append('\n')
+        }
         compactedSubsections.forEachIndexed { index, subsection ->
             append('\n')
             append(subsection)
@@ -281,13 +362,12 @@ private fun compactExerciseSessionHeartRateSubsection(
 
     val compactedLines = compactSessionHeartRateLines(lines)
         .filter { line ->
-            line.startsWith("- Avg % max HR:") ||
-                line.startsWith("- Peak % max HR:") ||
-                line.startsWith("- High-intensity exposure:")
+            line.startsWith("- Avg %maxHR:") ||
+                line.startsWith("- Peak %maxHR:") ||
+                line.startsWith("- Hi exp:")
         }
-        .sortedBy { sessionHeartRateLinePriority(it) }
         .filterNot { line ->
-            line == "- High-intensity exposure: 0% of samples"
+            line == "- Hi exp: 0% of samples"
         }
         .take(2)
 
@@ -326,31 +406,49 @@ private fun compactExerciseProgressionSubsection(
                 line.startsWith("- Vs expected:") ||
                 line.startsWith("- Volume:")
         }
+        .map(::compactLabelLine)
         .take(5)
 
     if (compactedLines.isEmpty()) return null
     return renderExerciseSubsection("Progression Context", compactedLines)
 }
 
+private fun compactExerciseTimelineSubsection(
+    subsectionMarkdown: String,
+): String? {
+    val lines = subsectionMarkdown
+        .lineSequence()
+        .drop(1)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .toList()
+
+    val compactedLines = lines
+        .filter { line ->
+            line.startsWith("S") || line.startsWith("[skipped] S")
+        }
+        .map(::normalizeCompactRangeLine)
+        .map(::humanizeDenseMetrics)
+        .take(2)
+
+    if (compactedLines.isEmpty()) return null
+    return renderExerciseSubsection("Executed Timeline", compactedLines)
+}
+
 private fun renderExerciseSubsection(
     title: String,
     lines: List<String>,
-): String = buildString {
-    append("#### ")
-    append(title)
-    append('\n')
-    lines.forEach { line ->
-        append(line)
-        append('\n')
-    }
-}.trim()
+): String = renderStructuredSubsection(title, lines)
 
-internal fun compactWorkoutSessionMarkdown(markdown: String): String {
+internal fun compactWorkoutSessionMarkdown(
+    markdown: String,
+    markdownCharBudget: Int = TARGET_MARKDOWN_CHAR_BUDGET,
+): String {
     val trimmed = markdown.trim()
 
     val blocks = splitMarkdownBlocks(trimmed, Regex("(?m)^### "))
     if (blocks.size <= 1) {
-        return compactWorkoutTopLevelBlock(trimmed).takeWithinBudget(TARGET_MARKDOWN_CHAR_BUDGET)
+        return compactWorkoutTopLevelBlock(trimmed).takeWithinBudget(markdownCharBudget)
     }
 
     val header = compactWorkoutTopLevelBlock(blocks.first().trim())
@@ -368,7 +466,7 @@ internal fun compactWorkoutSessionMarkdown(markdown: String): String {
         append(compactSections.joinToString("\n\n") { renderCompactWorkoutSection(it) })
     }.trim()
 
-    if (compacted.length <= TARGET_MARKDOWN_CHAR_BUDGET) return compacted
+    if (compacted.length <= markdownCharBudget) return compacted
 
     val reducedSections = compactSections.map { renderCompactWorkoutSection(it).takeWithinBudget(MAX_SECTION_CHAR_BUDGET) }
     return buildString {
@@ -376,7 +474,7 @@ internal fun compactWorkoutSessionMarkdown(markdown: String): String {
         append("\n\n")
         append("_Timelines, trends, and low-priority lines trimmed._\n\n")
         append(reducedSections.joinToString("\n\n"))
-    }.trim().takeWithinBudget(TARGET_MARKDOWN_CHAR_BUDGET)
+    }.trim().takeWithinBudget(markdownCharBudget)
 }
 
 private fun compactWorkoutTopLevelBlock(blockMarkdown: String): String {
@@ -414,19 +512,9 @@ private fun compactWorkoutTopLevelBlock(blockMarkdown: String): String {
             append(header)
             append("\n\n")
         }
-        append(
-            subsections.joinToString("\n\n") { subsection ->
-                buildString {
-                    append("#### ")
-                    append(subsection.title)
-                    append('\n')
-                    subsection.lines.forEach { line ->
-                        append(line)
-                        append('\n')
-                    }
-                }.trim()
-            }
-        )
+        append(subsections.joinToString("\n") { subsection ->
+            renderStructuredSubsection(subsection.title, subsection.lines)
+        })
     }.trim()
 }
 
@@ -469,6 +557,8 @@ private fun compactWorkoutSubsectionData(
         .toList()
 
     val compactedBody = when (title) {
+        "Context" -> compactExerciseContextLines(bodyLines)
+        "Planned" -> compactPlannedLines(bodyLines)
         "Session Heart Rate" -> compactSessionHeartRateLines(bodyLines)
         "Executed" -> compactExecutedLines(bodyLines)
         "Previous Session", "Best To Date" -> compactHistoricalLines(bodyLines)
@@ -521,6 +611,7 @@ private fun compactSessionHeartRateLines(lines: List<String>): List<String> {
         }
         .sortedBy { sessionHeartRateLinePriority(it) }
         .take(MAX_SESSION_HR_LINES)
+        .map(::compactLabelLine)
 }
 
 private fun compactSignalLines(lines: List<String>): List<String> {
@@ -543,10 +634,12 @@ private fun compactExecutedLines(lines: List<String>): List<String> {
         .filter { line ->
             line.startsWith("- Total volume:") ||
                 line.startsWith("- Total duration:") ||
-                line.startsWith("- Set summary:")
+                line.startsWith("- Set summary:") ||
+                line.startsWith("- Date:")
         }
         .sortedBy { executedLinePriority(it) }
-        .take(2)
+        .take(3)
+        .map(::compactLabelLine)
 }
 
 private fun compactHistoricalLines(lines: List<String>): List<String> {
@@ -559,6 +652,7 @@ private fun compactHistoricalLines(lines: List<String>): List<String> {
         }
         .sortedBy { historicalLinePriority(it) }
         .take(3)
+        .map(::compactLabelLine)
 }
 
 private fun compactRecoveryContextLines(lines: List<String>): List<String> {
@@ -570,37 +664,76 @@ private fun compactRecoveryContextLines(lines: List<String>): List<String> {
         }
         .sortedBy { recoveryLinePriority(it) }
         .take(3)
+        .map(::compactLabelLine)
+}
+
+private fun compactExerciseContextLines(lines: List<String>): List<String> {
+    return lines
+        .map(::humanizeDenseMetrics)
+        .filter { line ->
+            line.startsWith("- Type:") ||
+                line.startsWith("- Equipment:") ||
+                line.startsWith("- Rep range:") ||
+                line.startsWith("- Load range:") ||
+                line.startsWith("- Progression mode:") ||
+                line.startsWith("- Exercise target zone:") ||
+                line.startsWith("- Intra-set rest:") ||
+                line.startsWith("- Warm-up sets:") ||
+                line.startsWith("- Notes:")
+        }
+        .sortedBy { exerciseContextLinePriority(it) }
+        .take(5)
+        .map(::compactLabelLine)
+}
+
+private fun compactPlannedLines(lines: List<String>): List<String> {
+    val plannedSets = lines
+        .map(::humanizeDenseMetrics)
+        .filter { line -> line.startsWith("- P") }
+        .map { line -> line.removePrefix("- ").trim() }
+
+    if (plannedSets.isEmpty()) {
+        return emptyList()
+    }
+
+    val previewCount = 4
+    val preview = plannedSets.take(previewCount).joinToString("; ")
+    return if (plannedSets.size > previewCount) {
+        listOf("- Plan: $preview; ... (${plannedSets.size} total)")
+    } else {
+        listOf("- Plan: $preview")
+    }
 }
 
 private fun compactCoachingSignalLines(lines: List<String>): List<String> {
     return lines
         .mapNotNull { line ->
             when {
-                line.contains("best_to_date") -> "- Performance is at or near the current best."
-                line.contains("below_best_to_date") -> "- Performance is below the current best."
+                line.contains("best_to_date") -> "- Best to date"
+                line.contains("below_best_to_date") -> "- Below best to date"
                 line.contains("progression_state:") ->
                     line.substringAfter("progression_state:", "")
                         .takeIf { it.isNotBlank() }
-                        ?.let { "- Progression state: ${it.replace('_', ' ')}." }
-                line.contains("vs_expected:above") -> "- Session performance was above the expected target."
-                line.contains("vs_expected:below") -> "- Session performance was below the expected target."
-                line.contains("vs_expected:equal") -> "- Session performance was in line with the expected target."
-                line.contains("vs_expected:mixed") -> "- Session performance was mixed against the expected target."
+                        ?.let { "- State: ${it.replace('_', ' ')}" }
+                line.contains("vs_expected:above") -> "- Vs exp: above"
+                line.contains("vs_expected:below") -> "- Vs exp: below"
+                line.contains("vs_expected:equal") -> "- Vs exp: equal"
+                line.contains("vs_expected:mixed") -> "- Vs exp: mixed"
                 line.contains("vs_previous_successful_baseline:above") ->
-                    "- Performance was above the previous successful baseline."
+                    "- Vs baseline: above"
                 line.contains("vs_previous_successful_baseline:below") ->
-                    "- Performance was below the previous successful baseline."
+                    "- Vs baseline: below"
                 line.contains("vs_previous_successful_baseline:equal") ->
-                    "- Performance matched the previous successful baseline."
+                    "- Vs baseline: equal"
                 line.contains("vs_previous_successful_baseline:mixed") ->
-                    "- Performance was mixed versus the previous successful baseline."
-                line.contains("vs_previous_session:above") -> "- Performance improved versus the previous session."
-                line.contains("vs_previous_session:below") -> "- Performance was below the previous session."
-                line.contains("vs_previous_session:similar") -> "- Performance was similar to the previous session."
-                line.contains("trend:up") -> "- Recent performance trend is improving."
-                line.contains("trend:down") -> "- Recent performance trend is declining."
-                line.contains("trend:stable") -> "- Recent performance trend is stable."
-                line.contains("trend:mixed") -> "- Recent performance trend is mixed."
+                    "- Vs baseline: mixed"
+                line.contains("vs_previous_session:above") -> "- Vs prev: above"
+                line.contains("vs_previous_session:below") -> "- Vs prev: below"
+                line.contains("vs_previous_session:similar") -> "- Vs prev: similar"
+                line.contains("trend:up") -> "- Trend: up"
+                line.contains("trend:down") -> "- Trend: down"
+                line.contains("trend:stable") -> "- Trend: stable"
+                line.contains("trend:mixed") -> "- Trend: mixed"
                 line.equals("- None", ignoreCase = true) -> null
                 else -> null
             }
@@ -622,6 +755,7 @@ private fun compactAthleteContextLines(lines: List<String>): List<String> {
                 line.startsWith("- Resting HR")
         }
         .take(3)
+        .map(::compactLabelLine)
 }
 
 private fun splitMarkdownBlocks(
@@ -705,9 +839,10 @@ private fun expandCompactBpmRange(rawRange: String): String? {
 }
 
 private fun executedLinePriority(line: String): Int = when {
-    line.startsWith("- Set summary:") -> 0
-    line.startsWith("- Total volume:") -> 1
-    line.startsWith("- Total duration:") -> 2
+    line.startsWith("- Date:") -> 0
+    line.startsWith("- Set summary:") -> 1
+    line.startsWith("- Total volume:") -> 2
+    line.startsWith("- Total duration:") -> 3
     else -> 9
 }
 
@@ -732,6 +867,19 @@ private fun sessionHeartRateLinePriority(line: String): Int = when {
     line.startsWith("- Avg % max HR:") -> 2
     line.startsWith("- Peak % max HR:") -> 3
     line.startsWith("- High-intensity exposure:") -> 4
+    else -> 9
+}
+
+private fun exerciseContextLinePriority(line: String): Int = when {
+    line.startsWith("- Type:") -> 0
+    line.startsWith("- Rep range:") -> 1
+    line.startsWith("- Load range:") -> 2
+    line.startsWith("- Progression mode:") -> 3
+    line.startsWith("- Exercise target zone:") -> 4
+    line.startsWith("- Equipment:") -> 5
+    line.startsWith("- Intra-set rest:") -> 6
+    line.startsWith("- Warm-up sets:") -> 7
+    line.startsWith("- Notes:") -> 8
     else -> 9
 }
 
@@ -801,7 +949,7 @@ private fun aggregateRecoverySubsection(
             restPeaks += match.groupValues[2].toInt()
             return@forEach
         }
-        Regex("""^- Work samples in target zone: (\d{1,3})%$""").find(line)?.let { match ->
+        Regex("""^- In-zone: (\d{1,3})%$""").find(line)?.let { match ->
             targetZonePercents += match.groupValues[1].toInt()
         }
     }
@@ -817,7 +965,7 @@ private fun aggregateRecoverySubsection(
         aggregatedLines += "- Rest HR avg range: ${restAverages.min()} to ${restAverages.max()} bpm | peak range: ${restPeaks.min()} to ${restPeaks.max()} bpm"
     }
     if (targetZonePercents.isNotEmpty()) {
-        aggregatedLines += "- Work samples in target zone range: ${targetZonePercents.min()}% to ${targetZonePercents.max()}%"
+        aggregatedLines += "- In-zone range: ${targetZonePercents.min()}% to ${targetZonePercents.max()}%"
     }
 
     if (aggregatedLines.isEmpty()) return null
@@ -842,21 +990,11 @@ private fun aggregateSimpleDedupSubsection(
 private fun renderCompactWorkoutSection(
     section: CompactWorkoutSectionData,
 ): String = buildString {
-    append(section.heading)
-    append("\n\n")
-    append(
-        section.subsections.joinToString("\n\n") { subsection ->
-            buildString {
-                append("#### ")
-                append(subsection.title)
-                append('\n')
-                subsection.lines.forEach { line ->
-                    append(line)
-                    append('\n')
-                }
-            }.trim()
-        }
-    )
+    append(compactWorkoutSectionHeading(section.heading))
+    append('\n')
+    append(section.subsections.joinToString("\n") { subsection ->
+        renderStructuredSubsection(subsection.title, subsection.lines)
+    })
 }.trim().takeWithinBudget(MAX_SECTION_CHAR_BUDGET)
 
 private fun List<String>.takeWhileBudget(
@@ -936,4 +1074,94 @@ private fun normalizeCompactRangeLine(
     val rangeMatch = Regex("""(Range:\s*)(\d{4,6})(\s*bpm)""").find(line) ?: return line
     val expanded = expandCompactBpmRange(rangeMatch.groupValues[2]) ?: return line
     return line.replaceRange(rangeMatch.range, "${rangeMatch.groupValues[1]}$expanded${rangeMatch.groupValues[3]}")
+}
+
+private fun compactLabelLine(
+    line: String,
+): String {
+    return line
+        .replace("- Total volume:", "- Vol:")
+        .replace("- Total duration:", "- Dur:")
+        .replace("- Set summary:", "- Sets:")
+        .replace("- Progression state:", "- State:")
+        .replace("- Expected:", "- Exp:")
+        .replace("- Executed:", "- Done:")
+        .replace("- Vs expected:", "- Vs exp:")
+        .replace("- Vs previous baseline:", "- Vs base:")
+        .replace("- Work samples in target zone:", "- In-zone:")
+        .replace("- High-intensity exposure:", "- Hi exp:")
+        .replace("- Avg % max HR:", "- Avg %maxHR:")
+        .replace("- Peak % max HR:", "- Peak %maxHR:")
+        .replace("- Avg % HR reserve:", "- Avg %HRR:")
+        .replace("- Peak % HR reserve:", "- Peak %HRR:")
+        .replace("- Type:", "- Type")
+        .replace("- Equipment:", "- Equip")
+        .replace("- Rep range:", "- Reps")
+        .replace("- Load range:", "- Load")
+        .replace("- Progression mode:", "- Prog")
+        .replace("- Exercise target zone:", "- Zone")
+        .replace("- Intra-set rest:", "- Rest")
+        .replace("- Warm-up sets:", "- Warm-up")
+        .replace("- Resting HR (bpm):", "- Rest HR:")
+        .replace("- Weight (kg):", "- Wt:")
+}
+
+private fun compactExerciseSessionHeading(
+    heading: String,
+): String = heading
+    .removePrefix("## ")
+    .replaceFirst(": ", " ")
+    .replace(" | Dur: ", " | dur=")
+
+private fun compactWorkoutSectionHeading(
+    heading: String,
+): String = when {
+    heading.startsWith("### Superset: ") -> "SUPERSET ${heading.removePrefix("### Superset: ").trim()}"
+    heading.startsWith("### ") -> "EXERCISE ${heading.removePrefix("### ").trim()}"
+    else -> heading.trim()
+}
+
+private fun compactStructuredMetadataLine(
+    line: String,
+): String = line
+    .removePrefix("- ")
+    .replace("Template position:", "slot=")
+    .replace("exercise ", "")
+    .replace(" of ", "/")
+    .replace(" (flattened workout order)", "")
+    .replace("Session BW:", "bw=")
+
+private fun renderStructuredSubsection(
+    title: String,
+    lines: List<String>,
+): String {
+    val payload = lines.joinToString(" | ") { it.removePrefix("- ").trim() }
+    return "${structuredTag(title)} $payload".trim()
+}
+
+private fun structuredTag(
+    title: String,
+): String = when (title) {
+    "Context" -> "CONTEXT"
+    "Planned" -> "PLAN"
+    "Athlete Context" -> "ATHLETE"
+    "Session Heart Rate" -> "HR"
+    "Executed" -> "EXEC"
+    "Previous Session" -> "PREV"
+    "Best To Date" -> "BEST"
+    "Recovery Context" -> "RECOVERY"
+    "Coaching Signals" -> "SIGNALS"
+    "Progression Context" -> "PROG"
+    "Executed Timeline" -> "TIMELINE"
+    else -> title.uppercase()
+}
+
+internal fun estimateTokenCount(
+    text: String,
+): Int {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return 0
+    val scaledLength = trimmed.length * ESTIMATED_CHARS_PER_TOKEN_DENOMINATOR
+    return (scaledLength + ESTIMATED_CHARS_PER_TOKEN_NUMERATOR - 1) /
+        ESTIMATED_CHARS_PER_TOKEN_NUMERATOR
 }
