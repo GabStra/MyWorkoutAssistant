@@ -6,8 +6,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -61,7 +62,7 @@ fun WorkoutInsightsDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 420.dp),
+                    .height(360.dp),
                 verticalArrangement = Arrangement.spacedBy(Spacing.md),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -84,7 +85,7 @@ fun WorkoutInsightsDialog(
 
                     state is WorkoutInsightsUiState.Generating -> {
                         CenteredInsightBodySurface {
-                            LoadingText("Generating local insights...")
+                            LoadingText("Generating insights...")
                         }
                     }
 
@@ -202,7 +203,7 @@ private fun InsightBodySurface(
     SecondarySurface {
         Column(
             modifier = Modifier
-                .heightIn(max = 260.dp)
+                .fillMaxHeight()
                 .verticalScroll(scrollState)
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -219,7 +220,7 @@ private fun CenteredInsightBodySurface(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 100.dp)
+                .fillMaxHeight()
                 .padding(Spacing.md),
             contentAlignment = Alignment.Center
         ) {
