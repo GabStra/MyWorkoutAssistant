@@ -5,12 +5,13 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,17 +40,18 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
-import com.gabstra.myworkoutassistant.composables.LoadingOverlay
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.ContentSubtitle
 import com.gabstra.myworkoutassistant.composables.FormSectionTitle
+import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
+import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
-import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthConnect
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
@@ -185,7 +187,6 @@ fun SettingsScreen(
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
                 .verticalColumnScrollbarContainer(scrollState)
-                .padding(horizontal = 15.dp)
         ) {
             FormSectionTitle("Profile")
             StyledCard(
@@ -223,7 +224,7 @@ fun SettingsScreen(
                     )
                 }
             }
-
+            Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("Heart Rate")
             StyledCard(
                 modifier = Modifier
@@ -246,9 +247,9 @@ fun SettingsScreen(
                     )
                     ContentSubtitle(
                         text = if (fallbackAge != null && fallbackMaxHeartRate != null) {
-                            "If left blank, the app uses the default formula `211 - 0.64 × age`. For age $fallbackAge, that resolves to $fallbackMaxHeartRate bpm."
+                            "If left blank, the app uses the default formula:\n211 - 0.64 × age ($fallbackAge) = $fallbackMaxHeartRate bpm"
                         } else {
-                            "If left blank, the app uses the default formula `211 - 0.64 × age`. Enter a valid birth year to preview the fallback result."
+                            "If left blank, the app uses the default formula:\n211 - 0.64 × age. Enter a valid birth year to preview the fallback result."
                         },
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
@@ -315,7 +316,7 @@ fun SettingsScreen(
                     )
                 }
             }
-
+            Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("External Sensors")
             StyledCard(
                 modifier = Modifier
@@ -360,7 +361,7 @@ fun SettingsScreen(
                     )
                 }
             }
-
+            Spacer(modifier = Modifier.height(Spacing.sm))
             FormSectionTitle("Local Insights")
             StyledCard(
                 modifier = Modifier
