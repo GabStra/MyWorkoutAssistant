@@ -34,6 +34,24 @@ android {
             )
         }
     }
+
+    sourceSets {
+        named("main") {
+            kotlin.directories.add("src/main/java")
+        }
+        named("debug") {
+            kotlin.directories.add("src/debug/java")
+        }
+        named("release") {
+            kotlin.directories.add("src/release/java")
+        }
+        named("androidTest") {
+            kotlin.directories.add("src/androidTest/java")
+        }
+        named("test") {
+            kotlin.directories.add("src/test/java")
+        }
+    }
 }
 
 
