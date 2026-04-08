@@ -62,6 +62,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
+import com.gabstra.myworkoutassistant.insights.LiteRtLmInsightsRepository
+import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
@@ -275,6 +277,10 @@ class MainActivity : ComponentActivity() {
         )
 
         PhoneToWatchSyncCoordinator.install(applicationContext)
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            LiteRtLmInsightsRepository.prewarmIfConfigured(applicationContext)
+        }
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -1020,6 +1026,30 @@ fun MyWorkoutAssistantNavHost(
             }
         }
 
+    var configuredLiteRtModelPath by remember {
+        mutableStateOf(LiteRtLmModelStore.getConfiguredModelPath(context))
+    }
+
+    val liteRtModelPickerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri ?: return@rememberLauncherForActivityResult
+            try {
+                val importedName = LiteRtLmModelStore.importModel(context, uri)
+                configuredLiteRtModelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
+                Toast.makeText(
+                    context,
+                    "LiteRT-LM model imported: $importedName",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    e.message ?: "Couldn't import LiteRT-LM model.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
     val backupSaveLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
             uri?.let {
@@ -1325,6 +1355,16 @@ fun MyWorkoutAssistantNavHost(
                             },
                             workoutStore = appViewModel.workoutStore,
                             healthConnectClient = healthConnectClient,
+                            liteRtModelPath = configuredLiteRtModelPath,
+                            onImportLiteRtModel = {
+                                liteRtModelPickerLauncher.launch(arrayOf("*/*"))
+                            },
+                            onClearLiteRtModel = {
+                                LiteRtLmModelStore.clearConfiguredModel(context)
+                                configuredLiteRtModelPath = null
+                                Toast.makeText(context, "LiteRT-LM model cleared.", Toast.LENGTH_SHORT)
+                                    .show()
+                            },
                             isSaving = isSaving
                         )
                     }

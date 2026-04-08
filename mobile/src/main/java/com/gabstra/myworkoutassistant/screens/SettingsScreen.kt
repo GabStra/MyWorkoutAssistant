@@ -43,6 +43,9 @@ import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
+import com.gabstra.myworkoutassistant.composables.ContentSubtitle
+import com.gabstra.myworkoutassistant.composables.FormSectionTitle
+import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
@@ -51,6 +54,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
+import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -63,6 +67,9 @@ fun SettingsScreen(
     onCancel: () -> Unit,
     workoutStore: WorkoutStore,
     healthConnectClient: HealthConnectClient,
+    liteRtModelPath: String?,
+    onImportLiteRtModel: () -> Unit,
+    onClearLiteRtModel: () -> Unit,
     isSaving: Boolean = false
 ) {
     val context = LocalContext.current
@@ -81,8 +88,14 @@ fun SettingsScreen(
     val restingHeartRateState = remember {
         mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
     }
-    
+
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
+    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+    val fallbackBirthYear = birthDateYearState.value.toIntOrNull()
+    val fallbackAge = fallbackBirthYear?.let { year ->
+        (currentYear - year).takeIf { it in 1..120 }
+    }
+    val fallbackMaxHeartRate = fallbackAge?.let(::getMaxHeartRate)
 
     suspend fun loadRestingHeartRateWithMinimumLoadingTime(): Int? {
         val startedAt = System.currentTimeMillis()
@@ -174,145 +187,224 @@ fun SettingsScreen(
                 .verticalColumnScrollbarContainer(scrollState)
                 .padding(horizontal = 15.dp)
         ) {
-            OutlinedTextField(
-                value = polarDeviceIdState.value,
-                onValueChange = { polarDeviceIdState.value = it },
-                label = { Text("Polar Device ID") },
+            FormSectionTitle("Profile")
+            StyledCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = polarDisplayNameState.value,
-                onValueChange = { polarDisplayNameState.value = it },
-                label = { Text("Polar Display Name (optional)") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = whoopDeviceIdState.value,
-                onValueChange = { whoopDeviceIdState.value = it },
-                label = { Text("WHOOP Device ID (optional)") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = whoopDisplayNameState.value,
-                onValueChange = { whoopDisplayNameState.value = it },
-                label = { Text("WHOOP Display Name (optional)") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = birthDateYearState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it.isDigit() }) {
-                        birthDateYearState.value = input
-                    }
-                },
-                label = { Text("User Year of Birth") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = weightState.value,
-                onValueChange = { input ->
-                    // Allow a single dot for decimals, but not as the first character
-                    if (input.isEmpty() || (input.count { it == '.' } <= 1 && input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
-                        weightState.value = input
-                    }
-                },
-                label = { Text("Weight (KG)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = measuredMaxHeartRateState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it.isDigit() }) {
-                        measuredMaxHeartRateState.value = input
-                    }
-                },
-                label = { Text("Measured HR Max (optional)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            OutlinedTextField(
-                value = restingHeartRateState.value,
-                onValueChange = { input ->
-                    if (input.isEmpty() || input.all { it.isDigit() }) {
-                        restingHeartRateState.value = input
-                    }
-                },
-                label = { Text("Resting HR (bpm)") },
-                keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp)
-            )
-
-            AppPrimaryOutlinedButton(
-                text = if (isLoadingRestingHeartRate) {
-                    "Loading Resting HR..."
-                } else {
-                    "Use Health Connect Resting HR"
-                },
-                onClick = {
-                    if (isLoadingRestingHeartRate) {
-                        return@AppPrimaryOutlinedButton
-                    }
-                    coroutineScope.launch {
-                        isLoadingRestingHeartRate = true
-                        try {
-                            val historicalRestingHeartRate =
-                                loadRestingHeartRateWithMinimumLoadingTime()
-                            if (historicalRestingHeartRate != null) {
-                                restingHeartRateState.value = historicalRestingHeartRate.toString()
-                                Toast.makeText(
-                                    context,
-                                    "Resting heart rate loaded from Health Connect.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            } else {
-                                restingHeartRateState.value = defaultRestingHeartRate.toString()
-                                Toast.makeText(
-                                    context,
-                                    "No resting heart rate was found in Health Connect. Using $defaultRestingHeartRate bpm instead.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    OutlinedTextField(
+                        value = birthDateYearState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                birthDateYearState.value = input
                             }
-                        } catch (_: Exception) {
-                            restingHeartRateState.value = defaultRestingHeartRate.toString()
-                            Toast.makeText(
-                                context,
-                                "Couldn't read your resting heart rate from Health Connect. Using $defaultRestingHeartRate bpm instead.",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        } finally {
-                            isLoadingRestingHeartRate = false
-                        }
-                    }
-                },
+                        },
+                        label = { Text("User Year of Birth") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = weightState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || (input.count { it == '.' } <= 1 && input.all { it.isDigit() || it == '.' } && !input.startsWith("."))) {
+                                weightState.value = input
+                            }
+                        },
+                        label = { Text("Weight (kg)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
+
+            FormSectionTitle("Heart Rate")
+            StyledCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
-            )
+                    .padding(horizontal = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    OutlinedTextField(
+                        value = measuredMaxHeartRateState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                measuredMaxHeartRateState.value = input
+                            }
+                        },
+                        label = { Text("Measured HR Max (optional)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                    ContentSubtitle(
+                        text = if (fallbackAge != null && fallbackMaxHeartRate != null) {
+                            "If left blank, the app uses the default formula `211 - 0.64 × age`. For age $fallbackAge, that resolves to $fallbackMaxHeartRate bpm."
+                        } else {
+                            "If left blank, the app uses the default formula `211 - 0.64 × age`. Enter a valid birth year to preview the fallback result."
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = restingHeartRateState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                restingHeartRateState.value = input
+                            }
+                        },
+                        label = { Text("Resting HR (bpm)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    AppPrimaryOutlinedButton(
+                        text = if (isLoadingRestingHeartRate) {
+                            "Loading Resting HR..."
+                        } else {
+                            "Use Health Connect Resting HR"
+                        },
+                        onClick = {
+                            if (isLoadingRestingHeartRate) {
+                                return@AppPrimaryOutlinedButton
+                            }
+                            coroutineScope.launch {
+                                isLoadingRestingHeartRate = true
+                                try {
+                                    val historicalRestingHeartRate =
+                                        loadRestingHeartRateWithMinimumLoadingTime()
+                                    if (historicalRestingHeartRate != null) {
+                                        restingHeartRateState.value = historicalRestingHeartRate.toString()
+                                        Toast.makeText(
+                                            context,
+                                            "Resting heart rate loaded from Health Connect.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        restingHeartRateState.value = defaultRestingHeartRate.toString()
+                                        Toast.makeText(
+                                            context,
+                                            "No resting heart rate was found in Health Connect. Using $defaultRestingHeartRate bpm instead.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } catch (_: Exception) {
+                                    restingHeartRateState.value = defaultRestingHeartRate.toString()
+                                    Toast.makeText(
+                                        context,
+                                        "Couldn't read your resting heart rate from Health Connect. Using $defaultRestingHeartRate bpm instead.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } finally {
+                                    isLoadingRestingHeartRate = false
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
+
+            FormSectionTitle("External Sensors")
+            StyledCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    OutlinedTextField(
+                        value = polarDeviceIdState.value,
+                        onValueChange = { polarDeviceIdState.value = it },
+                        label = { Text("Polar Device ID") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = polarDisplayNameState.value,
+                        onValueChange = { polarDisplayNameState.value = it },
+                        label = { Text("Polar Display Name (optional)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = whoopDeviceIdState.value,
+                        onValueChange = { whoopDeviceIdState.value = it },
+                        label = { Text("WHOOP Device ID (optional)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = whoopDisplayNameState.value,
+                        onValueChange = { whoopDisplayNameState.value = it },
+                        label = { Text("WHOOP Display Name (optional)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
+
+            FormSectionTitle("Local Insights")
+            StyledCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    ContentSubtitle(
+                        text = "Select the local `.litertlm` model used for on-device workout insights.",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                    OutlinedTextField(
+                        value = liteRtModelPath ?: "",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("LiteRT-LM model path") },
+                        placeholder = { Text("No local .litertlm model selected") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    AppPrimaryOutlinedButton(
+                        text = if (liteRtModelPath == null) {
+                            "Import LiteRT-LM model"
+                        } else {
+                            "Replace LiteRT-LM model"
+                        },
+                        onClick = onImportLiteRtModel,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    AppSecondaryButton(
+                        text = "Clear LiteRT-LM model",
+                        onClick = onClearLiteRtModel,
+                        enabled = liteRtModelPath != null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
 
             Row(
                 modifier = Modifier
@@ -399,4 +491,3 @@ fun SettingsScreen(
 
     LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
 }
-

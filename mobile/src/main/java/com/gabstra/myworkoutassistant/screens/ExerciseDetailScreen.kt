@@ -1,6 +1,10 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
+import android.net.Uri
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckBox
@@ -66,6 +71,12 @@ import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
+import com.gabstra.myworkoutassistant.insights.LiteRtLmInsightsRepository
+import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
+import com.gabstra.myworkoutassistant.insights.buildExerciseInsightsPrompt
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
@@ -80,9 +91,12 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+
+private const val INSIGHTS_LOG_TAG = "WorkoutInsights"
 
 @Composable
 private fun ExerciseDetailMenu(
@@ -156,6 +170,26 @@ fun ExerciseDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isSaving by remember { mutableStateOf(false) }
+    var showInsightsDialog by remember { mutableStateOf(false) }
+    var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
+    val insightsRepository = remember(context) { LiteRtLmInsightsRepository(context.applicationContext) }
+    val modelPickerLauncher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            uri ?: return@rememberLauncherForActivityResult
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        LiteRtLmModelStore.importModel(context, uri)
+                    }
+                }.onSuccess {
+                    insightsState = WorkoutInsightsUiState.Idle
+                }.onFailure { error ->
+                    insightsState = WorkoutInsightsUiState.Error(
+                        error.message ?: "Unable to import the selected LiteRT-LM model."
+                    )
+                }
+            }
+        }
 
     fun updateExerciseWithHistory(updatedExercise: Exercise) {
         if (isSaving) return
@@ -199,6 +233,60 @@ fun ExerciseDetailScreen(
         }
     }
 
+    fun generateExerciseInsights() {
+        showInsightsDialog = true
+        scope.launch {
+            insightsState = WorkoutInsightsUiState.PreparingModel
+            when (
+                val promptResult = withContext(Dispatchers.IO) {
+                    val db = AppDatabase.getDatabase(context)
+                    buildExerciseInsightsPrompt(
+                        exercise = exercise,
+                        workoutHistoryDao = workoutHistoryDao,
+                        setHistoryDao = setHistoryDao,
+                        restHistoryDao = db.restHistoryDao(),
+                        exerciseSessionProgressionDao = db.exerciseSessionProgressionDao(),
+                        workouts = workouts,
+                        workoutStore = appViewModel.workoutStore
+                    )
+                }
+            ) {
+                is WorkoutInsightsPromptResult.Failure -> {
+                    insightsState = WorkoutInsightsUiState.Error(promptResult.message)
+                }
+                is WorkoutInsightsPromptResult.Success -> {
+                    Log.d(
+                        INSIGHTS_LOG_TAG,
+                        "exercise_prompt_start\n${promptResult.prompt}\nexercise_prompt_end"
+                    )
+                    runCatching {
+                        insightsRepository.generateInsights(
+                            title = promptResult.title,
+                            prompt = promptResult.prompt
+                        ).collectLatest { chunk ->
+                            insightsState = WorkoutInsightsUiState.Generating(chunk.text)
+                        }
+                    }.onSuccess {
+                        val finalText =
+                            (insightsState as? WorkoutInsightsUiState.Generating)?.partialText.orEmpty()
+                        Log.d(
+                            INSIGHTS_LOG_TAG,
+                            "exercise_raw_response_start\n${finalText.ifBlank { "No insights were generated." }}\nexercise_raw_response_end"
+                        )
+                        insightsState = WorkoutInsightsUiState.Success(
+                            title = promptResult.title,
+                            text = finalText.ifBlank { "No insights were generated." }
+                        )
+                    }.onFailure { error ->
+                        insightsState = WorkoutInsightsUiState.Error(
+                            error.message ?: "Unable to generate local insights."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(showRest) {
         selectedSetIds = emptySet()
     }
@@ -235,6 +323,17 @@ fun ExerciseDetailScreen(
                     },
 
                     actions = {
+                        IconButton(
+                            onClick = {
+                                showInsightsDialog = true
+                                insightsState = WorkoutInsightsUiState.Idle
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Insights"
+                            )
+                        }
                         ExerciseDetailMenu(
                             onEditExercise = {
                                 appViewModel.setScreenData(
@@ -689,5 +788,18 @@ fun ExerciseDetailScreen(
             }
         )
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
+        WorkoutInsightsDialog(
+            show = showInsightsDialog,
+            title = "Exercise insights",
+            state = insightsState,
+            isModelConfigured = LiteRtLmModelStore.getConfiguredModelPath(context) != null,
+            onDismiss = { showInsightsDialog = false },
+            onImportModel = { modelPickerLauncher.launch(arrayOf("*/*")) },
+            onGenerate = { generateExerciseInsights() },
+            onClearModel = {
+                LiteRtLmModelStore.clearConfiguredModel(context)
+                insightsState = WorkoutInsightsUiState.Idle
+            }
+        )
     }
 }
