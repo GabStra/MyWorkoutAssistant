@@ -134,6 +134,7 @@ private val backupFileWriteMutex = Mutex()
 private const val BACKUP_STORAGE_PREFS = "backup_storage_prefs"
 private const val AUTO_BACKUP_DOCUMENT_URI_KEY = "auto_backup_document_uri"
 private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
+private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "workout_store_backup.json"
 
 private fun backupStoragePrefs(context: Context) =
     context.getSharedPreferences(BACKUP_STORAGE_PREFS, Context.MODE_PRIVATE)
@@ -199,6 +200,59 @@ private fun writeTextToUri(
         outputStream.flush()
         true
     } ?: false
+}
+
+private suspend fun upsertDownloadsBackupFile(
+    context: Context,
+    fileName: String,
+    content: String
+): Boolean {
+    return withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val existingUri = findFileInDownloadsFolder(context, fileName)
+
+        if (existingUri != null) {
+            val existingContent = readTextFromUri(context, existingUri)
+            if (existingContent == content) {
+                Log.d("Utils", "Automatic Downloads backup content unchanged, skipping save")
+                return@withContext true
+            }
+
+            return@withContext writeTextToUri(context, existingUri, content).also { wroteContent ->
+                if (wroteContent) {
+                    Log.d("Utils", "Automatic backup updated in Downloads")
+                } else {
+                    Log.e("Utils", "Failed to update automatic backup in Downloads")
+                }
+            }
+        }
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+        }
+
+        val createdUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+        if (createdUri == null) {
+            Log.e("Utils", "Failed to create automatic backup file in Downloads")
+            return@withContext false
+        }
+
+        return@withContext try {
+            writeTextToUri(context, createdUri, content).also { wroteContent ->
+                if (wroteContent) {
+                    Log.d("Utils", "Automatic backup created in Downloads")
+                } else {
+                    resolver.delete(createdUri, null, null)
+                    Log.e("Utils", "Failed to open output stream for automatic Downloads backup")
+                }
+            }
+        } catch (e: Exception) {
+            resolver.delete(createdUri, null, null)
+            throw e
+        }
+    }
 }
 
 private suspend fun loadAppBackupFromConfiguredUri(
@@ -1135,22 +1189,36 @@ suspend fun saveWorkoutStoreToExternalStorage(
 
                 val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                 val backupUri = readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
-                if (backupUri == null) {
-                    Log.d("Utils", "Automatic backup skipped because no backup document is configured")
-                    return@withContext
+                var wroteBackup = false
+
+                if (backupUri != null) {
+                    try {
+                        val existingContent = readTextFromUri(context, backupUri)
+                        if (existingContent == jsonString) {
+                            Log.d("Utils", "Automatic backup content unchanged, skipping SAF save")
+                            wroteBackup = true
+                        } else {
+                            wroteBackup = writeTextToUri(context, backupUri, jsonString)
+                            if (wroteBackup) {
+                                Log.d("Utils", "Automatic backup saved to persisted SAF document")
+                            } else {
+                                Log.e("Utils", "Failed to open output stream for automatic backup document")
+                            }
+                        }
+                    } catch (e: SecurityException) {
+                        Log.w("Utils", "Lost persisted access to automatic backup document, falling back to Downloads", e)
+                        clearConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
+                    } catch (e: Exception) {
+                        Log.w("Utils", "Failed writing automatic backup to SAF document, falling back to Downloads", e)
+                    }
                 }
 
-                val existingContent = readTextFromUri(context, backupUri)
-                if (existingContent == jsonString) {
-                    Log.d("Utils", "Automatic backup content unchanged, skipping save")
-                    return@withContext
-                }
-
-                val wroteContent = writeTextToUri(context, backupUri, jsonString)
-                if (wroteContent) {
-                    Log.d("Utils", "Automatic backup saved to persisted SAF document")
-                } else {
-                    Log.e("Utils", "Failed to open output stream for automatic backup document")
+                if (!wroteBackup) {
+                    upsertDownloadsBackupFile(
+                        context = context,
+                        fileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME,
+                        content = jsonString
+                    )
                 }
             } catch (e: Exception) {
                 when (e) {
@@ -1210,12 +1278,18 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                 return@withContext it
             }
 
+            readJsonFromDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME)?.let { jsonString ->
+                val appBackup = fromJSONtoAppBackup(jsonString)
+                Log.d("Utils", "Backup loaded successfully from Downloads automatic backup file")
+                return@withContext appBackup
+            }
+
             val externalDir = context.getExternalFilesDir(null)
             if (externalDir == null) {
                 Log.d("Utils", "No configured backup document and external storage is unavailable")
                 return@withContext null
             }
-            val backupFileName = "workout_store_backup.json"
+            val backupFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
             val backupFile = java.io.File(externalDir, backupFileName)
             if (!backupFile.exists()) {
                 Log.d("Utils", "Backup file does not exist in any configured location")
