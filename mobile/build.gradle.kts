@@ -90,6 +90,24 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    sourceSets {
+        named("main") {
+            kotlin.directories.add("src/main/java")
+        }
+        named("debug") {
+            kotlin.directories.add("src/debug/java")
+        }
+        named("release") {
+            kotlin.directories.add("src/release/java")
+        }
+        named("androidTest") {
+            kotlin.directories.add("src/androidTest/java")
+        }
+        named("test") {
+            kotlin.directories.add("src/test/java")
+        }
+    }
 }
 
 dependencies {
@@ -141,7 +159,7 @@ dependencies {
 
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")
-    implementation("com.patrykandpatrick.vico:compose:3.0.3")
+    implementation("com.patrykandpatrick.vico:compose:3.1.0")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")

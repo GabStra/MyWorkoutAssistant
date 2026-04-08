@@ -38,6 +38,7 @@ import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.compose.cartesian.CartesianMeasuringContext
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
 import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
+import com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
@@ -250,6 +251,8 @@ internal class BottomPaddedStartVerticalAxis(
     size: com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size,
     titleComponent: TextComponent?,
     title: (ExtraStore) -> CharSequence?,
+    tickPosition: BaseAxis.TickPosition,
+    lineDrawingOrder: BaseAxis.LineDrawingOrder,
     private val bottomPadding: Dp,
 ) : VerticalAxis<Axis.Position.Vertical.Start>(
     position = Axis.Position.Vertical.Start,
@@ -266,6 +269,8 @@ internal class BottomPaddedStartVerticalAxis(
     size = size,
     titleComponent = titleComponent,
     title = title,
+    tickPosition = tickPosition,
+    lineDrawingOrder = lineDrawingOrder,
 ) {
     override fun drawUnderLayers(
         context: CartesianDrawingContext,
@@ -403,6 +408,13 @@ internal fun rememberBottomPaddedStartVerticalAxis(
     size: com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size,
     titleComponent: TextComponent? = null,
     title: (ExtraStore) -> CharSequence? = { null },
+    tickPosition: BaseAxis.TickPosition =
+        if (horizontalLabelPosition == VerticalAxis.HorizontalLabelPosition.Outside) {
+            BaseAxis.TickPosition.Outside
+        } else {
+            BaseAxis.TickPosition.Inside
+        },
+    lineDrawingOrder: BaseAxis.LineDrawingOrder = BaseAxis.LineDrawingOrder.UnderLayers,
     bottomPadding: Dp,
 ): VerticalAxis<Axis.Position.Vertical.Start> = remember(
     line,
@@ -418,6 +430,8 @@ internal fun rememberBottomPaddedStartVerticalAxis(
     size,
     titleComponent,
     title,
+    tickPosition,
+    lineDrawingOrder,
     bottomPadding,
 ) {
     BottomPaddedStartVerticalAxis(
@@ -434,6 +448,8 @@ internal fun rememberBottomPaddedStartVerticalAxis(
         size = size,
         titleComponent = titleComponent,
         title = title,
+        tickPosition = tickPosition,
+        lineDrawingOrder = lineDrawingOrder,
         bottomPadding = bottomPadding,
     )
 }
