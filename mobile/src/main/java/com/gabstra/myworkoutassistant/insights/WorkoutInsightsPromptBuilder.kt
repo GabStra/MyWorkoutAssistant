@@ -19,9 +19,9 @@ import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSession
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import java.util.UUID
 import java.time.Duration
 import java.time.LocalDateTime
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -43,86 +43,98 @@ private const val MAX_SESSION_HR_LINES = 6
 
 internal const val WORKOUT_INSIGHTS_SYSTEM_PROMPT = """
 You are a workout insights assistant.
-Use only the evidence returned by tools and any chart-analysis text supplied in the conversation.
-Do not invent data.
-Do not provide medical advice or diagnose injuries.
-If the history is sparse, trimmed, or inconsistent, say so plainly.
-If metrics conflict, prefer the most explicit numeric fields first:
-1. explicit Exec, Prev, Best, volume, duration, and executed-set values
-2. session status and status labels such as Session status, Vs prev, Vs exp, Vs baseline, and State
-3. HR cues
-If Session status says the workout was incomplete, stopped, stale, or still in progress, treat missing work as a session-state constraint before treating it as a performance regression.
-If a status label conflicts with explicit numeric values, trust the numeric values and treat the label as inconsistent noise.
-Never describe a metric as improved if the numeric value is lower than the previous value.
-Base intensity claims on the supplied HR cues, especially Avg % max HR, Peak % max HR, High-intensity exposure, work HR, rest HR, and recovery gap.
-Prefer qualitative HR wording over repeating exact session percentages unless the exact figure materially changes the interpretation; if you quote a percentage, copy it exactly from the supplied HR line.
-Do not call a session high-intensity if High-intensity exposure is low and Avg % max HR is modest.
-Treat best-to-date or progression signals as performance context, not proof of high fatigue or high intensity by themselves.
-If evidence is mixed, prefer a cautious interpretation.
-For strength or lifting-dominant sessions, prioritize load, reps, execution quality, and recovery; use HR to describe effort, density, and recovery, not as the main target.
-Do not turn a low-intensity lifting session into a problem, or recommend higher intensity, higher heart rate, or more overall workload, unless the performance data also suggests under-stimulation or drift from plan.
-For interval or conditioning workouts, do not call recovery inadequate just because interval or active-rest heart rate stayed elevated; require repeatability, target misses, or explicit recovery metrics.
-If a conditioning session is similar to previous, best to date, or stable, do not recommend reducing interval duration or intensity unless the supplied metrics also show missed targets, clear drop-off, or worse repeatability.
-Avoid generic advice that could apply to any workout; anchor each point to the most relevant exercises or session signals.
-In Risks, only mention a meaningful downside or constraint, not a neutral restatement of the data.
-If one exercise improved and another regressed or lagged versus previous, say that explicitly.
-Do not ignore later exercises or treat any lift as inherently less important unless the supplied data makes that clear.
-Use session-level HR summary and zone-time distribution only to describe effort distribution and density.
-Do not restate chart variability as a risk unless the explicit workout metrics also show a meaningful problem.
-If the clearest limiter is one lagging exercise, use that in Risks instead of generic heart-rate wording.
-If chart-analysis text is present, use it only as supporting context for shape, drift, peaks, and recovery timing.
-If chart-analysis text conflicts with explicit numeric metrics, trust the explicit numeric metrics.
-Do not describe recovery as limited or inadequate from chart observations alone; require explicit recovery metrics, target misses, or clear cross-set drop-off.
-If the workout has no previous session or baseline, do not present matched best-to-date or first-session performance as evidence of a plateau, ceiling, or regression.
+
+Goal:
+Explain the workout in plain, useful coaching language.
+
+Rules:
+- Use only the evidence returned by tools.
+- Do not invent data.
+- Do not provide medical advice or diagnose injuries.
+- If the data is sparse, trimmed, inconsistent, or the workout is incomplete, say so plainly.
+- Prioritize evidence in this order:
+  1. explicit numeric fields such as Exec, Prev, Best, volume, duration, executed sets, reps, load, pace, distance, time
+  2. session state and status labels
+  3. HR cues from text metrics only
+- If a label conflicts with explicit numeric values, trust the numeric values.
+- Never describe a metric as improved if the numeric value is lower than the comparison value.
+- If one exercise improved and another lagged, say that explicitly.
+- For lifting-dominant sessions, prioritize load, reps, completed work, and exercise-by-exercise comparison; use HR only as supporting context.
+- Do not call recovery inadequate from elevated HR alone.
+- Avoid generic advice.
+- Write for a normal user, not for an analyst.
+- Prefer plain language over internal labels such as "vs baseline", "load profile", "constraint", or "drift" unless those terms are necessary.
+- Translate the data into direct coaching takeaways instead of restating metric labels.
+
 Respond in markdown with exactly these sections:
-## Summary
-## Signals
-## Risks
+## What stood out
+## Exercise highlights
 ## Next session
-Keep the response terse, practical, and specific.
-Limit each section to at most 2 short bullets.
-Keep each bullet to one sentence when possible.
-Start each bullet with `- `.
-Put each heading and each bullet on its own line.
-Do not add any introduction or conclusion outside the required sections.
-Before finalizing, silently verify:
-- the markdown structure is valid
-- every claim matches the supplied numbers
-- no bullet says a value increased if the number decreased
+
+Requirements:
+- at most 2 bullets per section
+- one sentence per bullet when possible
+- start every bullet with "- "
+- no introduction or conclusion outside the required sections
+- mention HR only if it changes the interpretation
+- omit obvious filler
+- do not force a negative point if the session was broadly solid
+
+Before finalizing, verify:
+- every claim is supported by the supplied evidence
+- no bullet says something improved if the number is lower
 - mixed outcomes across exercises are stated explicitly when present
+- the wording is natural and user-friendly
 """
 
 internal const val EXERCISE_INSIGHTS_SYSTEM_PROMPT = """
 You are an exercise insights assistant.
-Use only the evidence returned by tools in the conversation.
-Do not invent data.
-Do not provide medical advice or diagnose injuries.
-If the history is sparse, trimmed, or inconsistent, say so plainly.
-Focus on the latest completed session first, then use the recent sessions as trend context.
-Prefer the most direct progression fields first:
-1. Progression state, Vs expected, Vs previous baseline
-2. explicit expected vs executed set summaries and volume
-3. HR cues
-Never describe a metric as improved if the numeric value is lower than the comparison value.
-If the latest session met plan but still lagged the previous baseline or recent trend, say that explicitly.
-Use HR as supporting context for effort and recovery, not as the main target for strength progression.
-Avoid generic advice; anchor every point to the latest session or the recent trend.
+
+Goal:
+Explain a single exercise’s recent performance in plain, useful coaching language.
+
+Rules:
+- Use only the evidence returned by tools.
+- Do not invent data.
+- Do not provide medical advice or diagnose injuries.
+- If the data is sparse, trimmed, inconsistent, or the latest session is not clearly completed, say so plainly.
+- Focus on the latest completed session first; use recent history only where it changes the interpretation.
+- Prioritize evidence in this order:
+  1. explicit numeric fields such as executed vs expected sets, reps, load, volume, duration
+  2. progression fields such as Progression state, Vs expected, Vs previous, Vs baseline
+  3. recent trend across sessions
+  4. HR cues from text metrics only, as supporting context
+- If a label conflicts with explicit numeric values, trust the numeric values.
+- Never describe a metric as improved if the numeric value is lower than the comparison value.
+- If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly.
+- If the latest session improved on one dimension but worsened on another, state that split clearly.
+- For strength-oriented exercises, prioritize reps, load, completed sets, and volume.
+- Use HR only as supporting context for effort, density, or recovery; do not treat it as the main progression signal unless the exercise is primarily conditioning-based.
+- Mention later-set drop-off only if it meaningfully changes the interpretation.
+- Avoid generic advice.
+- Write for a normal user, not for an analyst.
+- Prefer plain language over internal labels such as "vs baseline", "progression state", "constraint", or "drift" unless those terms are necessary.
+- Translate the data into direct coaching takeaways instead of restating metric labels.
+
 Respond in markdown with exactly these sections:
-## Summary
-## Signals
-## Risks
+## What stood out
+## Exercise trend
 ## Next session
-Keep the response terse, practical, and specific.
-Limit each section to at most 2 short bullets.
-Keep each bullet to one sentence when possible.
-Start each bullet with `- `.
-Put each heading and each bullet on its own line.
-Do not add any introduction or conclusion outside the required sections.
-Before finalizing, silently verify:
-- the markdown structure is valid
-- every claim matches the supplied numbers
-- no bullet says a value increased if the number decreased
+
+Requirements:
+- at most 2 bullets per section
+- one sentence per bullet when possible
+- start every bullet with "- "
+- no introduction or conclusion outside the required sections
+- mention HR only if it changes the interpretation
+- omit obvious filler
+- do not force a negative point if the exercise was broadly solid
+
+Before finalizing, verify:
+- every claim is supported by the supplied evidence
+- no bullet says something improved if the numeric value is lower
 - mixed signals across latest session, baseline, and trend are stated explicitly when present
+- the wording is natural and user-friendly
 """
 
 sealed class WorkoutInsightsPromptResult {
@@ -190,8 +202,7 @@ suspend fun buildExerciseInsightsPrompt(
                     title = "${exercise.name} insights",
                     exerciseName = exercise.name,
                     markdown = markdownResult.markdown
-                ),
-                chartAnalysisContext = null
+                )
             )
         }
     }
@@ -221,19 +232,10 @@ suspend fun buildWorkoutSessionInsightsPrompt(
             val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutHistoryId)
                 ?: return WorkoutInsightsPromptResult.Failure("Workout session not found")
             val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutHistoryId(workoutHistoryId)
-            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(workoutHistoryId)
-            val sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistoryId)
-            val workout = workoutHistory
-                ?.let { history -> workoutStore.workouts.find { it.id == history.workoutId } }
-            val sessionStatus = workoutHistory
-                ?.let { history -> resolveWorkoutSessionStatus(history, workoutRecord) }
-            val sessionStatusLine = sessionStatus
-                ?.let(::buildWorkoutSessionStatusLine)
-                ?.let { "$it\n" }
-                .orEmpty()
-            val sessionStatusSummary = sessionStatus
-                ?.let(::describeWorkoutSessionStatusForPrompt)
-                ?: "unknown"
+            val workout = workoutStore.workouts.find { it.id == workoutHistory.workoutId }
+            val sessionStatus = resolveWorkoutSessionStatus(workoutHistory, workoutRecord)
+            val sessionStatusLine = "${buildWorkoutSessionStatusLine(sessionStatus)}\n"
+            val sessionStatusSummary = describeWorkoutSessionStatusForPrompt(sessionStatus)
             val workoutType = workout?.type
             val workoutCategoryLine = workoutType
                 ?.let(::buildWorkoutCategoryContextLine)
@@ -255,15 +257,6 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                     sessionStatusSummary = sessionStatusSummary
                 ),
                 systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT),
-                chartAnalysisContext = null,
-                chartTimelineToolContext = workout?.let {
-                    buildWorkoutSessionChartTimelineToolContext(
-                        workoutHistory = workoutHistory,
-                        workout = it,
-                        setHistories = setHistories,
-                        restHistories = sessionRestHistories
-                    )
-                },
                 toolContext = WorkoutInsightsToolContext.WorkoutSession(
                     title = "Workout session insights",
                     workoutLabel = workoutLabel,
@@ -289,15 +282,14 @@ internal fun buildExercisePrompt(
         markdown = markdown,
         markdownCharBudget = charBudget
     )
+
     normalizePromptLayout(
         listOf(
             "Analyze this exercise history and provide focused training insights.",
-            "Focus on the latest completed session first, then the recent trend.",
-            "Compare executed performance against expected work and the previous baseline.",
-            "If the latest session met plan but still lagged baseline or recent trend, say that explicitly.",
-            "Use HR cues as supporting context only.",
-            "Be concise: at most 2 short bullets per required section.",
-            "Ground every point in the supplied data.",
+            "Focus on the latest completed session first, then use recent history only where it changes interpretation.",
+            "Highlight only what is decision-useful: whether the latest session beat, matched, or lagged plan, previous, baseline, or trend, and what should happen next.",
+            "If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly.",
+            "If load improved but reps, sets, or volume worsened, state that tradeoff clearly.",
             "",
             "Exercise history:",
             compactedMarkdown
@@ -314,36 +306,25 @@ internal fun buildWorkoutSessionPrompt(
         markdown = markdown,
         markdownCharBudget = charBudget
     )
+
     val guidanceBlock = listOfNotNull(
         workoutCategoryGuidance.trim().takeIf { it.isNotBlank() },
         buildWorkoutStructurePromptGuidance(
             workoutCategoryLine = workoutCategoryLine,
             markdown = compactedMarkdown
-        )
+        )?.trim().takeIf { it?.isNotBlank() == true }
     ).joinToString("\n")
+
     normalizePromptLayout(
         listOfNotNull(
-            "Analyze this completed workout session and provide practical coaching insights.",
-            "Focus on what went well, what drifted from plan, likely fatigue/recovery signals, and one clear recommendation for the next session.",
-            "Be concise: at most 2 short bullets per required section.",
-            "Use HR cues carefully: low High-intensity exposure and modest Avg % max HR usually indicate a low-to-moderate intensity session.",
-            "Use session-level zone time to describe intensity distribution when it is provided.",
-            "Prefer concise HR wording like modest Avg % max HR or mostly Z0-Z1 over repeating exact decimals unless the exact value matters.",
-            "Do not infer high fatigue or high intensity from volume alone.",
-            "For lifting sessions, do not recommend chasing a higher Avg % max HR unless the workout is explicitly conditioning-focused.",
-            "Compare each exercise against plan, previous, and best-to-date performance.",
-            "Do not flatten mixed results into overall progress when the exercises diverged.",
-            "For numeric comparisons, read carefully:",
-            "- lower current volume than previous = below previous",
-            "- equal executed sets to plan = met plan",
-            "- best-to-date on one exercise does not imply best-to-date on the whole session",
-            "If current top load is higher than previous, mention that explicitly even if current volume is lower.",
-            "Use load-profile facts when present: top load and sets at top load can matter even when total volume is lower.",
-            "If Exec, Prev, or Best numbers disagree with status labels, trust the numbers.",
-            "If most exercises are WEIGHT or BODY_WEIGHT, treat the session as lifting-dominant even if the workout category label is generic.",
-            "For lifting-dominant sessions, modest session HR or low high-intensity exposure is descriptive, not a problem by itself.",
-            "Do not recommend a higher intensity cue, higher heart rate, or more overall workload unless the lifting performance data shows clear underdosing or drift from plan.",
-            "Ground every point in the supplied data.",
+            "Analyze this completed workout session and explain it in plain coaching language.",
+            "Focus first on what mattered most in the latest session, then use plan, previous, best, and recent exercise context only where it changes the interpretation.",
+            "Prioritize useful takeaways over full coverage.",
+            "For lifting-dominant sessions, keep HR commentary brief unless it clearly changes the interpretation.",
+            "If current top load is higher than previous, mention it even when total volume is lower.",
+            "If plan was met but performance still lagged previous or recent trend, say that clearly.",
+            "Do not flatten mixed exercise results into overall progress when exercises diverge.",
+            "Do not repeat internal labels; translate them into normal language.",
             guidanceBlock.takeIf { it.isNotBlank() },
             "",
             "Workout session:",

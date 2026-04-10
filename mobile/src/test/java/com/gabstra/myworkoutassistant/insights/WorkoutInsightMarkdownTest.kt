@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkoutInsightMarkdownTest {
+    @Test
+    fun sanitizeInsightMarkdown_collapsesNestedDashBullets() {
+        val sanitized = sanitizeInsightMarkdown(
+            """
+                ## Signals
+                - - The heart rate showed significant fluctuation throughout the session.
+            """.trimIndent()
+        )
+
+        assertTrue(sanitized.contains("- The heart rate showed significant fluctuation throughout the session."))
+        assertFalse(sanitized.contains("- - The heart rate"))
+    }
+
 
     @Test
     fun sanitizeInsightMarkdown_normalizes_raw_response_wrappers_and_broken_lists() {

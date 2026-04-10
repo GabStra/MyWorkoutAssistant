@@ -219,7 +219,7 @@ private fun defaultProgressLabel(
     WorkoutInsightsPhase.PREPARING_TOOLS -> "Preparing insight tools..."
     WorkoutInsightsPhase.FETCHING_CONTEXT -> "Fetching workout context..."
     WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> "Summarizing relevant history..."
-    WorkoutInsightsPhase.CHART_ANALYSIS -> "Analyzing chart..."
+    WorkoutInsightsPhase.CHART_ANALYSIS -> "Preparing insight context..."
     WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Generating insight..."
 }
 

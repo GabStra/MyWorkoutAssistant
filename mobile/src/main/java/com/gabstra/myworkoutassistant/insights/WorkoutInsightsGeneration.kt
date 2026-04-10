@@ -1,10 +1,8 @@
 package com.gabstra.myworkoutassistant.insights
 
-import android.util.Log
-
-internal const val CHART_ANALYSIS_PLACEHOLDER = "Analyzing heart-rate chart..."
-internal const val FINAL_SYNTHESIS_PLACEHOLDER = "Combining chart analysis with workout data..."
-internal const val PREPARING_TOOLS_PLACEHOLDER = "Preparing insight tools..."
+internal const val FINAL_SYNTHESIS_PLACEHOLDER = "Generating final insight..."
+internal const val PREPARING_TOOLS_PLACEHOLDER = "Preparing insight context..."
+internal const val CHART_ANALYSIS_DISABLED_PLACEHOLDER = PREPARING_TOOLS_PLACEHOLDER
 private const val HEART_RATE_CHART_ANALYSIS_SYSTEM_PROMPT_BASE = """
 You are extracting observational context from an attached workout session heart-rate chart.
 Use only what is clearly visible in the chart.
@@ -65,72 +63,25 @@ internal suspend fun runWorkoutInsightsGeneration(
     ) -> Unit,
     onAfterChartAnalysis: (suspend () -> Unit)? = null,
 ) {
-    val finalPrompt = if (request.imagePngBytes != null) {
-        emitChunk(
-            WorkoutInsightsChunk(
-                title = request.title,
-                text = CHART_ANALYSIS_PLACEHOLDER,
-                phase = WorkoutInsightsPhase.CHART_ANALYSIS,
-                statusText = "Step 1: Analyzing heart-rate chart..."
-            )
+    val finalSynthesisBasePrompt = buildFinalSynthesisInlinePrompt(request)
+    emitChunk(
+        WorkoutInsightsChunk(
+            title = request.title,
+            text = PREPARING_TOOLS_PLACEHOLDER,
+            phase = WorkoutInsightsPhase.PREPARING_TOOLS,
+            statusText = "Preparing insight context..."
         )
-        val chartAnalysisPrompt = buildHeartRateChartImageOnlyPrompt(
-            chartAnalysisContext = request.chartAnalysisContext,
-            chartTimelineToolContext = request.chartTimelineToolContext,
-        )
-        Log.d(logTag, "${transportLabel}_chart_analysis_prompt_start\n$chartAnalysisPrompt\n${transportLabel}_chart_analysis_prompt_end")
-        val chartAnalysis = runCatching {
-            generateText(
-                WorkoutInsightsTransportRequest(
-                    systemPrompt = buildHeartRateChartAnalysisSystemPrompt(
-                        hasSessionTimelineTool = request.chartTimelineToolContext != null,
-                    ),
-                    prompt = chartAnalysisPrompt,
-                    imagePngBytes = request.imagePngBytes,
-                    toolContext = null,
-                    chartTimelineToolContext = request.chartTimelineToolContext,
-                    requestLogLabel = "${transportLabel}_chart_analysis_request",
-                    responseLogLabel = "${transportLabel}_chart_analysis_raw_response",
-                )
-            )
-        }.onFailure { throwable ->
-            Log.w(logTag, "${transportLabel}_chart_analysis_failed_falling_back_to_text", throwable)
-        }.getOrNull()
+    )
+    val finalPrompt = finalSynthesisBasePrompt
 
-        onAfterChartAnalysis?.invoke()
-        emitChunk(
-            WorkoutInsightsChunk(
-                title = request.title,
-                text = FINAL_SYNTHESIS_PLACEHOLDER,
-                phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                statusText = "Step 2: Generating final insight..."
-            )
-        )
-        buildPromptWithHeartRateChartAnalysis(
-            prompt = request.prompt,
-            chartAnalysis = chartAnalysis,
-            supportingMarkdown = request.toolContext?.markdown
-        )
-    } else {
-        emitChunk(
-            WorkoutInsightsChunk(
-                title = request.title,
-                text = PREPARING_TOOLS_PLACEHOLDER,
-                phase = WorkoutInsightsPhase.PREPARING_TOOLS,
-                statusText = "Preparing insight tools..."
-            )
-        )
-        request.prompt
-    }
-
-    Log.d(logTag, "${transportLabel}_final_prompt_start\n$finalPrompt\n${transportLabel}_final_prompt_end")
+    logWorkoutInsightsBlock(logTag, "${transportLabel}_final_prompt", finalPrompt)
     val accumulated = StringBuilder()
     streamText(
         WorkoutInsightsTransportRequest(
-            systemPrompt = request.systemPrompt.trimIndent(),
+            systemPrompt = buildFinalSynthesisSystemPrompt(request),
             prompt = finalPrompt,
             imagePngBytes = null,
-            toolContext = request.toolContext,
+            toolContext = null,
             requestLogLabel = "${transportLabel}_final_request",
             responseLogLabel = "${transportLabel}_final_raw_response",
         ),
@@ -154,7 +105,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                             WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
                             WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
                             WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
-                            WorkoutInsightsPhase.CHART_ANALYSIS -> CHART_ANALYSIS_PLACEHOLDER
+                            WorkoutInsightsPhase.CHART_ANALYSIS -> CHART_ANALYSIS_DISABLED_PLACEHOLDER
                             WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
                         }
                     },
@@ -182,9 +133,34 @@ internal suspend fun runWorkoutInsightsGeneration(
     }
     onAfterChartAnalysis?.invoke()
     if (request.toolContext == null) {
-        Log.d(
+        logWorkoutInsightsBlock(
             logTag,
-            "${transportLabel}_final_raw_response_start\n${accumulated.toString().ifBlank { "No insights were generated." }}\n${transportLabel}_final_raw_response_end"
+            "${transportLabel}_final_raw_response",
+            accumulated.toString().ifBlank { "No insights were generated." }
         )
+    }
+}
+
+internal fun buildFinalSynthesisInlinePrompt(
+    request: WorkoutInsightsRequest,
+): String {
+    return when (val toolContext = request.toolContext) {
+        is WorkoutInsightsToolContext.Exercise -> buildExercisePrompt(toolContext.markdown)
+        is WorkoutInsightsToolContext.WorkoutSession -> buildWorkoutSessionPrompt(
+            markdown = toolContext.markdown,
+            workoutCategoryGuidance = "",
+            workoutCategoryLine = "",
+        )
+        null -> request.prompt
+    }
+}
+
+internal fun buildFinalSynthesisSystemPrompt(
+    request: WorkoutInsightsRequest,
+): String {
+    return when (request.toolContext) {
+        is WorkoutInsightsToolContext.Exercise -> EXERCISE_INSIGHTS_SYSTEM_PROMPT.trimIndent()
+        is WorkoutInsightsToolContext.WorkoutSession -> WORKOUT_INSIGHTS_SYSTEM_PROMPT.trimIndent()
+        null -> request.systemPrompt.trimIndent()
     }
 }

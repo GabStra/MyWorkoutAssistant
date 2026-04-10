@@ -127,6 +127,7 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
+private const val INSIGHTS_HEART_RATE_CHART_CAPTURE_ENABLED = false
 
 private data class HeartRateZoneSegment(
     val zoneIndex: Int,
@@ -739,6 +740,10 @@ fun WorkoutHistoryScreen(
         isLoading
     ) {
         val selectedHistoryId = selectedWorkoutHistory?.id
+        if (!INSIGHTS_HEART_RATE_CHART_CAPTURE_ENABLED) {
+            onHeartRateChartCaptured(selectedHistoryId, null)
+            return@LaunchedEffect
+        }
         if (
             isLoading ||
             selectedHistoryId == null ||

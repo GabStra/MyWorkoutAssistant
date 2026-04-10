@@ -96,7 +96,7 @@ class LiteRtLmInsightsRepositoryTest {
             """.trimIndent()
         )
 
-        assertTrue(formatted!!.contains("CHART SUMMARY The heart rate fluctuates between approximately 121 and 135 bpm."))
+        assertFalse(formatted!!.contains("between approximately"))
         assertTrue(formatted.contains("CHART SIGNAL Repeated rises and drops are visible."))
         assertTrue(formatted.contains("CHART SIGNAL No sustained peak is visible."))
     }
@@ -111,8 +111,7 @@ class LiteRtLmInsightsRepositoryTest {
             listOf(
                 "CHART SUMMARY Heart rate fluctuated within a range from approximately 100 to 150.",
                 "CHART SUMMARY The heart rate pattern appears intermittent with significant variation throughout the session.",
-                "CHART SIGNAL Heart rate shows periods of sustained activity followed by drops.",
-                "CHART SIGNAL Recoveries appear relatively short between peaks."
+                "CHART SIGNAL Heart rate shows periods of sustained activity followed by drops."
             ),
             formatted!!.lines()
         )
@@ -131,7 +130,7 @@ class LiteRtLmInsightsRepositoryTest {
             prompt = prompt,
             chartAnalysis = """
                 ## Chart Summary
-                - Four clear peaks with consistent recovery between them.
+                - Four clear peaks with similar shape.
             """.trimIndent()
         )
 
@@ -139,7 +138,41 @@ class LiteRtLmInsightsRepositoryTest {
         assertTrue(merged.contains("EXERCISE Main Set"))
         assertTrue(merged.contains("RECOVERY Work HR: avg 178 bpm | peak 183 bpm"))
         assertTrue(merged.contains("Heart-rate chart observations:"))
-        assertTrue(merged.contains("CHART SUMMARY Four clear peaks with consistent recovery between them."))
+        assertTrue(merged.contains("CHART SUMMARY Four clear peaks with similar shape."))
         assertTrue(merged.contains("Treat chart observations as secondary context for the final insight."))
+    }
+
+    @Test
+    fun finalSynthesisPrompt_inlinesWorkoutContextInsteadOfUsingWorkoutTools() {
+        val request = WorkoutInsightsRequest(
+            title = "Workout session insights",
+            prompt = buildWorkoutSessionToolCallingPrompt(
+                workoutLabel = "A Squat/Bench",
+                sessionStatusSummary = "completed normally",
+            ),
+            systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT),
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "A Squat/Bench",
+                markdown = """
+                    Session status: Completed normally
+                    Workout category: Workout
+                    # A Squat/Bench
+                    EXERCISE Back Squat
+                    EXEC Sets: 84 kg x 8 (3 sets) | Volume: 2450 kg
+                    PREV Sets: 84 kg x 7 (3 sets) | Volume: 2190 kg
+                    SIGNALS State: progress | Vs prev: above
+                """.trimIndent(),
+            )
+        )
+
+        val finalPrompt = buildFinalSynthesisInlinePrompt(request)
+        val finalSystemPrompt = buildFinalSynthesisSystemPrompt(request)
+
+        assertTrue(finalPrompt.contains("Workout session:"))
+        assertTrue(finalPrompt.contains("EXERCISE Back Squat"))
+        assertFalse(finalPrompt.contains("Fetch the compact session overview first."))
+        assertFalse(finalSystemPrompt.contains("Retrieval policy:"))
+        assertFalse(finalSystemPrompt.contains("You have tools for scoped workout-history retrieval"))
     }
 }

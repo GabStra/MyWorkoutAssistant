@@ -327,8 +327,6 @@ fun WorkoutDetailScreen(
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
     }
     var displayedWorkoutHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
-    var capturedHeartRateChartHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
-    var capturedHeartRateChartPng by remember(workout.id) { mutableStateOf<ByteArray?>(null) }
 
     LaunchedEffect(selectedTopTab) {
         if (selectedTopTab == 0) {
@@ -485,27 +483,13 @@ fun WorkoutDetailScreen(
                     insightsState = WorkoutInsightsUiState.Error(promptResult.message)
                 }
                 is WorkoutInsightsPromptResult.Success -> {
-                    val heartRateChartPng = capturedHeartRateChartPng
-                        ?.takeIf { capturedHeartRateChartHistoryId == historyId }
-                    val debugImageFileName = heartRateChartPng?.let { imageBytes ->
-                        withContext(Dispatchers.IO) {
-                            saveInsightsDebugImageToDownloads(
-                                context = context,
-                                historyId = historyId,
-                                imageBytes = imageBytes
-                            )
-                        }
-                    }
                     runCatching {
                         insightsRepository.generateInsights(
                             WorkoutInsightsRequest(
                                 title = promptResult.title,
                                 prompt = promptResult.prompt,
                                 systemPrompt = promptResult.systemPrompt,
-                                imagePngBytes = heartRateChartPng,
                                 toolContext = promptResult.toolContext,
-                                chartAnalysisContext = promptResult.chartAnalysisContext,
-                                chartTimelineToolContext = promptResult.chartTimelineToolContext,
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(
@@ -1289,15 +1273,8 @@ fun WorkoutDetailScreen(
                             selectedTopTab = selectedTopTab,
                             onDisplayedWorkoutHistoryIdChange = { id ->
                                 displayedWorkoutHistoryId = id
-                                if (capturedHeartRateChartHistoryId != id) {
-                                    capturedHeartRateChartHistoryId = null
-                                    capturedHeartRateChartPng = null
-                                }
                             },
-                            onHeartRateChartCaptured = { historyId, pngBytes ->
-                                capturedHeartRateChartHistoryId = historyId
-                                capturedHeartRateChartPng = pngBytes
-                            },
+                            onHeartRateChartCaptured = { _, _ -> },
                             onGoBack = onGoBack
                         )
                     }

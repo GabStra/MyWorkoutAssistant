@@ -65,9 +65,10 @@ class OpenAiInsightsRepository(
             onProgress = { _, _ -> },
         )
         val finalText = accumulated.toString().ifBlank { "No insights were generated." }
-        Log.d(
+        logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
-            "${transportRequest.responseLogLabel}_start\n$finalText\n${transportRequest.responseLogLabel}_end"
+            transportRequest.responseLogLabel,
+            finalText
         )
         return finalText
     }

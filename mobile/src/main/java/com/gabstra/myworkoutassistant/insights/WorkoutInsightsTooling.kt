@@ -11,9 +11,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal const val MAX_INSIGHTS_TOOL_ROUNDS = 4
-private const val MAX_TOOL_RESULT_CHARS = 2_400
+private const val MAX_TOOL_TEXT_FIELD_CHARS = 12_000
 private const val MAX_TOOL_SESSION_SNIPPET_CHARS = 1_400
-private const val MAX_CHART_TIMELINE_TOOL_RESULT_CHARS = 2_400
+private const val DEFAULT_WORKOUT_OVERVIEW_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
+private const val DEFAULT_WORKOUT_SECTION_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
+private const val DEFAULT_FULL_WORKOUT_SESSION_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
+private const val INSIGHT_LOG_PREVIEW_CHARS = 240
+private const val INSIGHT_LOG_CHUNK_CHARS = 3_000
 private val WORKOUT_SESSION_SECTION_DELIMITER = Regex("(?m)^(?:EXERCISE|SUPERSET) ")
 
 data class WorkoutInsightsChartTimelineSegment(
@@ -109,13 +113,7 @@ internal class WorkoutInsightsChartTimelineToolExecutor(
                     "error" to (error.message ?: "Tool execution failed")
                 )
             }
-        val json = JSONObject.wrap(result)
-        val rendered = when (json) {
-            is JSONObject -> json.toString()
-            is JSONArray -> json.toString()
-            else -> JSONObject(mapOf("ok" to true, "result" to json)).toString()
-        }
-        return rendered.takeWithinBudget(MAX_CHART_TIMELINE_TOOL_RESULT_CHARS)
+        return renderToolResult(result)
     }
 }
 
@@ -240,13 +238,7 @@ internal class WorkoutInsightsToolExecutor(
                     "error" to (error.message ?: "Tool execution failed")
                 )
             }
-        val json = JSONObject.wrap(result)
-        val rendered = when (json) {
-            is JSONObject -> json.toString()
-            is JSONArray -> json.toString()
-            else -> JSONObject(mapOf("ok" to true, "result" to json)).toString()
-        }
-        return rendered.takeWithinBudget(MAX_TOOL_RESULT_CHARS)
+        return renderToolResult(result)
     }
 
     private fun buildSpecs(
@@ -276,7 +268,7 @@ Retrieval policy:
 - Do not ask for data outside the available tools.
 
 Final synthesis policy:
-- Base the final answer only on retrieved tool outputs and any chart-analysis text already in the conversation.
+- Base the final answer only on retrieved tool outputs.
 - If evidence is partial, say so plainly instead of overreaching.
 - If a tool payload says `truncated: true` or the returned text ends with `...`, fetch narrower context before concluding.
 - Do not write a workout-level risk or next-step recommendation from a generic overview alone when an exercise section is available.
@@ -476,9 +468,9 @@ private fun buildWorkoutSessionSpecs(
         WorkoutInsightsToolSpec(
             name = "get_context_overview",
             description = "Get the compact overview for the current workout session. Use this first when you need the high-level session picture.",
-            parametersSchema = maxCharsParametersSchema(defaultMaxChars = 1200),
+            parametersSchema = maxCharsParametersSchema(defaultMaxChars = DEFAULT_WORKOUT_OVERVIEW_CHARS),
             handler = { args ->
-                val maxChars = args.maxCharsOrDefault(1200)
+                val maxChars = args.maxCharsOrDefault(DEFAULT_WORKOUT_OVERVIEW_CHARS)
                 mapOf(
                     "ok" to true,
                     "target" to toolContext.workoutLabel,
@@ -490,9 +482,9 @@ private fun buildWorkoutSessionSpecs(
         WorkoutInsightsToolSpec(
             name = "get_full_compact_session",
             description = "Get the full compacted workout session context when the overview is not enough and you need broader detail.",
-            parametersSchema = maxCharsParametersSchema(defaultMaxChars = 3000),
+            parametersSchema = maxCharsParametersSchema(defaultMaxChars = DEFAULT_FULL_WORKOUT_SESSION_CHARS),
             handler = { args ->
-                val maxChars = args.maxCharsOrDefault(3000)
+                val maxChars = args.maxCharsOrDefault(DEFAULT_FULL_WORKOUT_SESSION_CHARS)
                 mapOf(
                     "ok" to true,
                     "target" to toolContext.workoutLabel,
@@ -513,14 +505,14 @@ private fun buildWorkoutSessionSpecs(
                     ),
                     "max_chars" to mapOf(
                         "type" to "integer",
-                        "description" to "Maximum number of characters in the returned section. Default: 1500."
+                        "description" to "Maximum number of characters in the returned section. Default: $DEFAULT_WORKOUT_SECTION_CHARS."
                     )
                 ),
                 "required" to listOf("section_title")
             ),
             handler = { args ->
                 val requested = args.stringValue("section_title").trim()
-                val maxChars = args.maxCharsOrDefault(1500)
+                val maxChars = args.maxCharsOrDefault(DEFAULT_WORKOUT_SECTION_CHARS)
                 val match = sections.entries.firstOrNull { (title, _) ->
                     title.equals(requested, ignoreCase = true)
                 }?.value ?: "No section found for \"$requested\"."
@@ -617,7 +609,7 @@ internal fun buildWorkoutSectionOverviewLine(
         lines.firstOrNull { it.startsWith("PREV ") }?.let(::add)
         lines.firstOrNull { it.startsWith("SIGNALS ") }?.let(::add)
     }
-    return summaryParts.joinToString(" | ").takeWithinBudget(420)
+    return summaryParts.joinToString(" | ").takeWithinBudget(320)
 }
 
 private fun maxCharsParametersSchema(
@@ -643,7 +635,7 @@ private fun Map<String, Any?>.intOrDefault(
 
 private fun Map<String, Any?>.maxCharsOrDefault(
     default: Int,
-): Int = intOrDefault("max_chars", default).coerceIn(200, 4000)
+): Int = intOrDefault("max_chars", default).coerceIn(200, MAX_TOOL_TEXT_FIELD_CHARS)
 
 private fun Map<String, Any?>.stringValue(
     key: String,
@@ -722,10 +714,79 @@ internal fun renderForInsightLog(
     else -> value.toString()
 }
 
+private fun renderToolResult(
+    result: Any,
+): String {
+    return when (val wrapped = JSONObject.wrap(result)) {
+        is JSONObject -> wrapped
+        is JSONArray -> JSONObject(mapOf("ok" to true, "result" to wrapped))
+        else -> JSONObject(mapOf("ok" to true, "result" to wrapped))
+    }.toString()
+}
+
 internal fun logWorkoutInsightsBlock(
     logTag: String,
     label: String,
     body: String,
 ) {
-    Log.d(logTag, "${label}_start\n$body\n${label}_end")
+    if (Log.isLoggable(logTag, Log.VERBOSE)) {
+        logWorkoutInsightsBlockChunks(Log.VERBOSE, logTag, label, body)
+        return
+    }
+
+    if (INSIGHTS_FULL_DEBUG_LOGS_ENABLED) {
+        logWorkoutInsightsBlockChunks(Log.DEBUG, logTag, label, body)
+        return
+    }
+
+    Log.d(
+        logTag,
+        "$label chars=${body.length} lines=${body.lines().size} preview=${body.logPreview()}"
+    )
+}
+
+private fun logWorkoutInsightsBlockChunks(
+    priority: Int,
+    logTag: String,
+    label: String,
+    body: String,
+) {
+    val chunkCount = ((body.length + INSIGHT_LOG_CHUNK_CHARS - 1) / INSIGHT_LOG_CHUNK_CHARS)
+        .coerceAtLeast(1)
+    Log.println(
+        priority,
+        logTag,
+        "$label full_start chars=${body.length} lines=${body.lines().size} chunks=$chunkCount"
+    )
+
+    for (chunkIndex in 0 until chunkCount) {
+        val startIndex = chunkIndex * INSIGHT_LOG_CHUNK_CHARS
+        val endIndex = (startIndex + INSIGHT_LOG_CHUNK_CHARS).coerceAtMost(body.length)
+        val chunk = body.substring(startIndex, endIndex)
+        Log.println(
+            priority,
+            logTag,
+            "${label}_part_${chunkIndex + 1}_of_$chunkCount\n$chunk"
+        )
+    }
+
+    Log.println(priority, logTag, "$label full_end")
+}
+
+private fun String.logPreview(): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .takeWithinBudget(INSIGHT_LOG_PREVIEW_CHARS)
+}
+
+internal fun logConversationSummary(
+    logTag: String,
+    phase: String,
+    turns: Int,
+    toolNames: List<String>,
+    exitReason: String,
+    responseChars: Int,
+) {
+    val tools = if (toolNames.isEmpty()) "[]" else toolNames.joinToString(",", "[", "]")
+    Log.d(logTag, "$phase turns=$turns tools=$tools exit=$exitReason chars=$responseChars")
 }

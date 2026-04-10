@@ -216,9 +216,10 @@ private suspend fun LiteRtLmInsightsRepository.generateResponse(
         onProgress = { _, _ -> }
     )
     val finalText = accumulated.toString().ifBlank { "No insights were generated." }
-    Log.d(
+    logWorkoutInsightsBlock(
         LiteRtLmInsightsRepository.LOG_TAG,
-        "${transportRequest.responseLogLabel}_start\n$finalText\n${transportRequest.responseLogLabel}_end"
+        transportRequest.responseLogLabel,
+        finalText
     )
     return finalText
 }
@@ -602,47 +603,57 @@ internal fun buildHeartRateChartImageOnlyPrompt(
     chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
 ): String = buildString {
     appendLine("Analyze the attached workout session heart-rate chart only.")
-    appendLine("Do not use any hidden assumptions about the workout.")
+    appendLine("Use only what is visible in the chart and any timeline context explicitly provided below.")
+    appendLine("Do not infer workout quality, fatigue, exercise type, or performance from the chart alone.")
+    appendLine("Do not estimate exact bpm values, intensity zones, or exact recovery durations from the image.")
+    appendLine("If the image is unclear or the pattern is ambiguous, say so plainly.")
+
     when {
         chartTimelineToolContext != null -> {
             appendLine()
+            appendLine("Session duration: ${chartTimelineToolContext.durationSeconds} seconds from start to end.")
             appendLine(
-                "Session duration: ${chartTimelineToolContext.durationSeconds} seconds elapsed from start to end."
+                "Tool available: get_session_timeline_for_time_range(start_seconds, end_seconds), " +
+                        "using inclusive elapsed seconds from workout start."
             )
             appendLine(
-                "Tool get_session_timeline_for_time_range: pass start_seconds and end_seconds (inclusive, " +
-                    "seconds since workout start) to receive blocks that overlap that window."
+                "Use the tool only when visible features would be materially clearer with block names or timing, " +
+                        "especially repeated peaks, phase changes, long recoveries, or late-session changes."
             )
             appendLine(
-                "Investigate further with the tool when block names would sharpen a visible heart-rate feature, " +
-                    "especially repeated peaks, phase changes, or possible late-session changes."
+                "If the chart appears to contain repeated peaks or distinct phases, prefer at least one targeted tool call before finalizing."
             )
-            appendLine(
-                "If the chart shows repeated peaks or distinct phases, prefer at least one targeted tool call before finalizing."
-            )
-            appendLine("Conflict resolution: trust the visible chart over tool output.")
+            appendLine("If tool output conflicts with the chart, trust the chart.")
         }
+
         else -> {
             chartAnalysisContext
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
                 ?.let { context ->
                     appendLine()
-                    appendLine("Complete session timeline (elapsed time from workout start; one row per contiguous block):")
+                    appendLine("Provided timeline context (elapsed time from workout start; contiguous blocks):")
                     appendLine(context)
-                    appendLine("Use these intervals to align the heart-rate curve with sets, rests, and transitions.")
-                    appendLine("Conflict resolution: trust the visible chart over the pasted timeline text.")
+                    appendLine("Use it only to align visible features with likely work, rest, or transition periods.")
+                    appendLine("If the pasted timeline conflicts with the chart, trust the chart.")
                 }
         }
     }
+
     appendLine()
-    appendLine("Describe only what the chart itself makes clear about:")
-    appendLine("- whether the pattern looks steady, intermittent, or drifted")
-    appendLine("- whether repeated peaks look similar, fade, or are unclear")
-    appendLine("- whether there is a clear late-session upward drift or no clear drift")
-    appendLine("Omit details not clearly visible on the chart.")
-    appendLine("Do not estimate bpm values, intensity zones, or exact recovery durations from the image.")
-    append("Keep the analysis concise and practical.")
+    appendLine("Focus only on chart-supported observations such as:")
+    appendLine("- overall pattern: steady, intermittent, phased, or unclear")
+    appendLine("- repeatability of visible peaks: similar, fading, building, or unclear")
+    appendLine("- recovery shape between peaks: clear drop, partial drop, or unclear")
+    appendLine("- late-session behavior: upward drift, stable pattern, reduced peaks, or unclear")
+    appendLine("- obvious transitions: warm-up-like rise, repeated work/rest cycles, cooldown-like fall, or unclear")
+
+    appendLine()
+    appendLine("Output requirements:")
+    appendLine("- keep the analysis concise and practical")
+    appendLine("- report only observations that are visually supported")
+    appendLine("- prefer cautious wording when evidence is mixed")
+    append("- do not restate timeline context unless it changes the interpretation")
 }
 
 internal fun buildPromptWithHeartRateChartAnalysis(
