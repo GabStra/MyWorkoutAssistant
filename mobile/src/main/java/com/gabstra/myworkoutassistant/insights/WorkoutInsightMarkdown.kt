@@ -28,16 +28,24 @@ internal fun WorkoutInsightMarkdown(
     )
 }
 
-private fun sanitizeInsightMarkdown(
+internal fun sanitizeInsightMarkdown(
     markdown: String,
 ): String {
     val normalizedMarkdown = markdown
         .replace("\r\n", "\n")
         .replace('\r', '\n')
+        .replace(Regex("(?im)^\\s*workout_raw_response_(?:start|end)\\s*$"), "")
+        .replace("workout_raw_response_start", "")
+        .replace("workout_raw_response_end", "")
         .replace(Regex("(?<!\\n)(##\\s+)"), "\n\n$1")
         .replace(Regex("(?<!\\n)(###\\s+)"), "\n\n$1")
+        .replace(Regex("(##\\s+[^\\n#-][^\\n#]*?)\\s*(?:-\\s*)+(?=[A-Z0-9'])"), "$1\n- ")
+        .replace(Regex("(###\\s+[^\\n#-][^\\n#]*?)\\s*(?:-\\s*)+(?=[A-Z0-9'])"), "$1\n- ")
         .replace(Regex("(##\\s+[^\\n#*-][^\\n#]*?)-\\s+"), "$1\n- ")
         .replace(Regex("([.!?])\\s*-\\s+(?=[A-Z0-9])"), "$1\n- ")
+        .replace(Regex("([.!?])\\s*(?:-\\s*){2,}(?=[A-Z0-9'])"), "$1\n- ")
+        .replace(Regex("(?m)^-\\s+-\\s+"), "- ")
+        .replace(Regex("(?m)^\\s*-\\s+-\\s+"), "- ")
         .replace(Regex("(?<=\\S)\\*(?=\\s*[A-Z0-9])"), "\n- ")
         .replace(Regex("(?<!\\n)(\\*\\S)"), "\n$1")
         .replace(Regex("(?<=\\D)(\\d+)%"), "$1%")

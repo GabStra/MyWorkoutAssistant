@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -31,7 +32,10 @@ import com.gabstra.myworkoutassistant.composables.StandardDialog
 sealed class WorkoutInsightsUiState {
     data object Idle : WorkoutInsightsUiState()
     data object PreparingModel : WorkoutInsightsUiState()
-    data class Generating(val partialText: String = "") : WorkoutInsightsUiState()
+    data class Generating(
+        val partialText: String = "",
+        val phase: WorkoutInsightsPhase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+    ) : WorkoutInsightsUiState()
     data class Success(val title: String, val text: String) : WorkoutInsightsUiState()
     data class Error(val message: String) : WorkoutInsightsUiState()
 }
@@ -41,16 +45,15 @@ fun WorkoutInsightsDialog(
     show: Boolean,
     title: String,
     state: WorkoutInsightsUiState,
-    isModelConfigured: Boolean,
+    configurationState: WorkoutInsightsConfigurationState,
     onDismiss: () -> Unit,
-    onImportModel: () -> Unit,
+    onConfigure: (() -> Unit)?,
     onGenerate: () -> Unit,
-    onClearModel: () -> Unit,
 ) {
     if (!show) return
 
-    LaunchedEffect(show, isModelConfigured, state) {
-        if (show && isModelConfigured && state is WorkoutInsightsUiState.Idle) {
+    LaunchedEffect(show, configurationState.isConfigured, state, configurationState.mode) {
+        if (show && configurationState.isConfigured && state is WorkoutInsightsUiState.Idle) {
             onGenerate()
         }
     }
@@ -67,10 +70,10 @@ fun WorkoutInsightsDialog(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 when {
-                    !isModelConfigured -> {
+                    !configurationState.isConfigured -> {
                         SecondarySurface {
                             Text(
-                                text = "No LiteRT-LM model is configured. Import a local .litertlm model file to enable on-device insights.",
+                                text = configurationState.missingConfigurationMessage,
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.md)
                             )
@@ -79,13 +82,23 @@ fun WorkoutInsightsDialog(
 
                     state is WorkoutInsightsUiState.PreparingModel -> {
                         CenteredInsightBodySurface {
-                            LoadingText("Preparing local model...")
+                            LoadingText(
+                                when (configurationState.mode) {
+                                    WorkoutInsightsMode.LOCAL -> "Preparing local model..."
+                                    WorkoutInsightsMode.REMOTE -> "Preparing remote request..."
+                                }
+                            )
                         }
                     }
 
                     state is WorkoutInsightsUiState.Generating -> {
                         CenteredInsightBodySurface {
-                            LoadingText("Generating insights...")
+                            LoadingText(
+                                when (state.phase) {
+                                    WorkoutInsightsPhase.CHART_ANALYSIS -> "Step 1 of 2: Analyzing chart..."
+                                    WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Step 2 of 2: Generating insight..."
+                                }
+                            )
                         }
                     }
 
@@ -113,7 +126,12 @@ fun WorkoutInsightsDialog(
                     else -> {
                         SecondarySurface {
                             Text(
-                                text = "Generate concise insights from your local workout history using the selected LiteRT-LM model.",
+                                text = when (configurationState.mode) {
+                                    WorkoutInsightsMode.LOCAL ->
+                                        "Generate concise insights from your workout history using the selected local LiteRT-LM model."
+                                    WorkoutInsightsMode.REMOTE ->
+                                        "Generate concise insights from your workout history using the configured hosted OpenAI-compatible API."
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(Spacing.md)
                             )
@@ -122,11 +140,11 @@ fun WorkoutInsightsDialog(
                 }
             }
         },
-        confirmText = if (isModelConfigured) null else "Import model",
-        onConfirm = if (isModelConfigured) null else onImportModel,
+        confirmText = if (configurationState.isConfigured) null else configurationState.configureActionLabel,
+        onConfirm = if (configurationState.isConfigured) null else onConfigure,
         dismissText = "Close",
         onDismissButton = onDismiss,
-        showConfirm = !isModelConfigured
+        showConfirm = !configurationState.isConfigured && onConfigure != null && configurationState.configureActionLabel != null
     )
 }
 
@@ -179,9 +197,9 @@ private fun InsightStatusHeader(
 
 @Composable
 private fun LoadingText(label: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         CircularProgressIndicator(
             strokeWidth = 2.dp,
@@ -203,7 +221,7 @@ private fun InsightBodySurface(
     SecondarySurface {
         Column(
             modifier = Modifier
-                .fillMaxHeight()
+                .fillMaxSize()
                 .verticalScroll(scrollState)
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),

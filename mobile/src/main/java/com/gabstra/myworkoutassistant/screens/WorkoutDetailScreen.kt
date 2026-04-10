@@ -2,8 +2,11 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.ContentValues
 import android.net.Uri
 import android.os.SystemClock
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -94,8 +97,10 @@ import com.gabstra.myworkoutassistant.exportWorkoutSessionToMarkdown
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
-import com.gabstra.myworkoutassistant.insights.LiteRtLmInsightsRepository
+import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
@@ -122,6 +127,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 @Composable
@@ -291,6 +298,9 @@ fun WorkoutDetailScreen(
     onGoBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val userAge by appViewModel.userAge
+    val measuredMaxHeartRate = appViewModel.workoutStore.measuredMaxHeartRate
+    val restingHeartRate = appViewModel.workoutStore.restingHeartRate
 
     val isCheckingWorkoutRecord by workoutViewModel.isCheckingWorkoutRecord.collectAsState()
     val currentSelectedWorkoutId by workoutViewModel.selectedWorkoutId
@@ -309,11 +319,16 @@ fun WorkoutDetailScreen(
     var showDeleteSelectedSessionDialog by remember { mutableStateOf(false) }
     var showInsightsDialog by remember { mutableStateOf(false) }
     var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
+    val insightsConfigurationState = remember(showInsightsDialog, insightsState) {
+        WorkoutInsightsSettingsStore.getConfigurationState(context)
+    }
 
     var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
     }
     var displayedWorkoutHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
+    var capturedHeartRateChartHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
+    var capturedHeartRateChartPng by remember(workout.id) { mutableStateOf<ByteArray?>(null) }
 
     LaunchedEffect(selectedTopTab) {
         if (selectedTopTab == 0) {
@@ -411,7 +426,7 @@ fun WorkoutDetailScreen(
 
     val scope = rememberCoroutineScope()
     var isSaving by remember { mutableStateOf(false) }
-    val insightsRepository = remember(context) { LiteRtLmInsightsRepository(context.applicationContext) }
+    val insightsRepository = remember(context) { ConfigurableWorkoutInsightsEngine(context.applicationContext) }
     val modelPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri ?: return@rememberLauncherForActivityResult
@@ -469,24 +484,34 @@ fun WorkoutDetailScreen(
                     insightsState = WorkoutInsightsUiState.Error(promptResult.message)
                 }
                 is WorkoutInsightsPromptResult.Success -> {
-                    Log.d(
-                        INSIGHTS_LOG_TAG,
-                        "workout_prompt_start\n${promptResult.prompt}\nworkout_prompt_end"
-                    )
+                    val heartRateChartPng = capturedHeartRateChartPng
+                        ?.takeIf { capturedHeartRateChartHistoryId == historyId }
+                    val debugImageFileName = heartRateChartPng?.let { imageBytes ->
+                        withContext(Dispatchers.IO) {
+                            saveInsightsDebugImageToDownloads(
+                                context = context,
+                                historyId = historyId,
+                                imageBytes = imageBytes
+                            )
+                        }
+                    }
                     runCatching {
                         insightsRepository.generateInsights(
-                            title = promptResult.title,
-                            prompt = promptResult.prompt
+                            WorkoutInsightsRequest(
+                                title = promptResult.title,
+                                prompt = promptResult.prompt,
+                                systemPrompt = promptResult.systemPrompt,
+                                imagePngBytes = heartRateChartPng
+                            )
                         ).collectLatest { chunk ->
-                            insightsState = WorkoutInsightsUiState.Generating(chunk.text)
+                            insightsState = WorkoutInsightsUiState.Generating(
+                                partialText = chunk.text,
+                                phase = chunk.phase
+                            )
                         }
                     }.onSuccess {
                         val finalText =
                             (insightsState as? WorkoutInsightsUiState.Generating)?.partialText.orEmpty()
-                        Log.d(
-                            INSIGHTS_LOG_TAG,
-                            "workout_raw_response_start\n${finalText.ifBlank { "No insights were generated." }}\nworkout_raw_response_end"
-                        )
                         insightsState = WorkoutInsightsUiState.Success(
                             title = promptResult.title,
                             text = finalText.ifBlank { "No insights were generated." }
@@ -1259,6 +1284,14 @@ fun WorkoutDetailScreen(
                             selectedTopTab = selectedTopTab,
                             onDisplayedWorkoutHistoryIdChange = { id ->
                                 displayedWorkoutHistoryId = id
+                                if (capturedHeartRateChartHistoryId != id) {
+                                    capturedHeartRateChartHistoryId = null
+                                    capturedHeartRateChartPng = null
+                                }
+                            },
+                            onHeartRateChartCaptured = { historyId, pngBytes ->
+                                capturedHeartRateChartHistoryId = historyId
+                                capturedHeartRateChartPng = pngBytes
                             },
                             onGoBack = onGoBack
                         )
@@ -1523,15 +1556,46 @@ fun WorkoutDetailScreen(
                 show = showInsightsDialog,
                 title = "Workout insights",
                 state = insightsState,
-                isModelConfigured = LiteRtLmModelStore.getConfiguredModelPath(context) != null,
+                configurationState = insightsConfigurationState,
                 onDismiss = { showInsightsDialog = false },
-                onImportModel = { modelPickerLauncher.launch(arrayOf("*/*")) },
+                onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
+                    { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
+                } else {
+                    null
+                },
                 onGenerate = { generateWorkoutInsights() },
-                onClearModel = {
-                    LiteRtLmModelStore.clearConfiguredModel(context)
-                    insightsState = WorkoutInsightsUiState.Idle
-                }
             )
         }
     }
+}
+
+private suspend fun saveInsightsDebugImageToDownloads(
+    context: Context,
+    historyId: UUID,
+    imageBytes: ByteArray,
+): String? = withContext(Dispatchers.IO) {
+    val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(LocalDateTime.now())
+    val fileName = "workout_insights_hr_chart_${historyId}_$timestamp.png"
+    runCatching {
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            ?: error("Failed to create debug image in Downloads.")
+        resolver.openOutputStream(uri)?.use { output ->
+            output.write(imageBytes)
+            output.flush()
+        } ?: error("Failed to open output stream for debug image.")
+        fileName
+    }.onSuccess { savedFileName ->
+        Log.d(
+            INSIGHTS_LOG_TAG,
+            "workout_llm_debug_image_saved file=$savedFileName bytes=${imageBytes.size}"
+        )
+    }.onFailure { error ->
+        Log.w(INSIGHTS_LOG_TAG, "workout_llm_debug_image_save_failed", error)
+    }.getOrNull()
 }

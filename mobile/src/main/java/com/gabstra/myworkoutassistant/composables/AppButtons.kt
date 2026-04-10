@@ -96,7 +96,7 @@ fun AppPrimaryOutlinedButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.heightIn(min = minHeight).then(modifier),
+        modifier = modifier.heightIn(min = minHeight),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = color,
             disabledContentColor = DisabledContentGray

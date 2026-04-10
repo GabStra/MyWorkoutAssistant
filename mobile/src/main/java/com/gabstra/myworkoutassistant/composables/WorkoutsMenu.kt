@@ -36,12 +36,15 @@ fun WorkoutsMenu(
     onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
-    onMenuItemClick: () -> Unit = {},
+    onMenuItemClick: ((() -> Unit) -> Unit)? = null,
 ) {
     var showClearHistoryDialog by remember { mutableStateOf(false) }
     var showClearExerciseInfoDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
+    fun handleMenuItemClick(action: () -> Unit) {
+        onMenuItemClick?.invoke(action) ?: action()
+    }
 
     Column(
         modifier = Modifier
@@ -52,97 +55,69 @@ fun WorkoutsMenu(
         MenuSectionHeader("Settings", showDivider = false)
         WorkoutsMenuItem(
             label = "Settings",
-            onClick = {
-                onOpenSettingsClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onOpenSettingsClick) }
         )
 
         MenuSectionHeader("Sync")
         WorkoutsMenuItem(
             label = "Sync with Watch",
-            onClick = {
-                onSyncClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onSyncClick) }
         )
         WorkoutsMenuItem(
             label = "Sync with Health Connect",
-            onClick = {
-                onSyncWithHealthConnectClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onSyncWithHealthConnectClick) }
         )
 
         MenuSectionHeader("Export")
         WorkoutsMenuItem(
             label = "Export Workouts",
-            onClick = {
-                onExportWorkouts()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onExportWorkouts) }
         )
         WorkoutsMenuItem(
             label = "Export Workout Plan (Markdown)",
-            onClick = {
-                onExportWorkoutPlan()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onExportWorkoutPlan) }
         )
         WorkoutsMenuItem(
             label = "Export Equipment (JSON)",
-            onClick = {
-                onExportEquipment()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onExportEquipment) }
         )
 
         MenuSectionHeader("Data")
         WorkoutsMenuItem(
             label = "Save Backup",
-            onClick = {
-                onBackupClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onBackupClick) }
         )
         WorkoutsMenuItem(
             label = "Restore Backup",
-            onClick = {
-                onRestoreClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onRestoreClick) }
         )
         WorkoutsMenuItem(
             label = "Import Workout Plan",
-            onClick = {
-                onImportWorkoutsClick()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onImportWorkoutsClick) }
         )
 
         MenuSectionHeader("Maintenance")
         WorkoutsMenuItem(
             label = "Clear workout history",
             onClick = {
-                showClearHistoryDialog = true
-                onMenuItemClick()
+                handleMenuItemClick {
+                    showClearHistoryDialog = true
+                }
             }
         )
 //        WorkoutsMenuItem(
 //            label = "Clear all exercise info",
 //            onClick = {
-//                showClearExerciseInfoDialog = true
-//                onMenuItemClick()
+//                handleMenuItemClick {
+//                    showClearExerciseInfoDialog = true
+//                }
 //            }
 //        )
 
         MenuSectionHeader("Diagnostics")
         WorkoutsMenuItem(
             label = "View Error Logs",
-            onClick = {
-                onViewErrorLogs()
-                onMenuItemClick()
-            }
+            onClick = { handleMenuItemClick(onViewErrorLogs) }
         )
     }
 

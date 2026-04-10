@@ -24,6 +24,7 @@ fun WorkoutHistoryTab(
     pageIndex: Int,
     selectedTopTab: Int,
     onDisplayedWorkoutHistoryIdChange: (UUID?) -> Unit,
+    onHeartRateChartCaptured: (UUID?, ByteArray?) -> Unit,
     onGoBack: () -> Unit,
 ) {
     WorkoutHistoryScreen(
@@ -40,6 +41,11 @@ fun WorkoutHistoryTab(
         onSelectedWorkoutHistoryIdChanged = { id ->
             if (pageIndex == selectedTopTab) {
                 onDisplayedWorkoutHistoryIdChange(id)
+            }
+        },
+        onHeartRateChartCaptured = { historyId, pngBytes ->
+            if (pageIndex == selectedTopTab) {
+                onHeartRateChartCaptured(historyId, pngBytes)
             }
         },
     )

@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -76,6 +76,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
+import com.gabstra.myworkoutassistant.verticalLazyColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
@@ -536,19 +537,19 @@ fun ExerciseHistoryScreen(
                 }
             }
             else -> {
-                val scrollState = rememberScrollState()
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize()
-                        .verticalColumnScrollbarContainer(
-                            scrollState = scrollState,
-                            enabled = !isChartInteractionActive,
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(15.dp),
-                ) {
-                    when (selectedHistoryMode.coerceIn(0, 1)) {
-                        0 -> {
+                when (selectedHistoryMode.coerceIn(0, 1)) {
+                    0 -> {
+                        val scrollState = androidx.compose.foundation.rememberScrollState()
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .verticalColumnScrollbarContainer(
+                                    scrollState = scrollState,
+                                    enabled = !isChartInteractionActive,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        ) {
                                     if (setHistoriesByWorkoutHistoryId.isEmpty()) {
                                         PrimarySurface(
                                             modifier = Modifier.fillMaxWidth()
@@ -600,83 +601,100 @@ fun ExerciseHistoryScreen(
                                         )
                                     }
                                 }
-                        1 -> {
-                                    if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
-                                        PrimarySurface(
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(15.dp),
-                                                text = "No history in selected range",
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
-                                            )
-                                        }
-                                        return@Column
+                        }
+                    1 -> {
+                        if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
+                            PrimarySurface(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(15.dp),
+                                    text = "No history in selected range",
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                                )
+                            }
+                            return@Column
+                        }
+
+                        val lazyListState = rememberLazyListState()
+                        val setHistories =
+                            setHistoriesByWorkoutHistoryId[selectedWorkoutHistory!!.id]!!
+                        val hasTarget =
+                            exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
+
+                        val (targetCounter, targetTotal) = remember(
+                            hasTarget,
+                            setHistories.selectedExerciseSetHistories,
+                            selectedWorkoutHistory?.id,
+                            selectedWorkoutHistory?.heartBeatRecords,
+                            exercise.lowerBoundMaxHRPercent,
+                            exercise.upperBoundMaxHRPercent,
+                            userAge,
+                            measuredMaxHeartRate,
+                            restingHeartRate
+                        ) {
+                            if (!hasTarget) {
+                                0 to 0
+                            } else {
+                                var counter = 0
+                                var total = 0
+                                setHistories.selectedExerciseSetHistories
+                                    .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
+                                    .forEach { setHistory ->
+                                        val hrTimeOffset = Duration.between(
+                                            selectedWorkoutHistory!!.startTime,
+                                            setHistory.startTime,
+                                        ).seconds
+                                        val setDuration = Duration.between(
+                                            setHistory.startTime,
+                                            setHistory.endTime
+                                        ).seconds
+
+                                        val lowHr = getHeartRateFromPercentage(
+                                            exercise.lowerBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
+                                        )
+                                        val highHr = getHeartRateFromPercentage(
+                                            exercise.upperBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
+                                        )
+
+                                        val hrEntriesCount =
+                                            selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
+                                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
+                                            }.size
+
+                                        counter += hrEntriesCount
+                                        total += setDuration.toInt()
                                     }
-                                    workoutSelector()
-                                    val setHistories =
-                                        setHistoriesByWorkoutHistoryId[selectedWorkoutHistory!!.id]!!
+                                counter to total
+                            }
+                        }
 
-                                    val hasTarget =
-                                        exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
-
-                                    val (targetCounter, targetTotal) = remember(
-                                        hasTarget,
-                                        setHistories.selectedExerciseSetHistories,
-                                        selectedWorkoutHistory?.id,
-                                        selectedWorkoutHistory?.heartBeatRecords,
-                                        exercise.lowerBoundMaxHRPercent,
-                                        exercise.upperBoundMaxHRPercent,
-                                        userAge,
-                                        measuredMaxHeartRate,
-                                        restingHeartRate
-                                    ) {
-                                        if (!hasTarget) {
-                                            0 to 0
-                                        } else {
-                                            var counter = 0
-                                            var total = 0
-                                            setHistories.selectedExerciseSetHistories
-                                                .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
-                                                .forEach { setHistory ->
-                                                    val hrTimeOffset = Duration.between(
-                                                        selectedWorkoutHistory!!.startTime,
-                                                        setHistory.startTime,
-                                                    ).seconds
-                                                    val setDuration = Duration.between(
-                                                        setHistory.startTime,
-                                                        setHistory.endTime
-                                                    ).seconds
-
-                                                    val lowHr = getHeartRateFromPercentage(
-                                                        exercise.lowerBoundMaxHRPercent!!,
-                                                        userAge,
-                                                        measuredMaxHeartRate,
-                                                        restingHeartRate
-                                                    )
-                                                    val highHr = getHeartRateFromPercentage(
-                                                        exercise.upperBoundMaxHRPercent!!,
-                                                        userAge,
-                                                        measuredMaxHeartRate,
-                                                        restingHeartRate
-                                                    )
-
-                                                    val hrEntriesCount =
-                                                        selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
-                                                            index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
-                                                        }.size
-
-                                                    counter += hrEntriesCount
-                                                    total += setDuration.toInt()
-                                                }
-                                            counter to total
-                                        }
-                                    }
-
-                                    PrimarySurface {
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .verticalLazyColumnScrollbar(
+                                    lazyListState = lazyListState,
+                                    enableTopFade = false,
+                                    enableBottomFade = false,
+                                ),
+                            state = lazyListState,
+                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        ) {
+                            item {
+                                workoutSelector()
+                            }
+                            item {
+                                PrimarySurface {
                                         if (hasTarget) {
                                             Column {
                                                 Column(
@@ -779,7 +797,8 @@ fun ExerciseHistoryScreen(
                                             }
                                         }
                                     }
-                                }
+                            }
+                        }
                     }
                 }
             }

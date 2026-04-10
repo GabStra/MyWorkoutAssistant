@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -37,10 +40,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -99,13 +104,17 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
+import com.gabstra.myworkoutassistant.verticalLazyColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
+import dev.shreyaspatil.capturable.capturable
+import dev.shreyaspatil.capturable.controller.rememberCaptureController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
@@ -315,7 +324,11 @@ fun Menu(
 }
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalComposeUiApi::class
+)
 @Composable
 fun WorkoutHistoryScreen(
     appViewModel: AppViewModel,
@@ -329,6 +342,7 @@ fun WorkoutHistoryScreen(
     selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
+    onHeartRateChartCaptured: (UUID?, ByteArray?) -> Unit = { _, _ -> },
 ) {
 
     val context = LocalContext.current
@@ -375,6 +389,7 @@ fun WorkoutHistoryScreen(
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
     var heartRateMinY by remember { mutableStateOf<Double?>(null) }
+    val heartRateChartCaptureController = rememberCaptureController()
 
     val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _ ->
@@ -593,6 +608,7 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(selectedWorkoutHistory) {
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
+        onHeartRateChartCaptured(selectedWorkoutHistory?.id, null)
         if (selectedWorkoutHistory == null) return@LaunchedEffect
 
         isLoading = true
@@ -697,6 +713,39 @@ fun WorkoutHistoryScreen(
 
             delay(500)
             isLoading = false
+        }
+    }
+
+    LaunchedEffect(
+        selectedWorkoutHistory?.id,
+        heartRateEntryModel,
+        heartRateMinY,
+        userAge,
+        measuredMaxHeartRate,
+        restingHeartRate,
+        isLoading
+    ) {
+        val selectedHistoryId = selectedWorkoutHistory?.id
+        if (
+            isLoading ||
+            selectedHistoryId == null ||
+            heartRateEntryModel == null ||
+            selectedWorkoutHistory?.heartBeatRecords?.any { it != 0 } != true
+        ) {
+            onHeartRateChartCaptured(selectedHistoryId, null)
+            return@LaunchedEffect
+        }
+
+        withFrameNanos { }
+        runCatching {
+            heartRateChartCaptureController.captureAsync().await()
+                .asAndroidBitmap()
+                .toPngByteArray()
+        }.onSuccess { bytes ->
+            onHeartRateChartCaptured(selectedHistoryId, bytes)
+        }.onFailure { error ->
+            Log.w(WORKOUT_HISTORY_SCREEN_LOG_TAG, "heart_rate_chart_capture_failed", error)
+            onHeartRateChartCaptured(selectedHistoryId, null)
         }
     }
 
@@ -933,20 +982,26 @@ fun WorkoutHistoryScreen(
                             )
                         },
                         subContent = {
-                            HeartRateChartContent(
-                                modifier = Modifier.fillMaxWidth(),
-                                cartesianChartModel = heartRateEntryModel!!,
-                                userAge = userAge,
-                                measuredMaxHeartRate = measuredMaxHeartRate,
-                                restingHeartRate = restingHeartRate,
-                                minYBpm = heartRateMinY,
-                                zoneGuideValuesBpm = getHeartRateZoneGuideValues(
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .capturable(heartRateChartCaptureController)
+                            ) {
+                                HeartRateChartContent(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cartesianChartModel = heartRateEntryModel!!,
                                     userAge = userAge,
                                     measuredMaxHeartRate = measuredMaxHeartRate,
                                     restingHeartRate = restingHeartRate,
-                                ),
-                                onInteractionChange = { isChartInteractionActive = it },
-                            )
+                                    minYBpm = heartRateMinY,
+                                    zoneGuideValuesBpm = getHeartRateZoneGuideValues(
+                                        userAge = userAge,
+                                        measuredMaxHeartRate = measuredMaxHeartRate,
+                                        restingHeartRate = restingHeartRate,
+                                    ),
+                                    onInteractionChange = { isChartInteractionActive = it },
+                                )
+                            }
 
                             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1447,6 +1502,7 @@ fun WorkoutHistoryScreen(
     }
 
     val scrollState = rememberScrollState()
+    val setHistoryLazyListState = rememberLazyListState()
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1459,25 +1515,29 @@ fun WorkoutHistoryScreen(
         when {
             isLoading -> {
                 if (selectedHistoryMode == 1 && selectedWorkoutHistory != null) {
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalColumnScrollbarContainer(
-                                scrollState = scrollState,
-                                enabled = !isChartInteractionActive,
+                            .verticalLazyColumnScrollbar(
+                                lazyListState = setHistoryLazyListState,
                             ),
+                        state = setHistoryLazyListState,
                         verticalArrangement = Arrangement.spacedBy(15.dp),
                     ) {
-                        workoutSelector()
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.width(32.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MediumDarkGray,
-                            )
+                        item {
+                            workoutSelector()
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.width(32.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MediumDarkGray,
+                                )
+                            }
                         }
                     }
                 } else {
@@ -1509,22 +1569,45 @@ fun WorkoutHistoryScreen(
                 }
             }
             else -> {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxSize()
-                        .verticalColumnScrollbarContainer(
-                            scrollState = scrollState,
-                            enabled = !isChartInteractionActive,
-                        ),
-                    verticalArrangement = Arrangement.spacedBy(15.dp),
-                ) {
-                    when (selectedHistoryMode.coerceIn(0, 1)) {
-                        0 -> graphsTabContent()
-                        1 -> setsTabContent()
+                when (selectedHistoryMode.coerceIn(0, 1)) {
+                    0 -> {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .verticalColumnScrollbarContainer(
+                                    scrollState = scrollState,
+                                    enabled = !isChartInteractionActive,
+                                ),
+                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        ) {
+                            graphsTabContent()
+                        }
+                    }
+                    1 -> {
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .verticalLazyColumnScrollbar(
+                                    lazyListState = setHistoryLazyListState,
+                                ),
+                            state = setHistoryLazyListState,
+                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        ) {
+                            item {
+                                setsTabContent()
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private fun android.graphics.Bitmap.toPngByteArray(): ByteArray =
+    ByteArrayOutputStream().use { output ->
+        compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+        output.toByteArray()
+    }

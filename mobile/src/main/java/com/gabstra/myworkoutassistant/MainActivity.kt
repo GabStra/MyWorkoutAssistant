@@ -62,8 +62,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.gabstra.myworkoutassistant.composables.LoadingScreen
 import com.gabstra.myworkoutassistant.composables.StandardDialog
-import com.gabstra.myworkoutassistant.insights.LiteRtLmInsightsRepository
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
+import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
@@ -277,10 +279,6 @@ class MainActivity : ComponentActivity() {
         )
 
         PhoneToWatchSyncCoordinator.install(applicationContext)
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            LiteRtLmInsightsRepository.prewarmIfConfigured(applicationContext)
-        }
 
         setContent {
             MyWorkoutAssistantTheme {
@@ -1029,24 +1027,42 @@ fun MyWorkoutAssistantNavHost(
     var configuredLiteRtModelPath by remember {
         mutableStateOf(LiteRtLmModelStore.getConfiguredModelPath(context))
     }
+    var workoutInsightsMode by remember {
+        mutableStateOf(WorkoutInsightsSettingsStore.getMode(context))
+    }
+    var liteRtBackendPreference by remember {
+        mutableStateOf(LiteRtLmModelStore.getBackendPreference(context))
+    }
+    var remoteInsightsConfig by remember {
+        mutableStateOf(WorkoutInsightsSettingsStore.getRemoteConfig(context))
+    }
+    var isImportingLiteRtModel by remember { mutableStateOf(false) }
 
     val liteRtModelPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri ?: return@rememberLauncherForActivityResult
-            try {
-                val importedName = LiteRtLmModelStore.importModel(context, uri)
-                configuredLiteRtModelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
-                Toast.makeText(
-                    context,
-                    "LiteRT-LM model imported: $importedName",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    e.message ?: "Couldn't import LiteRT-LM model.",
-                    Toast.LENGTH_SHORT
-                ).show()
+            if (isImportingLiteRtModel) return@rememberLauncherForActivityResult
+            scope.launch {
+                isImportingLiteRtModel = true
+                try {
+                    val importedName = withContext(Dispatchers.IO) {
+                        LiteRtLmModelStore.importModel(context, uri)
+                    }
+                    configuredLiteRtModelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
+                    Toast.makeText(
+                        context,
+                        "LiteRT-LM model imported: $importedName",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } catch (e: Exception) {
+                    Toast.makeText(
+                        context,
+                        e.message ?: "Couldn't import LiteRT-LM model.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } finally {
+                    isImportingLiteRtModel = false
+                }
             }
         }
 
@@ -1341,7 +1357,6 @@ fun MyWorkoutAssistantNavHost(
                                             workoutStoreRepository,
                                             db
                                         )
-                                        syncWithWatch()
                                         Toast.makeText(context, "Settings saved.", Toast.LENGTH_SHORT)
                                             .show()
                                         appViewModel.goBack()
@@ -1355,9 +1370,20 @@ fun MyWorkoutAssistantNavHost(
                             },
                             workoutStore = appViewModel.workoutStore,
                             healthConnectClient = healthConnectClient,
+                            workoutInsightsMode = workoutInsightsMode,
                             liteRtModelPath = configuredLiteRtModelPath,
-                            onImportLiteRtModel = {
-                                liteRtModelPickerLauncher.launch(arrayOf("*/*"))
+                            liteRtBackendPreference = liteRtBackendPreference,
+                            remoteInsightsConfig = remoteInsightsConfig,
+            onImportLiteRtModel = {
+                liteRtModelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes)
+            },
+                            onSaveInsightsSettings = { mode, backendPreference, remoteConfig ->
+                                WorkoutInsightsSettingsStore.setMode(context, mode)
+                                LiteRtLmModelStore.setBackendPreference(context, backendPreference)
+                                WorkoutInsightsSettingsStore.setRemoteConfig(context, remoteConfig)
+                                workoutInsightsMode = mode
+                                liteRtBackendPreference = backendPreference
+                                remoteInsightsConfig = remoteConfig
                             },
                             onClearLiteRtModel = {
                                 LiteRtLmModelStore.clearConfiguredModel(context)
@@ -1365,7 +1391,8 @@ fun MyWorkoutAssistantNavHost(
                                 Toast.makeText(context, "LiteRT-LM model cleared.", Toast.LENGTH_SHORT)
                                     .show()
                             },
-                            isSaving = isSaving
+                            isSaving = isSaving,
+                            isImportingLiteRtModel = isImportingLiteRtModel
                         )
                     }
 

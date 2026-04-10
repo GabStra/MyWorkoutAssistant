@@ -88,6 +88,7 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
         }
     }
 
@@ -157,7 +158,9 @@ dependencies {
     // Room runtime only; shared owns Room annotation processing.
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
+    implementation("com.openai:openai-java:4.13.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
+    implementation("dev.shreyaspatil:capturable:3.0.1")
 
     // Misc
     implementation("com.google.code.gson:gson:2.13.2")

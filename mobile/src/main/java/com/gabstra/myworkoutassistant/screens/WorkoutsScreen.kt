@@ -475,9 +475,10 @@ fun WorkoutsScreen(
                         onExportEquipment = onExportEquipment,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
                         onViewErrorLogs = onViewErrorLogs,
-                        onMenuItemClick = {
+                        onMenuItemClick = { action ->
                             scope.launch {
                                 drawerState.close()
+                                action()
                             }
                         }
                     )

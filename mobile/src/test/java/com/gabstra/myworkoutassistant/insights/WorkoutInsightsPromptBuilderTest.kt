@@ -8,6 +8,41 @@ import org.junit.Test
 class WorkoutInsightsPromptBuilderTest {
 
     @Test
+    fun workoutInsightsPrompts_include_conflict_and_formatting_guards() {
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If metrics conflict, prefer the most explicit numeric fields first:"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If a status label conflicts with explicit numeric values, trust the numeric values"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Never describe a metric as improved if the numeric value is lower than the previous value."))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If one exercise improved and another regressed or lagged versus previous, say that explicitly."))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Before finalizing, silently verify:"))
+
+        val prompt = buildWorkoutSessionPrompt(
+            markdown = "# Session\n\n### Back Squat",
+            workoutCategoryGuidance = "",
+            workoutCategoryLine = ""
+        )
+
+        assertTrue(prompt.contains("Compare each exercise against plan, previous, and best-to-date performance."))
+        assertTrue(prompt.contains("Do not flatten mixed results into overall progress when the exercises diverged."))
+        assertTrue(prompt.contains("lower current volume than previous = below previous"))
+        assertTrue(prompt.contains("If Exec, Prev, or Best numbers disagree with status labels, trust the numbers."))
+        assertTrue(prompt.contains("If most exercises are WEIGHT or BODY_WEIGHT, treat the session as lifting-dominant"))
+    }
+
+    @Test
+    fun exerciseInsightsPrompt_uses_exercise_specific_instructions() {
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("You are an on-device exercise insights assistant."))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Focus on the latest completed session first"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("If the latest session met plan but still lagged the previous baseline or recent trend, say that explicitly."))
+
+        val prompt = buildExercisePrompt(
+            markdown = "# Back Squat\n\n## S1: 2026-04-01"
+        )
+
+        assertTrue(prompt.contains("Focus on the latest completed session first, then the recent trend."))
+        assertTrue(prompt.contains("Compare executed performance against expected work and the previous baseline."))
+    }
+
+    @Test
     fun buildWorkoutSessionPrompt_keeps_full_prompt_within_reserved_input_budget() {
         val markdown = buildString {
             append("# Very Long Session\n")
@@ -56,9 +91,58 @@ class WorkoutInsightsPromptBuilderTest {
 
         assertTrue(estimateTokenCount(WORKOUT_INSIGHTS_SYSTEM_PROMPT) + estimateTokenCount(prompt) <= 3_456)
         assertTrue(prompt.contains("Workout session:"))
-        assertTrue(prompt.contains("_Timelines"))
         assertTrue(prompt.contains("CONTEXT "))
-        assertTrue(prompt.contains("PLAN "))
+        assertTrue(prompt.contains("EXERCISE "))
+        assertFalse(prompt.contains("_Timelines"))
+        assertFalse(prompt.contains("PLAN "))
+    }
+
+    @Test
+    fun buildWorkoutSessionPrompt_drops_redundant_prev_and_best_snapshots_when_signals_match() {
+        val markdown = """
+            # Intervals
+            2026-04-08 09:00 | Dur: 32m
+
+            ### Main Set
+
+            #### Context
+            - Type: COUNTDOWN
+            - Progression mode: OFF
+            - Exercise target zone: 90%-95% of max HR
+            - Warm-up sets: disabled
+
+            #### Executed
+            - Set summary: Duration: 04:00 | Duration: 04:00
+
+            #### Previous Session
+            - Set summary: Duration: 04:00 | Duration: 04:00
+
+            #### Best To Date
+            - Duration: 04:00
+
+            #### Recovery Context
+            - Work HR: avg 177 bpm | peak 181 bpm
+            - Work samples in target zone: 78%
+
+            #### Coaching Signals
+            - Vs prev: matched
+            - Vs best: matched
+            - Trend: stable
+        """.trimIndent()
+
+        val prompt = buildWorkoutSessionPrompt(
+            markdown = markdown,
+            workoutCategoryGuidance = "",
+            workoutCategoryLine = ""
+        )
+
+        assertTrue(prompt.contains("EXERCISE Main Set"))
+        assertTrue(prompt.contains("CONTEXT Type COUNTDOWN | Progression OFF | Target zone 90%-95% of max HR | Warm-up disabled"))
+        assertTrue(prompt.contains("EXEC Sets: Duration: 04:00 | Duration: 04:00"))
+        assertTrue(prompt.contains("RECOVERY Work HR: avg 177 bpm | peak 181 bpm | In target zone: 78%"))
+        assertTrue(prompt.contains("SIGNALS Vs prev: matched | Vs best: matched | Trend: stable"))
+        assertFalse(prompt.contains("PREV Sets: Duration: 04:00 | Duration: 04:00"))
+        assertFalse(prompt.contains("BEST Duration: 04:00"))
     }
 
     @Test
@@ -97,9 +181,8 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertTrue(compacted.length <= 12_000)
-        assertTrue(compacted.contains("Timelines and trends trimmed"))
         assertTrue(compacted.contains("CONTEXT "))
-        assertTrue(compacted.contains("PLAN "))
+        assertFalse(compacted.contains("PLAN "))
         assertFalse(compacted.contains("TIMELINE "))
         assertFalse(compacted.contains("Trend (last 3 sessions)"))
         assertFalse(compacted.contains("signals detail"))
@@ -154,13 +237,12 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertTrue(compacted.contains("Range: 78 to 124 bpm"))
-        assertTrue(compacted.contains("Hi exp: 0% of samples"))
+        assertTrue(compacted.contains("High-intensity exposure: 0% of samples"))
         assertTrue(compacted.contains("CONTEXT Type WEIGHT"))
-        assertTrue(compacted.contains("PLAN "))
-        assertTrue(compacted.contains("Plan:"))
-        assertTrue(compacted.contains("Vol: 2.16 k kg"))
+        assertFalse(compacted.contains("PLAN "))
+        assertTrue(compacted.contains("Volume: 2160 kg"))
         assertTrue(compacted.contains("Sets: 9 kg x 5, 34 kg x 5, 49 kg x 3, 69 kg x 9"))
-        assertTrue(compacted.contains("Best to date"))
+        assertTrue(compacted.contains("Vs best: matched"))
         assertTrue(compacted.contains("Vs prev: above"))
         assertTrue(compacted.contains("State: ready to progress"))
         assertFalse(compacted.contains("Standard zones"))
@@ -200,16 +282,16 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertTrue(compacted.contains("ATHLETE Age: 31 years"))
-        assertTrue(compacted.contains("Wt: 65"))
+        assertTrue(compacted.contains("Body weight: 65"))
         assertTrue(compacted.contains("Rest HR: 50"))
         assertFalse(compacted.contains("Max HR:"))
-        assertFalse(compacted.contains("PREV "))
+        assertTrue(compacted.contains("PREV No previous session"))
         assertFalse(compacted.contains("BEST "))
         assertFalse(compacted.contains("SIGNALS "))
     }
 
     @Test
-    fun compactWorkoutSessionMarkdown_aggregates_repeated_interval_sections() {
+    fun compactWorkoutSessionMarkdown_keeps_repeated_interval_sections_separate() {
         val markdown = """
             # Cyclette - HIIT
             2026-03-30 19:51:38 | Dur: 40:16
@@ -265,14 +347,15 @@ class WorkoutInsightsPromptBuilderTest {
 
         assertTrue(compacted.contains("Range: 99 to 183 bpm"))
         assertTrue(compacted.contains("EXERCISE Main Set"))
-        assertTrue(compacted.contains("Repeated 2 times"))
-        assertTrue(compacted.contains("Work HR avg range: 178 to 179 bpm | peak range: 181 to 183 bpm"))
-        assertTrue(compacted.contains("In-zone range: 70% to 83%"))
         assertTrue(compacted.contains("EXERCISE Active Rest"))
-        assertTrue(compacted.contains("Work HR avg range: 146 to 149 bpm | peak range: 172 to 172 bpm"))
-        assertEquals(1, Regex("(?m)^EXERCISE Main Set$").findAll(compacted).count())
-        assertEquals(1, Regex("(?m)^EXERCISE Active Rest$").findAll(compacted).count())
-        assertEquals(2, Regex("Vs prev: similar").findAll(compacted).count())
+        assertTrue(compacted.contains("RECOVERY Work HR: avg 178 bpm | peak 181 bpm | In target zone: 70%"))
+        assertTrue(compacted.contains("RECOVERY Work HR: avg 179 bpm | peak 183 bpm | In target zone: 83%"))
+        assertTrue(compacted.contains("RECOVERY Work HR: avg 146 bpm | peak 172 bpm | In target zone: 73%"))
+        assertTrue(compacted.contains("RECOVERY Work HR: avg 149 bpm | peak 172 bpm | In target zone: 68%"))
+        assertFalse(compacted.contains("Repeated 2 times"))
+        assertEquals(2, Regex("(?m)^EXERCISE Main Set$").findAll(compacted).count())
+        assertEquals(2, Regex("(?m)^EXERCISE Active Rest$").findAll(compacted).count())
+        assertEquals(4, Regex("Vs prev: similar").findAll(compacted).count())
     }
 
     @Test
@@ -398,13 +481,332 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(compacted.contains("S4 "))
         assertFalse(compacted.contains("- Age:"))
         assertFalse(compacted.contains("Range: 69 to 132 bpm"))
-        assertFalse(compacted.contains("Hi exp: 0% of samples"))
+        assertTrue(compacted.contains("HR Avg % max HR: 55% | Peak % max HR: 69%"))
         assertTrue(compacted.contains("PROG State: PROGRESS"))
-        assertTrue(compacted.contains("Exp: 84 kg x 7, 84 kg x 7, 84 kg x 7"))
+        assertTrue(compacted.contains("Expected: 84 kg x 7 (3 sets)"))
+        assertTrue(compacted.contains("Executed: 9 kg x 5, 41.5 kg x 5, 59 kg x 3, 84 kg x 7 (3 sets)"))
+        assertTrue(compacted.contains("Vs success baseline: EQUAL"))
+        assertTrue(compacted.contains("Volume: Prev 0 kg | Exp 1.76 k kg | Exec 1.76 k kg"))
         assertFalse(compacted.contains("Set Differences"))
         assertFalse(compacted.contains("Stored HR samples"))
         assertFalse(compacted.contains("sessionId"))
-        assertFalse(compacted.contains("Vs previous baseline"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_omits_planned_steps_from_compacted_payload() {
+        val markdown = """
+            # A Squat/Bench
+            2026-04-01 19:24:20 | Dur: 01:08:26
+
+            ### Back Squat
+            #### Planned
+            - P 1: 84 kg x 7 reps
+            - P 2: 120 seconds rest
+            - P 3: 84 kg x 7 reps
+            - P 4: 120 seconds rest
+            - P 5: 84 kg x 7 reps
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertFalse(compacted.contains("PLAN "))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_prioritizes_numeric_history_and_compacts_repeated_sets() {
+        val markdown = """
+            # A Squat/Bench
+            2026-04-01 19:24:20 | Dur: 01:08:26
+
+            ### Back Squat
+            #### Executed
+            - Date: 2026-04-01
+            - Set summary: 9 kg x 5, 41.5 kg x 5, 59 kg x 3, 84 kg x 7, 84 kg x 7, 84 kg x 7
+            - Total volume: 2.19Kkg
+
+            #### Previous Session
+            - Set summary: 84 kg x 7, 84 kg x 7, 84 kg x 7
+            - Total volume: 2.61Kkg
+            - Progression state: PROGRESS
+
+            #### Best To Date
+            - Set summary: 84 kg x 7, 84 kg x 7, 84 kg x 7
+            - Total volume: 2.61Kkg
+            - Progression state: PROGRESS
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertFalse(compacted.contains("Date: 2026-04-01"))
+        assertTrue(compacted.contains("EXEC Sets: 84 kg x 7 (3 sets) | Volume: 2190 kg"))
+        assertTrue(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 2610 kg"))
+        assertTrue(compacted.contains("BEST Volume: 2610 kg"))
+        assertFalse(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 2610 kg | State: PROGRESS"))
+        assertFalse(compacted.contains("BEST Volume: 2610 kg | State: PROGRESS"))
+        assertFalse(compacted.contains("BEST Sets:"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_normalizes_decimal_commas_and_compact_ranges() {
+        val markdown = """
+            # A Squat/Bench
+            2026-04-01 19:24:20 | Dur: 01:08:26
+
+            #### Athlete Context
+            - Age: 31 years
+            - Weight (kg): 65
+            - Resting HR (bpm): 50
+
+            #### Session Heart Rate
+            - Mean: 105 bpm
+            - MinMax: 69132 bpm
+            - Average as % of max HR: 55,0%
+            - Peak as % of max HR: 69,1%
+            - Time at or above 85% of max HR: 0% of samples
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("ATHLETE Age: 31 years | Body weight: 65 | Rest HR: 50"))
+        assertTrue(compacted.contains("HR Mean: 105 bpm | Range: 69 to 132 bpm | Avg % max HR: 55% | Peak % max HR: 69% | High-intensity exposure: 0% of samples"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_marks_missing_previous_session_explicitly() {
+        val markdown = """
+            # A Push
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Overhead Press
+            #### Executed
+            - Set summary: 40 kg x 8, 40 kg x 8, 40 kg x 8
+            - Total volume: 960kg
+
+            #### Previous Session
+            - None
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("PREV No previous session"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_builds_prev_sets_from_historical_set_lines() {
+        val markdown = """
+            # A Squat
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Back Squat
+            #### Previous Session
+            - Date: 2026-03-25 19:24:20
+            - Executed sets: 3
+            - Total volume: 1764kg
+            - Progression state: PROGRESS
+            - S1: 84kg×7
+            - S2: 84kg×7
+            - S3: 84kg×7
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 1764 kg"))
+        assertFalse(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 1764 kg | State: PROGRESS"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_highlights_top_load_increase_when_volume_is_lower() {
+        val markdown = """
+            # A Squat
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Back Squat
+            #### Executed
+            - Set summary: 9 kg x 5, 41.5 kg x 5, 59 kg x 3, 84 kg x 7, 84 kg x 7, 84 kg x 7
+            - Total volume: 2.19Kkg
+
+            #### Previous Session
+            - Set summary: 81.5 kg x 11, 81.5 kg x 11, 81.5 kg x 10
+            - Total volume: 2.61Kkg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_expected:equal
+            - vs_previous_session:below
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("EXEC Sets: 84 kg x 7 (3 sets) | Volume: 2190 kg"))
+        assertTrue(compacted.contains("PREV Sets: 81.5 kg x 11 (2 sets), 81.5 kg x 10 | Volume: 2610 kg"))
+        assertTrue(compacted.contains("SIGNALS State: progress | Vs target: equal | Vs prev: below | Load profile vs prev: above | Top load vs prev: above (84 kg vs 81.5 kg) | Sets at top load: 3 vs 3"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_highlights_top_load_drop_when_current_load_is_lighter() {
+        val markdown = """
+            # A Bench
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Bench Press
+            #### Executed
+            - Set summary: 80 kg x 8, 80 kg x 8, 80 kg x 8
+            - Total volume: 1920kg
+
+            #### Previous Session
+            - Set summary: 82.5 kg x 8, 82.5 kg x 8, 82.5 kg x 8
+            - Total volume: 1980kg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_previous_session:below
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("Load profile vs prev: below"))
+        assertTrue(compacted.contains("Top load vs prev: below (80 kg vs 82.5 kg)"))
+        assertTrue(compacted.contains("Sets at top load: 3 vs 3"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_highlights_mixed_load_profile_when_only_some_sets_are_heavier() {
+        val markdown = """
+            # A Squat
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Back Squat
+            #### Executed
+            - Set summary: 82.5 kg x 8, 80 kg x 8, 80 kg x 8
+            - Total volume: 2425kg
+
+            #### Previous Session
+            - Set summary: 80 kg x 8, 80 kg x 8, 80 kg x 8
+            - Total volume: 1920kg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_previous_session:above
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("Load profile vs prev: mixed"))
+        assertTrue(compacted.contains("Top load vs prev: above (82.5 kg vs 80 kg)"))
+        assertTrue(compacted.contains("Sets at top load: 1 vs 3"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_keeps_zone_time_without_exercise_snapshots() {
+        val markdown = """
+            # A Squat/Bench
+            2026-04-01 19:24:20 | Dur: 01:08:26
+
+            #### Session Heart Rate
+            - Mean: 105 bpm
+            - MinMax: 69132 bpm
+            - Average as % of max HR: 55.0%
+            - Peak as % of max HR: 69.1%
+            - Time at or above 85% of max HR: 0% of samples
+            - Valid HR samples: 600
+            - Standard zones (% of samples, bpm range):
+              - Z0 (0.0%50.0% reserve): 70% of samples, 50120 bpm
+              - Z1 (50.0%60.0% reserve): 30% of samples, 120140 bpm
+
+            ### Back Squat
+            #### Context
+            - Type: WEIGHT
+            - Equipment: Barbell
+
+            #### Executed
+            - Total volume: 2.19Kkg
+
+            #### Previous Session
+            - Total volume: 2.61Kkg
+
+            #### Best To Date
+            - Total volume: 2.61Kkg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_expected:equal
+            - vs_previous_session:below
+            - below_best_to_date
+
+            ### Bench Press
+            #### Context
+            - Type: WEIGHT
+            - Equipment: Barbell
+
+            #### Executed
+            - Total volume: 2.11Kkg
+
+            #### Previous Session
+            - Total volume: 1.68Kkg
+
+            #### Best To Date
+            - Total volume: 2.11Kkg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_expected:above
+            - vs_previous_session:above
+            - best_to_date
+
+            ### Row
+            #### Context
+            - Type: WEIGHT
+            - Equipment: Barbell
+
+            #### Executed
+            - Total volume: 893kg
+
+            #### Previous Session
+            - Total volume: 1.25Kkg
+
+            #### Best To Date
+            - Total volume: 893kg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_expected:equal
+            - vs_previous_successful_baseline:equal
+            - vs_previous_session:above
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("HR Mean: 105 bpm | Range: 69 to 132 bpm | Avg % max HR: 55% | Peak % max HR: 69% | High-intensity exposure: 0% of samples | Approx zone time: Z0 07:00 | Z1 03:00"))
+        assertTrue(compacted.contains("EXEC Volume: 2190 kg"))
+        assertTrue(compacted.contains("PREV Volume: 2610 kg"))
+        assertTrue(compacted.contains("BEST Volume: 2610 kg"))
+        assertTrue(compacted.contains("PREV Volume: 1250 kg"))
+        assertFalse(compacted.contains("Range: 69132 bpm"))
+        assertFalse(compacted.contains("k kg"))
+        assertFalse(compacted.contains("EXERCISE SNAPSHOT"))
+        assertFalse(compacted.contains("_Timelines and trends trimmed._"))
+        assertTrue(compacted.contains("SIGNALS State: progress | Vs target: equal | Vs success baseline: equal | Vs prev: below"))
+    }
+
+    @Test
+    fun buildWorkoutSessionPrompt_adds_lifting_guidance_for_generic_workout_category_when_exercise_mix_is_strength_dominant() {
+        val prompt = buildWorkoutSessionPrompt(
+            markdown = """
+                # A Squat/Bench
+
+                ### Back Squat
+                #### Context
+                - Type: WEIGHT
+
+                ### Pull-Ups
+                #### Context
+                - Type: BODY_WEIGHT
+            """.trimIndent(),
+            workoutCategoryGuidance = "Category guidance: balance performance, effort, and recovery signals according to the workout type.",
+            workoutCategoryLine = "Workout category: Workout\n"
+        )
+
+        assertTrue(prompt.contains("Exercise mix guidance: this session is lifting-dominant even though the workout category label is generic"))
     }
 
     @Test
@@ -425,7 +827,7 @@ class WorkoutInsightsPromptBuilderTest {
 
         val prompt = buildExercisePrompt(markdown)
 
-        assertTrue(estimateTokenCount(WORKOUT_INSIGHTS_SYSTEM_PROMPT) + estimateTokenCount(prompt) <= 3_456)
+        assertTrue(estimateTokenCount(EXERCISE_INSIGHTS_SYSTEM_PROMPT) + estimateTokenCount(prompt) <= 3_456)
         assertTrue(prompt.contains("Exercise history:"))
         assertTrue(prompt.contains("## S12:"))
     }

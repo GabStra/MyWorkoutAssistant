@@ -71,8 +71,10 @@ import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.exportExerciseHistoryToMarkdown
-import com.gabstra.myworkoutassistant.insights.LiteRtLmInsightsRepository
+import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
@@ -172,7 +174,10 @@ fun ExerciseDetailScreen(
     var isSaving by remember { mutableStateOf(false) }
     var showInsightsDialog by remember { mutableStateOf(false) }
     var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
-    val insightsRepository = remember(context) { LiteRtLmInsightsRepository(context.applicationContext) }
+    val insightsRepository = remember(context) { ConfigurableWorkoutInsightsEngine(context.applicationContext) }
+    val insightsConfigurationState = remember(showInsightsDialog, insightsState) {
+        WorkoutInsightsSettingsStore.getConfigurationState(context)
+    }
     val modelPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri ?: return@rememberLauncherForActivityResult
@@ -261,10 +266,16 @@ fun ExerciseDetailScreen(
                     )
                     runCatching {
                         insightsRepository.generateInsights(
-                            title = promptResult.title,
-                            prompt = promptResult.prompt
+                            WorkoutInsightsRequest(
+                                title = promptResult.title,
+                                prompt = promptResult.prompt,
+                                systemPrompt = promptResult.systemPrompt
+                            )
                         ).collectLatest { chunk ->
-                            insightsState = WorkoutInsightsUiState.Generating(chunk.text)
+                            insightsState = WorkoutInsightsUiState.Generating(
+                                partialText = chunk.text,
+                                phase = chunk.phase
+                            )
                         }
                     }.onSuccess {
                         val finalText =
@@ -792,14 +803,14 @@ fun ExerciseDetailScreen(
             show = showInsightsDialog,
             title = "Exercise insights",
             state = insightsState,
-            isModelConfigured = LiteRtLmModelStore.getConfiguredModelPath(context) != null,
+            configurationState = insightsConfigurationState,
             onDismiss = { showInsightsDialog = false },
-            onImportModel = { modelPickerLauncher.launch(arrayOf("*/*")) },
+            onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
+                { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
+            } else {
+                null
+            },
             onGenerate = { generateExerciseInsights() },
-            onClearModel = {
-                LiteRtLmModelStore.clearConfiguredModel(context)
-                insightsState = WorkoutInsightsUiState.Idle
-            }
         )
     }
 }

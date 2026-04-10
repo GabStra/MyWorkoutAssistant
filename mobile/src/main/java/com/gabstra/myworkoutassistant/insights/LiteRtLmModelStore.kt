@@ -8,10 +8,26 @@ import java.io.File
 
 private const val INSIGHTS_PREFS = "litert_lm_insights"
 private const val MODEL_PATH_KEY = "model_path"
+private const val BACKEND_KEY = "backend"
+
+enum class LiteRtLmBackendPreference(
+    val label: String,
+) {
+    GPU("GPU"),
+    CPU("CPU");
+
+    companion object {
+        val default: LiteRtLmBackendPreference = GPU
+
+        fun fromStoredValue(value: String?): LiteRtLmBackendPreference =
+            entries.firstOrNull { it.name == value } ?: default
+    }
+}
 
 object LiteRtLmModelStore {
     private const val MODEL_DIRECTORY = "litertlm"
     private const val ACTIVE_MODEL_FILE_NAME = "active-model.litertlm"
+    val pickerMimeTypes: Array<String> = arrayOf("application/octet-stream")
 
     fun getConfiguredModelPath(context: Context): String? {
         val path = context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)
@@ -23,6 +39,21 @@ object LiteRtLmModelStore {
     fun clearConfiguredModel(context: Context) {
         context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
             remove(MODEL_PATH_KEY)
+        }
+    }
+
+    fun getBackendPreference(context: Context): LiteRtLmBackendPreference =
+        LiteRtLmBackendPreference.fromStoredValue(
+            context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)
+                .getString(BACKEND_KEY, null)
+        )
+
+    fun setBackendPreference(
+        context: Context,
+        preference: LiteRtLmBackendPreference,
+    ) {
+        context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
+            putString(BACKEND_KEY, preference.name)
         }
     }
 

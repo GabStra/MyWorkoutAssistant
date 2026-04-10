@@ -47,8 +47,8 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
-import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.Yellow
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
 import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
@@ -255,178 +255,173 @@ fun WorkoutsStatusTab(
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.width(32.dp),
+                        modifier = Modifier.size(32.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MediumDarkGray,
                     )
                 }
-            } else if (hasObjectives) {
+            } else {
+                if (hasObjectives) {
+                    StyledCard {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    modifier = Modifier.weight(1f),
+                                    text = "Weekly progress\n($selectedWeekLabel)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Start,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                AppPrimaryOutlinedButton(
+                                    text = "Edit",
+                                    onClick = {
+                                        pendingIncludedWorkoutGlobalIds =
+                                            weeklyProgressSnapshot.includedWorkoutGlobalIds
+                                        showWeeklyProgressDialog = true
+                                    },
+                                    minHeight = 36.dp,
+                                )
+                            }
+                            ExpandableContainer(
+                                isOpen = false,
+                                isExpandable = weeklyProgressSnapshot.hasOverride ||
+                                    weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.isNotEmpty(),
+                                title = { modifier ->
+                                    Row(
+                                        modifier = modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${(weeklyProgressSnapshot.objectiveProgress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            textAlign = TextAlign.Center,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        ObjectiveProgressBar(
+                                            Modifier.weight(1f),
+                                            progress = weeklyProgressSnapshot.objectiveProgress.toFloat(),
+                                            color = if (weeklyProgressSnapshot.objectiveProgress >= 1f) {
+                                                Yellow
+                                            } else {
+                                                MaterialTheme.colorScheme.primary
+                                            }
+                                        )
+                                    }
+                                },
+                                content = {
+                                    if (weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.isEmpty()) {
+                                        Text(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            text = "No workouts are selected for weekly progress.",
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            textAlign = TextAlign.Center,
+                                        )
+                                    } else {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.entries
+                                                .forEach { (workout, pair) ->
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Text(
+                                                            text = workout.name,
+                                                            modifier = Modifier.weight(1f),
+                                                            color = MaterialTheme.colorScheme.onBackground,
+                                                            style = MaterialTheme.typography.bodyLarge,
+                                                        )
+                                                        Text(
+                                                            text = "${pair.first}/${pair.second}",
+                                                            color = MaterialTheme.colorScheme.onBackground,
+                                                            style = MaterialTheme.typography.bodyLarge,
+                                                        )
+                                                    }
+                                                }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
                 StyledCard {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(
+                        val currentWeekStartMonth = selectedWeekStart
+                            .format(DateTimeFormatter.ofPattern("MMM", currentLocale))
+                        val currentWeekEndMonth = selectedWeekEnd
+                            .format(DateTimeFormatter.ofPattern("MMM", currentLocale))
+                        val currentWeekText = if (currentWeekStartMonth == currentWeekEndMonth) {
+                            "${selectedWeekStart.dayOfMonth} - ${selectedWeekEnd.dayOfMonth} $currentWeekStartMonth"
+                        } else {
+                            "${selectedWeekStart.dayOfMonth} $currentWeekStartMonth - ${selectedWeekEnd.dayOfMonth} $currentWeekEndMonth"
+                        }
+
+                        Text(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                modifier = Modifier.weight(1f),
-                                text = "Weekly progress\n($selectedWeekLabel)",
-                                style = MaterialTheme.typography.titleMedium,
-                                textAlign = TextAlign.Start,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            AppPrimaryOutlinedButton(
-                                text = "Edit",
-                                onClick = {
-                                    pendingIncludedWorkoutGlobalIds =
-                                        weeklyProgressSnapshot.includedWorkoutGlobalIds
-                                    showWeeklyProgressDialog = true
-                                },
-                                minHeight = 36.dp,
-                            )
-                        }
-/*                        if (weeklyProgressSnapshot.hasOverride && !weeklyProgressSnapshot.isOverrideBoundary) {
-                            Text(
-                                text = "Saved rule active since ${overrideStartLabel ?: selectedWeekLabel}",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }*/
-                        ExpandableContainer(
-                            isOpen = false,
-                            isExpandable = weeklyProgressSnapshot.hasOverride ||
-                                weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.isNotEmpty(),
-                            title = { modifier ->
-                                Row(
-                                    modifier = modifier
-                                        .fillMaxWidth()
-                                        .padding(10.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "${(weeklyProgressSnapshot.objectiveProgress * 100).toInt()}%",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    ObjectiveProgressBar(
-                                        Modifier.weight(1f),
-                                        progress = weeklyProgressSnapshot.objectiveProgress.toFloat(),
-                                        color = if (weeklyProgressSnapshot.objectiveProgress >= 1f) {
-                                            Yellow
-                                        } else {
-                                            MaterialTheme.colorScheme.primary
-                                        }
-                                    )
-                                }
-                            },
-                            content = {
-                                if (weeklyProgressSnapshot.weeklyWorkoutsByActualTarget.isEmpty()) {
-                                    Text(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        text = "No workouts are selected for weekly progress.",
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        textAlign = TextAlign.Center,
-                                    )
-                                } else {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        weeklyProgressSnapshot.weeklyWorkoutsByActualTarget
-                                            .entries
-                                            .forEach { (workout, pair) ->
-                                                Row(
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Text(
-                                                        text = workout.name,
-                                                        modifier = Modifier.weight(1f),
-                                                        color = MaterialTheme.colorScheme.onBackground,
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                    )
-                                                    Text(
-                                                        text = "${pair.first}/${pair.second}",
-                                                        color = MaterialTheme.colorScheme.onBackground,
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                    )
-                                                }
-                                            }
-                                    }
-                                }
-                            }
+                            text = "Workout history ($currentWeekText)",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Start,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
-                    }
-                }
-            }
-            StyledCard {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val currentWeekStartMonth = selectedWeekStart
-                        .format(DateTimeFormatter.ofPattern("MMM", currentLocale))
-                    val currentWeekEndMonth = selectedWeekEnd
-                        .format(DateTimeFormatter.ofPattern("MMM", currentLocale))
-                    val currentWeekText = if (currentWeekStartMonth == currentWeekEndMonth) {
-                        "${selectedWeekStart.dayOfMonth} - ${selectedWeekEnd.dayOfMonth} $currentWeekStartMonth"
-                    } else {
-                        "${selectedWeekStart.dayOfMonth} $currentWeekStartMonth - ${selectedWeekEnd.dayOfMonth} $currentWeekEndMonth"
-                    }
 
-                    Text(
-                        modifier = Modifier.fillMaxWidth(),
-                        text = "Workout history ($currentWeekText)",
-                        style = MaterialTheme.typography.titleMedium,
-                        textAlign = TextAlign.Start,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-
-                    if (selectedWeekWorkoutsByDate.isNullOrEmpty()) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                modifier = Modifier.padding(15.dp),
-                                text = "No workouts recorded this week.",
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                        }
-                    } else {
-                        val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", currentLocale)
-                        selectedWeekWorkoutsByDate.entries
-                            .sortedBy { it.key }
-                            .forEach { (date, dayWorkouts) ->
+                        if (selectedWeekWorkoutsByDate.isNullOrEmpty()) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = date.format(dayFormatter),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    textAlign = TextAlign.Start,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                                WorkoutHistoriesByWorkoutGroup(
-                                    dayWorkouts = dayWorkouts,
-                                    appViewModel = appViewModel,
-                                    timeFormatter = timeFormatter,
-                                    sessionStatusesByHistoryId = workoutHistorySessionStatuses,
+                                    modifier = Modifier.padding(15.dp),
+                                    text = "No workouts recorded this week.",
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
+                        } else {
+                            val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", currentLocale)
+                            selectedWeekWorkoutsByDate.entries
+                                .sortedBy { it.key }
+                                .forEach { (date, dayWorkouts) ->
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = date.format(dayFormatter),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        textAlign = TextAlign.Start,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    WorkoutHistoriesByWorkoutGroup(
+                                        dayWorkouts = dayWorkouts,
+                                        appViewModel = appViewModel,
+                                        timeFormatter = timeFormatter,
+                                        sessionStatusesByHistoryId = workoutHistorySessionStatuses,
+                                    )
+                                }
+                        }
                     }
                 }
             }
