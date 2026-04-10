@@ -43,6 +43,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.workout.model.decideWorkoutRecordIngest
+import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneSyncToWatchSuppressor
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -987,8 +988,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                 throw IllegalStateException("Workout not found for workout history: ${workoutHistoryStore.WorkoutHistory.workoutId}")
                                             }
 
-                                            var completedWorkoutStoreForExport: WorkoutStore? = null
-
                                             // Wrap database operations in NonCancellable to ensure they complete even if service is destroyed
                                             withContext(NonCancellable) {
                                                 workoutHistoryDao.insertWithVersionCheck(
@@ -1110,8 +1109,6 @@ class DataLayerListenerService : WearableListenerService() {
                                                     workoutStoreRepository.saveWorkoutStore(
                                                         updatedWorkoutStore
                                                     )
-                                                    completedWorkoutStoreForExport =
-                                                        updatedWorkoutStore
                                                 }
 
                                                 // Save error logs if present
@@ -1147,26 +1144,18 @@ class DataLayerListenerService : WearableListenerService() {
                                             ignoreUntilStartOrEnd = false
                                             currentTransactionId = null
 
-                                            completedWorkoutStoreForExport?.let { updatedWorkoutStore ->
-                                                processingStep =
-                                                    "saving workout backup to external storage"
-                                                runCatching {
-                                                    val db =
-                                                        AppDatabase.getDatabase(
-                                                            this@DataLayerListenerService
-                                                        )
-                                                    saveWorkoutStoreToExternalStorage(
-                                                        this@DataLayerListenerService,
-                                                        updatedWorkoutStore,
-                                                        db
-                                                    )
-                                                }.onFailure { exception ->
-                                                    Log.e(
-                                                        "DataLayerSync",
-                                                        "Failed to save workout store backup after successful workout history sync",
-                                                        exception
-                                                    )
-                                                }
+                                            processingStep = "scheduling workout backup"
+                                            runCatching {
+                                                BackupCoordinator.onWorkoutStorePersisted(
+                                                    context = this@DataLayerListenerService,
+                                                    trigger = BackupCoordinator.Trigger.WEAR_PERSIST
+                                                )
+                                            }.onFailure { exception ->
+                                                Log.e(
+                                                    "DataLayerSync",
+                                                    "Failed to schedule workout store backup after successful workout history sync",
+                                                    exception
+                                                )
                                             }
                                         } catch (exception: Exception) {
                                             // Build comprehensive error message

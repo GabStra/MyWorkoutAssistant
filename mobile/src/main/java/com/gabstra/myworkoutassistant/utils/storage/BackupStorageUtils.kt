@@ -95,6 +95,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
+import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -134,7 +135,12 @@ private val backupFileWriteMutex = Mutex()
 private const val BACKUP_STORAGE_PREFS = "backup_storage_prefs"
 private const val AUTO_BACKUP_DOCUMENT_URI_KEY = "auto_backup_document_uri"
 private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
-private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "workout_store_backup.json"
+private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME = "workout_store_backup"
+private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME.json"
+
+private fun buildAutomaticDownloadsBackupFileName(
+    now: LocalDate = LocalDate.now()
+): String = "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_${now}.json"
 
 private fun backupStoragePrefs(context: Context) =
     context.getSharedPreferences(BACKUP_STORAGE_PREFS, Context.MODE_PRIVATE)
@@ -495,10 +501,19 @@ private fun matchesBackupFileName(name: String, exactFileName: String): Boolean 
     val baseName = exactFileName.removeSuffix(".json")
     val escapedBaseName = Regex.escape(baseName)
     val pattern = Regex(
-        "^$escapedBaseName(?:\\.json(?:\\s*\\(\\d+\\))?|\\s*\\(\\d+\\)\\.json)$",
+        "^$escapedBaseName(?:_\\d{4}-\\d{2}-\\d{2})?(?:\\.json(?:\\s*\\(\\d+\\))?|\\s*\\(\\d+\\)\\.json)$",
         RegexOption.IGNORE_CASE
     )
     return pattern.matches(name)
+}
+
+private suspend fun readLatestAutomaticBackupJsonFromDownloads(context: Context): String? {
+    val automaticBackupFiles = findAllBackupFilesInDownloadsFolder(
+        context = context,
+        exactFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+    )
+    val latestBackup = automaticBackupFiles.maxByOrNull { it.dateModified } ?: return null
+    return readTextFromUri(context, latestBackup.uri)
 }
 
 private fun deleteBackupFile(context: Context, uri: android.net.Uri): Boolean {
@@ -972,7 +987,10 @@ suspend fun saveWorkoutStoreWithBackup(
 ) {
     withContext(Dispatchers.IO) {
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        saveWorkoutStoreToExternalStorage(context, workoutStore, db)
+        BackupCoordinator.onWorkoutStorePersisted(
+            context = context,
+            trigger = BackupCoordinator.Trigger.PHONE_PERSIST
+        )
     }
 }
 
@@ -985,17 +1003,19 @@ suspend fun saveWorkoutStoreWithBackupFromContext(
     workoutStore: WorkoutStore
 ) {
     withContext(Dispatchers.IO) {
-        val db = AppDatabase.getDatabase(context)
         val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
         workoutStoreRepository.saveWorkoutStore(workoutStore)
-        saveWorkoutStoreToExternalStorage(context, workoutStore, db)
+        BackupCoordinator.onWorkoutStorePersisted(
+            context = context,
+            trigger = BackupCoordinator.Trigger.PHONE_PERSIST
+        )
     }
 }
 
 /**
  * Cleans up duplicate backup files in Downloads folder.
  * This should be called once at app startup to remove any duplicate files that may have been created.
- * Keeps only the file with the exact name "workout_store_backup.json" if it exists, or the most recent one.
+ * Keeps only the most recent automatic backup file when MediaStore/provider duplicates appear.
  */
 suspend fun cleanupDuplicateBackupFiles(context: Context) {
     withContext(Dispatchers.IO) {
@@ -1008,7 +1028,7 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
 
             val downloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
             val folderLabel = "${Environment.DIRECTORY_DOWNLOADS} (MediaStore): $downloadsPath"
-            val backupFileName = "workout_store_backup.json"
+            val backupFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
             val resolver = context.contentResolver
 
             Log.d("Utils", "Backup cleanup started in $folderLabel")
@@ -1028,9 +1048,7 @@ suspend fun cleanupDuplicateBackupFiles(context: Context) {
             
             Log.d("Utils", "Found ${allBackupFiles.size} backup files, cleaning up duplicates")
             
-            // Find the file with exact name match, or use the most recent one
-            val exactMatch = allBackupFiles.firstOrNull { it.name == backupFileName }
-            val targetFile = exactMatch ?: allBackupFiles.maxByOrNull { it.dateModified } ?: allBackupFiles.first()
+            val targetFile = allBackupFiles.maxByOrNull { it.dateModified } ?: allBackupFiles.first()
             val targetUri = targetFile.uri
             
             // Delete all other files
@@ -1169,7 +1187,7 @@ suspend fun cleanupDuplicateBackupFilesByContent(context: Context) {
 
 /**
  * Saves workout store backup to Downloads folder (persists after app uninstall).
- * Creates an AppBackup (including database data) and saves it to workout_store_backup.json.
+ * Creates an AppBackup (including database data) and saves it to a dated workout_store_backup_YYYY-MM-DD.json file.
  * This file can be used for recovery if the main workout_store.json gets corrupted.
  * Uses Downloads folder via MediaStore so the backup persists after uninstall and is accessible via file managers.
  */
@@ -1216,7 +1234,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
                 if (!wroteBackup) {
                     upsertDownloadsBackupFile(
                         context = context,
-                        fileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME,
+                        fileName = buildAutomaticDownloadsBackupFileName(),
                         content = jsonString
                     )
                 }
@@ -1278,7 +1296,7 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                 return@withContext it
             }
 
-            readJsonFromDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME)?.let { jsonString ->
+            readLatestAutomaticBackupJsonFromDownloads(context)?.let { jsonString ->
                 val appBackup = fromJSONtoAppBackup(jsonString)
                 Log.d("Utils", "Backup loaded successfully from Downloads automatic backup file")
                 return@withContext appBackup

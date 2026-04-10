@@ -116,6 +116,7 @@ import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import com.gabstra.myworkoutassistant.sync.BackupCoordinator
 import com.gabstra.myworkoutassistant.sync.PhoneToWatchSyncCoordinator
 import com.gabstra.myworkoutassistant.ui.theme.MyWorkoutAssistantTheme
 import com.google.android.gms.wearable.DataClient
@@ -204,6 +205,7 @@ class MainActivity : ComponentActivity() {
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+                BackupCoordinator.flushPendingBackup(this@MainActivity)
                 PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(this@MainActivity)
             }
         }
@@ -216,6 +218,7 @@ class MainActivity : ComponentActivity() {
         if (::appViewModel.isInitialized) {
             lifecycleScope.launch {
                 appViewModel.flushWorkoutSave(this@MainActivity, workoutStoreRepository, db)
+                BackupCoordinator.flushPendingBackup(this@MainActivity)
                 PhoneToWatchSyncCoordinator.flushDebouncedSyncToWatch(this@MainActivity)
             }
         }
