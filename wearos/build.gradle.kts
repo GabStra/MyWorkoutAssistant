@@ -109,7 +109,7 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.wear.compose:compose-material-core:1.6.0")
+    implementation("androidx.wear.compose:compose-material-core:1.6.1")
     implementation("androidx.navigation:navigation-compose:2.9.7")
     implementation("androidx.compose.ui:ui-graphics:1.10.6")
     implementation("androidx.compose.ui:ui-graphics:1.10.6")
@@ -131,10 +131,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.0")
-    implementation("androidx.wear.compose:compose-navigation:1.6.0")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.0")
-    implementation("androidx.wear.compose:compose-foundation:1.6.0")
+    implementation("androidx.wear.compose:compose-material3:1.6.1")
+    implementation("androidx.wear.compose:compose-navigation:1.6.1")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.1")
+    implementation("androidx.wear.compose:compose-foundation:1.6.1")
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.18.0")
