@@ -15,6 +15,9 @@ interface WorkoutRecordDao {
     @Query("SELECT * FROM workout_record WHERE workoutId = :workoutId")
     suspend fun getWorkoutRecordByWorkoutId(workoutId: UUID): WorkoutRecord?
 
+    @Query("SELECT * FROM workout_record WHERE workoutHistoryId = :workoutHistoryId LIMIT 1")
+    suspend fun getWorkoutRecordByWorkoutHistoryId(workoutHistoryId: UUID): WorkoutRecord?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(workoutRecord: WorkoutRecord)
 
