@@ -8,6 +8,21 @@ import org.junit.Test
 class WorkoutInsightsPromptBuilderTest {
 
     @Test
+    fun toolEnabledPrompt_pushes_further_investigation_before_final_synthesis() {
+        val prompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT)
+        val workflow = buildWorkoutSessionToolCallingPrompt(
+            workoutLabel = "A Squat/Bench (Workout category: Workout)",
+            sessionStatusSummary = "completed normally"
+        )
+
+        assertTrue(prompt.contains("Treat the first overview as scouting context, not final evidence"))
+        assertTrue(prompt.contains("Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail"))
+        assertTrue(prompt.contains("Do not write a workout-level risk or next-step recommendation from a generic overview alone"))
+        assertTrue(workflow.contains("Treat that overview as a first pass only"))
+        assertTrue(workflow.contains("verify the clearest lagging or improving exercise with a narrower retrieval"))
+    }
+
+    @Test
     fun workoutInsightsPrompts_include_conflict_and_formatting_guards() {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If metrics conflict, prefer the most explicit numeric fields first:"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If a status label conflicts with explicit numeric values, trust the numeric values"))

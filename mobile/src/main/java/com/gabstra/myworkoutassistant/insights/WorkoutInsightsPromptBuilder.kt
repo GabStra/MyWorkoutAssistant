@@ -6,13 +6,22 @@ import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
+import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
+import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
+import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
+import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
+import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSessionStatus
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.UUID
+import java.time.Duration
+import java.time.LocalDateTime
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -33,32 +42,26 @@ private const val MAX_SUBSECTION_CHAR_BUDGET = 500
 private const val MAX_SESSION_HR_LINES = 6
 
 internal const val WORKOUT_INSIGHTS_SYSTEM_PROMPT = """
-You are an on-device workout insights assistant.
-Use only the supplied workout history.
+You are a workout insights assistant.
+Use only the evidence returned by tools and any chart-analysis text supplied in the conversation.
 Do not invent data.
 Do not provide medical advice or diagnose injuries.
-If an image is attached, it is the workout session heart-rate chart.
-Use the chart to understand shape, peaks, drift, and recovery timing.
-Do not describe visual details that are not clearly supported by the chart.
-If the chart conflicts with explicit text metrics, prefer the explicit text metrics.
 If the history is sparse, trimmed, or inconsistent, say so plainly.
 If metrics conflict, prefer the most explicit numeric fields first:
 1. explicit Exec, Prev, Best, volume, duration, and executed-set values
-2. status labels such as Vs prev, Vs exp, Vs baseline, and State
+2. session status and status labels such as Session status, Vs prev, Vs exp, Vs baseline, and State
 3. HR cues
+If Session status says the workout was incomplete, stopped, stale, or still in progress, treat missing work as a session-state constraint before treating it as a performance regression.
 If a status label conflicts with explicit numeric values, trust the numeric values and treat the label as inconsistent noise.
 Never describe a metric as improved if the numeric value is lower than the previous value.
 Base intensity claims on the supplied HR cues, especially Avg % max HR, Peak % max HR, High-intensity exposure, work HR, rest HR, and recovery gap.
-Prefer qualitative HR wording over repeating exact session percentages unless the exact figure materially changes the interpretation.
-If you quote a session percentage, copy it exactly from the supplied HR line and do not add digits or extra precision.
+Prefer qualitative HR wording over repeating exact session percentages unless the exact figure materially changes the interpretation; if you quote a percentage, copy it exactly from the supplied HR line.
 Do not call a session high-intensity if High-intensity exposure is low and Avg % max HR is modest.
 Treat best-to-date or progression signals as performance context, not proof of high fatigue or high intensity by themselves.
 If evidence is mixed, prefer a cautious interpretation.
-For strength workouts, do not prescribe higher heart rate as the main goal; prioritize load, reps, execution quality, and recovery instead.
-Use HR mainly to describe overall effort, density, and recovery, not as the primary target for barbell progression.
-Do not turn a low-intensity lifting session into a problem unless the performance data also suggests under-stimulation or drift from plan.
-For lifting-dominant sessions, do not recommend higher intensity, higher heart rate, or more overall workload just because session HR was modest.
-For interval or conditioning workouts, do not call recovery inadequate just because interval or active-rest heart rate stayed elevated; only say recovery was limited when repeatability, target-zone adherence, or explicit recovery metrics support it.
+For strength or lifting-dominant sessions, prioritize load, reps, execution quality, and recovery; use HR to describe effort, density, and recovery, not as the main target.
+Do not turn a low-intensity lifting session into a problem, or recommend higher intensity, higher heart rate, or more overall workload, unless the performance data also suggests under-stimulation or drift from plan.
+For interval or conditioning workouts, do not call recovery inadequate just because interval or active-rest heart rate stayed elevated; require repeatability, target misses, or explicit recovery metrics.
 If a conditioning session is similar to previous, best to date, or stable, do not recommend reducing interval duration or intensity unless the supplied metrics also show missed targets, clear drop-off, or worse repeatability.
 Avoid generic advice that could apply to any workout; anchor each point to the most relevant exercises or session signals.
 In Risks, only mention a meaningful downside or constraint, not a neutral restatement of the data.
@@ -67,6 +70,10 @@ Do not ignore later exercises or treat any lift as inherently less important unl
 Use session-level HR summary and zone-time distribution only to describe effort distribution and density.
 Do not restate chart variability as a risk unless the explicit workout metrics also show a meaningful problem.
 If the clearest limiter is one lagging exercise, use that in Risks instead of generic heart-rate wording.
+If chart-analysis text is present, use it only as supporting context for shape, drift, peaks, and recovery timing.
+If chart-analysis text conflicts with explicit numeric metrics, trust the explicit numeric metrics.
+Do not describe recovery as limited or inadequate from chart observations alone; require explicit recovery metrics, target misses, or clear cross-set drop-off.
+If the workout has no previous session or baseline, do not present matched best-to-date or first-session performance as evidence of a plateau, ceiling, or regression.
 Respond in markdown with exactly these sections:
 ## Summary
 ## Signals
@@ -86,8 +93,8 @@ Before finalizing, silently verify:
 """
 
 internal const val EXERCISE_INSIGHTS_SYSTEM_PROMPT = """
-You are an on-device exercise insights assistant.
-Use only the supplied exercise history.
+You are an exercise insights assistant.
+Use only the evidence returned by tools in the conversation.
 Do not invent data.
 Do not provide medical advice or diagnose injuries.
 If the history is sparse, trimmed, or inconsistent, say so plainly.
@@ -98,7 +105,7 @@ Prefer the most direct progression fields first:
 3. HR cues
 Never describe a metric as improved if the numeric value is lower than the comparison value.
 If the latest session met plan but still lagged the previous baseline or recent trend, say that explicitly.
-Use HR mainly as supporting context for effort and recovery, not as the main target for strength progression.
+Use HR as supporting context for effort and recovery, not as the main target for strength progression.
 Avoid generic advice; anchor every point to the latest session or the recent trend.
 Respond in markdown with exactly these sections:
 ## Summary
@@ -123,6 +130,9 @@ sealed class WorkoutInsightsPromptResult {
         val title: String,
         val prompt: String,
         val systemPrompt: String,
+        val toolContext: WorkoutInsightsToolContext? = null,
+        val chartAnalysisContext: String? = null,
+        val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
     ) : WorkoutInsightsPromptResult()
 
     data class Failure(val message: String) : WorkoutInsightsPromptResult()
@@ -174,8 +184,14 @@ suspend fun buildExerciseInsightsPrompt(
         is ExerciseHistoryMarkdownResult.Success -> {
             WorkoutInsightsPromptResult.Success(
                 title = "${exercise.name} insights",
-                prompt = buildExercisePrompt(markdownResult.markdown),
-                systemPrompt = EXERCISE_INSIGHTS_SYSTEM_PROMPT
+                prompt = buildExerciseToolCallingPrompt(exercise.name),
+                systemPrompt = buildToolEnabledSystemPrompt(EXERCISE_INSIGHTS_SYSTEM_PROMPT),
+                toolContext = WorkoutInsightsToolContext.Exercise(
+                    title = "${exercise.name} insights",
+                    exerciseName = exercise.name,
+                    markdown = markdownResult.markdown
+                ),
+                chartAnalysisContext = null
             )
         }
     }
@@ -184,6 +200,7 @@ suspend fun buildExerciseInsightsPrompt(
 suspend fun buildWorkoutSessionInsightsPrompt(
     workoutHistoryId: UUID,
     workoutHistoryDao: WorkoutHistoryDao,
+    workoutRecordDao: WorkoutRecordDao,
     setHistoryDao: SetHistoryDao,
     restHistoryDao: RestHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
@@ -201,9 +218,23 @@ suspend fun buildWorkoutSessionInsightsPrompt(
     ) {
         is WorkoutSessionMarkdownResult.Failure -> WorkoutInsightsPromptResult.Failure(markdownResult.message)
         is WorkoutSessionMarkdownResult.Success -> {
-            val workoutType = workoutHistoryDao.getWorkoutHistoryById(workoutHistoryId)
+            val workoutHistory = workoutHistoryDao.getWorkoutHistoryById(workoutHistoryId)
+                ?: return WorkoutInsightsPromptResult.Failure("Workout session not found")
+            val workoutRecord = workoutRecordDao.getWorkoutRecordByWorkoutHistoryId(workoutHistoryId)
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(workoutHistoryId)
+            val sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistoryId)
+            val workout = workoutHistory
                 ?.let { history -> workoutStore.workouts.find { it.id == history.workoutId } }
-                ?.type
+            val sessionStatus = workoutHistory
+                ?.let { history -> resolveWorkoutSessionStatus(history, workoutRecord) }
+            val sessionStatusLine = sessionStatus
+                ?.let(::buildWorkoutSessionStatusLine)
+                ?.let { "$it\n" }
+                .orEmpty()
+            val sessionStatusSummary = sessionStatus
+                ?.let(::describeWorkoutSessionStatusForPrompt)
+                ?: "unknown"
+            val workoutType = workout?.type
             val workoutCategoryLine = workoutType
                 ?.let(::buildWorkoutCategoryContextLine)
                 ?.let { "$it\n" }
@@ -212,15 +243,40 @@ suspend fun buildWorkoutSessionInsightsPrompt(
                 ?.let(::buildWorkoutCategoryPromptGuidance)
                 ?.let { "$it\n" }
                 .orEmpty()
+            val workoutLabel = buildWorkoutInsightLabel(
+                workoutName = workout?.name,
+                workoutCategoryLine = workoutCategoryLine
+            )
 
             WorkoutInsightsPromptResult.Success(
                 title = "Workout session insights",
-                prompt = buildWorkoutSessionPrompt(
-                    markdown = markdownResult.markdown,
-                    workoutCategoryGuidance = workoutCategoryGuidance,
-                    workoutCategoryLine = workoutCategoryLine
+                prompt = buildWorkoutSessionToolCallingPrompt(
+                    workoutLabel = workoutLabel,
+                    sessionStatusSummary = sessionStatusSummary
                 ),
-                systemPrompt = WORKOUT_INSIGHTS_SYSTEM_PROMPT
+                systemPrompt = buildToolEnabledSystemPrompt(WORKOUT_INSIGHTS_SYSTEM_PROMPT),
+                chartAnalysisContext = null,
+                chartTimelineToolContext = workout?.let {
+                    buildWorkoutSessionChartTimelineToolContext(
+                        workoutHistory = workoutHistory,
+                        workout = it,
+                        setHistories = setHistories,
+                        restHistories = sessionRestHistories
+                    )
+                },
+                toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                    title = "Workout session insights",
+                    workoutLabel = workoutLabel,
+                    markdown = buildString {
+                        append(sessionStatusLine)
+                        if (workoutCategoryGuidance.isNotBlank()) {
+                            append(workoutCategoryGuidance.trim())
+                            append("\n\n")
+                        }
+                        append(workoutCategoryLine)
+                        append(markdownResult.markdown)
+                    }
+                )
             )
         }
     }
@@ -1172,7 +1228,7 @@ private fun humanizeDenseMetrics(line: String): String {
         .replace(Regex("(?<=\\d)kg\\b"), " kg")
         .replace(Regex("Vol:\\s*"), "Volume: ")
         .replace(Regex("Dur:\\s*"), "Duration: ")
-        .replace(Regex("Range:\\s*(\\d{4,6})\\s*bpm")) { match ->
+        .replace(Regex("""Range:\s*(\d{4,6})(?:\s*bpm|\bbpm\b)""")) { match ->
             expandCompactBpmRange(match.groupValues[1])
                 ?.let { "Range: $it bpm" }
                 ?: match.value
@@ -1781,6 +1837,246 @@ private fun buildWorkoutCategoryContextLine(
     workoutType: Int,
 ): String = "Workout category: ${WorkoutTypes.GetNameFromInt(workoutType)}"
 
+private fun buildWorkoutSessionStatusLine(
+    status: WorkoutSessionStatus,
+): String = when (status) {
+    WorkoutSessionStatus.COMPLETED -> "Session status: Completed normally"
+    WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "Session status: Still in progress on phone"
+    WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "Session status: Still in progress on wear device"
+    WorkoutSessionStatus.STOPPED_ON_WEAR -> "Session status: Stopped on wear device before completion"
+    WorkoutSessionStatus.STALE_ON_WEAR -> "Session status: Wear session became stale before completion"
+}
+
+private fun describeWorkoutSessionStatusForPrompt(
+    status: WorkoutSessionStatus,
+): String = when (status) {
+    WorkoutSessionStatus.COMPLETED -> "completed normally"
+    WorkoutSessionStatus.IN_PROGRESS_ON_PHONE -> "still in progress on phone"
+    WorkoutSessionStatus.IN_PROGRESS_ON_WEAR -> "still in progress on wear device"
+    WorkoutSessionStatus.STOPPED_ON_WEAR -> "stopped on wear device before completion"
+    WorkoutSessionStatus.STALE_ON_WEAR -> "became stale on wear before completion"
+}
+
+private fun buildWorkoutInsightLabel(
+    workoutName: String?,
+    workoutCategoryLine: String,
+): String {
+    val baseLabel = workoutName?.trim().takeUnless { it.isNullOrBlank() } ?: "Workout session"
+    val categoryLabel = workoutCategoryLine.trim()
+    return if (categoryLabel.isBlank()) {
+        baseLabel
+    } else {
+        "$baseLabel ($categoryLabel)"
+    }
+}
+
+private data class ChartTimelineSegment(
+    val label: String,
+    val startSeconds: Int,
+    val endSeconds: Int,
+)
+
+private data class ChartTimelineStep(
+    val label: String,
+    val startSeconds: Int,
+    val endSeconds: Int,
+)
+
+internal fun buildWorkoutSessionChartTimelineToolContext(
+    workoutHistory: com.gabstra.myworkoutassistant.shared.WorkoutHistory,
+    workout: Workout,
+    setHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>,
+    restHistories: List<com.gabstra.myworkoutassistant.shared.RestHistory>,
+): WorkoutInsightsChartTimelineContext? {
+    val segments = buildWorkoutSessionChartTimelineSegments(
+        workoutHistory = workoutHistory,
+        workout = workout,
+        setHistories = setHistories,
+        restHistories = restHistories,
+    ) ?: return null
+    return WorkoutInsightsChartTimelineContext(
+        durationSeconds = workoutHistory.duration,
+        segments = segments.map {
+            WorkoutInsightsChartTimelineSegment(
+                startSeconds = it.startSeconds,
+                endSeconds = it.endSeconds,
+                label = it.label,
+            )
+        },
+    )
+}
+
+private fun buildWorkoutSessionChartTimelineSegments(
+    workoutHistory: com.gabstra.myworkoutassistant.shared.WorkoutHistory,
+    workout: Workout,
+    setHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>,
+    restHistories: List<com.gabstra.myworkoutassistant.shared.RestHistory>,
+): List<ChartTimelineSegment>? {
+    val exerciseLabels = buildWorkoutExerciseLabels(workout)
+    val mergedTimeline = mergeSessionTimeline(setHistories, restHistories)
+    val steps = mutableListOf<ChartTimelineStep>()
+    val segments = mutableListOf<ChartTimelineSegment>()
+
+    fun addStep(label: String, startSeconds: Int, endSeconds: Int) {
+        val normalizedLabel = label.trim().takeIf { it.isNotBlank() } ?: return
+        val normalizedStart = startSeconds.coerceAtLeast(0)
+        val normalizedEnd = endSeconds.coerceAtMost(workoutHistory.duration)
+        if (normalizedEnd <= normalizedStart) return
+
+        val previous = steps.lastOrNull()
+        if (previous != null && previous.label == normalizedLabel && previous.endSeconds >= normalizedStart) {
+            steps[steps.lastIndex] = previous.copy(endSeconds = maxOf(previous.endSeconds, normalizedEnd))
+        } else {
+            steps += ChartTimelineStep(
+                label = normalizedLabel,
+                startSeconds = normalizedStart,
+                endSeconds = normalizedEnd
+            )
+        }
+    }
+
+    for (item in mergedTimeline) {
+        when (item) {
+            is SessionTimelineItem.SetStep -> {
+                val start = secondsFromWorkoutStart(workoutHistory.startTime, item.history.startTime) ?: continue
+                val end = secondsFromWorkoutStart(workoutHistory.startTime, item.history.endTime)
+                    ?: (start + inferSetDurationSeconds(item.history))
+                addStep(
+                    label = exerciseLabels[item.history.exerciseId].orEmpty().ifBlank { "Unnamed exercise block" },
+                    startSeconds = start,
+                    endSeconds = end
+                )
+            }
+            is SessionTimelineItem.RestStep -> {
+                val start = secondsFromWorkoutStart(workoutHistory.startTime, item.history.startTime) ?: continue
+                val end = secondsFromWorkoutStart(workoutHistory.startTime, item.history.endTime)
+                    ?: (start + inferRestDurationSeconds(item.history))
+                addStep(
+                    label = buildRestTimelineLabel(
+                        restHistory = item.history,
+                        exerciseLabels = exerciseLabels,
+                        existingSteps = steps
+                    ),
+                    startSeconds = start,
+                    endSeconds = end
+                )
+            }
+        }
+    }
+
+    val firstStep = steps.firstOrNull()
+    if (firstStep != null && firstStep.startSeconds >= 120) {
+        segments.add(
+            0,
+            ChartTimelineSegment(
+                label = "Lead-in before ${firstStep.label}",
+                startSeconds = 0,
+                endSeconds = firstStep.startSeconds
+            )
+        )
+    }
+
+    segments += steps.map { step ->
+        ChartTimelineSegment(
+            label = step.label,
+            startSeconds = step.startSeconds,
+            endSeconds = step.endSeconds
+        )
+    }
+
+    val lastStep = steps.lastOrNull()
+    if (lastStep != null && workoutHistory.duration - lastStep.endSeconds >= 120) {
+        segments += ChartTimelineSegment(
+            label = "Wrap-up after ${lastStep.label}",
+            startSeconds = lastStep.endSeconds,
+            endSeconds = workoutHistory.duration
+        )
+    }
+
+    return segments.takeIf { it.isNotEmpty() }
+}
+
+private fun buildWorkoutExerciseLabels(
+    workout: Workout,
+): Map<UUID, String> = buildMap {
+    workout.workoutComponents.forEach { component ->
+        when (component) {
+            is Exercise -> put(component.id, component.name)
+            is Superset -> component.exercises.forEach { exercise -> put(exercise.id, exercise.name) }
+            is Rest -> Unit
+        }
+    }
+}
+
+private fun buildRestTimelineLabel(
+    restHistory: com.gabstra.myworkoutassistant.shared.RestHistory,
+    exerciseLabels: Map<UUID, String>,
+    existingSteps: List<ChartTimelineStep>,
+): String {
+    val restExerciseLabel = restHistory.exerciseId
+        ?.let(exerciseLabels::get)
+        ?.trim()
+        .orEmpty()
+        .ifBlank { null }
+    if (restExerciseLabel != null) {
+        return "Rest after $restExerciseLabel"
+    }
+
+    val previousExerciseLabel = existingSteps
+        .lastOrNull()
+        ?.label
+        ?.removePrefix("Lead-in before ")
+        ?.removePrefix("Wrap-up after ")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+    return if (previousExerciseLabel != null) {
+        "Transition after $previousExerciseLabel"
+    } else {
+        "Session transition"
+    }
+}
+
+private fun secondsFromWorkoutStart(
+    workoutStart: LocalDateTime,
+    eventTime: LocalDateTime?,
+): Int? {
+    eventTime ?: return null
+    return Duration.between(workoutStart, eventTime).seconds.toInt().coerceAtLeast(0)
+}
+
+private fun inferSetDurationSeconds(
+    setHistory: com.gabstra.myworkoutassistant.shared.SetHistory,
+): Int = when (val setData = setHistory.setData) {
+    is com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData ->
+        ((setData.endTimer - setData.startTimer) / 1000).coerceAtLeast(30)
+    is com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData ->
+        (setData.endTimer / 1000).coerceAtLeast(30)
+    else -> 45
+}
+
+private fun inferRestDurationSeconds(
+    restHistory: com.gabstra.myworkoutassistant.shared.RestHistory,
+): Int = when (val setData = restHistory.setData) {
+    is com.gabstra.myworkoutassistant.shared.setdata.RestSetData ->
+        (setData.endTimer / 1000).coerceAtLeast(15)
+    else -> 30
+}
+
+private fun formatChartTimelineTimestamp(
+    totalSeconds: Int,
+): String {
+    val safeSeconds = totalSeconds.coerceAtLeast(0)
+    val hours = safeSeconds / 3600
+    val minutes = (safeSeconds % 3600) / 60
+    val seconds = safeSeconds % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
+    }
+}
+
 private fun buildWorkoutCategoryPromptGuidance(
     workoutType: Int,
 ): String {
@@ -1855,7 +2151,8 @@ private fun classifyWorkoutPromptCategory(
 private fun normalizeCompactRangeLine(
     line: String,
 ): String {
-    val rangeMatch = Regex("""(?i)(\bRange:\s*)(\d{4,6})(\s*bpm\b)""").find(line) ?: return line
+    val rangeMatch =
+        Regex("""(?i)(\bRange:\s*)(\d{4,6})(\s*bpm\b|\bbpm\b)""").find(line) ?: return line
     val expanded = expandCompactBpmRange(rangeMatch.groupValues[2]) ?: return line
     return line.replaceRange(rangeMatch.range, "${rangeMatch.groupValues[1]}$expanded bpm")
 }

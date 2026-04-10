@@ -112,3 +112,77 @@ internal fun sanitizeInsightMarkdown(
         .replace(Regex("\n{3,}"), "\n\n")
         .trim()
 }
+
+internal fun postProcessInsightMarkdown(
+    markdown: String,
+    toolContext: WorkoutInsightsToolContext?,
+): String {
+    val sanitized = sanitizeInsightMarkdown(markdown)
+    val workoutSessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession ?: return sanitized
+    if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
+        return sanitized
+    }
+    return removeLowIntensityLiftingRiskBullets(sanitized)
+}
+
+private fun isLiftingDominantLowIntensitySession(
+    markdown: String,
+): Boolean {
+    val weightExerciseCount = Regex("""(?im)\bType[: ]+(WEIGHT|BODY_WEIGHT)\b""")
+        .findAll(markdown)
+        .count()
+    if (weightExerciseCount == 0) return false
+
+    val avgPercentMaxHr = Regex("""Avg % max HR:\s*(\d{1,3})%""", RegexOption.IGNORE_CASE)
+        .find(markdown)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+    val highIntensityExposurePercent = Regex(
+        """High-intensity exposure:\s*(\d{1,3})%""",
+        RegexOption.IGNORE_CASE
+    ).find(markdown)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+
+    return highIntensityExposurePercent == 0 && (avgPercentMaxHr ?: Int.MAX_VALUE) <= 60
+}
+
+private fun removeLowIntensityLiftingRiskBullets(
+    markdown: String,
+): String {
+    val lines = markdown.lines()
+    val builder = StringBuilder()
+    var currentSection: String? = null
+
+    lines.forEach { line ->
+        when {
+            line.startsWith("## ") -> {
+                currentSection = line.removePrefix("## ").trim()
+                builder.append(line).append('\n')
+            }
+            currentSection == "Risks" &&
+                line.startsWith("- ") &&
+                isLowIntensityLiftingRiskBullet(line) -> Unit
+            else -> builder.append(line).append('\n')
+        }
+    }
+
+    return sanitizeInsightMarkdown(builder.toString())
+}
+
+private fun isLowIntensityLiftingRiskBullet(
+    line: String,
+): Boolean {
+    val normalized = line.lowercase()
+    return normalized.contains("high-intensity exposure") ||
+        normalized.contains("high intensity exposure") ||
+        normalized.contains("high-intensity territory") ||
+        normalized.contains("higher heart rate") ||
+        normalized.contains("higher intensity") ||
+        normalized.contains("session intensity was not pushed") ||
+        normalized.contains("session intensity was not pushed to") ||
+        normalized.contains("did not push into high-intensity") ||
+        normalized.contains("moderate effort level, which may limit the stimulus")
+}

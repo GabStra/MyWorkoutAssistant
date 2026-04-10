@@ -35,6 +35,7 @@ sealed class WorkoutInsightsUiState {
     data class Generating(
         val partialText: String = "",
         val phase: WorkoutInsightsPhase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+        val statusText: String = "",
     ) : WorkoutInsightsUiState()
     data class Success(val title: String, val text: String) : WorkoutInsightsUiState()
     data class Error(val message: String) : WorkoutInsightsUiState()
@@ -94,9 +95,8 @@ fun WorkoutInsightsDialog(
                     state is WorkoutInsightsUiState.Generating -> {
                         CenteredInsightBodySurface {
                             LoadingText(
-                                when (state.phase) {
-                                    WorkoutInsightsPhase.CHART_ANALYSIS -> "Step 1 of 2: Analyzing chart..."
-                                    WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Step 2 of 2: Generating insight..."
+                                label = state.statusText.ifBlank {
+                                    defaultProgressLabel(state.phase)
                                 }
                             )
                         }
@@ -211,6 +211,16 @@ private fun LoadingText(label: String) {
             style = MaterialTheme.typography.bodyMedium
         )
     }
+}
+
+private fun defaultProgressLabel(
+    phase: WorkoutInsightsPhase,
+): String = when (phase) {
+    WorkoutInsightsPhase.PREPARING_TOOLS -> "Preparing insight tools..."
+    WorkoutInsightsPhase.FETCHING_CONTEXT -> "Fetching workout context..."
+    WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> "Summarizing relevant history..."
+    WorkoutInsightsPhase.CHART_ANALYSIS -> "Analyzing chart..."
+    WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Generating insight..."
 }
 
 @Composable

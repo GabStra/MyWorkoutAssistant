@@ -1,6 +1,8 @@
 package com.gabstra.myworkoutassistant.insights
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkoutInsightMarkdownTest {
@@ -39,5 +41,41 @@ class WorkoutInsightMarkdownTest {
             """.trimIndent(),
             sanitized
         )
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_removes_low_intensity_hr_risk_for_lifting_sessions() {
+        val markdown = """
+            ## Summary
+            - Bench press volume was lower than the previous session.
+
+            ## Signals
+            - Squat top load increased to 84 kg.
+
+            ## Risks
+            - High-intensity exposure was 0%, meaning the session did not push into high-intensity territory.
+            - Bench press volume was lower than the previous session.
+
+            ## Next session
+            - Focus on increasing bench press volume.
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.WorkoutSession(
+                title = "Workout session insights",
+                workoutLabel = "A Squat/Bench",
+                markdown = """
+                    HR Mean: 105 bpm | Avg % max HR: 55% | High-intensity exposure: 0% of samples
+                    EXERCISE Back Squat
+                    CONTEXT Type WEIGHT | Rep range 6-10
+                    EXERCISE Bench Press
+                    CONTEXT Type WEIGHT | Rep range 6-10
+                """.trimIndent()
+            )
+        )
+
+        assertFalse(processed.contains("High-intensity exposure was 0%"))
+        assertTrue(processed.contains("Bench press volume was lower than the previous session."))
     }
 }

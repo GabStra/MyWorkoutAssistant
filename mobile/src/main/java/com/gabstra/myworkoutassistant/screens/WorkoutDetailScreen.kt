@@ -473,6 +473,7 @@ fun WorkoutDetailScreen(
                     buildWorkoutSessionInsightsPrompt(
                         workoutHistoryId = historyId,
                         workoutHistoryDao = workoutHistoryDao,
+                        workoutRecordDao = workoutRecordDao,
                         setHistoryDao = setHistoryDao,
                         restHistoryDao = restHistoryDao,
                         exerciseSessionProgressionDao = exerciseSessionProgressionDao,
@@ -501,12 +502,16 @@ fun WorkoutDetailScreen(
                                 title = promptResult.title,
                                 prompt = promptResult.prompt,
                                 systemPrompt = promptResult.systemPrompt,
-                                imagePngBytes = heartRateChartPng
+                                imagePngBytes = heartRateChartPng,
+                                toolContext = promptResult.toolContext,
+                                chartAnalysisContext = promptResult.chartAnalysisContext,
+                                chartTimelineToolContext = promptResult.chartTimelineToolContext,
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(
                                 partialText = chunk.text,
-                                phase = chunk.phase
+                                phase = chunk.phase,
+                                statusText = chunk.statusText
                             )
                         }
                     }.onSuccess {

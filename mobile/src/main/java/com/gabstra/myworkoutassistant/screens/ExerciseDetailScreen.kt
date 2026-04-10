@@ -269,12 +269,14 @@ fun ExerciseDetailScreen(
                             WorkoutInsightsRequest(
                                 title = promptResult.title,
                                 prompt = promptResult.prompt,
-                                systemPrompt = promptResult.systemPrompt
+                                systemPrompt = promptResult.systemPrompt,
+                                toolContext = promptResult.toolContext
                             )
                         ).collectLatest { chunk ->
                             insightsState = WorkoutInsightsUiState.Generating(
                                 partialText = chunk.text,
-                                phase = chunk.phase
+                                phase = chunk.phase,
+                                statusText = chunk.statusText
                             )
                         }
                     }.onSuccess {

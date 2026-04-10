@@ -9,6 +9,7 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.LogSeverity
+import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -21,9 +22,13 @@ data class WorkoutInsightsChunk(
     val title: String,
     val text: String,
     val phase: WorkoutInsightsPhase,
+    val statusText: String = "",
 )
 
 enum class WorkoutInsightsPhase {
+    PREPARING_TOOLS,
+    FETCHING_CONTEXT,
+    SUMMARIZING_CONTEXT,
     CHART_ANALYSIS,
     FINAL_SYNTHESIS,
 }
@@ -33,6 +38,9 @@ data class WorkoutInsightsRequest(
     val prompt: String,
     val systemPrompt: String = WORKOUT_INSIGHTS_SYSTEM_PROMPT,
     val imagePngBytes: ByteArray? = null,
+    val toolContext: WorkoutInsightsToolContext? = null,
+    val chartAnalysisContext: String? = null,
+    val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
 )
 
 class LiteRtLmInsightsRepository(
@@ -68,11 +76,12 @@ class LiteRtLmInsightsRepository(
                     transportRequest = transportRequest,
                 )
             },
-            streamText = { transportRequest, onChunk ->
+            streamText = { transportRequest, onChunk, onProgress ->
                 generateResponseStream(
                     modelPath = modelPath,
                     transportRequest = transportRequest,
                     onChunk = onChunk,
+                    onProgress = onProgress,
                 )
             },
             onAfterChartAnalysis = { releaseChartAnalysisResources() },
@@ -182,7 +191,7 @@ internal fun buildHeartRateChartAwarePrompt(prompt: String): String = buildStrin
     append("\n\nAttached image context:\n")
     append("- The attached image is the workout session heart-rate chart.\n")
     append("- Use it to understand shape, peaks, drift, and recovery timing.\n")
-    append("- If the image conflicts with explicit text metrics, prefer the explicit text metrics.\n")
+    append("- Prefer explicit text metrics over conflicting image cues.\n")
 }
 
 internal fun stripRedundantHeartRateTextMetrics(
@@ -203,6 +212,8 @@ private suspend fun LiteRtLmInsightsRepository.generateResponse(
         modelPath = modelPath,
         transportRequest = transportRequest,
         onChunk = { chunk -> accumulated.append(chunk) }
+        ,
+        onProgress = { _, _ -> }
     )
     val finalText = accumulated.toString().ifBlank { "No insights were generated." }
     Log.d(
@@ -216,7 +227,31 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
     modelPath: String,
     transportRequest: WorkoutInsightsTransportRequest,
     onChunk: suspend (String) -> Unit,
+    onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
 ) {
+    if (transportRequest.imagePngBytes != null && transportRequest.chartTimelineToolContext != null) {
+        val finalText = generateChartAnalysisWithTimelineToolsResponse(
+            modelPath = modelPath,
+            transportRequest = transportRequest,
+            onProgress = onProgress,
+        )
+        if (finalText.isNotBlank()) {
+            onChunk(finalText)
+        }
+        return
+    }
+    if (transportRequest.imagePngBytes == null && transportRequest.toolContext != null) {
+        val finalText = generateToolCallingResponse(
+            modelPath = modelPath,
+            transportRequest = transportRequest,
+            onProgress = onProgress
+        )
+        if (finalText.isNotBlank()) {
+            onChunk(finalText)
+        }
+        return
+    }
+
     LiteRtLmEnginePool.appContext = context.applicationContext
     val engineHandle = LiteRtLmEnginePool.acquire(
         modelPath = modelPath,
@@ -230,6 +265,16 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}" +
                 "_start mode=${if (transportRequest.imagePngBytes != null) "image_text" else "text_only"} backend=${engineHandle.backendName} prompt_chars=${transportRequest.prompt.length} image_bytes=${transportRequest.imagePngBytes?.size ?: 0}"
+        )
+        logWorkoutInsightsBlock(
+            LiteRtLmInsightsRepository.LOG_TAG,
+            "${transportRequest.requestLogLabel}_system_prompt",
+            transportRequest.systemPrompt
+        )
+        logWorkoutInsightsBlock(
+            LiteRtLmInsightsRepository.LOG_TAG,
+            "${transportRequest.requestLogLabel}_user_prompt",
+            transportRequest.prompt
         )
         val conversationConfig = ConversationConfig(
             systemInstruction = Contents.of(transportRequest.systemPrompt),
@@ -262,37 +307,369 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
     }
 }
 
-internal fun buildHeartRateChartImageOnlyPrompt(): String = """
-Analyze the attached workout session heart-rate chart only.
-Do not use any hidden assumptions about the workout.
-Describe only what the chart itself makes clear about:
-- the approximate operating range
-- whether the pattern looks steady, intermittent, or drifted
-- whether repeated peaks look similar or fade
-- whether recoveries look longer or shorter later in the session
-If something is not clearly visible, omit it.
-Keep the analysis concise and practical.
-""".trimIndent()
+private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimelineToolsResponse(
+    modelPath: String,
+    transportRequest: WorkoutInsightsTransportRequest,
+    onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
+): String {
+    LiteRtLmEnginePool.appContext = context.applicationContext
+    val engineHandle = LiteRtLmEnginePool.acquire(
+        modelPath = modelPath,
+        cacheDir = context.cacheDir.absolutePath,
+        nativeLibraryDir = context.applicationInfo.nativeLibraryDir,
+        visionEnabled = true
+    )
+    val timeline = requireNotNull(transportRequest.chartTimelineToolContext)
+    val toolExecutor = WorkoutInsightsChartTimelineToolExecutor(timeline)
+
+    try {
+        val conversationConfig = ConversationConfig(
+            systemInstruction = Contents.of(transportRequest.systemPrompt),
+            samplerConfig = SamplerConfig(
+                temperature = 1.0,
+                topK = 64,
+                topP = 0.95
+            ),
+            tools = toolExecutor.liteRtTools(),
+            automaticToolCalling = false
+        )
+        engineHandle.engine.createConversation(conversationConfig).use { conversation ->
+            onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_system_prompt",
+                transportRequest.systemPrompt
+            )
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_tool_definitions",
+                toolExecutor.describeToolsForLog()
+            )
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_turn_1_user_message",
+                transportRequest.prompt
+            )
+            var responseMessage = conversation.sendMessage(
+                Contents.of(
+                    Content.ImageBytes(requireNotNull(transportRequest.imagePngBytes)),
+                    Content.Text(transportRequest.prompt)
+                )
+            )
+            logLiteRtAssistantMessage(
+                requestLogLabel = transportRequest.requestLogLabel,
+                turnNumber = 1,
+                message = responseMessage
+            )
+            repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
+                val toolCalls = responseMessage.toolCalls
+                if (toolCalls.isEmpty()) {
+                    Log.d(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
+                    )
+                    return extractLiteRtText(responseMessage)
+                }
+
+                Log.d(
+                    LiteRtLmInsightsRepository.LOG_TAG,
+                    "${transportRequest.requestLogLabel}_tool_round_${round + 1}_calls=${toolCalls.joinToString { it.name }}"
+                )
+
+                val status = toolCalls.joinToString { it.name }.lowercase()
+                onProgress(
+                    WorkoutInsightsPhase.CHART_ANALYSIS,
+                    "Chart analysis: $status"
+                )
+                val toolResponses = toolCalls.map { toolCall ->
+                    logWorkoutInsightsBlock(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_arguments",
+                        renderForInsightLog(toolCall.arguments)
+                    )
+                    val payload = toolExecutor.executeToJsonString(
+                        name = toolCall.name,
+                        arguments = toolCall.arguments
+                    )
+                    logWorkoutInsightsBlock(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_result",
+                        payload
+                    )
+                    Content.ToolResponse(toolCall.name, payload)
+                }
+                logWorkoutInsightsBlock(
+                    LiteRtLmInsightsRepository.LOG_TAG,
+                    "${transportRequest.requestLogLabel}_turn_${round + 2}_tool_message",
+                    toolResponses.joinToString("\n\n") { toolResponse ->
+                        "Tool: ${toolResponse.name}\nPayload:\n${toolResponse.response}"
+                    }
+                )
+
+                responseMessage = conversation.sendMessage(
+                    Message.Companion.tool(Contents.of(toolResponses))
+                )
+                logLiteRtAssistantMessage(
+                    requestLogLabel = transportRequest.requestLogLabel,
+                    turnNumber = round + 2,
+                    message = responseMessage
+                )
+            }
+
+            Log.d(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
+            )
+            return extractLiteRtText(responseMessage)
+        }
+    } finally {
+        LiteRtLmEnginePool.release(engineHandle)
+    }
+}
+
+private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
+    modelPath: String,
+    transportRequest: WorkoutInsightsTransportRequest,
+    onProgress: suspend (WorkoutInsightsPhase, String) -> Unit,
+): String {
+    LiteRtLmEnginePool.appContext = context.applicationContext
+    val engineHandle = LiteRtLmEnginePool.acquire(
+        modelPath = modelPath,
+        cacheDir = context.cacheDir.absolutePath,
+        nativeLibraryDir = context.applicationInfo.nativeLibraryDir,
+        visionEnabled = false
+    )
+    val toolContext = requireNotNull(transportRequest.toolContext)
+    val toolExecutor = WorkoutInsightsToolExecutor(toolContext)
+
+    try {
+        val conversationConfig = ConversationConfig(
+            systemInstruction = Contents.of(transportRequest.systemPrompt),
+            samplerConfig = SamplerConfig(
+                temperature = 1.0,
+                topK = 64,
+                topP = 0.95
+            ),
+            tools = toolExecutor.liteRtTools(),
+            automaticToolCalling = false
+        )
+        engineHandle.engine.createConversation(conversationConfig).use { conversation ->
+            onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_system_prompt",
+                transportRequest.systemPrompt
+            )
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_tool_definitions",
+                toolExecutor.describeToolsForLog()
+            )
+            logWorkoutInsightsBlock(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_turn_1_user_message",
+                transportRequest.prompt
+            )
+            var responseMessage = conversation.sendMessage(transportRequest.prompt)
+            logLiteRtAssistantMessage(
+                requestLogLabel = transportRequest.requestLogLabel,
+                turnNumber = 1,
+                message = responseMessage
+            )
+            repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
+                val toolCalls = responseMessage.toolCalls
+                if (toolCalls.isEmpty()) {
+                    Log.d(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
+                    )
+                    return extractLiteRtText(responseMessage)
+                }
+
+                Log.d(
+                    LiteRtLmInsightsRepository.LOG_TAG,
+                    "${transportRequest.requestLogLabel}_tool_round_${round + 1}_calls=${toolCalls.joinToString { it.name }}"
+                )
+
+                val status = toolCalls.joinToString { it.name }.lowercase()
+                onProgress(
+                    phaseForToolCalls(toolCalls.map { it.name }),
+                    "Tool round ${round + 1}: $status"
+                )
+                val toolResponses = toolCalls.map { toolCall ->
+                    logWorkoutInsightsBlock(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_arguments",
+                        renderForInsightLog(toolCall.arguments)
+                    )
+                    val payload = toolExecutor.executeToJsonString(
+                        name = toolCall.name,
+                        arguments = toolCall.arguments
+                    )
+                    logWorkoutInsightsBlock(
+                        LiteRtLmInsightsRepository.LOG_TAG,
+                        "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_result",
+                        payload
+                    )
+                    Content.ToolResponse(toolCall.name, payload)
+                }
+                logWorkoutInsightsBlock(
+                    LiteRtLmInsightsRepository.LOG_TAG,
+                    "${transportRequest.requestLogLabel}_turn_${round + 2}_tool_message",
+                    toolResponses.joinToString("\n\n") { toolResponse ->
+                        "Tool: ${toolResponse.name}\nPayload:\n${toolResponse.response}"
+                    }
+                )
+
+                responseMessage = conversation.sendMessage(
+                    Message.Companion.tool(Contents.of(toolResponses))
+                )
+                logLiteRtAssistantMessage(
+                    requestLogLabel = transportRequest.requestLogLabel,
+                    turnNumber = round + 2,
+                    message = responseMessage
+                )
+            }
+
+            Log.d(
+                LiteRtLmInsightsRepository.LOG_TAG,
+                "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
+            )
+            return extractLiteRtText(responseMessage)
+        }
+    } finally {
+        LiteRtLmEnginePool.release(engineHandle)
+    }
+}
+
+internal fun phaseForToolCalls(
+    toolNames: List<String>,
+): WorkoutInsightsPhase {
+    return if (toolNames.any { it.contains("summarize", ignoreCase = true) }) {
+        WorkoutInsightsPhase.SUMMARIZING_CONTEXT
+    } else {
+        WorkoutInsightsPhase.FETCHING_CONTEXT
+    }
+}
+
+private fun extractLiteRtText(
+    message: Message,
+): String {
+    return message.contents.contents
+        .mapNotNull { content ->
+            when (content) {
+                is Content.Text -> content.text
+                else -> null
+            }
+        }
+        .joinToString("")
+        .ifBlank { message.toString() }
+}
+
+private fun logLiteRtAssistantMessage(
+    requestLogLabel: String,
+    turnNumber: Int,
+    message: Message,
+) {
+    val text = extractLiteRtText(message)
+    val toolCalls = message.toolCalls
+    val rendered = buildString {
+        append("Text:\n")
+        append(text.ifBlank { "<empty>" })
+        if (toolCalls.isNotEmpty()) {
+            append("\n\nTool calls:\n")
+            append(
+                toolCalls.joinToString("\n\n") { toolCall ->
+                    buildString {
+                        append("Tool: ")
+                        append(toolCall.name)
+                        append("\nArguments:\n")
+                        append(renderForInsightLog(toolCall.arguments))
+                    }
+                }
+            )
+        }
+    }
+    logWorkoutInsightsBlock(
+        LiteRtLmInsightsRepository.LOG_TAG,
+        "${requestLogLabel}_turn_${turnNumber}_assistant_message",
+        rendered
+    )
+}
+
+internal fun buildHeartRateChartImageOnlyPrompt(
+    chartAnalysisContext: String? = null,
+    chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
+): String = buildString {
+    appendLine("Analyze the attached workout session heart-rate chart only.")
+    appendLine("Do not use any hidden assumptions about the workout.")
+    when {
+        chartTimelineToolContext != null -> {
+            appendLine()
+            appendLine(
+                "Session duration: ${chartTimelineToolContext.durationSeconds} seconds elapsed from start to end."
+            )
+            appendLine(
+                "Tool get_session_timeline_for_time_range: pass start_seconds and end_seconds (inclusive, " +
+                    "seconds since workout start) to receive blocks that overlap that window."
+            )
+            appendLine(
+                "Investigate further with the tool when block names would sharpen a visible heart-rate feature, " +
+                    "especially repeated peaks, phase changes, or possible late-session changes."
+            )
+            appendLine(
+                "If the chart shows repeated peaks or distinct phases, prefer at least one targeted tool call before finalizing."
+            )
+            appendLine("Conflict resolution: trust the visible chart over tool output.")
+        }
+        else -> {
+            chartAnalysisContext
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { context ->
+                    appendLine()
+                    appendLine("Complete session timeline (elapsed time from workout start; one row per contiguous block):")
+                    appendLine(context)
+                    appendLine("Use these intervals to align the heart-rate curve with sets, rests, and transitions.")
+                    appendLine("Conflict resolution: trust the visible chart over the pasted timeline text.")
+                }
+        }
+    }
+    appendLine()
+    appendLine("Describe only what the chart itself makes clear about:")
+    appendLine("- whether the pattern looks steady, intermittent, or drifted")
+    appendLine("- whether repeated peaks look similar, fade, or are unclear")
+    appendLine("- whether there is a clear late-session upward drift or no clear drift")
+    appendLine("Omit details not clearly visible on the chart.")
+    appendLine("Do not estimate bpm values, intensity zones, or exact recovery durations from the image.")
+    append("Keep the analysis concise and practical.")
+}
 
 internal fun buildPromptWithHeartRateChartAnalysis(
     prompt: String,
     chartAnalysis: String?,
+    supportingMarkdown: String? = null,
 ): String = buildString {
     append(prompt.trimEnd())
-    formatHeartRateChartAnalysisForPrompt(chartAnalysis)?.let {
+    formatHeartRateChartAnalysisForPrompt(
+        chartAnalysis = chartAnalysis,
+        supportingMarkdown = supportingMarkdown
+    )?.let {
         append("\n\nHeart-rate chart observations:\n")
         append(it)
         append("\n\nTreat chart observations as secondary context for the final insight.")
-        append("\nPrefer explicit workout metrics when they disagree.")
+        append("\nPrefer explicit workout metrics over conflicting chart observation wording.")
         append("\nDo not let chart wording override plan, previous, or best-to-date comparisons.")
     }
 }
 
 internal fun formatHeartRateChartAnalysisForPrompt(
     chartAnalysis: String?,
+    supportingMarkdown: String? = null,
 ): String? {
     val raw = chartAnalysis?.takeUnless { it.isBlank() || it == "No insights were generated." } ?: return null
     val sanitized = sanitizeInsightMarkdown(normalizeChartAnalysisTokens(raw))
+    val structuredMetrics = parseStructuredHeartRateMetrics(supportingMarkdown)
     val structuredLines = mutableListOf<String>()
     var currentPrefix = "CHART NOTE"
 
@@ -316,6 +693,8 @@ internal fun formatHeartRateChartAnalysisForPrompt(
     return structuredLines
         .map { it.replace(Regex("\\s+"), " ").trim() }
         .filter { it.length > "CHART NOTE ".length }
+        .filterNot(::isUnreliableChartMetricLine)
+        .filter { chartLine -> isChartLineConsistentWithMetrics(chartLine, structuredMetrics) }
         .distinct()
         .take(4)
         .takeIf { it.isNotEmpty() }
@@ -329,4 +708,64 @@ private fun normalizeChartAnalysisTokens(
         Regex("""(?i)(?<=.)(?=(?:SUMMARY:|SIGNAL:|##\s*Chart\s+Summary|##\s*Chart\s+Signals))"""),
         "\n"
     )
+}
+
+private data class StructuredHeartRateMetrics(
+    val avgPercentMaxHr: Int?,
+    val peakPercentMaxHr: Int?,
+    val highIntensityExposurePercent: Int?,
+)
+
+private fun parseStructuredHeartRateMetrics(
+    markdown: String?,
+): StructuredHeartRateMetrics {
+    val source = markdown.orEmpty()
+    return StructuredHeartRateMetrics(
+        avgPercentMaxHr = Regex("""Avg % max HR:\s*(\d{1,3})%""", RegexOption.IGNORE_CASE)
+            .find(source)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull(),
+        peakPercentMaxHr = Regex("""Peak % max HR:\s*(\d{1,3})%""", RegexOption.IGNORE_CASE)
+            .find(source)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull(),
+        highIntensityExposurePercent =
+            Regex("""High-intensity exposure:\s*(\d{1,3})%""", RegexOption.IGNORE_CASE)
+                .find(source)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull(),
+    )
+}
+
+private fun isUnreliableChartMetricLine(
+    line: String,
+): Boolean {
+    val normalized = line.lowercase()
+    return normalized.contains(" bpm") ||
+        normalized.contains("between approximately") ||
+        normalized.contains("between ") ||
+        normalized.contains("high-intensity") ||
+        normalized.contains("high heart rate") ||
+        normalized.contains("shorter towards the end") ||
+        normalized.contains("longer towards the end") ||
+        normalized.contains("recoveries appear")
+}
+
+private fun isChartLineConsistentWithMetrics(
+    line: String,
+    metrics: StructuredHeartRateMetrics,
+): Boolean {
+    val normalized = line.lowercase()
+    if (
+        metrics.highIntensityExposurePercent == 0 &&
+        metrics.peakPercentMaxHr != null &&
+        metrics.peakPercentMaxHr <= 80 &&
+        (normalized.contains("high-intensity") || normalized.contains("high heart rate"))
+    ) {
+        return false
+    }
+    return true
 }

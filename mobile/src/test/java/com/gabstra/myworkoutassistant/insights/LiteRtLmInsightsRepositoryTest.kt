@@ -47,8 +47,45 @@ class LiteRtLmInsightsRepositoryTest {
 
         assertTrue(prompt.contains("Analyze the attached workout session heart-rate chart only."))
         assertTrue(prompt.contains("Do not use any hidden assumptions about the workout."))
-        assertTrue(prompt.contains("the approximate operating range"))
-        assertTrue(prompt.contains("whether recoveries look longer or shorter later in the session"))
+        assertTrue(prompt.contains("whether the pattern looks steady, intermittent, or drifted"))
+        assertTrue(prompt.contains("Do not estimate bpm values, intensity zones, or exact recovery durations from the image."))
+    }
+
+    @Test
+    fun buildHeartRateChartImageOnlyPrompt_includes_complete_timeline_heading_when_context_present() {
+        val prompt = buildHeartRateChartImageOnlyPrompt(
+            chartAnalysisContext = "- 00:00-00:45 Squat\n- 00:45-01:30 Rest after Squat",
+        )
+
+        assertTrue(prompt.contains("Complete session timeline (elapsed time from workout start; one row per contiguous block):"))
+        assertTrue(prompt.contains("- 00:00-00:45 Squat"))
+    }
+
+    @Test
+    fun buildHeartRateChartImageOnlyPrompt_prefers_timeline_tool_instructions_when_tool_context_present() {
+        val prompt = buildHeartRateChartImageOnlyPrompt(
+            chartAnalysisContext = "SHOULD NOT APPEAR",
+            chartTimelineToolContext = WorkoutInsightsChartTimelineContext(
+                durationSeconds = 3600,
+                segments = listOf(
+                    WorkoutInsightsChartTimelineSegment(0, 60, "Warmup"),
+                ),
+            ),
+        )
+
+        assertTrue(prompt.contains("Session duration: 3600 seconds elapsed from start to end."))
+        assertTrue(prompt.contains("get_session_timeline_for_time_range"))
+        assertTrue(prompt.contains("If the chart shows repeated peaks or distinct phases, prefer at least one targeted tool call"))
+        assertFalse(prompt.contains("SHOULD NOT APPEAR"))
+    }
+
+    @Test
+    fun buildHeartRateChartAnalysisSystemPrompt_encourages_targeted_timeline_investigation() {
+        val prompt = buildHeartRateChartAnalysisSystemPrompt(hasSessionTimelineTool = true)
+
+        assertTrue(prompt.contains("investigate with the available timeline tool instead of guessing"))
+        assertTrue(prompt.contains("prefer at least one targeted timeline lookup before finalizing"))
+        assertTrue(prompt.contains("Investigate visible peaks, clusters, phase changes, or ambiguous late-session behavior"))
     }
 
     @Test
