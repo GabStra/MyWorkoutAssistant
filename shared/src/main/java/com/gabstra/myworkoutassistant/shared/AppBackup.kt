@@ -11,4 +11,6 @@ data class AppBackup(
     val ErrorLogs: List<ErrorLog>? = null,
     /** Session rest intervals; omitted in older backup JSON. */
     val RestHistories: List<RestHistory>? = null,
+    /** LiteRT-LM model source URI used to repopulate the local model file on restore. */
+    val LiteRtLmModelSourceUri: String? = null,
 )
