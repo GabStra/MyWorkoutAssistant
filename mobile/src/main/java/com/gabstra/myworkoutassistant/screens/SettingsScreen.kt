@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -62,7 +63,6 @@ import com.gabstra.myworkoutassistant.shared.findPolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.findWhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.getEffectiveRestingHeartRate
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -205,7 +205,8 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
-                .verticalColumnScrollbarContainer(scrollState)
+                .verticalScroll(scrollState)
+                .padding(horizontal = Spacing.md)
         ) {
             FormSectionTitle("Profile")
             StyledCard(

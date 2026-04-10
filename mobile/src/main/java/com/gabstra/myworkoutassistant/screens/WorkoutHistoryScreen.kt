@@ -6,6 +6,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +17,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -51,6 +54,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.calculateKiloCaloriesBurned
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
@@ -66,6 +70,7 @@ import com.gabstra.myworkoutassistant.composables.ScrollableTextColumn
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.filterBy
 import com.gabstra.myworkoutassistant.formatTime
@@ -103,8 +108,6 @@ import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplay
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
-import com.gabstra.myworkoutassistant.verticalLazyColumnScrollbar
 import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
@@ -133,6 +136,12 @@ private data class HeartRateZoneSegment(
 
 private fun roundXToSupportedPrecision(value: Double): Double {
     return (value * 10_000.0).roundToLong() / 10_000.0
+}
+
+private fun WorkoutHistoryLayoutItem.setsTabHistoryItemKey(): Any = when (this) {
+    is WorkoutHistoryLayoutItem.ExerciseSection -> "exercise:$exerciseId"
+    is WorkoutHistoryLayoutItem.SupersetSection -> "superset:$supersetId"
+    is WorkoutHistoryLayoutItem.RestSection -> "rest:$restComponentId:${history.id}"
 }
 
 @Composable
@@ -367,6 +376,7 @@ fun WorkoutHistoryScreen(
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
     var workoutSessionStatuses by remember { mutableStateOf<Map<UUID, WorkoutSessionStatus>>(emptyMap()) }
     var workoutRecordsByHistoryId by remember { mutableStateOf<Map<UUID, WorkoutRecord>>(emptyMap()) }
+    var hasLoadedWorkoutHistories by remember { mutableStateOf(false) }
 
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
@@ -552,6 +562,7 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(workout, updateMessage) {
         isLoading = true
+        hasLoadedWorkoutHistories = false
         withContext(Dispatchers.IO) {
             val recordsByHistoryId = workoutRecordDao.getAll()
                 .associateBy { workoutRecord -> workoutRecord.workoutHistoryId }
@@ -591,6 +602,7 @@ fun WorkoutHistoryScreen(
             if (workoutHistories.isEmpty()) {
                 selectedWorkoutHistory = null
                 delay(500)
+                hasLoadedWorkoutHistories = true
                 isLoading = false
                 return@withContext
             }
@@ -600,6 +612,7 @@ fun WorkoutHistoryScreen(
                     ?: workoutHistories.lastOrNull()
 
             delay(500)
+            hasLoadedWorkoutHistories = true
             if (selectedWorkoutHistory == null) {
                 isLoading = false
             }
@@ -749,7 +762,10 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    LaunchedEffect(historiesToShow) {
+    LaunchedEffect(historiesToShow, hasLoadedWorkoutHistories) {
+        if (!hasLoadedWorkoutHistories) {
+            return@LaunchedEffect
+        }
         val loadingStartedAt = System.currentTimeMillis()
         isLoading = true
         if (historiesToShow.isEmpty()) {
@@ -768,10 +784,21 @@ fun WorkoutHistoryScreen(
         isLoading = false
     }
 
-    val graphsTabContent = @Composable {
+    val scrollState = rememberScrollState()
+    val setHistoryLazyListState = rememberLazyListState()
+
+    val graphsTabContent: @Composable ColumnScope.() -> Unit = {
         Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .fillMaxSize()
+                .verticalScroll(
+                    state = scrollState,
+                    enabled = !isChartInteractionActive,
+                )
+                .padding(horizontal = Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(15.dp),
         ) {
             selectedWorkoutHistory?.let { history ->
                 PrimarySurface(modifier = Modifier.fillMaxWidth()) {
@@ -958,29 +985,79 @@ fun WorkoutHistoryScreen(
         }
     }
 
-    val setsTabContent = @Composable {
-        Column(
-            modifier = Modifier,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+    val setsTabContent: @Composable ColumnScope.() -> Unit = {
+        val selectedWorkoutRecord = remember(
+            selectedWorkoutHistory?.id,
+            workoutRecordsByHistoryId
         ) {
-            workoutSelector()
+            selectedWorkoutHistory?.id?.let { historyId ->
+                workoutRecordsByHistoryId[historyId]
+            }
+        }
+        val selectedWorkoutSessionStatus = remember(
+            selectedWorkoutHistory?.id,
+            workoutSessionStatuses
+        ) {
+            selectedWorkoutHistory?.id?.let { historyId ->
+                workoutSessionStatuses[historyId]
+            }
+        }
+        val activeExerciseId = remember(
+            selectedWorkoutRecord,
+            selectedWorkoutSessionStatus
+        ) {
+            when (selectedWorkoutSessionStatus) {
+                WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
+                WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+                WorkoutSessionStatus.STOPPED_ON_WEAR,
+                WorkoutSessionStatus.STALE_ON_WEAR -> selectedWorkoutRecord?.exerciseId
+
+                else -> null
+            }
+        }
+        val historyLayout = remember(
+            selectedWorkout,
+            setHistoriesByExerciseId,
+            sessionRestHistories,
+            activeExerciseId
+        ) {
+            buildWorkoutHistoryLayout(
+                selectedWorkout,
+                setHistoriesByExerciseId,
+                sessionRestHistories,
+                activeExerciseId = activeExerciseId
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .fillMaxSize(),
+            state = setHistoryLazyListState,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                workoutSelector()
+            }
 
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
-                PrimarySurface {
-                    ExpandableContainer(
-                        isOpen = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        isExpandable = zoneCounter != null,
-                        title = {
-                            Text(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                text = "Heart rate during workout",
-                                color = MaterialTheme.colorScheme.onBackground,
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                        },
+                item {
+                    PrimarySurface {
+                        ExpandableContainer(
+                            isOpen = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            isExpandable = zoneCounter != null,
+                            title = {
+                                Text(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    text = "Heart rate during workout",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            },
                         subContent = {
                             Box(
                                 modifier = Modifier
@@ -1141,309 +1218,181 @@ fun WorkoutHistoryScreen(
                     )
                 }
             }
-            Column {
-                val selectedWorkoutRecord = remember(
-                    selectedWorkoutHistory?.id,
-                    workoutRecordsByHistoryId
-                ) {
-                    selectedWorkoutHistory?.id?.let { historyId ->
-                        workoutRecordsByHistoryId[historyId]
-                    }
-                }
-                val selectedWorkoutSessionStatus = remember(
-                    selectedWorkoutHistory?.id,
-                    workoutSessionStatuses
-                ) {
-                    selectedWorkoutHistory?.id?.let { historyId ->
-                        workoutSessionStatuses[historyId]
-                    }
-                }
-                val activeExerciseId = remember(
-                    selectedWorkoutRecord,
-                    selectedWorkoutSessionStatus
-                ) {
-                    when (selectedWorkoutSessionStatus) {
-                        WorkoutSessionStatus.IN_PROGRESS_ON_PHONE,
-                        WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
-                        WorkoutSessionStatus.STOPPED_ON_WEAR,
-                        WorkoutSessionStatus.STALE_ON_WEAR -> selectedWorkoutRecord?.exerciseId
-
-                        else -> null
-                    }
-                }
-                val historyLayout = remember(
-                    selectedWorkout,
-                    setHistoriesByExerciseId,
-                    sessionRestHistories,
-                    activeExerciseId
-                ) {
-                    buildWorkoutHistoryLayout(
-                        selectedWorkout,
-                        setHistoriesByExerciseId,
-                        sessionRestHistories,
-                        activeExerciseId = activeExerciseId
-                    )
-                }
-
+            }
+            item {
                 ContentTitle(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 10.dp),
                     text = "Exercise and superset history",
                 )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    historyLayout.forEach { layoutItem ->
-                        when (layoutItem) {
-                            is WorkoutHistoryLayoutItem.SupersetSection -> {
-                                val key = layoutItem.supersetId
-                                val setHistories = setHistoriesByExerciseId[key].orEmpty()
-                                val superset = supersetsById[key] ?: return@forEach
-                                val supersetExerciseIds =
-                                    superset.exercises.map { it.id }.toSet()
-                                val restsForSuperset = sessionRestHistories.filter { rh ->
-                                    rh.exerciseId != null && rh.exerciseId in supersetExerciseIds
-                                }
-                                val isActiveSupersetWithoutHistory =
-                                    setHistories.isEmpty() &&
-                                            activeExerciseId != null &&
-                                            supersetExerciseIds.contains(activeExerciseId)
-                                if (isActiveSupersetWithoutHistory) {
-                                    SupersetRenderer(
-                                        superset = superset,
-                                        showRest = true,
-                                        appViewModel = appViewModel,
-                                        initiallyExpanded = true,
-                                        onExerciseClick = { exerciseId ->
-                                            appViewModel.setScreenData(
-                                                ScreenData.ExerciseHistory(
-                                                    selectedWorkoutHistory?.workoutId ?: workout.id,
-                                                    exerciseId,
-                                                    1,
-                                                    workoutHistoryId = selectedWorkoutHistory?.id,
-                                                )
-                                            )
-                                        }
+            }
+            items(
+                items = historyLayout,
+                key = { it.setsTabHistoryItemKey() },
+            ) { layoutItem ->
+                when (layoutItem) {
+                    is WorkoutHistoryLayoutItem.SupersetSection -> {
+                        val key = layoutItem.supersetId
+                        val setHistories = setHistoriesByExerciseId[key].orEmpty()
+                        val superset = supersetsById[key] ?: return@items
+                        val supersetExerciseIds =
+                            superset.exercises.map { it.id }.toSet()
+                        val restsForSuperset = sessionRestHistories.filter { rh ->
+                            rh.exerciseId != null && rh.exerciseId in supersetExerciseIds
+                        }
+                        val isActiveSupersetWithoutHistory =
+                            setHistories.isEmpty() &&
+                                    activeExerciseId != null &&
+                                    supersetExerciseIds.contains(activeExerciseId)
+                        if (isActiveSupersetWithoutHistory) {
+                            SupersetRenderer(
+                                superset = superset,
+                                showRest = true,
+                                appViewModel = appViewModel,
+                                initiallyExpanded = true,
+                                onExerciseClick = { exerciseId ->
+                                    appViewModel.setScreenData(
+                                        ScreenData.ExerciseHistory(
+                                            selectedWorkoutHistory?.workoutId ?: workout.id,
+                                            exerciseId,
+                                            1,
+                                            workoutHistoryId = selectedWorkoutHistory?.id,
+                                        )
                                     )
-                                } else {
-                                    PrimarySurface {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(10.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Text(
-                                                text = "Superset: ${superset.exercises.joinToString(" ↔ ") { it.name }}",
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                            SupersetSetHistoriesRenderer(
-                                                setHistories = setHistories,
-                                                restHistories = restsForSuperset,
-                                                workout = selectedWorkout,
-                                                getEquipmentById = { appViewModel.getEquipmentById(it) }
-                                            )
-                                        }
-                                    }
+                                }
+                            )
+                        } else {
+                            PrimarySurface {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Superset: ${superset.exercises.joinToString(" ↔ ") { it.name }}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    SupersetSetHistoriesRenderer(
+                                        setHistories = setHistories,
+                                        restHistories = restsForSuperset,
+                                        workout = selectedWorkout,
+                                        getEquipmentById = { appViewModel.getEquipmentById(it) }
+                                    )
                                 }
                             }
+                        }
+                    }
 
-                            is WorkoutHistoryLayoutItem.ExerciseSection -> {
-                            val key = layoutItem.exerciseId
-                            val setHistories = setHistoriesByExerciseId[key].orEmpty()
-                            val exercise = exerciseById[key] ?: return@forEach
+                    is WorkoutHistoryLayoutItem.ExerciseSection -> {
+                        val key = layoutItem.exerciseId
+                        val setHistories = setHistoriesByExerciseId[key].orEmpty()
+                        val exercise = exerciseById[key] ?: return@items
 
-                            val restsForExercise =
-                                sessionRestHistories.filter { it.exerciseId == key }
-                            val timeline = mergeSessionTimeline(setHistories, restsForExercise)
-                            val setHistoriesForRenderer = timeline.mapNotNull { step ->
+                        val restsForExercise =
+                            sessionRestHistories.filter { it.exerciseId == key }
+                        val timeline = remember(setHistories, restsForExercise) {
+                            mergeSessionTimeline(setHistories, restsForExercise)
+                        }
+                        val setHistoriesForRenderer = remember(timeline) {
+                            timeline.mapNotNull { step ->
                                 (step as? SessionTimelineItem.SetStep)?.history
                             }
-                            val orderedSets = remember(timeline) {
-                                timeline.map { item ->
-                                    when (item) {
-                                        is SessionTimelineItem.SetStep -> getNewSetFromSetHistory(item.history)
-                                        is SessionTimelineItem.RestStep -> getNewSetFromRestHistory(item.history)
-                                    }
+                        }
+                        val orderedSets = remember(timeline) {
+                            timeline.map { item ->
+                                when (item) {
+                                    is SessionTimelineItem.SetStep -> getNewSetFromSetHistory(item.history)
+                                    is SessionTimelineItem.RestStep -> getNewSetFromRestHistory(item.history)
                                 }
                             }
+                        }
 
-                            val hasTarget =
-                                exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
+                        val hasTarget =
+                            exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
 
-                            val (targetCounter, targetTotal) = remember(
-                                hasTarget,
-                                setHistoriesForRenderer,
-                                selectedWorkoutHistory?.id,
-                                selectedWorkoutHistory?.heartBeatRecords,
-                                exercise.lowerBoundMaxHRPercent,
-                                exercise.upperBoundMaxHRPercent,
-                                userAge,
-                                measuredMaxHeartRate,
-                                restingHeartRate
-                            ) {
-                                if (!hasTarget) {
-                                    0 to 0
-                                } else {
-                                    var counter = 0
-                                    var total = 0
-                                    setHistoriesForRenderer
-                                        .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
-                                        .forEach { setHistory ->
-                                            val hrTimeOffset = Duration.between(
-                                                selectedWorkoutHistory!!.startTime,
-                                                setHistory.startTime,
-                                            ).seconds
-                                            val setDuration = Duration.between(
-                                                setHistory.startTime,
-                                                setHistory.endTime
-                                            ).seconds
+                        val (targetCounter, targetTotal) = remember(
+                            hasTarget,
+                            setHistoriesForRenderer,
+                            selectedWorkoutHistory?.id,
+                            selectedWorkoutHistory?.heartBeatRecords,
+                            exercise.lowerBoundMaxHRPercent,
+                            exercise.upperBoundMaxHRPercent,
+                            userAge,
+                            measuredMaxHeartRate,
+                            restingHeartRate
+                        ) {
+                            if (!hasTarget) {
+                                0 to 0
+                            } else {
+                                var counter = 0
+                                var total = 0
+                                setHistoriesForRenderer
+                                    .filter { it.setData !is RestSetData && it.startTime != null && it.endTime != null }
+                                    .forEach { setHistory ->
+                                        val hrTimeOffset = Duration.between(
+                                            selectedWorkoutHistory!!.startTime,
+                                            setHistory.startTime,
+                                        ).seconds
+                                        val setDuration = Duration.between(
+                                            setHistory.startTime,
+                                            setHistory.endTime
+                                        ).seconds
 
-                                            val lowHr = getHeartRateFromPercentage(
-                                                exercise.lowerBoundMaxHRPercent!!,
-                                                userAge,
-                                                measuredMaxHeartRate,
-                                                restingHeartRate
-                                            )
-                                            val highHr = getHeartRateFromPercentage(
-                                                exercise.upperBoundMaxHRPercent!!,
-                                                userAge,
-                                                measuredMaxHeartRate,
-                                                restingHeartRate
-                                            )
-
-                                            val hrEntriesCount =
-                                                selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
-                                                    index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
-                                                }.size
-
-                                            counter += hrEntriesCount
-                                            total += setDuration.toInt()
-                                        }
-                                    counter to total
-                                }
-                            }
-
-                            // Create an exercise with the historical sets (work + intra-exercise rests)
-                            val exerciseWithHistorySets = exercise.copy(
-                                sets = orderedSets,
-                                requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
-                                    ?: emptyList()
-                            )
-
-                            PrimarySurface {
-                                if (hasTarget) {
-                                    Column {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(10.dp)
-                                        ) {
-                                            var progress =
-                                                targetCounter.toFloat() / targetTotal
-                                            if (progress.isNaN()) {
-                                                progress = 0f
-                                            }
-
-                                            Text(
-                                                text = "Target HR",
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                            )
-                                            Spacer(Modifier.height(5.dp))
-                                            Row(modifier = Modifier.fillMaxWidth()) {
-                                                val lowHr = getHeartRateFromPercentage(
-                                                    exercise.lowerBoundMaxHRPercent!!,
-                                                    userAge,
-                                                    measuredMaxHeartRate,
-                                                    restingHeartRate
-                                                )
-                                                val highHr = getHeartRateFromPercentage(
-                                                    exercise.upperBoundMaxHRPercent!!,
-                                                    userAge,
-                                                    measuredMaxHeartRate,
-                                                    restingHeartRate
-                                                )
-                                                Text(
-                                                    "$lowHr - $highHr bpm",
-                                                    Modifier.weight(1f),
-                                                    color = MaterialTheme.colorScheme.onBackground,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                )
-                                                Spacer(Modifier.weight(1f))
-                                                Text(
-                                                    text = "${(progress * 100).toInt()}% ${
-                                                        formatTime(
-                                                            targetCounter
-                                                        )
-                                                    }",
-                                                    Modifier.weight(1f),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    textAlign = TextAlign.End,
-                                                    color = MaterialTheme.colorScheme.onBackground,
-                                                )
-                                            }
-                                            Spacer(Modifier.height(5.dp))
-                                            SimpleProgressIndicator(
-                                                progress = progress,
-                                                trackColor = MediumDarkGray,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(16.dp)
-                                                    .clip(MaterialTheme.shapes.large),
-                                                progressBarColor = Color.hsl(
-                                                    113f,
-                                                    0.79f,
-                                                    0.34f
-                                                ),
-                                            )
-                                        }
-                                        ExerciseHistoryRenderer(
-                                            exercise = exerciseWithHistorySets,
-                                            showRest = true,
-                                            appViewModel = appViewModel,
-                                            setHistories = setHistoriesForRenderer,
-                                            intraExerciseRestHistories = restsForExercise,
-                                            customTitle = { m ->
-                                                Row(
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    modifier = m,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    if (exerciseById.containsKey(key)) {
-                                                        IconButton(
-                                                            onClick = {
-                                                                appViewModel.setScreenData(
-                                                                    ScreenData.ExerciseHistory(
-                                                                        selectedWorkoutHistory?.workoutId
-                                                                            ?: workout.id,
-                                                                        exercise.id,
-                                                                        1,
-                                                                        workoutHistoryId = selectedWorkoutHistory?.id,
-                                                                    )
-                                                                )
-                                                            }) {
-                                                            Icon(
-                                                                imageVector = Icons.Filled.Info,
-                                                                contentDescription = "View details",
-                                                                tint = MaterialTheme.colorScheme.onBackground
-                                                            )
-                                                        }
-                                                    }
-                                                    ScrollableTextColumn(
-                                                        text = exercise.name,
-                                                        modifier = Modifier.weight(1f),
-                                                        maxLines = 2,
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                        color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
-                                                    )
-                                                }
-                                            }
+                                        val lowHr = getHeartRateFromPercentage(
+                                            exercise.lowerBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
                                         )
+                                        val highHr = getHeartRateFromPercentage(
+                                            exercise.upperBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
+                                        )
+
+                                        val hrEntriesCount =
+                                            selectedWorkoutHistory!!.heartBeatRecords.filterIndexed { index, value ->
+                                                index >= hrTimeOffset && index <= hrTimeOffset + setDuration && value >= lowHr && value <= highHr
+                                            }.size
+
+                                        counter += hrEntriesCount
+                                        total += setDuration.toInt()
                                     }
-                                } else {
+                                counter to total
+                            }
+                        }
+
+                        val exerciseWithHistorySets = exercise.copy(
+                            sets = orderedSets,
+                            requiredAccessoryEquipmentIds = exercise.requiredAccessoryEquipmentIds
+                                ?: emptyList()
+                        )
+
+                        PrimarySurface {
+                            if (hasTarget) {
+                                Column {
+                                    val lowHr = getHeartRateFromPercentage(
+                                        exercise.lowerBoundMaxHRPercent!!,
+                                        userAge,
+                                        measuredMaxHeartRate,
+                                        restingHeartRate
+                                    )
+                                    val highHr = getHeartRateFromPercentage(
+                                        exercise.upperBoundMaxHRPercent!!,
+                                        userAge,
+                                        measuredMaxHeartRate,
+                                        restingHeartRate
+                                    )
+                                    TargetHrProgressSection(
+                                        targetCounter = targetCounter,
+                                        targetTotal = targetTotal,
+                                        lowHrBpm = lowHr,
+                                        highHrBpm = highHr,
+                                    )
                                     ExerciseHistoryRenderer(
                                         exercise = exerciseWithHistorySets,
                                         showRest = true,
@@ -1487,22 +1436,61 @@ fun WorkoutHistoryScreen(
                                         }
                                     )
                                 }
-                            }
-                            }
-                            is WorkoutHistoryLayoutItem.RestSection -> {
-                                RestBetweenWorkoutComponentsBlock(
-                                    history = layoutItem.history,
+                            } else {
+                                ExerciseHistoryRenderer(
+                                    exercise = exerciseWithHistorySets,
+                                    showRest = true,
+                                    appViewModel = appViewModel,
+                                    setHistories = setHistoriesForRenderer,
+                                    intraExerciseRestHistories = restsForExercise,
+                                    customTitle = { m ->
+                                        Row(
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            modifier = m,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (exerciseById.containsKey(key)) {
+                                                IconButton(
+                                                    onClick = {
+                                                        appViewModel.setScreenData(
+                                                            ScreenData.ExerciseHistory(
+                                                                selectedWorkoutHistory?.workoutId
+                                                                    ?: workout.id,
+                                                                exercise.id,
+                                                                1,
+                                                                workoutHistoryId = selectedWorkoutHistory?.id,
+                                                            )
+                                                        )
+                                                    }) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Info,
+                                                        contentDescription = "View details",
+                                                        tint = MaterialTheme.colorScheme.onBackground
+                                                    )
+                                                }
+                                            }
+                                            ScrollableTextColumn(
+                                                text = exercise.name,
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 2,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
+                                            )
+                                        }
+                                    }
                                 )
                             }
                         }
+                    }
+                    is WorkoutHistoryLayoutItem.RestSection -> {
+                        RestBetweenWorkoutComponentsBlock(
+                            history = layoutItem.history,
+                        )
                     }
                 }
             }
         }
     }
-
-    val scrollState = rememberScrollState()
-    val setHistoryLazyListState = rememberLazyListState()
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1513,31 +1501,39 @@ fun WorkoutHistoryScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         when {
+            !hasLoadedWorkoutHistories -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
+                }
+            }
             isLoading -> {
                 if (selectedHistoryMode == 1 && selectedWorkoutHistory != null) {
-                    LazyColumn(
+                    Column(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .verticalLazyColumnScrollbar(
-                                lazyListState = setHistoryLazyListState,
-                            ),
-                        state = setHistoryLazyListState,
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(15.dp),
                     ) {
-                        item {
-                            workoutSelector()
-                        }
-                        item {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.width(32.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = MediumDarkGray,
-                                )
-                            }
+                        workoutSelector()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MediumDarkGray,
+                            )
                         }
                     }
                 } else {
@@ -1546,7 +1542,7 @@ fun WorkoutHistoryScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(
-                            modifier = Modifier.width(32.dp),
+                            modifier = Modifier.size(32.dp),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MediumDarkGray,
                         )
@@ -1571,34 +1567,10 @@ fun WorkoutHistoryScreen(
             else -> {
                 when (selectedHistoryMode.coerceIn(0, 1)) {
                     0 -> {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .verticalColumnScrollbarContainer(
-                                    scrollState = scrollState,
-                                    enabled = !isChartInteractionActive,
-                                ),
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
-                        ) {
-                            graphsTabContent()
-                        }
+                        graphsTabContent()
                     }
                     1 -> {
-                        LazyColumn(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .verticalLazyColumnScrollbar(
-                                    lazyListState = setHistoryLazyListState,
-                                ),
-                            state = setHistoryLazyListState,
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
-                        ) {
-                            item {
-                                setsTabContent()
-                            }
-                        }
+                        setsTabContent()
                     }
                 }
             }

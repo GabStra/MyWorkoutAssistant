@@ -15,8 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.shared.Workout
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.clip
 
@@ -40,7 +40,8 @@ fun MoveExercisesToWorkoutDialog(
                         .fillMaxWidth()
                         .padding(horizontal = 5.dp)
                         .padding(vertical = 10.dp)
-                        .verticalColumnScrollbarContainer(scrollState),
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = Spacing.md),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     // Only show other workouts, not the current one

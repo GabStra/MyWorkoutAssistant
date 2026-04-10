@@ -76,7 +76,6 @@ import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.utils.ScheduleConflictChecker
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -188,7 +187,8 @@ fun WorkoutForm(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(vertical = Spacing.sm)
-                    .verticalColumnScrollbarContainer(scrollState),
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = Spacing.md),
             ) {
                 // ----- Essentials -----
                 FormSectionTitle(text = "Essentials")

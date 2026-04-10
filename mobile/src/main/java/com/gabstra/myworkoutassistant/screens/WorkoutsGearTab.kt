@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -36,7 +37,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.toDisplayText
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 @Composable
 fun WorkoutsGearTab(
@@ -58,7 +58,8 @@ fun WorkoutsGearTab(
         modifier = Modifier
             .fillMaxSize()
             .padding(vertical = 10.dp)
-            .verticalColumnScrollbarContainer(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = Spacing.md)
     ) {
         ContentTitle(
             text = "Equipment",

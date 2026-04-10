@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalTextStyle
@@ -20,7 +21,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
+import com.gabstra.myworkoutassistant.Spacing
 
 private const val DEFAULT_VISIBLE_LINES = 2.5f
 
@@ -78,7 +79,8 @@ fun ScrollableTextColumn(
     Column(
         modifier = modifier
             .heightIn(max = heightDp)
-            .verticalColumnScrollbarContainer(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = Spacing.md)
     ) {
         Text(
             text = text,

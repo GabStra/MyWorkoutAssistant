@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,7 +35,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.gabstra.myworkoutassistant.Spacing
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 
 data class MenuItem(
     val label: String,
@@ -83,7 +83,8 @@ fun GenericButtonWithMenu(
                             modifier = Modifier
                                 .width(IntrinsicSize.Max)
                                 .heightIn(max = 240.dp)
-                                .verticalColumnScrollbarContainer(scrollState)
+                                .verticalScroll(scrollState)
+                                .padding(horizontal = Spacing.md)
 
                         ) {
                             menuItems.forEachIndexed { index, item ->
@@ -141,4 +142,3 @@ private class TopCenterMenuPositionProvider(
         )
     }
 }
-

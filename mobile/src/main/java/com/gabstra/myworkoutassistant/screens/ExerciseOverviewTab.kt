@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Checkbox
@@ -47,7 +48,6 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @Composable
@@ -77,7 +77,8 @@ fun ExerciseOverviewTab(
             .fillMaxSize()
             .padding(top = 10.dp)
             .padding(bottom = 10.dp)
-            .verticalColumnScrollbarContainer(scrollState)
+            .verticalScroll(scrollState)
+            .padding(horizontal = Spacing.md)
     ) {
         if (sets.isEmpty()) {
             Row(

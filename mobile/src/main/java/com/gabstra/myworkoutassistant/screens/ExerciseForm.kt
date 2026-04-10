@@ -81,7 +81,6 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.Locale
 import java.util.UUID
 
@@ -342,7 +341,8 @@ fun ExerciseForm(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(vertical = Spacing.sm)
-                .verticalColumnScrollbarContainer(scrollState),
+                .verticalScroll(scrollState)
+                .padding(horizontal = Spacing.md),
         ) {
             // ----- Essentials -----
             FormSectionTitle(text = "Essentials")

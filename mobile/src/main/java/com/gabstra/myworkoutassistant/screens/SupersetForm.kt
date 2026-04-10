@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Checkbox
@@ -52,7 +53,6 @@ import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -145,7 +145,8 @@ fun SupersetForm(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(vertical = Spacing.sm)
-                .verticalColumnScrollbarContainer(scrollState),
+                .verticalScroll(scrollState)
+                .padding(horizontal = Spacing.md),
         ) {
             FormSectionTitle(text = "Essentials")
             StyledCard(modifier = Modifier.fillMaxWidth()) {

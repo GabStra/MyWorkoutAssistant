@@ -28,7 +28,6 @@ import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import com.gabstra.myworkoutassistant.verticalColumnScrollbar
 
 @SuppressLint("DefaultLocale")
 @Composable
@@ -91,13 +90,6 @@ fun PagePlates(updatedState: WorkoutState.Set, equipment: WeightLoadedEquipment?
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 10.dp)
-                                .verticalColumnScrollbar(
-                                    scrollState = scrollState,
-                                    scrollBarColor = Color.Transparent,
-                                    scrollBarTrackColor = Color.Transparent,
-                                    enableTopFade = true,
-                                    enableBottomFade = true
-                                )
                                 .verticalScroll(scrollState),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally

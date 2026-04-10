@@ -4,9 +4,9 @@ import android.os.Build
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,45 +20,50 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
-import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
-import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
-import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
-import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
-import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
-import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
-import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
-import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
-import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.compose.cartesian.CartesianMeasuringContext
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
 import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisLineComponent
+import com.patrykandpatrick.vico.compose.cartesian.axis.rememberAxisTickComponent
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
 import com.patrykandpatrick.vico.compose.cartesian.decoration.HorizontalLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.marker.CandlestickCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.marker.ColumnCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.cartesian.marker.DefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.cartesian.rememberFadingEdges
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
+import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.DashedShape
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.Insets
 import com.patrykandpatrick.vico.compose.common.Position
+import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
+
+private const val HeartRateChartBottomRangePaddingFraction = 0.08
+private val HeartRateChartBottomVisualPaddingFraction =
+    HeartRateChartBottomRangePaddingFraction / (1.0 + HeartRateChartBottomRangePaddingFraction)
 
 @Composable
 private fun rememberHorizontalLine(
@@ -353,6 +358,25 @@ fun HeartRateChartContent(
     val modelMaxY = firstModel?.maxY ?: 1.0
     val effectiveMinY = minOf(minYBpm ?: modelMaxY, zoneValues.firstOrNull() ?: modelMaxY) - 2.0
     val effectiveMaxY = maxOf(modelMaxY, (zoneValues.lastOrNull() ?: modelMaxY) + 2.0)
+    val xAxisTickValues = remember(firstModel) {
+        val maxX = firstModel?.maxX?.toInt() ?: -1
+        if (maxX < 0) {
+            emptyList()
+        } else {
+            (0..maxX).map(Int::toDouble)
+        }
+    }
+    val rangeProvider = remember(effectiveMinY, effectiveMaxY) {
+        object : CartesianLayerRangeProvider {
+            override fun getMinY(minY: Double, maxY: Double, extraStore: com.patrykandpatrick.vico.compose.common.data.ExtraStore): Double {
+                val range = (effectiveMaxY - effectiveMinY).takeIf { it > 0.0 } ?: 1.0
+                return effectiveMinY - (range * HeartRateChartBottomRangePaddingFraction)
+            }
+
+            override fun getMaxY(minY: Double, maxY: Double, extraStore: com.patrykandpatrick.vico.compose.common.data.ExtraStore): Double =
+                effectiveMaxY
+        }
+    }
 
     val modelSeriesCount = (cartesianChartModel.models.firstOrNull() as? LineCartesianLayerModel)?.series?.size ?: 0
     val effectiveLineZoneIndices = if (
@@ -400,14 +424,10 @@ fun HeartRateChartContent(
         ),
         scrollState = rememberVicoScrollState(scrollEnabled = true),
         chart = rememberCartesianChart(
-            rememberBottomPaddedLineCartesianLayer(
+            rememberLineCartesianLayer(
                 LineCartesianLayer.LineProvider.series(lines),
                 pointSpacing = 32.dp,
-                rangeProvider = CartesianLayerRangeProvider.fixed(
-                    minY = effectiveMinY,
-                    maxY = effectiveMaxY
-                ),
-                bottomPadding = BottomPaddedChartVerticalOffset,
+                rangeProvider = rangeProvider,
             ),
             decorations = guideLines.map { (zoneColor, threshold) ->
                 rememberHorizontalLine(
@@ -433,6 +453,7 @@ fun HeartRateChartContent(
                 itemPlacer = remember(zoneValues) { FixedValuesVerticalAxisItemPlacer(zoneValues) },
                 size = com.patrykandpatrick.vico.compose.cartesian.axis.BaseAxis.Size.Auto(),
                 bottomPadding = BottomPaddedChartVerticalOffset,
+                bottomPaddingFraction = HeartRateChartBottomVisualPaddingFraction,
             ),
             bottomAxis = HorizontalAxis.rememberBottom(
                 line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.outlineVariant)),

@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.ActiveScheduleCard
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -30,7 +31,6 @@ import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutSchedule
 import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,7 +119,8 @@ fun WorkoutsAlarmsTab(
                 .fillMaxSize()
                 .padding(top = 10.dp)
                 .padding(bottom = 10.dp)
-                .verticalColumnScrollbarContainer(scrollState),
+                .verticalScroll(scrollState)
+                .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Bulk toggle button - only show if there are schedules for available workouts

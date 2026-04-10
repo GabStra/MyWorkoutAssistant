@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,7 +41,6 @@ import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.composables.TimeConverter
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.gabstra.myworkoutassistant.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,7 +114,8 @@ fun RestForm(
                 .fillMaxSize()
                 .padding(it)
                 .padding(vertical = Spacing.sm)
-                .verticalColumnScrollbarContainer(scrollState),
+                .verticalScroll(scrollState)
+                .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md)
         ) {
             Column(

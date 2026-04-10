@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -43,16 +45,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
+import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
 import com.gabstra.myworkoutassistant.filterBy
@@ -75,9 +77,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
-import com.gabstra.myworkoutassistant.verticalLazyColumnScrollbar
-import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
@@ -414,12 +413,14 @@ fun ExerciseHistoryScreen(
     }
 
     val workoutSelector = @Composable {
-        val selectableWorkoutHistories = remember(setHistoriesByWorkoutHistoryId,historiesToShow) {
-            historiesToShow.filter{setHistoriesByWorkoutHistoryId.containsKey(it.id)}
+        val selectableWorkoutHistories = remember(setHistoriesByWorkoutHistoryId, historiesToShow) {
+            historiesToShow.filter { setHistoriesByWorkoutHistoryId.containsKey(it.id) }
         }
 
-        val canGoBack = selectedWorkoutHistory != selectableWorkoutHistories.first()
-        val canGoForward = selectedWorkoutHistory != selectableWorkoutHistories.last()
+        val canGoBack = selectableWorkoutHistories.size > 1 &&
+            selectedWorkoutHistory != selectableWorkoutHistories.first()
+        val canGoForward = selectableWorkoutHistories.size > 1 &&
+            selectedWorkoutHistory != selectableWorkoutHistories.last()
         
         val navIconColors = IconButtonDefaults.iconButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground,
@@ -461,7 +462,8 @@ fun ExerciseHistoryScreen(
                 Text(
                     modifier = Modifier
                         .weight(1f),
-                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " "+ selectedWorkoutHistory!!.time.format(timeFormatter),
+                    text = selectedWorkoutHistory!!.date.format(dateFormatter) + " " +
+                        selectedWorkoutHistory!!.time.format(timeFormatter),
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleMedium,
@@ -515,7 +517,7 @@ fun ExerciseHistoryScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.width(32.dp),
+                        modifier = Modifier.size(32.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = MediumDarkGray,
                     )
@@ -537,71 +539,75 @@ fun ExerciseHistoryScreen(
                 }
             }
             else -> {
+                val scrollState = rememberScrollState()
                 when (selectedHistoryMode.coerceIn(0, 1)) {
                     0 -> {
-                        val scrollState = androidx.compose.foundation.rememberScrollState()
                         Column(
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .weight(1f)
                                 .fillMaxSize()
-                                .verticalColumnScrollbarContainer(
-                                    scrollState = scrollState,
+                                .verticalScroll(
+                                    state = scrollState,
                                     enabled = !isChartInteractionActive,
-                                ),
+                                )
+                                .padding(horizontal = Spacing.md),
                             verticalArrangement = Arrangement.spacedBy(15.dp),
                         ) {
-                                    if (setHistoriesByWorkoutHistoryId.isEmpty()) {
-                                        PrimarySurface(
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(15.dp),
-                                                text = "No history in selected range",
-                                                textAlign = TextAlign.Center,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
-                                            )
-                                        }
-                                    }
-                                    if (volumeEntryModel != null) {
-                                        StandardChart(
-                                            cartesianChartModel = volumeEntryModel!!,
-                                            title = "Volume (KG)",
-                                            markerTextFormatter = { formatNumber(it) },
-                                            startAxisValueFormatter = volumeAxisValueFormatter,
-                                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                                            xAxisTickValues = volumes.map { it.first.toDouble() },
-                                            onInteractionChange = { isChartInteractionActive = it },
-                                        )
-                                    }
-
-                                    if (oneRepMaxEntryModel != null) {
-                                        StandardChart(
-                                            cartesianChartModel = oneRepMaxEntryModel!!,
-                                            title = "Estimated 1RM/Session (KG)",
-                                            startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
-                                                value.round(2).toString()
-                                            },
-                                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                                            xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
-                                            onInteractionChange = { isChartInteractionActive = it },
-                                        )
-                                    }
-
-                                    if (durationEntryModel != null) {
-                                        StandardChart(
-                                            cartesianChartModel = durationEntryModel!!,
-                                            title = "Total duration",
-                                            markerTextFormatter = {  value -> formatTime(value.toInt()/1000) },
-                                            startAxisValueFormatter = durationAxisValueFormatter,
-                                            bottomAxisValueFormatter = horizontalAxisValueFormatter,
-                                            xAxisTickValues = durations.map { it.first.toDouble() },
-                                            onInteractionChange = { isChartInteractionActive = it },
-                                        )
-                                    }
+                            if (setHistoriesByWorkoutHistoryId.isEmpty()) {
+                                PrimarySurface(
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(15.dp),
+                                        text = "No history in selected range",
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
+                                    )
                                 }
+                            }
+                            if (volumeEntryModel != null) {
+                                StandardChart(
+                                    cartesianChartModel = volumeEntryModel!!,
+                                    title = "Volume (KG)",
+                                    markerTextFormatter = { formatNumber(it) },
+                                    startAxisValueFormatter = volumeAxisValueFormatter,
+                                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                    xAxisTickValues = volumes.map { it.first.toDouble() },
+                                    onInteractionChange = { isChartInteractionActive = it },
+                                )
+                            }
+
+                            if (oneRepMaxEntryModel != null) {
+                                StandardChart(
+                                    cartesianChartModel = oneRepMaxEntryModel!!,
+                                    title = "Estimated 1RM/Session (KG)",
+                                    startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
+                                        value.round(2).toString()
+                                    },
+                                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                    xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
+                                    onInteractionChange = { isChartInteractionActive = it },
+                                )
+                            }
+
+                            if (durationEntryModel != null) {
+                                StandardChart(
+                                    cartesianChartModel = durationEntryModel!!,
+                                    title = "Total duration",
+                                    markerTextFormatter = { value ->
+                                        formatTime(value.toInt() / 1000)
+                                    },
+                                    startAxisValueFormatter = durationAxisValueFormatter,
+                                    bottomAxisValueFormatter = horizontalAxisValueFormatter,
+                                    xAxisTickValues = durations.map { it.first.toDouble() },
+                                    onInteractionChange = { isChartInteractionActive = it },
+                                )
+                            }
                         }
+                    }
                     1 -> {
                         if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
                             PrimarySurface(
@@ -622,6 +628,7 @@ fun ExerciseHistoryScreen(
                         val lazyListState = rememberLazyListState()
                         val setHistories =
                             setHistoriesByWorkoutHistoryId[selectedWorkoutHistory!!.id]!!
+
                         val hasTarget =
                             exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null
 
@@ -680,123 +687,57 @@ fun ExerciseHistoryScreen(
 
                         LazyColumn(
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .weight(1f)
-                                .fillMaxSize()
-                                .verticalLazyColumnScrollbar(
-                                    lazyListState = lazyListState,
-                                    enableTopFade = false,
-                                    enableBottomFade = false,
-                                ),
+                                .fillMaxSize(),
                             state = lazyListState,
                             verticalArrangement = Arrangement.spacedBy(15.dp),
                         ) {
                             item {
                                 workoutSelector()
                             }
+                            if (hasTarget) {
+                                item {
+                                    PrimarySurface {
+                                        val lowHr = getHeartRateFromPercentage(
+                                            exercise.lowerBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
+                                        )
+                                        val highHr = getHeartRateFromPercentage(
+                                            exercise.upperBoundMaxHRPercent!!,
+                                            userAge,
+                                            measuredMaxHeartRate,
+                                            restingHeartRate
+                                        )
+                                        TargetHrProgressSection(
+                                            targetCounter = targetCounter,
+                                            targetTotal = targetTotal,
+                                            lowHrBpm = lowHr,
+                                            highHrBpm = highHr,
+                                        )
+                                    }
+                                }
+                            }
                             item {
                                 PrimarySurface {
-                                        if (hasTarget) {
-                                            Column {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(10.dp)
-                                                ) {
-                                                    var progress =
-                                                        targetCounter.toFloat() / targetTotal
-                                                    if (progress.isNaN()) {
-                                                        progress = 0f
-                                                    }
-
-                                                    Text(
-                                                        text = "Target HR",
-                                                        color = MaterialTheme.colorScheme.onBackground,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                    )
-                                                    Spacer(Modifier.height(5.dp))
-                                                    Row(modifier = Modifier.fillMaxWidth()) {
-                                                        val lowHr =
-                                                            getHeartRateFromPercentage(
-                                                                exercise.lowerBoundMaxHRPercent!!,
-                                                                userAge,
-                                                                measuredMaxHeartRate,
-                                                                restingHeartRate
-                                                            )
-                                                        val highHr =
-                                                            getHeartRateFromPercentage(
-                                                                exercise.upperBoundMaxHRPercent!!,
-                                                                userAge,
-                                                                measuredMaxHeartRate,
-                                                                restingHeartRate
-                                                            )
-                                                        Text(
-                                                            "$lowHr - $highHr bpm",
-                                                            Modifier.weight(1f),
-                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                        )
-                                                        Spacer(Modifier.weight(1f))
-                                                        Text(
-                                                            text = "${(progress * 100).toInt()}% ${
-                                                                formatTime(
-                                                                    targetCounter
-                                                                )
-                                                            }",
-                                                            Modifier.weight(1f),
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            textAlign = TextAlign.End,
-                                                            color = MaterialTheme.colorScheme.onBackground,
-                                                        )
-                                                    }
-                                                    Spacer(Modifier.height(5.dp))
-                                                    SimpleProgressIndicator(
-                                                        progress = progress,
-                                                        trackColor = MediumDarkGray,
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .height(16.dp)
-                                                            .clip(MaterialTheme.shapes.large),
-                                                        progressBarColor = Color.hsl(
-                                                            113f,
-                                                            0.79f,
-                                                            0.34f
-                                                        ),
-                                                    )
-                                                }
-                                                if (setHistories.isSupersetSession) {
-                                                    SupersetSetHistoriesRenderer(
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                        setHistories = setHistories.renderSetHistories,
-                                                        workout = workout,
-                                                        getEquipmentById = { appViewModel.getEquipmentById(it) }
-                                                    )
-                                                } else {
-                                                    SetHistoriesRenderer(
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                        setHistories = setHistories.renderSetHistories,
-                                                        appViewModel = appViewModel,
-                                                        workout = workout
-                                                    )
-                                                }
-                                            }
-                                        } else {
-                                            if (setHistories.isSupersetSession) {
-                                                SupersetSetHistoriesRenderer(
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                    setHistories = setHistories.renderSetHistories,
-                                                    workout = workout,
-                                                    getEquipmentById = { appViewModel.getEquipmentById(it) }
-                                                )
-                                            } else {
-                                                SetHistoriesRenderer(
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                                    setHistories = setHistories.renderSetHistories,
-                                                    appViewModel = appViewModel,
-                                                    workout = workout
-                                                )
-                                            }
-                                        }
+                                    if (setHistories.isSupersetSession) {
+                                        SupersetSetHistoriesRenderer(
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                            setHistories = setHistories.renderSetHistories,
+                                            workout = workout,
+                                            getEquipmentById = { appViewModel.getEquipmentById(it) }
+                                        )
+                                    } else {
+                                        SetHistoriesRenderer(
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
+                                            setHistories = setHistories.renderSetHistories,
+                                            appViewModel = appViewModel,
+                                            workout = workout
+                                        )
                                     }
+                                }
                             }
                         }
                     }

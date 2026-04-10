@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.DashedCard
@@ -49,7 +50,6 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.shared.workout.model.WorkoutSessionStatus
-import com.gabstra.myworkoutassistant.verticalColumnScrollbarContainer
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import java.time.LocalDate
@@ -212,7 +212,8 @@ fun WorkoutsStatusTab(
             .fillMaxWidth()
             .padding(top = 10.dp)
             .padding(bottom = 10.dp)
-            .verticalColumnScrollbarContainer(scrollState),
+            .verticalScroll(scrollState)
+            .padding(horizontal = Spacing.md),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         val overrideStartLabel = remember(weeklyProgressSnapshot.effectiveOverrideWeekStart, currentLocale) {

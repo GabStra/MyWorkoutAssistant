@@ -372,26 +372,64 @@ fun Modifier.verticalLazyColumnScrollbar(
 
     val layoutInfo = lazyListState.layoutInfo
     val visibleItemsInfo = layoutInfo.visibleItemsInfo
+    val totalItemsCount = layoutInfo.totalItemsCount
 
-    // Show scrollbar on scroll interaction - use firstVisibleItemIndex to track scroll changes
+    var stableItemCount by remember(lazyListState) { mutableStateOf<Int?>(null) }
+    var stableVisibleItemsCount by remember(lazyListState) { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(totalItemsCount, visibleItemsInfo.size) {
+        if (totalItemsCount > 0 && visibleItemsInfo.isNotEmpty()) {
+            val shouldResetBaseline =
+                stableItemCount == null ||
+                    totalItemsCount > (stableItemCount ?: 0) ||
+                    visibleItemsInfo.size > (stableVisibleItemsCount ?: 0)
+
+            if (shouldResetBaseline) {
+                stableItemCount = totalItemsCount
+                stableVisibleItemsCount = visibleItemsInfo.size
+            }
+        }
+    }
+
     val firstVisibleItemIndex = visibleItemsInfo.firstOrNull()?.index ?: 0
-    LaunchedEffect(firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+    val firstVisibleItemScrollOffset = lazyListState.firstVisibleItemScrollOffset
+    val lastVisibleItem = visibleItemsInfo.lastOrNull()
+    val viewportEndOffset = layoutInfo.viewportEndOffset
+    val canScrollForward = when {
+        lastVisibleItem == null -> false
+        lastVisibleItem.index < totalItemsCount - 1 -> true
+        else -> (lastVisibleItem.offset + lastVisibleItem.size) > viewportEndOffset
+    }
+    val canScrollBackward = firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 0
+    val isActuallyScrollable =
+        visibleItemsInfo.isNotEmpty() && totalItemsCount > 0 && (canScrollBackward || canScrollForward)
+
+    fun showScrollbarTemporarily() {
         scrollbarVisible = true
         hideTimeoutJob?.cancel()
         hideTimeoutJob = coroutineScope.launch {
-            delay(2500) // 2.5 seconds
+            delay(2500)
             scrollbarVisible = false
+        }
+    }
+
+    LaunchedEffect(isActuallyScrollable) {
+        if (isActuallyScrollable) {
+            showScrollbarTemporarily()
+        }
+    }
+
+    LaunchedEffect(firstVisibleItemIndex, firstVisibleItemScrollOffset) {
+        if (isActuallyScrollable) {
+            showScrollbarTemporarily()
         }
     }
 
     return this
         .pointerInput(Unit) {
             detectTapGestures {
-                scrollbarVisible = true
-                hideTimeoutJob?.cancel()
-                hideTimeoutJob = coroutineScope.launch {
-                    delay(2500)
-                    scrollbarVisible = false
+                if (isActuallyScrollable) {
+                    showScrollbarTemporarily()
                 }
             }
         }
@@ -402,39 +440,31 @@ fun Modifier.verticalLazyColumnScrollbar(
         val componentHeight = size.height
         val viewportHeight = componentHeight
 
-        // Calculate scroll position and total content height
         val firstVisibleItem = visibleItemsInfo.firstOrNull()
-        
-        if (firstVisibleItem == null || layoutInfo.totalItemsCount == 0) {
+        val effectiveTotalItemsCount = stableItemCount ?: totalItemsCount
+        val effectiveVisibleItemsCount =
+            (stableVisibleItemsCount ?: visibleItemsInfo.size).coerceAtLeast(1)
+
+        if (
+            firstVisibleItem == null ||
+            lastVisibleItem == null ||
+            effectiveTotalItemsCount == 0
+        ) {
             return@drawWithContent
         }
 
-        // Calculate current scroll position (pixels scrolled)
-        val currentScrollValue = if (firstVisibleItem.index > 0) {
-            // Estimate: sum of heights of items before first visible item
-            // Use average item height from visible items as estimate
-            val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
-                visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
-            } else {
-                firstVisibleItem.size.toFloat()
-            }
-            (firstVisibleItem.index * avgItemHeight) - firstVisibleItem.offset
-        } else {
-            (-firstVisibleItem.offset).toFloat()
-        }
-
-        // Calculate total content height
-        // Estimate based on visible items and total item count
-        val avgItemHeight = if (visibleItemsInfo.isNotEmpty()) {
-            visibleItemsInfo.sumOf { it.size }.toFloat() / visibleItemsInfo.size
-        } else {
-            firstVisibleItem.size.toFloat()
-        }
-        val estimatedTotalHeight = layoutInfo.totalItemsCount * avgItemHeight
-        val maxScrollValue = (estimatedTotalHeight - viewportHeight).coerceAtLeast(0f)
+        val firstVisibleItemSize = firstVisibleItem.size.coerceAtLeast(1)
+        val firstItemOffsetFraction =
+            (-firstVisibleItem.offset).toFloat() / firstVisibleItemSize.toFloat()
+        val maxScrollableItems = (effectiveTotalItemsCount - effectiveVisibleItemsCount).coerceAtLeast(1)
+        val scrollProgress = (
+            (firstVisibleItem.index.toFloat() + firstItemOffsetFraction) / maxScrollableItems.toFloat()
+        ).coerceIn(0f, 1f)
 
         // --- Content Fade Logic ---
         val fadeHeightPx = rememberedContentFadeHeight.toPx()
+        val currentScrollValue = scrollProgress * viewportHeight
+        val maxScrollValue = if (isActuallyScrollable) viewportHeight else 0f
         if (fadeHeightPx > 0f) {
             // --- Top Fade Calculation ---
             if (rememberedEnableTopFade) {
@@ -475,11 +505,10 @@ fun Modifier.verticalLazyColumnScrollbar(
         }
 
         // --- Scrollbar Logic ---
-        val totalContentHeight = (maxScrollValue + viewportHeight).coerceAtLeast(viewportHeight)
-        val scrollValue = currentScrollValue
-        val visibleRatio = (viewportHeight / totalContentHeight).coerceIn(0f, 1f)
+        val visibleRatio =
+            (effectiveVisibleItemsCount.toFloat() / effectiveTotalItemsCount.toFloat()).coerceIn(0f, 1f)
 
-        if (visibleRatio >= 1f || maxScrollValue <= 0) {
+        if (visibleRatio >= 1f || !isActuallyScrollable) {
             return@drawWithContent
         }
 
@@ -497,10 +526,8 @@ fun Modifier.verticalLazyColumnScrollbar(
         val scrollBarHeight = computedThumbHeight
             .coerceAtLeast(minThumbHeight)
             .coerceAtMost(maxThumbHeight)
-        val availableScrollSpace = maxScrollValue
         val availableTrackSpace = (actualTrackHeight - scrollBarHeight).coerceAtLeast(0f)
-        val scrollProgress = if (availableScrollSpace > 0) scrollValue / availableScrollSpace else 0f
-        val clampedScrollProgress = scrollProgress.coerceIn(0f, 1f)
+        val clampedScrollProgress = scrollProgress
         val scrollBarOffsetWithinTrack = clampedScrollProgress * availableTrackSpace
         val scrollBarTopOffset = trackTopOffset + scrollBarOffsetWithinTrack
 
@@ -508,7 +535,6 @@ fun Modifier.verticalLazyColumnScrollbar(
         val barWidthPx = rememberedWidth.toPx()
         val paddingPx = rememberedEndPadding
 
-        // Only draw scrollbar if alpha > 0
         if (scrollbarAlpha > 0f) {
             if (rememberedShowTrack) {
                 drawRoundRect(
