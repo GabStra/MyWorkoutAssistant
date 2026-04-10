@@ -21,18 +21,15 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.viewModelScope
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
 import io.reactivex.rxjava3.core.BackpressureStrategy
-import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.core.FlowableEmitter
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 import java.util.UUID
-import kotlinx.coroutines.launch
 
 class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.WHOOP_BLE) {
     private var whoopStreamDisposable: Disposable? = null
@@ -77,26 +74,7 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
             }
         )
         whoopClient = client
-        whoopStreamDisposable = StaleRetryingBpmStream(
-            deviceId = whoopConfig.deviceId.orEmpty(),
-            source = client,
-            reconnection = client,
-            staleTimeoutSec = 15,
-            backoffSec = 2,
-            onReconnecting = {
-                viewModelScope.launch(appCeh) {
-                    publishHeartRate(null)
-                    if (!isSessionSkipped) {
-                        publishConnectionState(
-                            ExternalHeartRateConnectionState.Connecting(
-                                source = source,
-                                message = "Reconnecting to your WHOOP..."
-                            )
-                        )
-                    }
-                }
-            }
-        ).stream()
+        whoopStreamDisposable = client.bpmStream(whoopConfig.deviceId.orEmpty())
             .subscribeOn(Schedulers.io())
             .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
             .subscribe(
@@ -139,11 +117,15 @@ class WhoopHeartRateViewModel : BaseExternalHeartRateViewModel(HeartRateSource.W
     }
 }
 
+interface HrBpmSource {
+    fun bpmStream(deviceId: String): Flowable<Int>
+}
+
 private class WhoopBleClient(
     private val context: Context,
     private val config: WhoopHeartRateConfig,
     private val onStateChange: (ExternalHeartRateConnectionState) -> Unit,
-) : HrBpmSource, ReconnectionActions {
+) : HrBpmSource {
     companion object {
         private const val TAG = "WhoopBleClient"
         private val HEART_RATE_SERVICE_UUID =
@@ -314,15 +296,6 @@ private class WhoopBleClient(
             emitter.setCancellable { cleanup() }
             connectOrScan()
         }, BackpressureStrategy.LATEST)
-    }
-
-    override fun onStale(deviceId: String, onReconnecting: (() -> Unit)?): Completable {
-        onReconnecting?.invoke()
-        return Completable.fromAction {
-            manualDisconnect = true
-            cleanup()
-            manualDisconnect = false
-        }
     }
 
     fun cleanup() {

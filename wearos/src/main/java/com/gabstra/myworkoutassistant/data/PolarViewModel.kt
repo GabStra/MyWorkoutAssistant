@@ -13,61 +13,16 @@ import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
-import io.reactivex.rxjava3.core.Completable
 import io.reactivex.rxjava3.core.Flowable
-import io.reactivex.rxjava3.core.Scheduler
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.disposables.Disposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import java.util.UUID
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-interface HrBpmSource {
-    fun bpmStream(deviceId: String): Flowable<Int>
-}
-
-interface ReconnectionActions {
-    fun onStale(deviceId: String, onReconnecting: (() -> Unit)? = null): Completable
-}
-
-class StaleRetryingBpmStream(
-    private val deviceId: String,
-    private val source: HrBpmSource,
-    private val reconnection: ReconnectionActions,
-    private val staleTimeoutSec: Long = 15,
-    private val backoffSec: Long = 2,
-    private val scheduler: Scheduler = Schedulers.computation(),
-    private val onReconnecting: (() -> Unit)? = null,
-) {
-    fun stream(): Flowable<Int> {
-        return Flowable.defer { source.bpmStream(deviceId) }
-            .timeout(
-                staleTimeoutSec,
-                TimeUnit.SECONDS,
-                scheduler,
-                Flowable.error<Int>(
-                    TimeoutException("Heart rate stream timed out after ${staleTimeoutSec}s")
-                )
-            )
-            .retryWhen { errors ->
-                errors.flatMap { throwable ->
-                    if (throwable is TimeoutException) {
-                        reconnection.onStale(deviceId, onReconnecting)
-                            .andThen(Flowable.timer(backoffSec, TimeUnit.SECONDS, scheduler))
-                    } else {
-                        Flowable.error(throwable)
-                    }
-                }
-            }
-    }
-}
 
 class PolarHrBpmSource(private val api: PolarBleApi) : HrBpmSource {
     override fun bpmStream(deviceId: String): Flowable<Int> =
