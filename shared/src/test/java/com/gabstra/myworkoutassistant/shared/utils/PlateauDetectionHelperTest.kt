@@ -685,6 +685,41 @@ class PlateauDetectionHelperTest {
     }
 
     @Test
+    fun testEdgeCase3_UnweightedToWeightedBodyweightDoesNotCrash() {
+        val exerciseId = UUID.randomUUID()
+        val baseDate = LocalDate.now().minusDays(10)
+        val workoutHistory1 = createWorkoutHistory(date = baseDate)
+        val workoutHistory2 = createWorkoutHistory(date = baseDate.plusDays(1))
+        val workoutHistory3 = createWorkoutHistory(date = baseDate.plusDays(2))
+        val workoutHistory4 = createWorkoutHistory(date = baseDate.plusDays(3))
+        val workoutHistory5 = createWorkoutHistory(date = baseDate.plusDays(4))
+
+        val setHistories = listOf(
+            createBodyWeightSetHistory(workoutHistory1.id, exerciseId, relativeBodyWeight = 70.0, additionalWeight = 0.0, reps = 10),
+            createBodyWeightSetHistory(workoutHistory2.id, exerciseId, relativeBodyWeight = 70.0, additionalWeight = 0.0, reps = 10),
+            createBodyWeightSetHistory(workoutHistory3.id, exerciseId, relativeBodyWeight = 70.0, additionalWeight = 2.5, reps = 8),
+            createBodyWeightSetHistory(workoutHistory4.id, exerciseId, relativeBodyWeight = 70.0, additionalWeight = 2.5, reps = 8),
+            createBodyWeightSetHistory(workoutHistory5.id, exerciseId, relativeBodyWeight = 70.0, additionalWeight = 2.5, reps = 8)
+        )
+
+        val workoutHistories = mapOf(
+            workoutHistory1.id to workoutHistory1,
+            workoutHistory2.id to workoutHistory2,
+            workoutHistory3.id to workoutHistory3,
+            workoutHistory4.id to workoutHistory4,
+            workoutHistory5.id to workoutHistory5
+        )
+
+        val (isPlateau, sessionImproved, _) = PlateauDetectionHelper.detectPlateauFromHistories(
+            setHistories,
+            workoutHistories
+        )
+
+        assertTrue("Session 3 should count as improvement when external load increases from +0kg", sessionImproved[2])
+        assertFalse("Should not detect plateau after progressing from unweighted to weighted bodyweight work", isPlateau)
+    }
+
+    @Test
     fun testEdgeCase4_MultipleWorkWeightsPerSession() {
         // Edge case 4: Multiple work weights per session - step loading should count as progress
         val exerciseId = UUID.randomUUID()

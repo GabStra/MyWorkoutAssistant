@@ -368,13 +368,21 @@ object PlateauDetectionHelper {
             setHistories.forEach { setHistory ->
                 when (val setData = setHistory.setData) {
                     is WeightSetData -> {
-                        if (setData.subCategory == SetSubCategory.WorkSet) {
+                        if (
+                            setData.subCategory == SetSubCategory.WorkSet &&
+                            !setHistory.skipped &&
+                            setData.getWeight() > 0.0
+                        ) {
                             val simpleSet = SimpleSet(setData.getWeight(), setData.actualReps)
                             workingSets.add(simpleSet)
                         }
                     }
                     is BodyWeightSetData -> {
-                        if (setData.subCategory == SetSubCategory.WorkSet) {
+                        if (
+                            setData.subCategory == SetSubCategory.WorkSet &&
+                            !setHistory.skipped &&
+                            setData.getWeight() > 0.0
+                        ) {
                             hasBodyweightSets = true
                             val totalWeight = setData.getWeight()
                             val externalWeight = setData.additionalWeight
@@ -590,14 +598,21 @@ object PlateauDetectionHelper {
                                         break
                                     }
                                 }
-                                
+
+                                if (bestLowerWeight <= 0.0 || bestRepsLower <= 0) {
+                                    // External-load bodyweight work can validly progress from +0kg to +Xkg.
+                                    // The 1RM model requires a strictly positive load, so treat the new load as progress.
+                                    improved = true
+                                    break
+                                }
+
                                 // Calculate expected rep drop using 1RM
                                 val expectedNewReps = calculateExpectedRepDrop(
                                     oldWeight = bestLowerWeight,  // Use the best lower weight from baseline
                                     oldReps = bestRepsLower,
                                     newWeight = currentBin
                                 )
-                                
+
                                 // Calculate dynamic tolerance
                                 val dynamicTolerance = calculateRepToleranceForWeightIncrease(
                                     oldWeight = bestLowerWeight,
@@ -605,15 +620,15 @@ object PlateauDetectionHelper {
                                     oldReps = bestRepsLower,
                                     expectedNewReps = expectedNewReps
                                 )
-                                
+
                                 // Check if actual reps are within tolerance of expected
                                 val minAcceptableReps = maxOf(1, expectedNewReps - dynamicTolerance)
                                 val conditionBMet = currentReps >= minAcceptableReps
-                                
+
                                 // Also check for extreme cases: if rep drop is >50% of old reps, be more strict
                                 val repDropPct = (bestRepsLower - currentReps).toDouble() / bestRepsLower
                                 val isExtremeDrop = repDropPct > 0.50 && currentReps < 3
-                                
+
                                 if (conditionBMet && !isExtremeDrop) {
                                     improved = true
                                     break // Any qualifying new weight bin counts as improvement
