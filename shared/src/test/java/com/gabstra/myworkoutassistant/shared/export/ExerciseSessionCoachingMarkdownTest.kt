@@ -3,7 +3,11 @@ package com.gabstra.myworkoutassistant.shared.export
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
+import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -76,43 +80,124 @@ class ExerciseSessionCoachingMarkdownTest {
         assertTrue(enduranceMarkdown.toString().contains("- S1: Duration: 03:00"))
     }
 
+    @Test
+    fun appendHistoricalSessionBlockMarkdown_excludes_warmup_and_calibration_sets_from_previous_session_metrics() {
+        val date = LocalDate.of(2026, 3, 30)
+        val time = LocalTime.of(19, 51, 38)
+        val startTime = LocalDateTime.of(date, time)
+        val workoutHistory = workoutHistory(date, time, startTime)
+        val session = ComparableExerciseSession(
+            workoutHistory = workoutHistory,
+            workout = null,
+            activeSetHistories = listOf(
+                setHistory(
+                    workoutHistory = workoutHistory,
+                    startTime = startTime,
+                    order = 0u,
+                    setData = WeightSetData(
+                        actualReps = 5,
+                        actualWeight = 40.0,
+                        volume = 200.0,
+                        subCategory = SetSubCategory.WarmupSet
+                    )
+                ),
+                setHistory(
+                    workoutHistory = workoutHistory,
+                    startTime = startTime.plusSeconds(60),
+                    order = 1u,
+                    setData = WeightSetData(
+                        actualReps = 3,
+                        actualWeight = 70.0,
+                        volume = 210.0,
+                        subCategory = SetSubCategory.CalibrationSet
+                    )
+                ),
+                setHistory(
+                    workoutHistory = workoutHistory,
+                    startTime = startTime.plusSeconds(120),
+                    order = 2u,
+                    setData = WeightSetData(
+                        actualReps = 8,
+                        actualWeight = 80.0,
+                        volume = 640.0,
+                        subCategory = SetSubCategory.WorkSet
+                    )
+                )
+            ).filterForInsightComparisonSets(),
+            progression = null
+        )
+
+        val markdown = StringBuilder()
+        appendHistoricalSessionBlockMarkdown(
+            markdown = markdown,
+            heading = "Previous Session",
+            session = session,
+            achievableWeights = null
+        )
+
+        val rendered = markdown.toString()
+        assertTrue(rendered.contains("- Executed sets: 1"))
+        assertTrue(rendered.contains("- Total volume: 640 kg"))
+        assertTrue(rendered.contains("- S1: 80kg×8"))
+        assertFalse(rendered.contains("40kg×5"))
+        assertFalse(rendered.contains("70kg×3"))
+    }
+
     private fun comparableSession(
-        setData: com.gabstra.myworkoutassistant.shared.setdata.SetData,
+        setData: SetData,
     ): ComparableExerciseSession {
         val date = LocalDate.of(2026, 3, 30)
         val time = LocalTime.of(19, 51, 38)
         val startTime = LocalDateTime.of(date, time)
+        val workoutHistory = workoutHistory(date, time, startTime)
         return ComparableExerciseSession(
-            workoutHistory = WorkoutHistory(
-                id = UUID.randomUUID(),
-                workoutId = UUID.randomUUID(),
-                date = date,
-                time = time,
-                startTime = startTime,
-                duration = 2_400,
-                heartBeatRecords = emptyList(),
-                isDone = true,
-                hasBeenSentToHealth = false,
-                globalId = UUID.randomUUID()
-            ),
+            workoutHistory = workoutHistory,
             workout = null,
             activeSetHistories = listOf(
-                SetHistory(
-                    id = UUID.randomUUID(),
-                    workoutHistoryId = UUID.randomUUID(),
-                    exerciseId = UUID.randomUUID(),
-                    equipmentIdSnapshot = null,
-                    equipmentNameSnapshot = null,
-                    equipmentTypeSnapshot = null,
-                    setId = UUID.randomUUID(),
-                    order = 0u,
-                    startTime = startTime,
-                    endTime = startTime.plusSeconds(45),
-                    setData = setData,
-                    skipped = false
-                )
+                setHistory(workoutHistory, startTime, 0u, setData)
             ),
             progression = null
+        )
+    }
+
+    private fun workoutHistory(
+        date: LocalDate,
+        time: LocalTime,
+        startTime: LocalDateTime,
+    ): WorkoutHistory {
+        return WorkoutHistory(
+            id = UUID.randomUUID(),
+            workoutId = UUID.randomUUID(),
+            date = date,
+            time = time,
+            startTime = startTime,
+            duration = 2_400,
+            heartBeatRecords = emptyList(),
+            isDone = true,
+            hasBeenSentToHealth = false,
+            globalId = UUID.randomUUID()
+        )
+    }
+
+    private fun setHistory(
+        workoutHistory: WorkoutHistory,
+        startTime: LocalDateTime,
+        order: UInt,
+        setData: SetData,
+    ): SetHistory {
+        return SetHistory(
+            id = UUID.randomUUID(),
+            workoutHistoryId = workoutHistory.id,
+            exerciseId = UUID.randomUUID(),
+            equipmentIdSnapshot = null,
+            equipmentNameSnapshot = null,
+            equipmentTypeSnapshot = null,
+            setId = UUID.randomUUID(),
+            order = order,
+            startTime = startTime,
+            endTime = startTime.plusSeconds(45),
+            setData = setData,
+            skipped = false
         )
     }
 }

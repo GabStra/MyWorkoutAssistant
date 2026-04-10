@@ -8,7 +8,6 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.workout.history.WorkoutHistoryLayoutItem
 import com.gabstra.myworkoutassistant.shared.workout.history.buildWorkoutHistoryLayout
 import com.gabstra.myworkoutassistant.shared.workout.history.formatRestLineForMarkdown
@@ -123,7 +122,7 @@ suspend fun buildWorkoutSessionMarkdown(
             is WorkoutHistoryLayoutItem.ExerciseSection -> {
                 val exercise = exercisesById[item.exerciseId] ?: continue
                 val allSets = sectionMap[item.exerciseId].orEmpty()
-                val active = allSets.filter { it.setData !is RestSetData }
+                val active = allSets.filterForInsightComparisonSets()
                 if (active.isEmpty()) continue
                 markdown.append("### ${exercise.name}\n")
                 val comparableSessions = loadComparableExerciseSessions(
@@ -233,7 +232,7 @@ suspend fun buildWorkoutSessionMarkdown(
                 markdown.append("### Superset: ${superset.exercises.joinToString(" ↔ ") { it.name }}\n\n")
                 for (ex in superset.exercises) {
                     val setsForEx = setHistoriesSuperset.filter { it.exerciseId == ex.id }
-                    val active = setsForEx.filter { it.setData !is RestSetData }
+                    val active = setsForEx.filterForInsightComparisonSets()
                     if (active.isEmpty()) continue
                     markdown.append("#### ${ex.name}\n")
                     val progression = exerciseSessionProgressionDao.getByWorkoutHistoryIdAndExerciseId(

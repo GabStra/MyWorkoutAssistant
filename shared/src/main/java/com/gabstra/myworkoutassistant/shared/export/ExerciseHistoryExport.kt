@@ -9,7 +9,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
-import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.Calendar
@@ -61,7 +60,7 @@ suspend fun buildExerciseHistoryMarkdown(
             workoutHistory.id,
             exercise.id
         ).sortedBy { it.order }
-        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
+        val activeSetHistories = setHistories.filterForInsightComparisonSets()
         if (activeSetHistories.isEmpty()) null else ExerciseExportSession(
             workoutHistory = workoutHistory,
             activeSetHistories = activeSetHistories

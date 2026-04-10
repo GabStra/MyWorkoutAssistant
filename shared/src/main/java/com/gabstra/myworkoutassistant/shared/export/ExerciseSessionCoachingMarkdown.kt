@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -71,7 +72,7 @@ internal suspend fun loadComparableExerciseSessions(
             workoutHistory.id,
             exercise.id
         ).sortedBy { it.order }
-        val activeSetHistories = setHistories.filter { it.setData !is RestSetData }
+        val activeSetHistories = setHistories.filterForInsightComparisonSets()
         if (activeSetHistories.isEmpty()) {
             null
         } else {
@@ -86,6 +87,23 @@ internal suspend fun loadComparableExerciseSessions(
             )
         }
     }
+}
+
+internal fun List<SetHistory>.filterForInsightComparisonSets(): List<SetHistory> {
+    return filterNot { setHistory ->
+        when (val setData = setHistory.setData) {
+            is RestSetData -> true
+            is WeightSetData -> setData.subCategory.isExcludedFromInsightComparison()
+            is BodyWeightSetData -> setData.subCategory.isExcludedFromInsightComparison()
+            else -> false
+        }
+    }
+}
+
+private fun SetSubCategory.isExcludedFromInsightComparison(): Boolean {
+    return this == SetSubCategory.WarmupSet ||
+        this == SetSubCategory.CalibrationPendingSet ||
+        this == SetSubCategory.CalibrationSet
 }
 
 internal fun appendExerciseContextMarkdown(
