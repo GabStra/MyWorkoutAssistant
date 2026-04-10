@@ -15,6 +15,7 @@ import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -36,6 +37,7 @@ internal data class ComparableExerciseSession(
 private data class ExportSessionMetrics(
     val executedSetCount: Int,
     val simpleSets: List<SimpleSet>,
+    val setSummaryEntries: List<String>,
     val totalVolume: Double,
     val totalDurationSeconds: Int,
 )
@@ -114,7 +116,7 @@ internal fun appendExerciseContextMarkdown(
 
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
         markdown.append(
-            "- Exercise target zone: ${formatNumber(exercise.lowerBoundMaxHRPercent.toDouble() * 100)}%-${formatNumber(exercise.upperBoundMaxHRPercent.toDouble() * 100)}% of max HR\n"
+            "- Exercise target zone: ${formatPercentValue(exercise.lowerBoundMaxHRPercent.toDouble())}%-${formatPercentValue(exercise.upperBoundMaxHRPercent.toDouble())}% of max HR\n"
         )
     }
 
@@ -133,6 +135,11 @@ internal fun appendExerciseContextMarkdown(
     }
 
     markdown.append("\n")
+}
+
+private fun formatPercentValue(value: Double): String {
+    val normalized = if (value in 0.0..1.0) value * 100.0 else value
+    return formatNumber(normalized)
 }
 
 internal fun appendPlannedMarkdown(
@@ -201,9 +208,9 @@ internal fun appendExecutedSummaryMarkdown(
     if (metrics.totalDurationSeconds > 0) {
         markdown.append("- Total duration: ${formatDurationForExport(metrics.totalDurationSeconds)}\n")
     }
-    if (metrics.simpleSets.isNotEmpty()) {
+    if (metrics.setSummaryEntries.isNotEmpty()) {
         markdown.append(
-            "- Set summary: ${metrics.simpleSets.joinToString(", ") { "${formatNumber(it.weight)}kg×${it.reps}" }}\n"
+            "- Set summary: ${metrics.setSummaryEntries.joinToString(", ")}\n"
         )
     }
     markdown.append("\n")
@@ -224,11 +231,9 @@ internal fun appendExerciseTrendMarkdown(
             append(" | ")
             append(session.workout?.name ?: "Unknown Workout")
             append(" | Sets: ${metrics.executedSetCount}")
-            if (metrics.simpleSets.isNotEmpty()) {
+            if (metrics.setSummaryEntries.isNotEmpty()) {
                 append(" | ")
-                append(metrics.simpleSets.joinToString(", ") {
-                    "${formatNumber(it.weight)}kg×${it.reps}"
-                })
+                append(metrics.setSummaryEntries.joinToString(", "))
             }
             if (metrics.totalVolume > 0.0) {
                 append(" | Vol: ${formatNumber(metrics.totalVolume)}kg")
@@ -379,6 +384,7 @@ private fun metricsForSetHistories(
     var totalVolume = 0.0
     var totalDurationSeconds = 0
     val simpleSets = mutableListOf<SimpleSet>()
+    val setSummaryEntries = mutableListOf<String>()
     var executedSetCount = 0
 
     for (setHistory in setHistories) {
@@ -388,18 +394,26 @@ private fun metricsForSetHistories(
             is WeightSetData -> {
                 val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
                 simpleSets += SimpleSet(adjustedWeight, setData.actualReps)
+                setSummaryEntries += formatSimpleSetSummaryEntry(adjustedWeight, setData.actualReps)
                 totalVolume += adjustedWeight * setData.actualReps
             }
             is BodyWeightSetData -> {
                 val effectiveWeight = setData.getWeight()
                 simpleSets += SimpleSet(effectiveWeight, setData.actualReps)
+                setSummaryEntries += formatSimpleSetSummaryEntry(effectiveWeight, setData.actualReps)
                 totalVolume += setData.volume
             }
             is TimedDurationSetData -> {
-                totalDurationSeconds += ((setData.endTimer - setData.startTimer) / 1000).coerceAtLeast(0)
+                extractActualDurationSeconds(setData)?.let { durationSeconds ->
+                    totalDurationSeconds += durationSeconds
+                    setSummaryEntries += formatDurationSummaryEntry(durationSeconds)
+                }
             }
             is EnduranceSetData -> {
-                totalDurationSeconds += (setData.endTimer / 1000).coerceAtLeast(0)
+                extractActualDurationSeconds(setData)?.let { durationSeconds ->
+                    totalDurationSeconds += durationSeconds
+                    setSummaryEntries += formatDurationSummaryEntry(durationSeconds)
+                }
             }
             else -> {
                 executedSetCount -= 1
@@ -410,6 +424,7 @@ private fun metricsForSetHistories(
     return ExportSessionMetrics(
         executedSetCount = executedSetCount,
         simpleSets = simpleSets,
+        setSummaryEntries = setSummaryEntries,
         totalVolume = totalVolume,
         totalDurationSeconds = totalDurationSeconds
     )
@@ -429,15 +444,71 @@ private fun formatSetHistoryInline(
             "${formatNumber(setData.getWeight())}kg×${setData.actualReps}"
         }
         is TimedDurationSetData -> {
-            val durationSeconds = ((setData.endTimer - setData.startTimer) / 1000).coerceAtLeast(0)
-            "Dur:${formatDurationForExport(durationSeconds)}"
+            extractActualDurationSeconds(setData)
+                ?.let(::formatDurationSummaryEntry)
+                ?: "Duration: unknown"
         }
         is EnduranceSetData -> {
-            val durationSeconds = (setData.endTimer / 1000).coerceAtLeast(0)
-            "Dur:${formatDurationForExport(durationSeconds)}"
+            extractActualDurationSeconds(setData)
+                ?.let(::formatDurationSummaryEntry)
+                ?: "Duration: unknown"
         }
         else -> "Other"
     }
+}
+
+private fun formatSimpleSetSummaryEntry(
+    weight: Double,
+    reps: Int,
+): String = "${formatNumber(weight)}kg×$reps"
+
+private fun formatDurationSummaryEntry(
+    durationSeconds: Int,
+): String = "Duration: ${formatDurationForExport(durationSeconds)}"
+
+private fun extractActualDurationSeconds(
+    setData: SetData,
+): Int? = when (setData) {
+    is TimedDurationSetData -> extractTimedDurationSeconds(setData)
+    is EnduranceSetData -> extractEnduranceDurationSeconds(setData)
+    else -> null
+}
+
+private fun extractTimedDurationSeconds(
+    setData: TimedDurationSetData,
+): Int {
+    val startSeconds = normalizeTimerValueToSeconds(setData.startTimer)
+    val endSeconds = normalizeTimerValueToSeconds(setData.endTimer)
+
+    return when {
+        startSeconds <= 0 -> 0
+        endSeconds in 1 until startSeconds -> startSeconds - endSeconds
+        setData.hasBeenExecuted && endSeconds <= 0 -> startSeconds
+        setData.hasBeenExecuted && endSeconds == startSeconds -> startSeconds
+        endSeconds > startSeconds -> endSeconds
+        else -> 0
+    }
+}
+
+private fun extractEnduranceDurationSeconds(
+    setData: EnduranceSetData,
+): Int {
+    val elapsedSeconds = normalizeTimerValueToSeconds(setData.endTimer)
+    val fallbackSeconds = normalizeTimerValueToSeconds(setData.startTimer)
+
+    return when {
+        elapsedSeconds > 0 -> elapsedSeconds
+        setData.hasBeenExecuted && fallbackSeconds > 0 -> fallbackSeconds
+        else -> 0
+    }
+}
+
+private fun normalizeTimerValueToSeconds(
+    rawValue: Int,
+): Int = when {
+    rawValue <= 0 -> 0
+    rawValue >= 1_000 -> rawValue / 1_000
+    else -> rawValue
 }
 
 private fun compareSessions(
