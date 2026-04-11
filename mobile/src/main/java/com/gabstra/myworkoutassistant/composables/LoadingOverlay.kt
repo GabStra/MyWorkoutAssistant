@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,11 +18,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import android.os.SystemClock
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
+import kotlinx.coroutines.delay
 
 @Composable
 fun rememberMinimumLoadingVisibility(
@@ -79,7 +79,7 @@ fun LoadingOverlay(isVisible: Boolean, text: String = "Loading...") {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
