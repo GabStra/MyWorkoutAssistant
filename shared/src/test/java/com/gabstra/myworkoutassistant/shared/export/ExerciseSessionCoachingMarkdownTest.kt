@@ -143,6 +143,32 @@ class ExerciseSessionCoachingMarkdownTest {
         assertFalse(rendered.contains("70kg×3"))
     }
 
+    @Test
+    fun appendExecutedAndHistoricalMarkdown_include_autoRegulationRir_when_present() {
+        val session = comparableSession(
+            setData = WeightSetData(
+                actualReps = 8,
+                actualWeight = 80.0,
+                volume = 640.0,
+                autoRegulationRIR = 2.0
+            )
+        )
+
+        val executedMarkdown = StringBuilder()
+        appendExecutedSummaryMarkdown(executedMarkdown, session, achievableWeights = null)
+
+        val historicalMarkdown = StringBuilder()
+        appendHistoricalSessionBlockMarkdown(
+            markdown = historicalMarkdown,
+            heading = "Previous Session",
+            session = session,
+            achievableWeights = null
+        )
+
+        assertTrue(executedMarkdown.toString().contains("- Set summary: 80kg×8 (auto RIR 2)"))
+        assertTrue(historicalMarkdown.toString().contains("- S1: 80kg×8 (auto RIR 2)"))
+    }
+
     private fun comparableSession(
         setData: SetData,
     ): ComparableExerciseSession {

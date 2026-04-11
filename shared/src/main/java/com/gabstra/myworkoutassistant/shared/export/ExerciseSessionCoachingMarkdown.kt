@@ -412,13 +412,21 @@ private fun metricsForSetHistories(
             is WeightSetData -> {
                 val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
                 simpleSets += SimpleSet(adjustedWeight, setData.actualReps)
-                setSummaryEntries += formatSimpleSetSummaryEntry(adjustedWeight, setData.actualReps)
+                setSummaryEntries += formatSimpleSetSummaryEntry(
+                    weight = adjustedWeight,
+                    reps = setData.actualReps,
+                    autoRegulationRIR = setData.autoRegulationRIR
+                )
                 totalVolume += adjustedWeight * setData.actualReps
             }
             is BodyWeightSetData -> {
                 val effectiveWeight = setData.getWeight()
                 simpleSets += SimpleSet(effectiveWeight, setData.actualReps)
-                setSummaryEntries += formatSimpleSetSummaryEntry(effectiveWeight, setData.actualReps)
+                setSummaryEntries += formatSimpleSetSummaryEntry(
+                    weight = effectiveWeight,
+                    reps = setData.actualReps,
+                    autoRegulationRIR = setData.autoRegulationRIR
+                )
                 totalVolume += setData.volume
             }
             is TimedDurationSetData -> {
@@ -456,10 +464,18 @@ private fun formatSetHistoryInline(
     return prefix + when (val setData = setHistory.setData) {
         is WeightSetData -> {
             val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
-            "${formatNumber(adjustedWeight)}kg×${setData.actualReps}"
+            formatSimpleSetSummaryEntry(
+                weight = adjustedWeight,
+                reps = setData.actualReps,
+                autoRegulationRIR = setData.autoRegulationRIR
+            )
         }
         is BodyWeightSetData -> {
-            "${formatNumber(setData.getWeight())}kg×${setData.actualReps}"
+            formatSimpleSetSummaryEntry(
+                weight = setData.getWeight(),
+                reps = setData.actualReps,
+                autoRegulationRIR = setData.autoRegulationRIR
+            )
         }
         is TimedDurationSetData -> {
             extractActualDurationSeconds(setData)
@@ -478,7 +494,17 @@ private fun formatSetHistoryInline(
 private fun formatSimpleSetSummaryEntry(
     weight: Double,
     reps: Int,
-): String = "${formatNumber(weight)}kg×$reps"
+    autoRegulationRIR: Double? = null,
+): String = buildString {
+    append(formatNumber(weight))
+    append("kg×")
+    append(reps)
+    autoRegulationRIR?.let { rir ->
+        append(" (auto RIR ")
+        append(formatNumber(rir))
+        append(")")
+    }
+}
 
 private fun formatDurationSummaryEntry(
     durationSeconds: Int,
