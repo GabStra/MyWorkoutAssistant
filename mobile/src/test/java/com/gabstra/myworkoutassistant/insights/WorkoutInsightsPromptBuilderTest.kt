@@ -28,7 +28,15 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If a status label conflicts with explicit numeric values, trust the numeric values"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Never describe a metric as improved if the numeric value is lower than the previous value."))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If one exercise improved and another regressed or lagged versus previous, say that explicitly."))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Double progression means the app normally adds reps at the current working load"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Auto-regulation uses the same double-progression baseline"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Do not omit grounded, decision-useful details just to satisfy brevity, but merge related exercises"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Keep each bullet short, focused, and non-redundant."))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Do not repeat the same fact in multiple sections"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Before finalizing, silently verify:"))
+        assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
         val prompt = buildWorkoutSessionPrompt(
             markdown = "# Session\n\n### Back Squat",
@@ -37,24 +45,41 @@ class WorkoutInsightsPromptBuilderTest {
         )
 
         assertTrue(prompt.contains("Compare each exercise against plan, previous, and best-to-date performance."))
-        assertTrue(prompt.contains("Do not flatten mixed results into overall progress when the exercises diverged."))
-        assertTrue(prompt.contains("lower current volume than previous = below previous"))
-        assertTrue(prompt.contains("If Exec, Prev, or Best numbers disagree with status labels, trust the numbers."))
-        assertTrue(prompt.contains("If most exercises are WEIGHT or BODY_WEIGHT, treat the session as lifting-dominant"))
+        assertTrue(prompt.contains("Do not flatten mixed exercise results into overall progress when exercises diverge."))
+        assertTrue(prompt.contains("account for planned double-progression load jumps or auto-regulated load changes before calling it below previous"))
+        assertTrue(prompt.contains("If Exec, Prev, Best, or Expected numbers disagree with status labels, trust the numbers."))
+        assertTrue(prompt.contains("Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems"))
+        assertTrue(prompt.contains("Stay concise by grouping exercises with the same takeaway and avoiding repeated facts across sections."))
+        assertTrue(prompt.contains("Use exact numbers for reasoning only"))
+        assertTrue(prompt.contains("Do not say an exercise reached the top or bottom of a rep range unless a TAKEAWAY line says that directly."))
+        assertTrue(prompt.contains("do not recommend reducing load just to match previous volume"))
     }
 
     @Test
     fun exerciseInsightsPrompt_uses_exercise_specific_instructions() {
-        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("You are an on-device exercise insights assistant."))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("You are an exercise insights assistant."))
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Focus on the latest completed session first"))
-        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("If the latest session met plan but still lagged the previous baseline or recent trend, say that explicitly."))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly."))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Double progression means the app normally adds reps at the current working load"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Auto-regulation uses the same double-progression baseline"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Do not omit grounded, decision-useful details just to satisfy brevity, but merge related signals"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Keep each bullet short, focused, and non-redundant."))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Do not repeat the same fact in multiple sections"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
+        assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
+        assertFalse(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
         val prompt = buildExercisePrompt(
             markdown = "# Back Squat\n\n## S1: 2026-04-01"
         )
 
-        assertTrue(prompt.contains("Focus on the latest completed session first, then the recent trend."))
-        assertTrue(prompt.contains("Compare executed performance against expected work and the previous baseline."))
+        assertTrue(prompt.contains("Focus on the latest completed session first, then use recent history only where it changes interpretation."))
+        assertTrue(prompt.contains("Compare executed performance against expected work and the previous baseline, then explain any relevant trend."))
+        assertTrue(prompt.contains("Stay concise by combining related signals and avoiding repeated facts across sections."))
+        assertTrue(prompt.contains("Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems"))
+        assertTrue(prompt.contains("Use TAKEAWAY lines as authoritative user-facing comparison facts, and do not contradict them."))
+        assertTrue(prompt.contains("do not recommend reducing load just to match previous volume"))
+        assertTrue(prompt.contains("Use exact numbers for reasoning only"))
     }
 
     @Test
@@ -256,7 +281,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(compacted.contains("CONTEXT Type WEIGHT"))
         assertFalse(compacted.contains("PLAN "))
         assertTrue(compacted.contains("Volume: 2160 kg"))
-        assertTrue(compacted.contains("Sets: 9 kg x 5, 34 kg x 5, 49 kg x 3, 69 kg x 9"))
+        assertTrue(compacted.contains("Sets: 1 set at 9 kg for 5 reps; 1 set at 34 kg for 5 reps; 1 set at 49 kg for 3 reps; 1 set at 69 kg for 9 reps"))
         assertTrue(compacted.contains("Vs best: matched"))
         assertTrue(compacted.contains("Vs prev: above"))
         assertTrue(compacted.contains("State: ready to progress"))
@@ -498,13 +523,48 @@ class WorkoutInsightsPromptBuilderTest {
         assertFalse(compacted.contains("Range: 69 to 132 bpm"))
         assertTrue(compacted.contains("HR Avg % max HR: 55% | Peak % max HR: 69%"))
         assertTrue(compacted.contains("PROG State: PROGRESS"))
-        assertTrue(compacted.contains("Expected: 84 kg x 7 (3 sets)"))
-        assertTrue(compacted.contains("Executed: 9 kg x 5, 41.5 kg x 5, 59 kg x 3, 84 kg x 7 (3 sets)"))
+        assertTrue(compacted.contains("Expected: 3 sets at 84 kg for 7 reps"))
+        assertTrue(compacted.contains("Executed: 1 set at 9 kg for 5 reps; 1 set at 41.5 kg for 5 reps; 1 set at 59 kg for 3 reps; 3 sets at 84 kg for 7 reps"))
         assertTrue(compacted.contains("Vs success baseline: EQUAL"))
         assertTrue(compacted.contains("Volume: Prev 0 kg | Exp 1.76 k kg | Exec 1.76 k kg"))
         assertFalse(compacted.contains("Set Differences"))
         assertFalse(compacted.contains("Stored HR samples"))
         assertFalse(compacted.contains("sessionId"))
+    }
+
+    @Test
+    fun compactExerciseHistoryMarkdown_adds_userFacingTakeaway_forSuccessfulLoadIncrease() {
+        val markdown = """
+            # Bench Press
+            Type: WEIGHT | Equipment: Barbell
+
+            Sessions: 2 | Range: 2026-03-25 to 2026-04-01
+
+            ## S1: 2026-03-25 19:24:20 | A Squat/Bench
+            #### Progression Context
+            - State: PROGRESS
+            - Expected: 60kg10, 60kg10, 60kg10
+            - Executed: 60kg10, 60kg10, 60kg10
+            - Comparison vs expected: EQUAL
+            - Comparison vs previous successful baseline: EQUAL
+            - Volume: Prev 0kg | Exp 1.8Kkg | Exec 1.8Kkg
+
+            ## S2: 2026-04-01 19:24:20 | A Squat/Bench
+            #### Progression Context
+            - State: PROGRESS
+            - Expected: 62kg7, 62kg7, 62kg7
+            - Executed: 62kg7, 62kg7, 62kg8
+            - Comparison vs expected: ABOVE
+            - Comparison vs previous successful baseline: ABOVE
+            - Volume: Prev 0kg | Exp 1.30Kkg | Exec 1.36Kkg
+        """.trimIndent()
+
+        val compacted = compactExerciseHistoryMarkdown(markdown)
+
+        assertTrue(
+            compacted,
+            compacted.contains("TAKEAWAY successful load increase; lower reps and volume are expected after the jump; beat the plan; above the previous successful baseline.")
+        )
     }
 
     @Test
@@ -553,10 +613,10 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertFalse(compacted.contains("Date: 2026-04-01"))
-        assertTrue(compacted.contains("EXEC Sets: 84 kg x 7 (3 sets) | Volume: 2190 kg"))
-        assertTrue(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 2610 kg"))
+        assertTrue(compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
+        assertTrue(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 2610 kg"))
         assertTrue(compacted.contains("BEST Volume: 2610 kg"))
-        assertFalse(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 2610 kg | State: PROGRESS"))
+        assertFalse(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 2610 kg | State: PROGRESS"))
         assertFalse(compacted.contains("BEST Volume: 2610 kg | State: PROGRESS"))
         assertFalse(compacted.contains("BEST Sets:"))
     }
@@ -625,8 +685,8 @@ class WorkoutInsightsPromptBuilderTest {
 
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
-        assertTrue(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 1764 kg"))
-        assertFalse(compacted.contains("PREV Sets: 84 kg x 7 (3 sets) | Volume: 1764 kg | State: PROGRESS"))
+        assertTrue(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 1764 kg"))
+        assertFalse(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 1764 kg | State: PROGRESS"))
     }
 
     @Test
@@ -652,9 +712,36 @@ class WorkoutInsightsPromptBuilderTest {
 
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
-        assertTrue(compacted.contains("EXEC Sets: 84 kg x 7 (3 sets) | Volume: 2190 kg"))
-        assertTrue(compacted.contains("PREV Sets: 81.5 kg x 11 (2 sets), 81.5 kg x 10 | Volume: 2610 kg"))
+        assertTrue(compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
+        assertTrue(compacted.contains("PREV Sets: 2 sets at 81.5 kg for 11 reps; 1 set at 81.5 kg for 10 reps | Volume: 2610 kg"))
         assertTrue(compacted.contains("SIGNALS State: progress | Vs target: equal | Vs prev: below | Load profile vs prev: above | Top load vs prev: above (84 kg vs 81.5 kg) | Sets at top load: 3 vs 3"))
+        assertTrue(compacted.contains("TAKEAWAY successful load increase; lower reps and volume are expected after the jump; met the plan."))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_adds_userFacingTakeaway_forSameLoadMoreReps() {
+        val markdown = """
+            # A Pull
+            2026-04-01 19:24:20 | Dur: 00:45:00
+
+            ### Pull-Ups
+            #### Executed
+            - Set summary: 67 kg x 7, 67 kg x 7, 67 kg x 7
+            - Total volume: 1410kg
+
+            #### Previous Session
+            - Set summary: 67 kg x 7, 67 kg x 7, 67 kg x 6
+            - Total volume: 1340kg
+
+            #### Coaching Signals
+            - progression_state:progress
+            - vs_expected:equal
+            - vs_previous_session:above
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("TAKEAWAY same load as the previous session, with more reps and volume; met the plan."))
     }
 
     @Test
@@ -682,6 +769,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(compacted.contains("Load profile vs prev: below"))
         assertTrue(compacted.contains("Top load vs prev: below (80 kg vs 82.5 kg)"))
         assertTrue(compacted.contains("Sets at top load: 3 vs 3"))
+        assertTrue(compacted.contains("TAKEAWAY lighter than the previous session."))
     }
 
     @Test
@@ -709,6 +797,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(compacted.contains("Load profile vs prev: mixed"))
         assertTrue(compacted.contains("Top load vs prev: above (82.5 kg vs 80 kg)"))
         assertTrue(compacted.contains("Sets at top load: 1 vs 3"))
+        assertTrue(compacted.contains("TAKEAWAY heavier than the previous session with more total work."))
     }
 
     @Test

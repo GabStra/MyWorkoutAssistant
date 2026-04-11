@@ -8,6 +8,24 @@ import org.junit.Test
 class LiteRtLmInsightsRepositoryTest {
 
     @Test
+    fun workoutInsightsBlockLogLines_includeLabelOnEveryLineForLogcatFiltering() {
+        val label = "litert_final_raw_response"
+        val lines = buildWorkoutInsightsBlockLogLines(
+            label = label,
+            body = """
+                ## What stood out
+                - Back Squat: 84 kg x 8.
+                - Bench Press: 62 kg x 7.
+            """.trimIndent()
+        )
+
+        assertTrue(lines.all { it.contains(label) })
+        assertTrue(lines.any { it.contains("## What stood out") })
+        assertTrue(lines.any { it.contains("- Back Squat: 84 kg x 8.") })
+        assertTrue(lines.any { it.contains("- Bench Press: 62 kg x 7.") })
+    }
+
+    @Test
     fun stripRedundantHeartRateTextMetrics_removes_compact_session_hr_lines_only() {
         val prompt = """
             Analyze this completed workout session and provide practical coaching insights.
@@ -46,9 +64,9 @@ class LiteRtLmInsightsRepositoryTest {
         val prompt = buildHeartRateChartImageOnlyPrompt()
 
         assertTrue(prompt.contains("Analyze the attached workout session heart-rate chart only."))
-        assertTrue(prompt.contains("Do not use any hidden assumptions about the workout."))
-        assertTrue(prompt.contains("whether the pattern looks steady, intermittent, or drifted"))
-        assertTrue(prompt.contains("Do not estimate bpm values, intensity zones, or exact recovery durations from the image."))
+        assertTrue(prompt.contains("Use only what is visible in the chart"))
+        assertTrue(prompt.contains("overall pattern: steady, intermittent, phased, or unclear"))
+        assertTrue(prompt.contains("Do not estimate exact bpm values, intensity zones, or exact recovery durations from the image."))
     }
 
     @Test
@@ -57,7 +75,7 @@ class LiteRtLmInsightsRepositoryTest {
             chartAnalysisContext = "- 00:00-00:45 Squat\n- 00:45-01:30 Rest after Squat",
         )
 
-        assertTrue(prompt.contains("Complete session timeline (elapsed time from workout start; one row per contiguous block):"))
+        assertTrue(prompt.contains("Provided timeline context (elapsed time from workout start; contiguous blocks):"))
         assertTrue(prompt.contains("- 00:00-00:45 Squat"))
     }
 
@@ -73,9 +91,9 @@ class LiteRtLmInsightsRepositoryTest {
             ),
         )
 
-        assertTrue(prompt.contains("Session duration: 3600 seconds elapsed from start to end."))
+        assertTrue(prompt.contains("Session duration: 3600 seconds from start to end."))
         assertTrue(prompt.contains("get_session_timeline_for_time_range"))
-        assertTrue(prompt.contains("If the chart shows repeated peaks or distinct phases, prefer at least one targeted tool call"))
+        assertTrue(prompt.contains("If the chart appears to contain repeated peaks or distinct phases, prefer at least one targeted tool call"))
         assertFalse(prompt.contains("SHOULD NOT APPEAR"))
     }
 

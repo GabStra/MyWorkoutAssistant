@@ -115,11 +115,23 @@ internal suspend fun runWorkoutInsightsGeneration(
             )
         }
     )
-    val normalizedInsight = postProcessInsightMarkdown(
-        markdown = accumulated.toString(),
-        toolContext = request.toolContext
+    val rawInsight = accumulated.toString()
+    logWorkoutInsightsBlock(
+        logTag,
+        "${transportLabel}_final_raw_response",
+        rawInsight.ifBlank { "No insights were generated." }
     )
-    if (normalizedInsight != accumulated.toString()) {
+    val normalizedInsight = postProcessInsightMarkdown(
+        markdown = rawInsight,
+        toolContext = request.toolContext,
+        evidencePrompt = finalPrompt
+    )
+    if (normalizedInsight != rawInsight) {
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_final_postprocessed_response",
+            normalizedInsight.ifBlank { "No insights were generated." }
+        )
         accumulated.clear()
         accumulated.append(normalizedInsight)
         emitChunk(
@@ -132,13 +144,6 @@ internal suspend fun runWorkoutInsightsGeneration(
         )
     }
     onAfterChartAnalysis?.invoke()
-    if (request.toolContext == null) {
-        logWorkoutInsightsBlock(
-            logTag,
-            "${transportLabel}_final_raw_response",
-            accumulated.toString().ifBlank { "No insights were generated." }
-        )
-    }
 }
 
 internal fun buildFinalSynthesisInlinePrompt(

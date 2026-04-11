@@ -39,15 +39,18 @@ internal fun sanitizeInsightMarkdown(
         .replace("workout_raw_response_end", "")
         .replace(Regex("(?<!\\n)(##\\s+)"), "\n\n$1")
         .replace(Regex("(?<!\\n)(###\\s+)"), "\n\n$1")
+        .replace(Regex("(##\\s+[^\\n#-][^\\n#]*?)\\s*-\\s+(?=\\*\\*[A-Z0-9])"), "$1\n- ")
+        .replace(Regex("(###\\s+[^\\n#-][^\\n#]*?)\\s*-\\s+(?=\\*\\*[A-Z0-9])"), "$1\n- ")
         .replace(Regex("(##\\s+[^\\n#-][^\\n#]*?)\\s*(?:-\\s*)+(?=[A-Z0-9'])"), "$1\n- ")
         .replace(Regex("(###\\s+[^\\n#-][^\\n#]*?)\\s*(?:-\\s*)+(?=[A-Z0-9'])"), "$1\n- ")
         .replace(Regex("(##\\s+[^\\n#*-][^\\n#]*?)-\\s+"), "$1\n- ")
         .replace(Regex("([.!?])\\s*-\\s+(?=[A-Z0-9])"), "$1\n- ")
+        .replace(Regex("([.!?])\\s*-\\s+(?=\\*\\*[A-Z0-9])"), "$1\n- ")
         .replace(Regex("([.!?])\\s*(?:-\\s*){2,}(?=[A-Z0-9'])"), "$1\n- ")
         .replace(Regex("(?m)^-\\s+-\\s+"), "- ")
         .replace(Regex("(?m)^\\s*-\\s+-\\s+"), "- ")
-        .replace(Regex("(?<=\\S)\\*(?=\\s*[A-Z0-9])"), "\n- ")
-        .replace(Regex("(?<!\\n)(\\*\\S)"), "\n$1")
+        .replace(Regex("(?<=\\S)(?<!\\*)\\*(?!\\*)(?=\\s*[A-Z0-9])"), "\n- ")
+        .replace(Regex("(?<![\\n*])(\\*(?!\\*)\\S)"), "\n$1")
         .replace(Regex("(?<=\\D)(\\d+)%"), "$1%")
         .replace(Regex("(?<=[A-Za-z])(?=\\d)"), " ")
         .replace(Regex("(?<=\\d)(?=[A-Za-z])"), " ")
@@ -116,13 +119,66 @@ internal fun sanitizeInsightMarkdown(
 internal fun postProcessInsightMarkdown(
     markdown: String,
     toolContext: WorkoutInsightsToolContext?,
+    evidencePrompt: String? = null,
 ): String {
-    val sanitized = sanitizeInsightMarkdown(markdown)
-    val workoutSessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession ?: return sanitized
-    if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
-        return sanitized
+    var processed = sanitizeInsightMarkdown(markdown)
+    if (toolContext != null) {
+        processed = replaceUnsupportedExactMetricMentions(
+            markdown = processed,
+            evidence = evidencePrompt?.evidenceSectionForMetricAllowList() ?: toolContext.markdown
+        )
     }
-    return removeLowIntensityLiftingRiskBullets(sanitized)
+
+    val workoutSessionContext = toolContext as? WorkoutInsightsToolContext.WorkoutSession ?: return processed
+    if (!isLiftingDominantLowIntensitySession(workoutSessionContext.markdown)) {
+        return processed
+    }
+    return removeLowIntensityLiftingRiskBullets(processed)
+}
+
+private val exactMetricMentionRegex = Regex(
+    """(?<![A-Za-z0-9.])\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*(?:k\s*)?(?:kg|bpm|%|reps?|sets?|seconds?|minutes?|mins?|km|mi|m|rir)(?=$|[^A-Za-z0-9])""",
+    RegexOption.IGNORE_CASE
+)
+
+private fun replaceUnsupportedExactMetricMentions(
+    markdown: String,
+    evidence: String,
+): String {
+    val allowedMentions = exactMetricMentionRegex
+        .findAll(evidence)
+        .map { match -> match.value.normalizeExactMetricMention() }
+        .toSet()
+    if (allowedMentions.isEmpty()) return markdown
+
+    return exactMetricMentionRegex
+        .replace(markdown) { match ->
+            if (match.value.normalizeExactMetricMention() in allowedMentions) {
+                match.value
+            } else {
+                "the recorded value"
+            }
+        }
+        .replace(Regex("\\s+([,.;:])"), "$1")
+}
+
+private fun String.evidenceSectionForMetricAllowList(): String {
+    val markerIndex = listOf(
+        "Workout session:",
+        "Exercise history:"
+    ).map { marker -> lastIndexOf(marker) }.filter { it >= 0 }.maxOrNull()
+
+    return markerIndex
+        ?.let { index -> substring(index) }
+        ?: this
+}
+
+private fun String.normalizeExactMetricMention(): String {
+    return lowercase()
+        .replace(Regex("\\s+"), " ")
+        .replace(Regex("\\s+(?=%)"), "")
+        .replace("k kg", "kkg")
+        .trim()
 }
 
 private fun isLiftingDominantLowIntensitySession(

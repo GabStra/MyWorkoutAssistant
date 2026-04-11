@@ -57,6 +57,26 @@ class WorkoutInsightMarkdownTest {
     }
 
     @Test
+    fun sanitizeInsightMarkdown_preservesBoldBulletLabels() {
+        val sanitized = sanitizeInsightMarkdown(
+            """
+                ## Exercise highlights- **Back Squat**: You moved to a higher load while keeping the reps steady.- **Bench Press**: You increased the top load compared to the previous session.- **Pull-Ups**: You maintained the same load and rep scheme.
+            """.trimIndent()
+        )
+
+        assertEquals(
+            """
+            ## Exercise highlights
+
+            - **Back Squat**: You moved to a higher load while keeping the reps steady.
+            - **Bench Press**: You increased the top load compared to the previous session.
+            - **Pull-Ups**: You maintained the same load and rep scheme.
+            """.trimIndent(),
+            sanitized
+        )
+    }
+
+    @Test
     fun postProcessInsightMarkdown_removes_low_intensity_hr_risk_for_lifting_sessions() {
         val markdown = """
             ## Summary
@@ -90,5 +110,46 @@ class WorkoutInsightMarkdownTest {
 
         assertFalse(processed.contains("High-intensity exposure was 0%"))
         assertTrue(processed.contains("Bench press volume was lower than the previous session."))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_replacesMetricMentionsNotFoundInEvidencePrompt() {
+        val markdown = """
+            ## Exercise highlights
+            - Back Squat matched the recorded work at 84 kg for 8 reps.
+            - Bench Press total volume was 13600 kg versus 180 kg previously.
+            - Pull-Ups used the same load of 677 kg, and Row jumped to 425 kg.
+            - Heart rate averaged 10 bpm.
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.Exercise(
+                title = "Workout session insights",
+                exerciseName = "Back Squat",
+                markdown = ""
+            ),
+            evidencePrompt = """
+                Workout session:
+                EXERCISE Back Squat
+                EXEC Sets: 3 sets at 84 kg for 8 reps | Volume: 2020 kg
+                EXERCISE Bench Press
+                EXEC Sets: 2 sets at 62 kg for 7 reps; 1 set at 62 kg for 8 reps | Volume: 1360 kg
+                PREV Sets: 3 sets at 60 kg for 10 reps | Volume: 1800 kg
+                EXERCISE Pull-Ups
+                EXEC Sets: 3 sets at 67 kg for 7 reps | Volume: 1410 kg
+                EXERCISE Row
+                EXEC Sets: 3 sets at 42.5 kg for 8 reps | Volume: 1020 kg
+            """.trimIndent()
+        )
+
+        assertTrue(processed.contains("84 kg"))
+        assertTrue(processed.contains("8 reps"))
+        assertFalse(processed.contains("13600 kg"))
+        assertFalse(processed.contains("180 kg"))
+        assertFalse(processed.contains("677 kg"))
+        assertFalse(processed.contains("425 kg"))
+        assertFalse(processed.contains("10 bpm"))
+        assertTrue(processed.contains("the recorded value"))
     }
 }

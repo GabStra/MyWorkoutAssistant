@@ -17,7 +17,7 @@ private const val DEFAULT_WORKOUT_OVERVIEW_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
 private const val DEFAULT_WORKOUT_SECTION_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
 private const val DEFAULT_FULL_WORKOUT_SESSION_CHARS = MAX_TOOL_TEXT_FIELD_CHARS
 private const val INSIGHT_LOG_PREVIEW_CHARS = 240
-private const val INSIGHT_LOG_CHUNK_CHARS = 3_000
+private const val INSIGHT_LOG_CHUNK_CHARS = 1_800
 private val WORKOUT_SESSION_SECTION_DELIMITER = Regex("(?m)^(?:EXERCISE|SUPERSET) ")
 
 data class WorkoutInsightsChartTimelineSegment(
@@ -261,7 +261,7 @@ Retrieval policy:
 - Start with the smallest useful retrieval.
 - Treat the first overview as scouting context, not final evidence, unless it already covers the needed exercises and comparisons explicitly.
 - Prefer latest explicit metrics first, then recent trend context.
-- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for Risks or Next session.
+- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for final synthesis or next-session guidance.
 - If a workout has multiple main exercises, verify the relevant lagging or improving exercise with a narrower retrieval before concluding.
 - Use summarization tools only when raw scoped context would be too verbose.
 - Stop calling tools once you have enough evidence to answer confidently.
@@ -299,8 +299,8 @@ Workflow:
 3. Use summary tools only when the remaining context is too large.
 4. If the session was not completed normally, treat that as an important constraint on interpretation.
 5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.
-6. Before writing Risks or Next session, verify the clearest lagging or improving exercise with a narrower retrieval when available.
-7. Stop tool use and write the final answer once you can explain what went well, what drifted, the main risk, and one clear next-session adjustment.
+6. Before writing final synthesis or next-session guidance, verify the clearest lagging or improving exercise with a narrower retrieval when available.
+7. Stop tool use and write the final answer once you can explain what went well, what drifted, any important constraint, and the grounded next-session guidance.
 """.trimIndent()
 
 private class InsightsOpenApiTool(
@@ -751,26 +751,39 @@ private fun logWorkoutInsightsBlockChunks(
     label: String,
     body: String,
 ) {
-    val chunkCount = ((body.length + INSIGHT_LOG_CHUNK_CHARS - 1) / INSIGHT_LOG_CHUNK_CHARS)
-        .coerceAtLeast(1)
-    Log.println(
-        priority,
-        logTag,
-        "$label full_start chars=${body.length} lines=${body.lines().size} chunks=$chunkCount"
-    )
-
-    for (chunkIndex in 0 until chunkCount) {
-        val startIndex = chunkIndex * INSIGHT_LOG_CHUNK_CHARS
-        val endIndex = (startIndex + INSIGHT_LOG_CHUNK_CHARS).coerceAtMost(body.length)
-        val chunk = body.substring(startIndex, endIndex)
-        Log.println(
-            priority,
-            logTag,
-            "${label}_part_${chunkIndex + 1}_of_$chunkCount\n$chunk"
-        )
+    buildWorkoutInsightsBlockLogLines(label, body).forEach { line ->
+        Log.println(priority, logTag, line)
     }
+}
 
-    Log.println(priority, logTag, "$label full_end")
+internal fun buildWorkoutInsightsBlockLogLines(
+    label: String,
+    body: String,
+): List<String> {
+    val normalizedBody = body
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+    val chunkCount = ((normalizedBody.length + INSIGHT_LOG_CHUNK_CHARS - 1) / INSIGHT_LOG_CHUNK_CHARS)
+        .coerceAtLeast(1)
+
+    return buildList {
+        add("$label full_start chars=${normalizedBody.length} lines=${normalizedBody.lines().size} chunks=$chunkCount")
+
+        for (chunkIndex in 0 until chunkCount) {
+            val startIndex = chunkIndex * INSIGHT_LOG_CHUNK_CHARS
+            val endIndex = (startIndex + INSIGHT_LOG_CHUNK_CHARS).coerceAtMost(normalizedBody.length)
+            val chunk = normalizedBody.substring(startIndex, endIndex)
+            val chunkLines = chunk.split('\n')
+            chunkLines.forEachIndexed { lineIndex, line ->
+                add(
+                    "${label}_part_${chunkIndex + 1}_of_${chunkCount}" +
+                        "_line_${lineIndex + 1}_of_${chunkLines.size} $line"
+                )
+            }
+        }
+
+        add("$label full_end")
+    }
 }
 
 private fun String.logPreview(): String {

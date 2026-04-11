@@ -41,7 +41,16 @@ private const val MAX_SECTION_CHAR_BUDGET = 2_400
 private const val MAX_SUBSECTION_CHAR_BUDGET = 500
 private const val MAX_SESSION_HR_LINES = 6
 
-internal const val WORKOUT_INSIGHTS_SYSTEM_PROMPT = """
+private const val FINAL_RESPONSE_NUMERIC_POLICY = """
+Final-response numeric policy:
+- Use exact numeric fields only to decide comparisons and coaching meaning.
+- Write qualitative relationships instead, such as higher load, lower volume, matched plan, similar reps, steadier HR, or below the previous session.
+- Avoid writing exact metric values with units in the final markdown, including kg, reps, set counts, bpm, percentages, pace, distance, duration, or volume.
+- If an exact metric value is necessary, copy it verbatim from the supplied evidence; never transform, estimate, round, concatenate, or infer numeric values.
+- If exact metric values are needed in the UI, they must come from deterministic app-rendered evidence, not model-written prose.
+"""
+
+private const val WORKOUT_INSIGHTS_SYSTEM_PROMPT_BASE = """
 You are a workout insights assistant.
 
 Goal:
@@ -52,13 +61,14 @@ Rules:
 - Do not invent data.
 - Do not provide medical advice or diagnose injuries.
 - If the data is sparse, trimmed, inconsistent, or the workout is incomplete, say so plainly.
-- Prioritize evidence in this order:
+- If metrics conflict, prefer the most explicit numeric fields first:
   1. explicit numeric fields such as Exec, Prev, Best, volume, duration, executed sets, reps, load, pace, distance, time
-  2. session state and status labels
-  3. HR cues from text metrics only
-- If a label conflicts with explicit numeric values, trust the numeric values.
-- Never describe a metric as improved if the numeric value is lower than the comparison value.
-- If one exercise improved and another lagged, say that explicitly.
+  2. progression fields such as Progression state, Vs expected, Vs previous, Vs baseline, expected sets, auto RIR
+  3. session state and status labels
+  4. HR cues from text metrics only
+- If a status label conflicts with explicit numeric values, trust the numeric values.
+- Never describe a metric as improved if the numeric value is lower than the previous value.
+- If one exercise improved and another regressed or lagged versus previous, say that explicitly.
 - For lifting-dominant sessions, prioritize load, reps, completed work, and exercise-by-exercise comparison; use HR only as supporting context.
 - Do not call recovery inadequate from elevated HR alone.
 - Avoid generic advice.
@@ -66,28 +76,45 @@ Rules:
 - Prefer plain language over internal labels such as "vs baseline", "load profile", "constraint", or "drift" unless those terms are necessary.
 - Translate the data into direct coaching takeaways instead of restating metric labels.
 
-Respond in markdown with exactly these sections:
+Progression knowledge:
+- Double progression means the app normally adds reps at the current working load until work sets reach the top of the rep range, then raises load when a suitable heavier weight is available.
+- After a double-progression load increase, lower reps or lower total volume can be expected; do not call that a regression if the session met the expected sets or clearly advanced load as planned.
+- Auto-regulation uses the same double-progression baseline, then adjusts later work sets during the session from rep performance or recorded auto RIR on non-last work sets.
+- For auto-regulation, around 2 RIR or reps inside the target range usually means keep the load, clearly below the minimum rep target means the load was likely too high and later sets may drop, and clearly above the maximum rep target or higher RIR means later sets may rise.
+- Treat auto-regulated load changes as intended when the set data supports them; do not flatten them into inconsistency or simple volume drift.
+- Progression state PROGRESS/RETRY/DELOAD/FAILED and comparisons vs expected or previous describe the app's progression decision; expected sets are the session target, and previous successful baseline is the success baseline.
+- For double-progression or auto-regulated exercises, judge success against expected sets and progression comparisons before raw total volume.
+
+Respond in markdown using these sections:
 ## What stood out
 ## Exercise highlights
 ## Next session
 
 Requirements:
-- at most 2 bullets per section
-- one sentence per bullet when possible
+- Use as many bullets as needed for grounded, decision-useful details.
+- Do not omit grounded, decision-useful details just to satisfy brevity, but merge related exercises when one concise bullet can cover them accurately.
+- Keep each bullet short, focused, and non-redundant.
+- Do not repeat the same fact in multiple sections; if a section would only repeat an earlier point, skip that bullet.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
-- mention HR only if it changes the interpretation
+- include HR when it changes or supports the interpretation, but do not let HR override clearer lifting evidence
 - omit obvious filler
 - do not force a negative point if the session was broadly solid
 
-Before finalizing, verify:
+Before finalizing, silently verify:
 - every claim is supported by the supplied evidence
 - no bullet says something improved if the number is lower
 - mixed outcomes across exercises are stated explicitly when present
+- double progression and auto-regulation are interpreted as progression systems, not as generic static targets
 - the wording is natural and user-friendly
 """
 
-internal const val EXERCISE_INSIGHTS_SYSTEM_PROMPT = """
+internal val WORKOUT_INSIGHTS_SYSTEM_PROMPT = listOf(
+    WORKOUT_INSIGHTS_SYSTEM_PROMPT_BASE.trimIndent(),
+    FINAL_RESPONSE_NUMERIC_POLICY.trimIndent()
+).joinToString("\n\n")
+
+private const val EXERCISE_INSIGHTS_SYSTEM_PROMPT_BASE = """
 You are an exercise insights assistant.
 
 Goal:
@@ -101,7 +128,7 @@ Rules:
 - Focus on the latest completed session first; use recent history only where it changes the interpretation.
 - Prioritize evidence in this order:
   1. explicit numeric fields such as executed vs expected sets, reps, load, volume, duration
-  2. progression fields such as Progression state, Vs expected, Vs previous, Vs baseline
+  2. progression fields such as Progression state, Vs expected, Vs previous, Vs baseline, expected sets, auto RIR
   3. recent trend across sessions
   4. HR cues from text metrics only, as supporting context
 - If a label conflicts with explicit numeric values, trust the numeric values.
@@ -116,26 +143,43 @@ Rules:
 - Prefer plain language over internal labels such as "vs baseline", "progression state", "constraint", or "drift" unless those terms are necessary.
 - Translate the data into direct coaching takeaways instead of restating metric labels.
 
-Respond in markdown with exactly these sections:
+Progression knowledge:
+- Double progression means the app normally adds reps at the current working load until work sets reach the top of the rep range, then raises load when a suitable heavier weight is available.
+- After a double-progression load increase, lower reps or lower total volume can be expected; do not call that a regression if the session met the expected sets or clearly advanced load as planned.
+- Auto-regulation uses the same double-progression baseline, then adjusts later work sets during the session from rep performance or recorded auto RIR on non-last work sets.
+- For auto-regulation, around 2 RIR or reps inside the target range usually means keep the load, clearly below the minimum rep target means the load was likely too high and later sets may drop, and clearly above the maximum rep target or higher RIR means later sets may rise.
+- Treat auto-regulated load changes as intended when the set data supports them; do not flatten them into inconsistency or simple volume drift.
+- Progression state PROGRESS/RETRY/DELOAD/FAILED and comparisons vs expected or previous describe the app's progression decision; expected sets are the session target, and previous successful baseline is the success baseline.
+- For double-progression or auto-regulated exercises, judge success against expected sets and progression comparisons before raw total volume.
+
+Respond in markdown using these sections:
 ## What stood out
 ## Exercise trend
 ## Next session
 
 Requirements:
-- at most 2 bullets per section
-- one sentence per bullet when possible
+- Use as many bullets as needed for grounded, decision-useful details.
+- Do not omit grounded, decision-useful details just to satisfy brevity, but merge related signals when one concise bullet can cover them accurately.
+- Keep each bullet short, focused, and non-redundant.
+- Do not repeat the same fact in multiple sections; if a section would only repeat an earlier point, skip that bullet.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
-- mention HR only if it changes the interpretation
+- include HR when it changes or supports the interpretation, but do not let HR override clearer lifting evidence
 - omit obvious filler
 - do not force a negative point if the exercise was broadly solid
 
-Before finalizing, verify:
+Before finalizing, silently verify:
 - every claim is supported by the supplied evidence
 - no bullet says something improved if the numeric value is lower
 - mixed signals across latest session, baseline, and trend are stated explicitly when present
+- double progression and auto-regulation are interpreted as progression systems, not as generic static targets
 - the wording is natural and user-friendly
 """
+
+internal val EXERCISE_INSIGHTS_SYSTEM_PROMPT = listOf(
+    EXERCISE_INSIGHTS_SYSTEM_PROMPT_BASE.trimIndent(),
+    FINAL_RESPONSE_NUMERIC_POLICY.trimIndent()
+).joinToString("\n\n")
 
 sealed class WorkoutInsightsPromptResult {
     data class Success(
@@ -287,9 +331,15 @@ internal fun buildExercisePrompt(
         listOf(
             "Analyze this exercise history and provide focused training insights.",
             "Focus on the latest completed session first, then use recent history only where it changes interpretation.",
-            "Highlight only what is decision-useful: whether the latest session beat, matched, or lagged plan, previous, baseline, or trend, and what should happen next.",
+            "Compare executed performance against expected work and the previous baseline, then explain any relevant trend.",
+            "Include every grounded, decision-useful detail needed to explain whether the latest session beat, matched, or lagged plan, previous, baseline, or trend.",
+            "Stay concise by combining related signals and avoiding repeated facts across sections.",
+            "Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems, not static load and volume targets.",
+            "Use TAKEAWAY lines as authoritative user-facing comparison facts, and do not contradict them.",
+            "When a TAKEAWAY says lower reps or volume are expected after a successful load increase, do not recommend reducing load just to match previous volume.",
             "If the latest session met plan but still lagged previous, baseline, or recent trend, say that explicitly.",
-            "If load improved but reps, sets, or volume worsened, state that tradeoff clearly.",
+            "If load improved but reps, sets, or volume worsened, state that tradeoff clearly and account for planned double progression or auto-regulated adjustments when the evidence supports it.",
+            "Use exact numbers for reasoning only; in final markdown, describe metric relationships qualitatively instead of writing kg, reps, set counts, bpm, percentages, duration, or volume values.",
             "",
             "Exercise history:",
             compactedMarkdown
@@ -319,12 +369,21 @@ internal fun buildWorkoutSessionPrompt(
         listOfNotNull(
             "Analyze this completed workout session and explain it in plain coaching language.",
             "Focus first on what mattered most in the latest session, then use plan, previous, best, and recent exercise context only where it changes the interpretation.",
-            "Prioritize useful takeaways over full coverage.",
-            "For lifting-dominant sessions, keep HR commentary brief unless it clearly changes the interpretation.",
+            "Compare each exercise against plan, previous, and best-to-date performance.",
+            "Include every grounded, decision-useful training detail instead of suppressing details for brevity.",
+            "Stay concise by grouping exercises with the same takeaway and avoiding repeated facts across sections.",
+            "For lifting-dominant sessions, interpret HR as supporting context and do not let it override clearer load, rep, set, and progression evidence.",
             "If current top load is higher than previous, mention it even when total volume is lower.",
             "If plan was met but performance still lagged previous or recent trend, say that clearly.",
+            "If current volume is lower than previous, account for planned double-progression load jumps or auto-regulated load changes before calling it below previous.",
+            "If Exec, Prev, Best, or Expected numbers disagree with status labels, trust the numbers.",
+            "Interpret DOUBLE_PROGRESSION and AUTO_REGULATION as progression systems, not static load and volume targets.",
+            "Use TAKEAWAY lines as authoritative user-facing comparison facts, and do not contradict them.",
+            "Do not say an exercise reached the top or bottom of a rep range unless a TAKEAWAY line says that directly.",
+            "When a TAKEAWAY says lower reps or volume are expected after a successful load increase, do not recommend reducing load just to match previous volume.",
             "Do not flatten mixed exercise results into overall progress when exercises diverge.",
             "Do not repeat internal labels; translate them into normal language.",
+            "Use exact numbers for reasoning only; in final markdown, describe metric relationships qualitatively instead of writing kg, reps, set counts, bpm, percentages, duration, or volume values.",
             guidanceBlock.takeIf { it.isNotBlank() },
             "",
             "Workout session:",
@@ -366,7 +425,9 @@ internal fun compactExerciseHistoryMarkdown(
     val maxSessionsToKeep = sessions.size
 
     for (sessionsToKeep in maxSessionsToKeep downTo MIN_EXERCISE_SESSIONS) {
-        val recentSessions = sessions.takeLast(sessionsToKeep).mapNotNull(::compactExerciseSessionBlock)
+        val recentSessions = addExerciseHistoryTakeaways(
+            sessions.takeLast(sessionsToKeep).mapNotNull(::compactExerciseSessionBlock)
+        )
         val candidate = buildString {
             append(header.trim())
             append("\n\n")
@@ -385,6 +446,7 @@ internal fun compactExerciseHistoryMarkdown(
     val fallbackSessions = sessions
         .takeLast(MIN_EXERCISE_SESSIONS)
         .mapNotNull(::compactExerciseSessionBlock)
+        .let(::addExerciseHistoryTakeaways)
         .map { it.takeWithinBudget(MAX_SECTION_CHAR_BUDGET) }
     return buildString {
         append(header.takeWithinBudget(MAX_SECTION_CHAR_BUDGET))
@@ -475,6 +537,225 @@ private fun compactExerciseSessionBlock(
             }
         }
     }.trim().takeWithinBudget(MAX_SECTION_CHAR_BUDGET)
+}
+
+private fun addExerciseHistoryTakeaways(
+    compactedSessions: List<String>,
+): List<String> {
+    if (compactedSessions.size < 2) return compactedSessions
+    return compactedSessions.mapIndexed { index, session ->
+        val previousSession = compactedSessions.getOrNull(index - 1)
+        val takeawayLine = previousSession?.let { previous ->
+            buildExerciseHistorySessionTakeawayLine(
+                currentSession = session,
+                previousSession = previous
+            )
+        }
+        if (takeawayLine == null) {
+            session
+        } else {
+            appendExerciseHistoryTakeawayLine(session, takeawayLine)
+        }
+    }
+}
+
+private fun appendExerciseHistoryTakeawayLine(
+    session: String,
+    takeawayLine: String,
+): String {
+    val lines = session.lines()
+    val progressionIndex = lines.indexOfFirst { it.startsWith("PROG ") }
+    if (progressionIndex < 0) {
+        return buildString {
+            append(session)
+            append('\n')
+            append(takeawayLine)
+        }
+    }
+    return buildString {
+        lines.forEachIndexed { index, line ->
+            append(line)
+            append('\n')
+            if (index == progressionIndex) {
+                append(takeawayLine)
+                append('\n')
+            }
+        }
+    }.trimEnd()
+}
+
+private fun buildExerciseHistorySessionTakeawayLine(
+    currentSession: String,
+    previousSession: String,
+): String? {
+    val currentProgression = parseExerciseHistoryProgressionLine(currentSession) ?: return null
+    val previousProgression = parseExerciseHistoryProgressionLine(previousSession) ?: return null
+    val currentEntries = currentProgression.executedEntries
+    val previousEntries = previousProgression.executedEntries
+    if (currentEntries.isEmpty() || previousEntries.isEmpty()) return null
+
+    val loadStatus = compareDoubleValues(
+        currentEntries.maxOf { it.load },
+        previousEntries.maxOf { it.load }
+    )
+    val repStatus = compareIntValues(
+        currentEntries.sumOf { it.setCount * it.reps },
+        previousEntries.sumOf { it.setCount * it.reps }
+    )
+    val volumeStatus = compareNullableDoubleValues(
+        currentProgression.executedVolumeKg,
+        previousProgression.executedVolumeKg
+    )
+
+    val previousPhrase = when {
+        loadStatus == "above" &&
+            repStatus == "below" &&
+            volumeStatus == "below" &&
+            (currentProgression.planStatus == "above" || currentProgression.planStatus == "matched") ->
+            "successful load increase; lower reps and volume are expected after the jump"
+        loadStatus == "above" && repStatus == "below" && volumeStatus == "below" ->
+            "heavier than the previous session, but with fewer reps and lower volume"
+        loadStatus == "above" && (repStatus == "above" || volumeStatus == "above") ->
+            "heavier than the previous session with more total work"
+        loadStatus == "above" ->
+            "heavier than the previous session"
+        loadStatus == "matched" && repStatus == "above" && volumeStatus == "above" ->
+            "same load as the previous session, with more reps and volume"
+        loadStatus == "matched" && repStatus == "above" ->
+            "same load as the previous session, with more reps"
+        loadStatus == "matched" && volumeStatus == "above" ->
+            "same load as the previous session, with more volume"
+        loadStatus == "matched" && repStatus == "below" && volumeStatus == "below" ->
+            "same load as the previous session, but with fewer reps and lower volume"
+        loadStatus == "matched" && volumeStatus == "matched" ->
+            "matched the previous session"
+        loadStatus == "below" && (repStatus == "above" || volumeStatus == "above") ->
+            "lighter than the previous session, but with more total work"
+        loadStatus == "below" ->
+            "lighter than the previous session"
+        volumeStatus == "above" ->
+            "more total work than the previous session"
+        volumeStatus == "below" ->
+            "less total work than the previous session"
+        volumeStatus == "matched" ->
+            "matched the previous session"
+        else -> null
+    }
+
+    val planPhrase = currentProgression.planStatus?.let(::planStatusPhrase)
+    val baselinePhrase = when (currentProgression.baselineStatus) {
+        "above" -> "above the previous successful baseline"
+        "matched" -> "matched the previous successful baseline"
+        "below" -> "below the previous successful baseline"
+        else -> null
+    }
+    val phrases = listOfNotNull(previousPhrase, planPhrase, baselinePhrase).distinct()
+    if (phrases.isEmpty()) return null
+    return "TAKEAWAY ${phrases.joinToString("; ")}."
+}
+
+private data class ExerciseHistoryProgressionData(
+    val executedEntries: List<PromptSetSummaryEntry>,
+    val executedVolumeKg: Double?,
+    val planStatus: String?,
+    val baselineStatus: String?,
+)
+
+private fun parseExerciseHistoryProgressionLine(
+    session: String,
+): ExerciseHistoryProgressionData? {
+    val progressionLine = session.lineSequence()
+        .firstOrNull { it.startsWith("PROG ") }
+        ?: return null
+    val payload = progressionLine.removePrefix("PROG ")
+    val executedEntries = extractPromptSetSummaryEntriesFromPayload(
+        extractStructuredPayloadValue(payload, "Executed")
+    )
+    return ExerciseHistoryProgressionData(
+        executedEntries = executedEntries,
+        executedVolumeKg = parseExerciseHistoryExecutedVolumeKg(payload),
+        planStatus = (
+            extractStructuredPayloadValue(payload, "Vs target")
+                ?: extractStructuredPayloadValue(payload, "Vs expected")
+            )?.toSignalStatus(),
+        baselineStatus = extractStructuredPayloadValue(payload, "Vs success baseline")?.toSignalStatus(),
+    )
+}
+
+private fun extractStructuredPayloadValue(
+    payload: String,
+    label: String,
+): String? {
+    val prefix = "$label:"
+    return payload
+        .split('|')
+        .firstNotNullOfOrNull { part ->
+            val trimmed = part.trim()
+            if (!trimmed.startsWith(prefix, ignoreCase = true)) {
+                null
+            } else {
+                trimmed.removePrefix(prefix).trim().takeIf { it.isNotBlank() }
+            }
+        }
+}
+
+private fun extractPromptSetSummaryEntriesFromPayload(
+    payload: String?,
+): List<PromptSetSummaryEntry> {
+    return payload
+        ?.split(';')
+        ?.map { it.trim() }
+        ?.mapNotNull(::parsePromptSetSummaryEntry)
+        .orEmpty()
+}
+
+private fun parseExerciseHistoryExecutedVolumeKg(
+    payload: String,
+): Double? {
+    val execValue = Regex("""\bVolume:\s*.*?\bExec\s+([^|]+)""", RegexOption.IGNORE_CASE)
+        .find(payload)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?: return null
+    return parseVolumeMetricKg(execValue)
+}
+
+private fun String.toSignalStatus(): String {
+    return when (trim().lowercase()) {
+        "equal", "met" -> "matched"
+        else -> trim().lowercase()
+    }
+}
+
+private fun compareDoubleValues(
+    current: Double,
+    previous: Double,
+): String {
+    return when {
+        abs(current - previous) < 0.0001 -> "matched"
+        current > previous -> "above"
+        else -> "below"
+    }
+}
+
+private fun compareNullableDoubleValues(
+    current: Double?,
+    previous: Double?,
+): String? {
+    if (current == null || previous == null) return null
+    return compareDoubleValues(current, previous)
+}
+
+private fun compareIntValues(
+    current: Int,
+    previous: Int,
+): String {
+    return when {
+        current == previous -> "matched"
+        current > previous -> "above"
+        else -> "below"
+    }
 }
 
 private fun compactExerciseSessionHeartRateSubsection(
@@ -924,6 +1205,19 @@ private data class PlannedWorkEntry(
     val reps: Int,
 )
 
+private data class CompactSetSummaryEntry(
+    val loadDescription: String,
+    val reps: Int,
+    val setCount: Int,
+    val autoRegulationRir: String?,
+)
+
+private data class PromptSetSummaryEntry(
+    val setCount: Int,
+    val load: Double,
+    val reps: Int,
+)
+
 private fun buildCompactPlannedSummary(
     lines: List<String>,
 ): String? {
@@ -1059,7 +1353,7 @@ private fun compactRepeatedEntryListLine(
         .firstOrNull { line.startsWith(it) } ?: return line
     val value = line.removePrefix(prefix).trim()
     if (value.isBlank()) return line
-    return "$prefix ${compactRepeatedEntryList(value)}"
+    return "$prefix ${renderCompactSetSummaryForPrompt(compactRepeatedEntryList(value))}"
 }
 
 private fun compactRepeatedEntryList(
@@ -1095,6 +1389,52 @@ private fun compactRepeatedEntryList(
     flushCurrentEntry()
 
     return compacted.joinToString(", ")
+}
+
+private fun renderCompactSetSummaryForPrompt(
+    compactedValue: String,
+): String {
+    val entries = compactedValue
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (entries.isEmpty()) return compactedValue.trim()
+
+    val parsedEntries = entries.map { entry ->
+        parseCompactSetSummaryEntry(entry) ?: return compactedValue.trim()
+    }
+
+    return parsedEntries.joinToString("; ") { entry ->
+        buildString {
+            append(entry.setCount)
+            append(if (entry.setCount == 1) " set" else " sets")
+            append(" at ")
+            append(entry.loadDescription)
+            append(" for ")
+            append(entry.reps)
+            append(if (entry.reps == 1) " rep" else " reps")
+            entry.autoRegulationRir?.let { rir ->
+                append(" with auto RIR ")
+                append(rir)
+            }
+        }
+    }
+}
+
+private fun parseCompactSetSummaryEntry(
+    entry: String,
+): CompactSetSummaryEntry? {
+    val match = Regex(
+        """^(body weight \+\s*[0-9.]+\s*kg|[0-9.]+\s*kg)\s*x\s*(\d+)(?:\s*\(auto RIR\s*([0-9.]+)\))?(?:\s*\((\d+)\s+sets?\))?$""",
+        RegexOption.IGNORE_CASE
+    ).matchEntire(entry.trim()) ?: return null
+
+    return CompactSetSummaryEntry(
+        loadDescription = match.groupValues[1].replace(Regex("""\s+"""), " "),
+        reps = match.groupValues[2].toIntOrNull() ?: return null,
+        autoRegulationRir = match.groupValues[3].takeIf { it.isNotBlank() },
+        setCount = match.groupValues[4].takeIf { it.isNotBlank() }?.toIntOrNull() ?: 1,
+    )
 }
 
 private fun stripLikelyWarmupSetSummaryLine(
@@ -1677,7 +2017,7 @@ private fun extractSetLoads(
     val setsLine = lines.firstOrNull { it.startsWith("- Sets:") } ?: return null
     return setsLine
         .removePrefix("- Sets:")
-        .split(',')
+        .split(',', ';')
         .map { it.trim() }
         .flatMap(::expandSetEntryLoads)
         .ifEmpty { null }
@@ -1697,6 +2037,8 @@ private fun formatLoadValue(
 private fun expandSetEntryLoads(
     entry: String,
 ): List<Double> {
+    parsePromptSetSummaryEntryLoads(entry)?.let { return it }
+
     val load = parseSetSummaryLoad(entry) ?: return emptyList()
     val count = Regex("""\((\d+)\s+sets\)""", RegexOption.IGNORE_CASE)
         .find(entry)
@@ -1704,6 +2046,18 @@ private fun expandSetEntryLoads(
         ?.getOrNull(1)
         ?.toIntOrNull()
         ?: 1
+    return List(count) { load }
+}
+
+private fun parsePromptSetSummaryEntryLoads(
+    entry: String,
+): List<Double>? {
+    val match = Regex(
+        """^(\d+)\s+sets?\s+at\s+(?:body weight \+\s*)?([0-9.]+)\s*kg\s+for\s+\d+\s+reps?(?:\s+with\s+auto\s+RIR\s+[0-9.]+)?$""",
+        RegexOption.IGNORE_CASE
+    ).matchEntire(entry.trim()) ?: return null
+    val count = match.groupValues[1].toIntOrNull() ?: return null
+    val load = match.groupValues[2].toDoubleOrNull() ?: return null
     return List(count) { load }
 }
 
@@ -1798,7 +2152,179 @@ private fun renderCompactWorkoutSection(
     append(section.subsections.joinToString("\n") { subsection ->
         renderStructuredSubsection(subsection.title, subsection.lines)
     })
+    buildWorkoutExerciseTakeawayLine(section)?.let { takeawayLine ->
+        append('\n')
+        append(takeawayLine)
+    }
 }.trim().takeWithinBudget(MAX_SECTION_CHAR_BUDGET)
+
+private fun buildWorkoutExerciseTakeawayLine(
+    section: CompactWorkoutSectionData,
+): String? {
+    val executedLines = section.subsections.firstOrNull { it.title == "Executed" }?.lines.orEmpty()
+    val previousLines = section.subsections.firstOrNull { it.title == "Previous Session" }?.lines.orEmpty()
+    val signalLines = section.subsections.firstOrNull { it.title == "Coaching Signals" }?.lines.orEmpty()
+
+    val planPhrase = signalStatus(signalLines, "- Vs target:")
+        ?.let(::planStatusPhrase)
+    val previousPhrase = buildPreviousSessionTakeawayPhrase(
+        signalLines = signalLines,
+        executedLines = executedLines,
+        previousLines = previousLines,
+        planStatus = signalStatus(signalLines, "- Vs target:")
+    )
+    val bestPhrase = signalStatus(signalLines, "- Vs best:")
+        ?.let(::bestStatusPhrase)
+
+    val phrases = listOfNotNull(previousPhrase, planPhrase, bestPhrase)
+        .distinct()
+    if (phrases.isEmpty()) return null
+
+    return "TAKEAWAY ${phrases.joinToString("; ")}."
+}
+
+private fun buildPreviousSessionTakeawayPhrase(
+    signalLines: List<String>,
+    executedLines: List<String>,
+    previousLines: List<String>,
+    planStatus: String?,
+): String? {
+    if (previousLines.any { it.equals("- No previous session", ignoreCase = true) }) {
+        return "no previous completed session to compare against"
+    }
+
+    val volumeStatus = signalStatus(signalLines, "- Vs prev:")
+    val topLoadStatus = signalStatus(signalLines, "- Top load vs prev:")
+    val loadProfileStatus = signalStatus(signalLines, "- Load profile vs prev:")
+    val repStatus = deriveTotalRepComparisonStatus(
+        currentEntries = extractPromptSetSummaryEntries(executedLines),
+        previousEntries = extractPromptSetSummaryEntries(previousLines)
+    )
+    val effectiveLoadStatus = topLoadStatus ?: loadProfileStatus
+
+    return when {
+        effectiveLoadStatus == "above" &&
+            repStatus == "below" &&
+            volumeStatus == "below" &&
+            (planStatus == "above" || planStatus == "matched") ->
+            "successful load increase; lower reps and volume are expected after the jump"
+        effectiveLoadStatus == "above" && repStatus == "below" && volumeStatus == "below" ->
+            "heavier than the previous session, but with fewer reps and lower volume"
+        effectiveLoadStatus == "above" && repStatus == "below" ->
+            "heavier than the previous session, but with fewer total reps"
+        effectiveLoadStatus == "above" && volumeStatus == "below" ->
+            "heavier than the previous session, but with lower volume"
+        effectiveLoadStatus == "above" && (repStatus == "above" || volumeStatus == "above") ->
+            "heavier than the previous session with more total work"
+        effectiveLoadStatus == "above" ->
+            "heavier than the previous session"
+        effectiveLoadStatus == "matched" && repStatus == "above" && volumeStatus == "above" ->
+            "same load as the previous session, with more reps and volume"
+        effectiveLoadStatus == "matched" && repStatus == "above" ->
+            "same load as the previous session, with more reps"
+        effectiveLoadStatus == "matched" && volumeStatus == "above" ->
+            "same load as the previous session, with more volume"
+        effectiveLoadStatus == "matched" && repStatus == "below" && volumeStatus == "below" ->
+            "same load as the previous session, but with fewer reps and lower volume"
+        effectiveLoadStatus == "matched" && repStatus == "below" ->
+            "same load as the previous session, but with fewer reps"
+        effectiveLoadStatus == "matched" && volumeStatus == "below" ->
+            "same load as the previous session, but with lower volume"
+        effectiveLoadStatus == "matched" && volumeStatus == "matched" ->
+            "matched the previous session"
+        effectiveLoadStatus == "below" && (repStatus == "above" || volumeStatus == "above") ->
+            "lighter than the previous session, but with more total work"
+        effectiveLoadStatus == "below" ->
+            "lighter than the previous session"
+        volumeStatus == "above" ->
+            "more total work than the previous session"
+        volumeStatus == "below" ->
+            "less total work than the previous session"
+        volumeStatus == "matched" ->
+            "matched the previous session"
+        else -> null
+    }
+}
+
+private fun signalStatus(
+    signalLines: List<String>,
+    prefix: String,
+): String? {
+    return signalLines.firstOrNull { it.startsWith(prefix, ignoreCase = true) }
+        ?.substringAfter(':')
+        ?.substringBefore('(')
+        ?.trim()
+        ?.lowercase()
+        ?.let { status ->
+            when (status) {
+                "equal" -> "matched"
+                "met" -> "matched"
+                else -> status
+            }
+        }
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun planStatusPhrase(
+    status: String,
+): String? {
+    return when (status) {
+        "above" -> "beat the plan"
+        "matched" -> "met the plan"
+        "below" -> "fell short of the plan"
+        "mixed" -> "had mixed results against the plan"
+        else -> null
+    }
+}
+
+private fun bestStatusPhrase(
+    status: String,
+): String? {
+    return when (status) {
+        "above" -> "set a new best"
+        "matched" -> "matched the best so far"
+        "below" -> "below the best so far"
+        else -> null
+    }
+}
+
+private fun deriveTotalRepComparisonStatus(
+    currentEntries: List<PromptSetSummaryEntry>,
+    previousEntries: List<PromptSetSummaryEntry>,
+): String? {
+    if (currentEntries.isEmpty() || previousEntries.isEmpty()) return null
+    val currentReps = currentEntries.sumOf { it.setCount * it.reps }
+    val previousReps = previousEntries.sumOf { it.setCount * it.reps }
+    return when {
+        currentReps == previousReps -> "matched"
+        currentReps > previousReps -> "above"
+        else -> "below"
+    }
+}
+
+private fun extractPromptSetSummaryEntries(
+    lines: List<String>,
+): List<PromptSetSummaryEntry> {
+    val setsPayload = extractCompactValue(lines, "- Sets") ?: return emptyList()
+    return setsPayload
+        .split(';')
+        .map { it.trim() }
+        .mapNotNull(::parsePromptSetSummaryEntry)
+}
+
+private fun parsePromptSetSummaryEntry(
+    entry: String,
+): PromptSetSummaryEntry? {
+    val match = Regex(
+        """^(\d+)\s+sets?\s+at\s+(?:body weight \+\s*)?([0-9.]+)\s*kg\s+for\s+(\d+)\s+reps?(?:\s+with\s+auto\s+RIR\s+[0-9.]+)?$""",
+        RegexOption.IGNORE_CASE
+    ).matchEntire(entry.trim()) ?: return null
+    return PromptSetSummaryEntry(
+        setCount = match.groupValues[1].toIntOrNull() ?: return null,
+        load = match.groupValues[2].toDoubleOrNull() ?: return null,
+        reps = match.groupValues[3].toIntOrNull() ?: return null,
+    )
+}
 
 private fun List<String>.takeWhileBudget(
     budget: Int,
