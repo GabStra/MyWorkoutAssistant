@@ -507,13 +507,30 @@ private fun matchesBackupFileName(name: String, exactFileName: String): Boolean 
     return pattern.matches(name)
 }
 
-private suspend fun readLatestAutomaticBackupJsonFromDownloads(context: Context): String? {
-    val automaticBackupFiles = findAllBackupFilesInDownloadsFolder(
-        context = context,
-        exactFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
-    )
-    val latestBackup = automaticBackupFiles.maxByOrNull { it.dateModified } ?: return null
-    return readTextFromUri(context, latestBackup.uri)
+private suspend fun loadLatestBackupFromDownloadsFolder(context: Context): AppBackup? {
+    val backupFiles = findAllBackupFiles(context)
+        .sortedByDescending { it.dateModified }
+
+    for (backupFile in backupFiles) {
+        val jsonString = readFileContentFromDownloadsFolder(context, backupFile.uri)
+        if (jsonString == null) {
+            Log.w("Utils", "Couldn't read backup file from Downloads: ${backupFile.name}")
+            continue
+        }
+
+        val appBackup = runCatching { fromJSONtoAppBackup(jsonString) }
+            .onFailure {
+                Log.w("Utils", "Skipping invalid backup file from Downloads: ${backupFile.name}", it)
+            }
+            .getOrNull()
+
+        if (appBackup != null) {
+            Log.d("Utils", "Backup loaded successfully from Downloads: ${backupFile.name}")
+            return appBackup
+        }
+    }
+
+    return null
 }
 
 private fun deleteBackupFile(context: Context, uri: android.net.Uri): Boolean {
@@ -1282,7 +1299,7 @@ fun hasExternalBackup(context: Context): Boolean {
 
 /**
  * Loads the external backup file and parses it as AppBackup.
- * Prefers persisted SAF document access and falls back to the legacy external files dir.
+ * Prefers persisted SAF document access, then scans Downloads, then falls back to the legacy external files dir.
  */
 suspend fun loadExternalBackup(context: Context): AppBackup? {
     return withContext(Dispatchers.IO) {
@@ -1296,10 +1313,8 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                 return@withContext it
             }
 
-            readLatestAutomaticBackupJsonFromDownloads(context)?.let { jsonString ->
-                val appBackup = fromJSONtoAppBackup(jsonString)
-                Log.d("Utils", "Backup loaded successfully from Downloads automatic backup file")
-                return@withContext appBackup
+            loadLatestBackupFromDownloadsFolder(context)?.let {
+                return@withContext it
             }
 
             val externalDir = context.getExternalFilesDir(null)
@@ -1339,10 +1354,14 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
 }
 
 /**
- * Loads the latest available backup from the configured SAF documents.
+ * Loads the latest available backup from configured documents or Downloads.
  */
 suspend fun loadLatestBackupFromDownloads(context: Context): AppBackup? {
     return loadExternalBackup(context)
+}
+
+suspend fun hasBackupFileCandidateInDownloads(context: Context): Boolean {
+    return findAllBackupFiles(context).isNotEmpty()
 }
 
 suspend fun saveWorkoutStoreToDownloads(context: Context, workoutStore: WorkoutStore, db: AppDatabase) {

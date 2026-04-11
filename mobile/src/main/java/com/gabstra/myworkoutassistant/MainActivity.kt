@@ -696,8 +696,8 @@ fun MyWorkoutAssistantNavHost(
         workoutRecordDao: WorkoutRecordDao,
         healthConnectClient: HealthConnectClient,
         successToastMessage: String = "Backup restored."
-    ) {
-        withContext(Dispatchers.IO + NonCancellable) {
+    ): Boolean {
+        return withContext(Dispatchers.IO + NonCancellable) {
             try {
 
                 val allowedWorkouts = appBackup.WorkoutStore.workouts.filter { workout ->
@@ -822,7 +822,7 @@ fun MyWorkoutAssistantNavHost(
             } catch (e: CancellationException) {
                 // Job was cancelled (e.g., activity destroyed) - this is expected
                 Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
-                return@withContext
+                return@withContext false
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error awaiting restore job: ${e.javaClass.simpleName}. " +
                         "Message: ${e.message}, " +
@@ -859,6 +859,7 @@ fun MyWorkoutAssistantNavHost(
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
                     PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
+                    true
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error during restore migration: ${e.javaClass.simpleName}. " +
                             "Message: ${e.message}, " +
@@ -874,6 +875,7 @@ fun MyWorkoutAssistantNavHost(
                             Toast.LENGTH_LONG
                         ).show()
                     }
+                    false
                 }
             } else {
                 withContext(Dispatchers.Main) {
@@ -883,10 +885,12 @@ fun MyWorkoutAssistantNavHost(
                         Toast.LENGTH_SHORT
                     ).show()
                 }
+                false
             }
             } catch (e: CancellationException) {
                 // Job was cancelled (e.g., activity destroyed) - this is expected
                 Log.d("MainActivity", "Restore operation cancelled (likely activity destroyed): ${e.message}")
+                false
             } catch (e: Exception) {
                 Log.e("MainActivity", "Error during restore: ${e.javaClass.simpleName}. " +
                         "Message: ${e.message}, " +
@@ -902,9 +906,12 @@ fun MyWorkoutAssistantNavHost(
                         Toast.LENGTH_LONG
                     ).show()
                 }
+                false
             }
         }
     }
+
+    var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
@@ -919,11 +926,23 @@ fun MyWorkoutAssistantNavHost(
                 appViewModel.workoutStore.equipments.isNotEmpty() ||
                 appViewModel.workoutStore.accessoryEquipments.isNotEmpty()
 
-        prefs.edit { putBoolean("auto_restore_checked", true) }
-        if (hasCurrentData) return@LaunchedEffect
+        if (hasCurrentData) {
+            prefs.edit { putBoolean("auto_restore_checked", true) }
+            return@LaunchedEffect
+        }
 
-        val appBackup = loadLatestBackupFromDownloads(context) ?: return@LaunchedEffect
-        restoreFromAppBackup(
+        val appBackup = loadLatestBackupFromDownloads(context)
+        if (appBackup == null) {
+            val alreadyPrompted = prefs.getBoolean("restore_picker_prompt_shown", false)
+            val hasBackupCandidate = hasBackupFileCandidateInDownloads(context)
+            if (hasBackupCandidate && !alreadyPrompted) {
+                prefs.edit { putBoolean("restore_picker_prompt_shown", true) }
+                showStartupRestorePickerPrompt = true
+            }
+            return@LaunchedEffect
+        }
+
+        val restored = restoreFromAppBackup(
             appBackup = appBackup,
             context = context,
             appViewModel = appViewModel,
@@ -939,6 +958,9 @@ fun MyWorkoutAssistantNavHost(
             healthConnectClient = healthConnectClient,
             successToastMessage = "Backup restored because your local data was empty."
         )
+        if (restored) {
+            prefs.edit { putBoolean("auto_restore_checked", true) }
+        }
     }
 
     val jsonPickerLauncher =
@@ -1026,6 +1048,23 @@ fun MyWorkoutAssistantNavHost(
                 }
             }
         }
+
+    if (showStartupRestorePickerPrompt) {
+        StandardDialog(
+            onDismissRequest = { showStartupRestorePickerPrompt = false },
+            title = "Restore backup?",
+            body = {
+                Text("Your local data is empty. Choose a backup file to restore your workouts.")
+            },
+            confirmText = "Choose file",
+            onConfirm = {
+                showStartupRestorePickerPrompt = false
+                jsonPickerLauncher.launch(arrayOf("application/json"))
+            },
+            dismissText = "Not now",
+            onDismissButton = { showStartupRestorePickerPrompt = false }
+        )
+    }
 
     var configuredLiteRtModelPath by remember {
         mutableStateOf(LiteRtLmModelStore.getConfiguredModelPath(context))
