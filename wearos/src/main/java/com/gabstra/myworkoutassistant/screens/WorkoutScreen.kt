@@ -2,11 +2,17 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -19,10 +25,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
+import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
@@ -53,16 +69,28 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.isReady
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
+import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
+import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
+import com.gabstra.myworkoutassistant.shared.formatWeight
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
+import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
+import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
 import com.gabstra.myworkoutassistant.shared.workout.calibration.applyCalibrationRIR
 import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrationLoad
+import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
+import com.google.android.horologist.compose.ambient.AmbientAware
+import com.google.android.horologist.compose.ambient.AmbientAwareTime
+import com.google.android.horologist.compose.ambient.AmbientState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -89,6 +117,9 @@ fun WorkoutScreen(
     val workoutState = screenState.workoutState
     var hrStatus by remember(workoutState) { mutableStateOf<HeartRateStatus?>(null) }
     val selectedWorkout = screenState.selectedWorkout
+    val forceAmbientOverlay = remember(context) {
+        E2eRuntimePreferences.isAmbientWorkoutOverlayForced(context)
+    }
     val userAge = screenState.userAge
     val measuredMaxHeartRate = screenState.measuredMaxHeartRate
     val restingHeartRate = screenState.restingHeartRate
@@ -159,9 +190,17 @@ fun WorkoutScreen(
         try {
             val notificationHelper = WorkoutNotificationHelper(context)
             notificationHelper.clearChannelNotifications()
-            showWorkoutInProgressNotification(context)
+            showWorkoutInProgressNotification(context, selectedWorkout.globalId)
         } catch (exception: Exception) {
             android.util.Log.e("WorkoutScreen", "Error showing workout notification", exception)
+        }
+    }
+
+    LaunchedEffect(selectedWorkout.globalId) {
+        try {
+            showWorkoutInProgressNotification(context, selectedWorkout.globalId)
+        } catch (exception: Exception) {
+            android.util.Log.e("WorkoutScreen", "Error refreshing workout notification", exception)
         }
     }
 
@@ -406,32 +445,33 @@ fun WorkoutScreen(
         }
     )
 
-    CompositionLocalProvider(LocalTopOverlayController provides topOverlayController) {
-        LaunchedEffect(showHeartRateTutorial) {
-            if (showHeartRateTutorial) {
-                viewModel.setDimming(false)
-                topOverlayController.show(owner = "workout_heart_rate_tutorial") {
-                    TutorialOverlay(
-                        visible = true,
-                        steps = listOf(
-                            TutorialStep("Heart rate (left)", "Tap the number to change the display format."),
-                            TutorialStep("Workout progress (right)", "See your current position in the workout."),
-                            TutorialStep("Back button", "Double-press to complete the set.")
-                        ),
-                        onDismiss = onDismissHeartRateTutorial,
-                        hapticsViewModel = hapticsViewModel
-                    )
+    AmbientAware { ambientState ->
+        CompositionLocalProvider(LocalTopOverlayController provides topOverlayController) {
+            LaunchedEffect(showHeartRateTutorial) {
+                if (showHeartRateTutorial) {
+                    viewModel.setDimming(false)
+                    topOverlayController.show(owner = "workout_heart_rate_tutorial") {
+                        TutorialOverlay(
+                            visible = true,
+                            steps = listOf(
+                                TutorialStep("Heart rate (left)", "Tap the number to change the display format."),
+                                TutorialStep("Workout progress (right)", "See your current position in the workout."),
+                                TutorialStep("Back button", "Double-press to complete the set.")
+                            ),
+                            onDismiss = onDismissHeartRateTutorial,
+                            hapticsViewModel = hapticsViewModel
+                        )
+                    }
+                } else {
+                    topOverlayController.clear("workout_heart_rate_tutorial")
+                    viewModel.reEvaluateDimmingForCurrentState()
                 }
-            } else {
-                topOverlayController.clear("workout_heart_rate_tutorial")
-                viewModel.reEvaluateDimmingForCurrentState()
             }
-        }
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize(),
-        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize(),
+            ) {
             if(isResuming){
                 LoadingScreen(viewModel,"Resuming your workout")
                 return@Box
@@ -701,6 +741,365 @@ fun WorkoutScreen(
             HrStatusBadge(hrStatus = hrStatus)
 
             TopOverlayHost(controller = topOverlayController)
+
+            if (ambientState.isAmbient || forceAmbientOverlay) {
+                AmbientWorkoutOverlay(
+                    ambientState = ambientState,
+                    screenState = screenState,
+                    viewModel = viewModel
+                )
+            }
         }
+        }
+    }
+}
+
+@Composable
+private fun AmbientWorkoutOverlay(
+    ambientState: AmbientState,
+    screenState: WorkoutScreenState,
+    viewModel: AppViewModel
+) {
+    val workoutState = screenState.workoutState
+    val exerciseName = remember(workoutState, viewModel.exercisesById) {
+        val exerciseId = when (workoutState) {
+            is WorkoutState.Set -> workoutState.exerciseId
+            is WorkoutState.Rest -> workoutState.exerciseId
+            is WorkoutState.CalibrationLoadSelection -> workoutState.exerciseId
+            is WorkoutState.CalibrationRIRSelection -> workoutState.exerciseId
+            is WorkoutState.AutoRegulationRIRSelection -> workoutState.exerciseId
+            else -> null
+        }
+        exerciseId?.let { viewModel.exercisesById[it]?.name }
+    }
+    val phaseText = remember(workoutState) { ambientPhaseText(workoutState) }
+    val detailText = remember(workoutState) { ambientDetailText(workoutState) }
+    val progressText = remember(workoutState, viewModel.allWorkoutStates.size) {
+        val stateIndex = viewModel.allWorkoutStates.indexOfFirst { it === workoutState }
+        if (stateIndex >= 0 && viewModel.allWorkoutStates.isNotEmpty()) {
+            "${stateIndex + 1}/${viewModel.allWorkoutStates.size}"
+        } else {
+            null
+        }
+    }
+    val setCounterText = remember(workoutState) {
+        (workoutState as? WorkoutState.Set)
+            ?.let { state ->
+                viewModel.getSetCounterForExercise(state.exerciseId, state)
+                    ?.let { (current, total) -> if (total > 1) "Set $current/$total" else "Set $current" }
+            }
+    }
+    val overlayModel = ambientOverlayModel(
+        workoutState = workoutState,
+        exerciseName = exerciseName,
+        metadataText = setCounterText ?: detailText ?: progressText,
+        progressText = progressText,
+        formatWeightForState = { weight, equipmentId ->
+            equipmentId
+                ?.let { viewModel.getEquipmentById(it) }
+                ?.formatWeight(weight)
+                ?: formatWeight(weight)
+        }
+    )
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+
+    AmbientWorkoutOverlayContent(
+        ambientState = ambientState,
+        model = overlayModel.copy(phaseText = phaseText),
+        timeContent = {
+            AmbientAwareTime(stateUpdate = ambientState) { dateTime, _ ->
+                AmbientWorkoutTimeText(timeFormatter.format(dateTime))
+            }
+        }
+    )
+}
+
+@Composable
+private fun AmbientWorkoutOverlayContent(
+    ambientState: AmbientState,
+    model: AmbientWorkoutOverlayModel,
+    timeContent: @Composable () -> Unit
+) {
+    val offsetDp = (ambientState as? AmbientState.Ambient)
+        ?.takeIf { it.burnInProtectionRequired }
+        ?.let { (((it.updateTimeMillis / 60_000L) % 3L) - 1L).toInt().dp }
+        ?: 0.dp
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .semantics { contentDescription = "Ambient workout overlay" }
+            .zIndex(20f),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .offset(x = offsetDp, y = -offsetDp),
+            verticalArrangement = Arrangement.Top,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                timeContent()
+            }
+
+            Text(
+                modifier = Modifier.semantics {
+                    contentDescription = "Ambient workout exercise: ${model.exerciseName.orEmpty()}"
+                },
+                text = model.exerciseName.orEmpty(),
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.5.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp)
+                    .semantics {
+                        contentDescription = "Ambient workout phase: ${model.phaseText}"
+                    },
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = model.phaseText.uppercase(),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyExtraSmall.copy(fontWeight = FontWeight.Medium),
+                    maxLines = 1,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (!model.metadataText.isNullOrBlank()) {
+                    Text(
+                        text = "  |  ${model.metadataText}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyExtraSmall.copy(fontWeight = FontWeight.Medium),
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(Modifier.size(15.dp))
+
+            AmbientWorkoutMetricsRow(metrics = model.metrics)
+
+            if (!model.progressText.isNullOrBlank()) {
+                Spacer(Modifier.size(10.dp))
+                Text(
+                    text = "${model.progressText}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmbientWorkoutMetricsRow(metrics: List<AmbientWorkoutMetric>) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally)
+    ) {
+        metrics.forEach { metric ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.5.dp, Alignment.Bottom)
+            ) {
+                Text(
+                    text = metric.label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+                Text(
+                    modifier = Modifier.semantics {
+                        contentDescription = "Ambient workout ${metric.label.lowercase()}: ${metric.value}"
+                    },
+                    text = metric.value,
+                    color = Color.White,
+                    style = MaterialTheme.typography.numeralSmall.copy(fontWeight = FontWeight.Medium),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmbientWorkoutTimeText(text: String) {
+    Text(
+        text = text,
+        color = Color.White,
+        style = MaterialTheme.typography.bodySmall,
+        maxLines = 1
+    )
+}
+
+private data class AmbientWorkoutOverlayModel(
+    val phaseText: String,
+    val exerciseName: String?,
+    val metadataText: String?,
+    val progressText: String?,
+    val metrics: List<AmbientWorkoutMetric>
+)
+
+private data class AmbientWorkoutMetric(
+    val label: String,
+    val value: String
+)
+
+private fun ambientOverlayModel(
+    workoutState: WorkoutState,
+    exerciseName: String?,
+    metadataText: String?,
+    progressText: String?,
+    formatWeightForState: (Double, java.util.UUID?) -> String
+): AmbientWorkoutOverlayModel {
+    return AmbientWorkoutOverlayModel(
+        phaseText = ambientPhaseText(workoutState),
+        exerciseName = exerciseName ?: ambientPhaseText(workoutState),
+        metadataText = metadataText,
+        progressText = progressText,
+        metrics = ambientMetrics(workoutState, formatWeightForState)
+    )
+}
+
+private fun ambientMetrics(
+    workoutState: WorkoutState,
+    formatWeightForState: (Double, java.util.UUID?) -> String
+): List<AmbientWorkoutMetric> {
+    return when (workoutState) {
+        is WorkoutState.Set -> {
+            when (val setData = workoutState.currentSetData) {
+                is WeightSetData -> listOf(
+                    AmbientWorkoutMetric(
+                        label = "WEIGHT (KG)",
+                        value = formatWeightForState(setData.getWeight(), workoutState.equipmentId)
+                    ),
+                    AmbientWorkoutMetric(label = "REPS", value = setData.actualReps.toString())
+                )
+                is BodyWeightSetData -> listOf(
+                    AmbientWorkoutMetric(
+                        label = "WEIGHT (KG)",
+                        value = if (setData.additionalWeight == 0.0) {
+                            "BW"
+                        } else {
+                            formatWeightForState(setData.additionalWeight, workoutState.equipmentId)
+                        }
+                    ),
+                    AmbientWorkoutMetric(label = "REPS", value = setData.actualReps.toString())
+                )
+                is TimedDurationSetData -> listOf(
+                    AmbientWorkoutMetric(
+                        label = "TIMER",
+                        value = formatWorkoutDurationSecondsForDisplay((setData.endTimer / 1000).coerceAtLeast(0))
+                    )
+                )
+                is EnduranceSetData -> listOf(
+                    AmbientWorkoutMetric(
+                        label = "TIMER",
+                        value = formatWorkoutDurationSecondsForDisplay((setData.endTimer / 1000).coerceAtLeast(0))
+                    )
+                )
+                else -> listOf(AmbientWorkoutMetric(label = "SET", value = (workoutState.setIndex.toInt() + 1).toString()))
+            }
+        }
+        is WorkoutState.Rest -> {
+            val restData = workoutState.currentSetData as? RestSetData
+            listOf(
+                AmbientWorkoutMetric(
+                    label = "TIMER",
+                    value = formatWorkoutDurationSecondsForDisplay((restData?.endTimer ?: 0).coerceAtLeast(0))
+                )
+            )
+        }
+        is WorkoutState.CalibrationLoadSelection -> listOf(AmbientWorkoutMetric(label = "LOAD", value = "Pick"))
+        is WorkoutState.CalibrationRIRSelection -> listOf(AmbientWorkoutMetric(label = "RIR", value = "Log"))
+        is WorkoutState.AutoRegulationRIRSelection -> listOf(AmbientWorkoutMetric(label = "RIR", value = "Log"))
+        is WorkoutState.Preparing -> listOf(AmbientWorkoutMetric(label = "STATUS", value = "Ready"))
+        is WorkoutState.Completed -> listOf(AmbientWorkoutMetric(label = "STATUS", value = "Done"))
+    }
+}
+
+private fun ambientPhaseText(workoutState: WorkoutState): String =
+    when (workoutState) {
+        is WorkoutState.Preparing -> "Preparing"
+        is WorkoutState.Set -> "Set"
+        is WorkoutState.Rest -> "Rest"
+        is WorkoutState.Completed -> "Complete"
+        is WorkoutState.CalibrationLoadSelection -> "Pick load"
+        is WorkoutState.CalibrationRIRSelection -> "Log RIR"
+        is WorkoutState.AutoRegulationRIRSelection -> "Log RIR"
+    }
+
+private fun ambientDetailText(workoutState: WorkoutState): String? =
+    when (workoutState) {
+        is WorkoutState.Set -> {
+            val timerText = when (val setData = workoutState.currentSetData) {
+                is TimedDurationSetData -> "Timer ${formatWorkoutDurationSecondsForDisplay(setData.startTimer / 1000)}"
+                is EnduranceSetData -> "Timer --"
+                else -> null
+            }
+            listOfNotNull("Set ${workoutState.setIndex.toInt() + 1}", timerText)
+                .joinToString(" | ")
+        }
+        is WorkoutState.Rest -> {
+            "Timer --"
+        }
+        is WorkoutState.CalibrationLoadSelection -> "Calibration"
+        is WorkoutState.CalibrationRIRSelection -> "Calibration"
+        is WorkoutState.AutoRegulationRIRSelection -> "Auto-regulation"
+        else -> null
+    }
+
+@Preview(
+    name = "Ambient Workout Overlay",
+    group = "WorkoutScreen/Ambient",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun AmbientWorkoutOverlayPreview() {
+    MyWorkoutAssistantTheme {
+        AmbientWorkoutOverlayContent(
+            ambientState = AmbientState.Ambient(
+                burnInProtectionRequired = true,
+                updateTimeMillis = 60_000L
+            ),
+            model = AmbientWorkoutOverlayModel(
+                phaseText = "Set",
+                exerciseName = "Incline Dumbbell Press",
+                metadataText = "Set 2/4",
+                progressText = "4/18",
+                metrics = listOf(
+                    AmbientWorkoutMetric(label = "WEIGHT (KG)", value = "80"),
+                    AmbientWorkoutMetric(label = "REPS", value = "8")
+                )
+            ),
+            timeContent = {
+                AmbientWorkoutTimeText("21:42")
+            }
+        )
     }
 }

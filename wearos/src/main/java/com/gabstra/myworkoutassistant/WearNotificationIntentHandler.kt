@@ -14,7 +14,6 @@ internal object WearNotificationIntentHandler {
     fun handle(
         intent: Intent,
         notificationManager: NotificationManager,
-        isWorkoutInProgress: Boolean,
         workoutStoreRepository: WorkoutStoreRepository,
         appViewModel: AppViewModel
     ) {
@@ -26,7 +25,7 @@ internal object WearNotificationIntentHandler {
         val scheduleId = intent.getStringExtra(SCHEDULE_ID)
         notificationManager.cancel(scheduleId.hashCode())
 
-        if (isWorkoutInProgress || workoutId.isNullOrBlank()) {
+        if (workoutId.isNullOrBlank()) {
             return
         }
 

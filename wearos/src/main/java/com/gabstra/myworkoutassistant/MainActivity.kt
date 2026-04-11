@@ -81,6 +81,7 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
+import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -123,7 +124,9 @@ class MainActivity : ComponentActivity() {
         // cause issues when navigating between activities (e.g., WorkoutAlarmActivity launching
         // MainActivity with FLAG_ACTIVITY_CLEAR_TOP) while a workout is still active.
 
-        cancelWorkoutInProgressNotification(this)
+        if (!isWorkoutInProgress()) {
+            cancelWorkoutInProgressNotification(this)
+        }
 
         if (::myReceiver.isInitialized) {
             unregisterReceiver(myReceiver)
@@ -174,7 +177,6 @@ class MainActivity : ComponentActivity() {
         WearNotificationIntentHandler.handle(
             intent = intent,
             notificationManager = notificationManager,
-            isWorkoutInProgress = isWorkoutInProgress(),
             workoutStoreRepository = workoutStoreRepository,
             appViewModel = appViewModel
         )
@@ -239,7 +241,6 @@ class MainActivity : ComponentActivity() {
         WearNotificationIntentHandler.handle(
             intent = intent,
             notificationManager = notificationManager,
-            isWorkoutInProgress = isWorkoutInProgress(),
             workoutStoreRepository = workoutStoreRepository,
             appViewModel = appViewModel
         )
@@ -361,8 +362,9 @@ fun WearApp(
             }
         }
 
-        LaunchedEffect(appViewModel.executeStartWorkout) {
-            if (appViewModel.executeStartWorkout.value == null) return@LaunchedEffect
+        val executeStartWorkout = appViewModel.executeStartWorkout.value
+        LaunchedEffect(executeStartWorkout) {
+            if (executeStartWorkout == null) return@LaunchedEffect
 
             try {
                 // Check if a workout is already in progress
@@ -372,12 +374,12 @@ fun WearApp(
 
                 val workoutStore = workoutStoreRepository.getWorkoutStore()
                 val workout =
-                    workoutStore.workouts.find { it.globalId == appViewModel.executeStartWorkout.value }
+                    workoutStore.workouts.find { it.globalId == executeStartWorkout }
 
                 if (workout == null) {
                     Log.e(
                         "MainActivity",
-                        "Workout not found for id: ${appViewModel.executeStartWorkout.value}"
+                        "Workout not found for id: $executeStartWorkout"
                     )
                     return@LaunchedEffect
                 }
@@ -390,6 +392,7 @@ fun WearApp(
                     navController.navigate(Screen.Workout.route) {
                         popUpTo(0) { inclusive = true }
                     }
+                    appViewModel.consumeStartWorkout()
                 } else {
                     startDestination = Screen.WorkoutDetail.route
                 }
@@ -464,7 +467,22 @@ fun WearApp(
             LoadingScreen(appViewModel)
         } else {
             val enableDimming by appViewModel.enableDimming
-            KeepOn(appViewModel, enableDimming = enableDimming) {
+            val screenState by appViewModel.screenState.collectAsState()
+            val keepInteractive = remember(
+                screenState.workoutState,
+                screenState.keepScreenOn,
+                appViewModel.exercisesById
+            ) {
+                val setState = screenState.workoutState as? WorkoutState.Set
+                screenState.keepScreenOn ||
+                    setState?.let { appViewModel.exercisesById[it.exerciseId]?.keepScreenOn } == true
+            }
+
+            KeepOn(
+                appViewModel,
+                keepInteractive = keepInteractive,
+                enableDimming = enableDimming && keepInteractive
+            ) {
                 EdgeSwipeBackHandler(
                     enabled = enableManualSwipe,
                     onSwipe = {

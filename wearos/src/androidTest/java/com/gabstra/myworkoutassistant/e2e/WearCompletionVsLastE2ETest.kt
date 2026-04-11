@@ -13,7 +13,9 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -94,6 +96,8 @@ class WearCompletionVsLastE2ETest : WearBaseE2ETest() {
         val db = AppDatabase.getDatabase(ApplicationProvider.getApplicationContext())
         db.workoutRecordDao().deleteAll()
         db.setHistoryDao().deleteAll()
+        db.exerciseInfoDao().deleteById(CompletionVsLastWorkoutStoreFixture.EXERCISE_ID)
+        db.exerciseSessionProgressionDao().deleteByExerciseId(CompletionVsLastWorkoutStoreFixture.EXERCISE_ID)
         db.workoutHistoryDao().deleteAll()
 
         val workoutHistoryId = UUID.fromString("45ddb966-b1c3-4d36-b296-64c57f38b37e")
@@ -165,6 +169,25 @@ class WearCompletionVsLastE2ETest : WearBaseE2ETest() {
         }
 
         workoutDriver.waitForWorkoutCompletion(timeoutMs = 30_000)
+        assertExecutedVsSeededHistoryMatchesScenario(scenario)
+    }
+
+    private fun assertExecutedVsSeededHistoryMatchesScenario(scenario: CompletionVsLastScenario) {
+        val expected = when (scenario) {
+            CompletionVsLastScenario.Above -> Ternary.ABOVE
+            CompletionVsLastScenario.Below -> Ternary.BELOW
+            CompletionVsLastScenario.Mixed -> Ternary.MIXED
+        }
+        val executedSets = scenario.mutations.map { mutation ->
+            SimpleSet(weight = mutation.actualWeight, reps = mutation.actualReps)
+        }
+        val seededHistorySets = scenario.historySetTemplates.map { template ->
+            SimpleSet(weight = template.weight, reps = template.reps)
+        }
+        val actual = compareSetListsUnordered(executedSets, seededHistorySets)
+        require(actual == expected) {
+            "Scenario fixture mismatch. expected=$expected actual=$actual executed=$executedSets history=$seededHistorySets"
+        }
     }
 
     private fun waitForCurrentSet(expectedSetId: UUID, timeoutMs: Long = 10_000): Boolean {

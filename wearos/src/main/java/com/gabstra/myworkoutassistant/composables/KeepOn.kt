@@ -51,6 +51,7 @@ private fun readSystemBrightnessAsWindowOverride(context: Context): Float {
 @SuppressLint("WakelockTimeout")
 fun KeepOn(
     appViewModel: AppViewModel,
+    keepInteractive: Boolean = true,
     enableDimming: Boolean = false,
     dimDelay: Long = 30000L, // Delay before dimming the screen
     content: @Composable () -> Unit
@@ -73,6 +74,7 @@ fun KeepOn(
 
     val updatedEnableDimming by rememberUpdatedState(enableDimming)
     val updatedDimDelay by rememberUpdatedState(dimDelay)
+    val updatedKeepInteractive by rememberUpdatedState(keepInteractive)
 
     fun setScreenBrightness(brightness: Float) {
         window?.attributes = window?.attributes?.apply {
@@ -132,6 +134,11 @@ fun KeepOn(
             isDimmed = false
         }
 
+        if (!updatedKeepInteractive) {
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            return
+        }
+
         if (updatedEnableDimming) {
             applyAwakeBrightness()
             dimmingJob = scope.launch {
@@ -154,14 +161,18 @@ fun KeepOn(
             releaseWakeLock()
         },
         onStarted = {
-            applyWindowFlags()
-            acquireWakeLock()
-            wakeUpAndResetTimer()
+            if (updatedKeepInteractive) {
+                applyWindowFlags()
+                acquireWakeLock()
+                wakeUpAndResetTimer()
+            }
         },
         onResumed = {
-            applyWindowFlags()
-            acquireWakeLock()
-            wakeUpAndResetTimer()
+            if (updatedKeepInteractive) {
+                applyWindowFlags()
+                acquireWakeLock()
+                wakeUpAndResetTimer()
+            }
         },
         onStopped = {
             releaseWakeLock()
@@ -169,8 +180,10 @@ fun KeepOn(
     )
 
     DisposableEffect(Unit) {
-        applyWindowFlags()
-        acquireWakeLock()
+        if (keepInteractive) {
+            applyWindowFlags()
+            acquireWakeLock()
+        }
         onDispose {
             dimmingJob?.cancel()
             // Ensure flags and brightness are reset when leaving the screen
@@ -190,12 +203,28 @@ fun KeepOn(
     LaunchedEffect(enableDimming) {
         if(!enableDimming){
             dimmingJob?.cancel()
-            applyWindowFlags()
-            acquireWakeLock()
             setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
             isDimmed = false
+            if (keepInteractive) {
+                applyWindowFlags()
+                acquireWakeLock()
+            }
         }else{
             wakeUpAndResetTimer()
+        }
+    }
+
+    LaunchedEffect(keepInteractive) {
+        if (keepInteractive) {
+            applyWindowFlags()
+            acquireWakeLock()
+            wakeUpAndResetTimer()
+        } else {
+            dimmingJob?.cancel()
+            clearWindowFlags()
+            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+            isDimmed = false
+            releaseWakeLock()
         }
     }
 
@@ -204,7 +233,7 @@ fun KeepOn(
             .fillMaxSize()
             .background(Color.Transparent)
             .then(
-                if(enableDimming){
+                if(enableDimming && keepInteractive){
                     Modifier.pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {

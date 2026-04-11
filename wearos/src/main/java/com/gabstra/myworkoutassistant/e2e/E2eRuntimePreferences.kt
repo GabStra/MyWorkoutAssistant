@@ -8,6 +8,8 @@ object E2eRuntimePreferences {
         "disable_startup_unsynced_history_sync"
     private const val KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS =
         "workout_history_sync_debounce_ms"
+    private const val KEY_FORCE_AMBIENT_WORKOUT_OVERLAY =
+        "force_ambient_workout_overlay"
 
     fun isStartupUnsyncedHistorySyncDisabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -37,11 +39,24 @@ object E2eRuntimePreferences {
             .commit()
     }
 
+    fun isAmbientWorkoutOverlayForced(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY, false)
+    }
+
+    fun setAmbientWorkoutOverlayForced(context: Context, forced: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY, forced)
+            .commit()
+    }
+
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .remove(KEY_DISABLE_STARTUP_UNSYNCED_HISTORY_SYNC)
             .remove(KEY_WORKOUT_HISTORY_SYNC_DEBOUNCE_MS)
+            .remove(KEY_FORCE_AMBIENT_WORKOUT_OVERLAY)
             .commit()
     }
 }
