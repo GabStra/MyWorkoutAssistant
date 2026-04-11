@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -87,21 +88,29 @@ object PhoneToWatchSyncCoordinator {
                 return
             }
             debounceJob?.cancel()
-            debounceJob = scope.launch {
+            val scheduledJob = scope.launch {
                 delay(DEBOUNCE_MS)
+                val currentJob = currentCoroutineContext()[Job]
                 mutex.withLock {
-                    if (PhoneSyncToWatchSuppressor.shouldSuppressPhoneToWatchSync()) {
-                        return@withLock
-                    }
-                    if (isWorkerRunning.get()) {
-                        setPendingFollowUp(appContext, true)
-                        Log.d(TAG, "debounce completed while sync running, pending follow-up set")
-                    } else {
-                        MobileSyncToWatchWorker.enqueue(appContext)
-                        Log.d(TAG, "debounce completed, enqueued mobile sync to watch")
+                    try {
+                        if (PhoneSyncToWatchSuppressor.shouldSuppressPhoneToWatchSync()) {
+                            return@withLock
+                        }
+                        if (isWorkerRunning.get()) {
+                            setPendingFollowUp(appContext, true)
+                            Log.d(TAG, "debounce completed while sync running, pending follow-up set")
+                        } else {
+                            MobileSyncToWatchWorker.enqueue(appContext)
+                            Log.d(TAG, "debounce completed, enqueued mobile sync to watch")
+                        }
+                    } finally {
+                        if (debounceJob === currentJob) {
+                            debounceJob = null
+                        }
                     }
                 }
             }
+            debounceJob = scheduledJob
         }
     }
 
