@@ -48,7 +48,6 @@ import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
@@ -402,7 +401,7 @@ fun PageProgressionComparison(
         // Set number indicator (combined with Repeat and Plateau Detected if applicable)
         if (maxSets > 0) {
             val baseStyle = MaterialTheme.typography.bodySmall
-            val secondaryTextColor = MediumLighterGray
+            val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
             val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle, secondaryTextColor) {
                 buildAnnotatedString {
                     withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {

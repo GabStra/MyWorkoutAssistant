@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.gabstra.myworkoutassistant.shared.DarkGray
 
 @Composable
 fun StandardDialog(
@@ -43,7 +42,7 @@ fun StandardDialog(
                 .fillMaxWidth()
                 .widthIn(max = 560.dp),
             shape = MaterialTheme.shapes.small,
-            color = DarkGray,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 0.dp
         ) {
             Column(

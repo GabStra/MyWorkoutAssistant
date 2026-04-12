@@ -48,7 +48,7 @@ val darkScheme = ColorScheme(
     surfaceContainer = MediumDarkGray,
     surfaceContainerHigh = MediumGray,
     onSurface =  LighterGray, //Color(210, 210, 210),
-    onSurfaceVariant = LighterGray,
+    onSurfaceVariant = MediumLightGray,
     outline = MediumGray,
     outlineVariant = MediumLightGray,
 

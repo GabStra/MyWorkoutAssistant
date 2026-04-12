@@ -33,7 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,12 +42,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -112,12 +109,9 @@ import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
-import dev.shreyaspatil.capturable.capturable
-import dev.shreyaspatil.capturable.controller.rememberCaptureController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.time.Duration
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
@@ -127,7 +121,6 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
-private const val INSIGHTS_HEART_RATE_CHART_CAPTURE_ENABLED = false
 
 private data class HeartRateZoneSegment(
     val zoneIndex: Int,
@@ -336,8 +329,7 @@ fun Menu(
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(
     ExperimentalMaterial3Api::class,
-    ExperimentalFoundationApi::class,
-    ExperimentalComposeUiApi::class
+    ExperimentalFoundationApi::class
 )
 @Composable
 fun WorkoutHistoryScreen(
@@ -352,7 +344,6 @@ fun WorkoutHistoryScreen(
     selectedHistoryMode: Int = 0,
     onGoBack: () -> Unit,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
-    onHeartRateChartCaptured: (UUID?, ByteArray?) -> Unit = { _, _ -> },
 ) {
 
     val context = LocalContext.current
@@ -400,7 +391,6 @@ fun WorkoutHistoryScreen(
     var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
     var heartRateMinY by remember { mutableStateOf<Double?>(null) }
-    val heartRateChartCaptureController = rememberCaptureController()
 
     val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _ ->
@@ -622,7 +612,6 @@ fun WorkoutHistoryScreen(
 
     LaunchedEffect(selectedWorkoutHistory) {
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
-        onHeartRateChartCaptured(selectedWorkoutHistory?.id, null)
         if (selectedWorkoutHistory == null) return@LaunchedEffect
 
         isLoading = true
@@ -727,43 +716,6 @@ fun WorkoutHistoryScreen(
 
             delay(500)
             isLoading = false
-        }
-    }
-
-    LaunchedEffect(
-        selectedWorkoutHistory?.id,
-        heartRateEntryModel,
-        heartRateMinY,
-        userAge,
-        measuredMaxHeartRate,
-        restingHeartRate,
-        isLoading
-    ) {
-        val selectedHistoryId = selectedWorkoutHistory?.id
-        if (!INSIGHTS_HEART_RATE_CHART_CAPTURE_ENABLED) {
-            onHeartRateChartCaptured(selectedHistoryId, null)
-            return@LaunchedEffect
-        }
-        if (
-            isLoading ||
-            selectedHistoryId == null ||
-            heartRateEntryModel == null ||
-            selectedWorkoutHistory?.heartBeatRecords?.any { it != 0 } != true
-        ) {
-            onHeartRateChartCaptured(selectedHistoryId, null)
-            return@LaunchedEffect
-        }
-
-        withFrameNanos { }
-        runCatching {
-            heartRateChartCaptureController.captureAsync().await()
-                .asAndroidBitmap()
-                .toPngByteArray()
-        }.onSuccess { bytes ->
-            onHeartRateChartCaptured(selectedHistoryId, bytes)
-        }.onFailure { error ->
-            Log.w(WORKOUT_HISTORY_SCREEN_LOG_TAG, "heart_rate_chart_capture_failed", error)
-            onHeartRateChartCaptured(selectedHistoryId, null)
         }
     }
 
@@ -1064,26 +1016,20 @@ fun WorkoutHistoryScreen(
                                 )
                             },
                         subContent = {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .capturable(heartRateChartCaptureController)
-                            ) {
-                                HeartRateChartContent(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    cartesianChartModel = heartRateEntryModel!!,
+                            HeartRateChartContent(
+                                modifier = Modifier.fillMaxWidth(),
+                                cartesianChartModel = heartRateEntryModel!!,
+                                userAge = userAge,
+                                measuredMaxHeartRate = measuredMaxHeartRate,
+                                restingHeartRate = restingHeartRate,
+                                minYBpm = heartRateMinY,
+                                zoneGuideValuesBpm = getHeartRateZoneGuideValues(
                                     userAge = userAge,
                                     measuredMaxHeartRate = measuredMaxHeartRate,
                                     restingHeartRate = restingHeartRate,
-                                    minYBpm = heartRateMinY,
-                                    zoneGuideValuesBpm = getHeartRateZoneGuideValues(
-                                        userAge = userAge,
-                                        measuredMaxHeartRate = measuredMaxHeartRate,
-                                        restingHeartRate = restingHeartRate,
-                                    ),
-                                    onInteractionChange = { isChartInteractionActive = it },
-                                )
-                            }
+                                ),
+                                onInteractionChange = { isChartInteractionActive = it },
+                            )
 
                             Spacer(modifier = Modifier.height(10.dp))
 
@@ -1582,9 +1528,3 @@ fun WorkoutHistoryScreen(
         }
     }
 }
-
-private fun android.graphics.Bitmap.toPngByteArray(): ByteArray =
-    ByteArrayOutputStream().use { output ->
-        compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
-        output.toByteArray()
-    }

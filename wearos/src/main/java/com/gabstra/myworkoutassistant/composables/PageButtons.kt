@@ -46,7 +46,6 @@ import com.gabstra.myworkoutassistant.shared.DarkOrange
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
@@ -224,7 +223,7 @@ fun PageButtons(
                                 text = statusText,
                                 style = MaterialTheme.typography.bodyExtraSmall,
                                 textAlign = TextAlign.Start,
-                                color = MediumLighterGray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(

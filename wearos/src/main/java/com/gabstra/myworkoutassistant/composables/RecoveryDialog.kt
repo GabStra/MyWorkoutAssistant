@@ -43,7 +43,6 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.presentation.theme.baseline
 import com.gabstra.myworkoutassistant.presentation.theme.darkScheme
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.workout.model.IncompleteWorkout
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
@@ -378,7 +377,7 @@ private fun RecoveryBodyText(
             text = text,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
-            color = MediumLighterGray,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

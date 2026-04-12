@@ -119,7 +119,6 @@ import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -138,9 +137,12 @@ private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME = "workout_store_backup"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME.json"
 
-private fun buildAutomaticDownloadsBackupFileName(
-    now: LocalDate = LocalDate.now()
-): String = "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_${now}.json"
+fun buildWorkoutStoreBackupFileName(
+    now: Date = Date()
+): String {
+    val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault()).format(now)
+    return "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_$timestamp.json"
+}
 
 private fun backupStoragePrefs(context: Context) =
     context.getSharedPreferences(BACKUP_STORAGE_PREFS, Context.MODE_PRIVATE)
@@ -501,7 +503,7 @@ private fun matchesBackupFileName(name: String, exactFileName: String): Boolean 
     val baseName = exactFileName.removeSuffix(".json")
     val escapedBaseName = Regex.escape(baseName)
     val pattern = Regex(
-        "^$escapedBaseName(?:_\\d{4}-\\d{2}-\\d{2})?(?:\\.json(?:\\s*\\(\\d+\\))?|\\s*\\(\\d+\\)\\.json)$",
+        "^$escapedBaseName(?:_\\d{4}-\\d{2}-\\d{2}(?:_\\d{2}-\\d{2}-\\d{2})?)?(?:\\.json(?:\\s*\\(\\d+\\))?|\\s*\\(\\d+\\)\\.json)$",
         RegexOption.IGNORE_CASE
     )
     return pattern.matches(name)
@@ -1204,7 +1206,7 @@ suspend fun cleanupDuplicateBackupFilesByContent(context: Context) {
 
 /**
  * Saves workout store backup to Downloads folder (persists after app uninstall).
- * Creates an AppBackup (including database data) and saves it to a dated workout_store_backup_YYYY-MM-DD.json file.
+ * Creates an AppBackup (including database data) and saves it to a timestamped workout_store_backup_YYYY-MM-DD_HH-mm-ss.json file.
  * This file can be used for recovery if the main workout_store.json gets corrupted.
  * Uses Downloads folder via MediaStore so the backup persists after uninstall and is accessible via file managers.
  */
@@ -1251,7 +1253,7 @@ suspend fun saveWorkoutStoreToExternalStorage(
                 if (!wroteBackup) {
                     upsertDownloadsBackupFile(
                         context = context,
-                        fileName = buildAutomaticDownloadsBackupFileName(),
+                        fileName = buildWorkoutStoreBackupFileName(),
                         content = jsonString
                     )
                 }

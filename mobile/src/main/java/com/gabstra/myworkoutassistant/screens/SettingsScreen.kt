@@ -76,6 +76,7 @@ fun SettingsScreen(
     healthConnectClient: HealthConnectClient,
     workoutInsightsMode: WorkoutInsightsMode,
     liteRtModelPath: String?,
+    liteRtModelName: String?,
     liteRtBackendPreference: LiteRtLmBackendPreference,
     remoteInsightsConfig: RemoteOpenAiConfig,
     onImportLiteRtModel: () -> Unit,
@@ -428,27 +429,19 @@ fun SettingsScreen(
 
                     if (workoutInsightsModeState.value == WorkoutInsightsMode.LOCAL) {
                         OutlinedTextField(
-                            value = liteRtModelPath ?: "",
+                            value = liteRtModelName.orEmpty(),
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("LiteRT-LM model path") },
-                            placeholder = { Text("No local .litertlm model selected") },
+                            label = { Text("LiteRT-LM model") },
+                            placeholder = { Text("No local model selected") },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
                         )
 
-                        AppPrimaryOutlinedButton(
-                            text = if (liteRtModelPath == null) {
-                                "Import LiteRT-LM model"
-                            } else {
-                                "Replace LiteRT-LM model"
-                            },
-                            onClick = onImportLiteRtModel,
-                            enabled = !isImportingLiteRtModel,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
+                        ContentSubtitle(
+                            text = "Use GPU for faster on-device insights when available, or CPU for broader device compatibility.",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                         )
 
                         LiteRtLmBackendPreference.entries.forEach { preference ->
@@ -476,6 +469,19 @@ fun SettingsScreen(
                                 }
                             }
                         }
+
+                        AppPrimaryOutlinedButton(
+                            text = if (liteRtModelPath == null) {
+                                "Import LiteRT-LM model"
+                            } else {
+                                "Replace LiteRT-LM model"
+                            },
+                            onClick = onImportLiteRtModel,
+                            enabled = !isImportingLiteRtModel,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                        )
 
                         AppSecondaryButton(
                             text = "Clear LiteRT-LM model",

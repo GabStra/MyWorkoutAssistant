@@ -174,8 +174,9 @@ fun ExerciseDetailScreen(
     var isSaving by remember { mutableStateOf(false) }
     var showInsightsDialog by remember { mutableStateOf(false) }
     var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
+    var insightsConfigurationVersion by remember { mutableIntStateOf(0) }
     val insightsRepository = remember(context) { ConfigurableWorkoutInsightsEngine(context.applicationContext) }
-    val insightsConfigurationState = remember(showInsightsDialog, insightsState) {
+    val insightsConfigurationState = remember(showInsightsDialog, insightsState, insightsConfigurationVersion) {
         WorkoutInsightsSettingsStore.getConfigurationState(context)
     }
     val modelPickerLauncher =
@@ -187,6 +188,7 @@ fun ExerciseDetailScreen(
                         LiteRtLmModelStore.importModel(context, uri)
                     }
                 }.onSuccess {
+                    insightsConfigurationVersion++
                     insightsState = WorkoutInsightsUiState.Idle
                 }.onFailure { error ->
                     insightsState = WorkoutInsightsUiState.Error(

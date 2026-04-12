@@ -2,11 +2,8 @@ package com.gabstra.myworkoutassistant.screens
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.ContentValues
 import android.net.Uri
 import android.os.SystemClock
-import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -127,8 +124,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 @Composable
@@ -250,7 +245,6 @@ fun WorkoutComponentRenderer(
 
 private const val TAG = "WorkoutDetailScreen"
 private const val MIN_WORKOUT_RECORD_LOADING_MS = 500L
-private const val INSIGHTS_LOG_TAG = "WorkoutInsights"
 
 /**
  * Matches [WorkoutHistoryScreen] history loading: selectable histories
@@ -319,7 +313,8 @@ fun WorkoutDetailScreen(
     var showDeleteSelectedSessionDialog by remember { mutableStateOf(false) }
     var showInsightsDialog by remember { mutableStateOf(false) }
     var insightsState by remember { mutableStateOf<WorkoutInsightsUiState>(WorkoutInsightsUiState.Idle) }
-    val insightsConfigurationState = remember(showInsightsDialog, insightsState) {
+    var insightsConfigurationVersion by remember { mutableIntStateOf(0) }
+    val insightsConfigurationState = remember(showInsightsDialog, insightsState, insightsConfigurationVersion) {
         WorkoutInsightsSettingsStore.getConfigurationState(context)
     }
 
@@ -434,6 +429,7 @@ fun WorkoutDetailScreen(
                         LiteRtLmModelStore.importModel(context, uri)
                     }
                 }.onSuccess {
+                    insightsConfigurationVersion++
                     insightsState = WorkoutInsightsUiState.Idle
                 }.onFailure { error ->
                     insightsState = WorkoutInsightsUiState.Error(
@@ -1274,7 +1270,6 @@ fun WorkoutDetailScreen(
                             onDisplayedWorkoutHistoryIdChange = { id ->
                                 displayedWorkoutHistoryId = id
                             },
-                            onHeartRateChartCaptured = { _, _ -> },
                             onGoBack = onGoBack
                         )
                     }
@@ -1549,35 +1544,4 @@ fun WorkoutDetailScreen(
             )
         }
     }
-}
-
-private suspend fun saveInsightsDebugImageToDownloads(
-    context: Context,
-    historyId: UUID,
-    imageBytes: ByteArray,
-): String? = withContext(Dispatchers.IO) {
-    val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(LocalDateTime.now())
-    val fileName = "workout_insights_hr_chart_${historyId}_$timestamp.png"
-    runCatching {
-        val resolver = context.contentResolver
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-        }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            ?: error("Failed to create debug image in Downloads.")
-        resolver.openOutputStream(uri)?.use { output ->
-            output.write(imageBytes)
-            output.flush()
-        } ?: error("Failed to open output stream for debug image.")
-        fileName
-    }.onSuccess { savedFileName ->
-        Log.d(
-            INSIGHTS_LOG_TAG,
-            "workout_llm_debug_image_saved file=$savedFileName bytes=${imageBytes.size}"
-        )
-    }.onFailure { error ->
-        Log.w(INSIGHTS_LOG_TAG, "workout_llm_debug_image_save_failed", error)
-    }.getOrNull()
 }

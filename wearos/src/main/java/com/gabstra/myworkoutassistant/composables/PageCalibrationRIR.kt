@@ -30,7 +30,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.rir.withRIR
@@ -242,7 +241,7 @@ fun PageCalibrationRIR(
                 Text(
                     text = "0 = Form Breaks",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MediumLighterGray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -440,7 +439,7 @@ fun PageCalibrationRIR(
                 Text(
                     text = "0 = Form Breaks",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MediumLighterGray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                 )

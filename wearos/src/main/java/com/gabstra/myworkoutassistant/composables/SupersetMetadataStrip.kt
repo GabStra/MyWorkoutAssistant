@@ -9,7 +9,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 /**
  * Metadata strip for superset pages. Shows only container-level info when relevant.
@@ -21,7 +20,7 @@ fun SupersetMetadataStrip(
     onTap: (() -> Unit)? = null,
 ) {
     val baseStyle = MaterialTheme.typography.bodySmall
-    val secondaryTextColor = MediumLighterGray
+    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     val metadataText = remember(
         containerLabel,

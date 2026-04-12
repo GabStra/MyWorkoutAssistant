@@ -11,7 +11,6 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.wear.compose.material3.MaterialTheme
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 
 @Composable
 fun ExerciseMetadataStrip(
@@ -28,7 +27,7 @@ fun ExerciseMetadataStrip(
     val baseStyle = MaterialTheme.typography.bodySmall
     val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
-    val secondaryTextColor = MediumLighterGray
+    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     val metadataText = remember(
         exerciseLabel,

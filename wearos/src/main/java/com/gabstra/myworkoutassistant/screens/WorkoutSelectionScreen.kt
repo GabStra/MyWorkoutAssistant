@@ -72,7 +72,6 @@ import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.openSettingsOnPhoneApp
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutPlan
@@ -356,7 +355,7 @@ fun WorkoutSelectionScreen(
                             text = "Turn on reminders for scheduled workouts",
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                            color = MediumLighterGray
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     item {
@@ -399,7 +398,7 @@ fun WorkoutSelectionScreen(
                                     text = "Finish setup in the phone app",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                    color = MediumLighterGray
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             } else {
                                 Text(
@@ -409,7 +408,7 @@ fun WorkoutSelectionScreen(
                                     text = "Open the phone app and sync to connect",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                    color = MediumLighterGray
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -453,7 +452,7 @@ fun WorkoutSelectionScreen(
                                     text = "No workouts available",
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                                    color = MediumLighterGray
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }

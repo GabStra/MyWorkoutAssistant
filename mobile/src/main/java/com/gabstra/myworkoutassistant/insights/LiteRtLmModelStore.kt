@@ -8,6 +8,7 @@ import java.io.File
 
 private const val INSIGHTS_PREFS = "litert_lm_insights"
 private const val MODEL_PATH_KEY = "model_path"
+private const val MODEL_NAME_KEY = "model_name"
 private const val BACKEND_KEY = "backend"
 
 enum class LiteRtLmBackendPreference(
@@ -36,9 +37,18 @@ object LiteRtLmModelStore {
         return path.takeIf { File(it).isFile() }
     }
 
+    fun getConfiguredModelName(context: Context): String? {
+        val modelPath = getConfiguredModelPath(context) ?: return null
+        return context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)
+            .getString(MODEL_NAME_KEY, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: File(modelPath).name
+    }
+
     fun clearConfiguredModel(context: Context) {
         context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
             remove(MODEL_PATH_KEY)
+            remove(MODEL_NAME_KEY)
         }
     }
 
@@ -74,6 +84,7 @@ object LiteRtLmModelStore {
 
         context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
             putString(MODEL_PATH_KEY, targetFile.absolutePath)
+            putString(MODEL_NAME_KEY, sourceName)
         }
 
         return sourceName

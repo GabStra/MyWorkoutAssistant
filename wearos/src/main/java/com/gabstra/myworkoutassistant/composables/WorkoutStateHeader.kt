@@ -29,7 +29,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -181,7 +180,7 @@ fun WorkoutStateHeader(
                     modifier = Modifier.alignByBaseline(),
                     text = " | ",
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = MediumLighterGray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 CurrentTime()
             }

@@ -934,8 +934,7 @@ fun MyWorkoutAssistantNavHost(
         val appBackup = loadLatestBackupFromDownloads(context)
         if (appBackup == null) {
             val alreadyPrompted = prefs.getBoolean("restore_picker_prompt_shown", false)
-            val hasBackupCandidate = hasBackupFileCandidateInDownloads(context)
-            if (hasBackupCandidate && !alreadyPrompted) {
+            if (!alreadyPrompted) {
                 prefs.edit { putBoolean("restore_picker_prompt_shown", true) }
                 showStartupRestorePickerPrompt = true
             }
@@ -966,7 +965,6 @@ fun MyWorkoutAssistantNavHost(
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri?.let {
-                setAutomaticRestoreDocumentUri(context, it)
                 try {
                     context.contentResolver.openInputStream(it)?.use { inputStream ->
                         val reader = inputStream.bufferedReader()
@@ -1006,6 +1004,8 @@ fun MyWorkoutAssistantNavHost(
                                 // File type is valid, proceed with restore
                             }
                         }
+
+                        setAutomaticRestoreDocumentUri(context, it)
 
                         val appBackup = try {
                             fromJSONtoAppBackup(content)
@@ -1069,6 +1069,9 @@ fun MyWorkoutAssistantNavHost(
     var configuredLiteRtModelPath by remember {
         mutableStateOf(LiteRtLmModelStore.getConfiguredModelPath(context))
     }
+    var configuredLiteRtModelName by remember {
+        mutableStateOf(LiteRtLmModelStore.getConfiguredModelName(context))
+    }
     var workoutInsightsMode by remember {
         mutableStateOf(WorkoutInsightsSettingsStore.getMode(context))
     }
@@ -1091,6 +1094,7 @@ fun MyWorkoutAssistantNavHost(
                         LiteRtLmModelStore.importModel(context, uri)
                     }
                     configuredLiteRtModelPath = LiteRtLmModelStore.getConfiguredModelPath(context)
+                    configuredLiteRtModelName = LiteRtLmModelStore.getConfiguredModelName(context)
                     Toast.makeText(
                         context,
                         "LiteRT-LM model imported: $importedName",
@@ -1229,10 +1233,7 @@ fun MyWorkoutAssistantNavHost(
                                 appViewModel.setScreenData(ScreenData.Settings())
                             },
                             onBackupClick = {
-                                val sdf = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
-                                val currentDate = sdf.format(Date())
-                                val filename = "workout_backup_$currentDate.json"
-                                backupSaveLauncher.launch(filename)
+                                backupSaveLauncher.launch(buildWorkoutStoreBackupFileName())
                             },
                             onRestoreClick = {
                                 jsonPickerLauncher.launch(arrayOf("application/json"))
@@ -1414,6 +1415,7 @@ fun MyWorkoutAssistantNavHost(
                             healthConnectClient = healthConnectClient,
                             workoutInsightsMode = workoutInsightsMode,
                             liteRtModelPath = configuredLiteRtModelPath,
+                            liteRtModelName = configuredLiteRtModelName,
                             liteRtBackendPreference = liteRtBackendPreference,
                             remoteInsightsConfig = remoteInsightsConfig,
             onImportLiteRtModel = {
@@ -1430,6 +1432,7 @@ fun MyWorkoutAssistantNavHost(
                             onClearLiteRtModel = {
                                 LiteRtLmModelStore.clearConfiguredModel(context)
                                 configuredLiteRtModelPath = null
+                                configuredLiteRtModelName = null
                                 Toast.makeText(context, "LiteRT-LM model cleared.", Toast.LENGTH_SHORT)
                                     .show()
                             },

@@ -56,7 +56,6 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
@@ -253,8 +252,9 @@ private fun PagePlatesContent(
 
                 if (previousSideWeightTotal.isEqualTo(currentSideWeightTotal) || previousSideWeightTotal == 0.0) {
                     val baseStyle = MaterialTheme.typography.bodySmall
+                    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Normal)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -269,12 +269,13 @@ private fun PagePlatesContent(
                     ScalableFadingText(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
-                        color = MediumLighterGray,
+                        color = secondaryTextColor,
                     )
                 } else {
                     val baseStyle = MaterialTheme.typography.bodySmall
+                    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     val topLine = buildAnnotatedString {
-                        withStyle(baseStyle.toSpanStyle().copy(color = MediumLighterGray, fontWeight = FontWeight.Normal)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
                             append("Tot: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
@@ -289,7 +290,7 @@ private fun PagePlatesContent(
                     ScalableFadingText(
                         text = topLine,
                         style = baseStyle.copy(fontWeight = FontWeight.Normal),
-                        color = MediumLighterGray
+                        color = secondaryTextColor
                     )
                 }
             }

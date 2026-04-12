@@ -42,6 +42,7 @@ private val DarkColorScheme = darkColorScheme(
     background = Color.Black,
     onBackground = LighterGray,
     surface = MediumDarkerGray,
+    surfaceContainerHigh = MediumDarkGray,
     onSurface = LighterGray,
     surfaceVariant = MediumDarkGray,
     // Use a lighter variant for texts/icons on surface variants so labels and
