@@ -478,7 +478,7 @@ fun EnduranceSetScreen (
                         modifier = Modifier.size(30.dp),
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Start",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
             }
@@ -521,7 +521,7 @@ fun EnduranceSetScreen (
                         modifier = Modifier.size(26.dp),
                         imageVector = Icons.Default.Replay,
                         contentDescription = "Repeat set",
-                        tint = MaterialTheme.colorScheme.onPrimary
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
             }
@@ -540,7 +540,7 @@ fun EnduranceSetScreen (
                         modifier = Modifier.size(30.dp),
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
             }
