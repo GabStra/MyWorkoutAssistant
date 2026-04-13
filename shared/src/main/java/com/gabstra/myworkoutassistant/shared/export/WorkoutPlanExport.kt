@@ -16,6 +16,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -271,6 +272,12 @@ private fun appendExerciseDetails(
                     val workWeight = firstWorkSet.weight
                     val workReps = firstWorkSet.reps
                     val availableTotals = equipment.getWeightsCombinationsNoExtra()
+                    val additionalWorkWeights = exercise.sets
+                        .filterIsInstance<WeightSet>()
+                        .filter { it.subCategory != SetSubCategory.WarmupSet }
+                        .drop(1)
+                        .map { it.weight }
+                        .filter { it > 0.0 }
                     
                     val warmups = if (equipment is Barbell) {
                         WarmupPlanner.buildWarmupSetsForBarbell(
@@ -281,7 +288,9 @@ private fun appendExerciseDetails(
                             exercise = exercise,
                             priorExercises = priorExercises,
                             initialSetup = emptyList(),
-                            maxWarmups = 3
+                            maxWarmups = 3,
+                            additionalWorkWeights = additionalWorkWeights,
+                            warmupContext = warmupContext
                         )
                     } else {
                         WarmupPlanner.buildWarmupSets(
@@ -291,7 +300,8 @@ private fun appendExerciseDetails(
                             exercise = exercise,
                             priorExercises = priorExercises,
                             equipment = equipment,
-                            maxWarmups = 3
+                            maxWarmups = 3,
+                            warmupContext = warmupContext
                         )
                     }
                     

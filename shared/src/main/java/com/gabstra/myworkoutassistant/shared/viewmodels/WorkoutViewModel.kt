@@ -2413,7 +2413,8 @@ open class WorkoutViewModel(
             priorExercises = priorExercises,
             equipment = equipment,
             bodyWeightKg = bodyWeight.value,
-            getAvailableTotals = ::getCachedAvailableTotals
+            getAvailableTotals = ::getCachedAvailableTotals,
+            warmupContext = warmupContext
         )
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)

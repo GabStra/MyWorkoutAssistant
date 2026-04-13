@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
@@ -19,7 +20,8 @@ class WorkoutSetPreparationService {
         priorExercises: List<Exercise>,
         equipment: WeightLoadedEquipment?,
         bodyWeightKg: Double,
-        getAvailableTotals: (WeightLoadedEquipment) -> kotlin.collections.Set<Double>
+        getAvailableTotals: (WeightLoadedEquipment) -> kotlin.collections.Set<Double>,
+        warmupContext: WarmupContext? = null,
     ): List<Set> {
         val exerciseAllSets = mutableListOf<Set>()
         val exerciseSets = exercise.sets
@@ -73,6 +75,24 @@ class WorkoutSetPreparationService {
                 }
             }
 
+            val additionalWorkWeights = exerciseSets
+                .drop(1)
+                .mapNotNull { set ->
+                    when (set) {
+                        is BodyWeightSet -> {
+                            if (set.subCategory == SetSubCategory.WarmupSet) return@mapNotNull null
+                            val relativeBodyWeight = bodyWeightKg * (exercise.bodyWeightPercentage!! / 100)
+                            set.getWeight(relativeBodyWeight)
+                        }
+                        is WeightSet -> {
+                            if (set.subCategory == SetSubCategory.WarmupSet) return@mapNotNull null
+                            set.weight
+                        }
+                        else -> null
+                    }
+                }
+                .filter { it > 0.0 }
+
             val warmups: List<Pair<Double, Int>> = if (equipment is Barbell && exercise.exerciseType == ExerciseType.WEIGHT) {
                 WarmupPlanner.buildWarmupSetsForBarbell(
                     availableTotals = availableTotals,
@@ -82,7 +102,9 @@ class WorkoutSetPreparationService {
                     exercise = exercise,
                     priorExercises = priorExercises,
                     initialSetup = emptyList(),
-                    maxWarmups = 3
+                    maxWarmups = 3,
+                    additionalWorkWeights = additionalWorkWeights,
+                    warmupContext = warmupContext
                 )
             } else {
                 WarmupPlanner.buildWarmupSets(
@@ -92,7 +114,8 @@ class WorkoutSetPreparationService {
                     exercise = exercise,
                     priorExercises = priorExercises,
                     equipment = equipment,
-                    maxWarmups = 3
+                    maxWarmups = 3,
+                    warmupContext = warmupContext
                 )
             }
 
@@ -155,4 +178,3 @@ class WorkoutSetPreparationService {
         calibrationSet?.let { exerciseAllSets.add(firstWorkSetIndex, it) }
     }
 }
-
