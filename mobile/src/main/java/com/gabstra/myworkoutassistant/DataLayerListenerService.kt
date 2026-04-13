@@ -32,6 +32,11 @@ import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
+import com.gabstra.myworkoutassistant.llm.PhoneLlmOperationExecutor
+import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
+import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
+import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmOperationRequest
+import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmOperationResult
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -68,6 +73,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -75,6 +81,7 @@ class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
+    private val phoneLlmOperationExecutor by lazy { PhoneLlmOperationExecutor(this) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -421,6 +428,81 @@ class DataLayerListenerService : WearableListenerService() {
         sharedPreferences.edit().putLong("last_service_start_time", currentTime).apply()
     }
 
+    private fun handlePhoneLlmOperationRequest(
+        path: String,
+        dataMap: com.google.android.gms.wearable.DataMap,
+    ) {
+        val requestId = DataLayerPaths.parseTransactionId(
+            path,
+            DataLayerPaths.PHONE_LLM_OPERATION_REQUEST_PREFIX
+        ) ?: dataMap.getString(PhoneLlmDataMapKeys.REQUEST_ID)
+
+        if (requestId.isNullOrBlank()) {
+            Log.w("PhoneLlmOperation", "Received LLM operation request without requestId")
+            return
+        }
+
+        val requestJson = dataMap.getString(PhoneLlmDataMapKeys.REQUEST_JSON)
+        scope.launch(Dispatchers.IO) {
+            val result = if (requestJson.isNullOrBlank()) {
+                PhoneLlmOperationResult.error(
+                    requestId = requestId,
+                    operation = DEFAULT_PHONE_LLM_OPERATION,
+                    errorMessage = "Missing LLM operation request payload."
+                )
+            } else {
+                try {
+                    val parsedRequest = gson.fromJson(
+                        requestJson,
+                        PhoneLlmOperationRequest::class.java
+                    ) ?: error("Invalid LLM operation request payload.")
+                    phoneLlmOperationExecutor.execute(parsedRequest.copy(requestId = requestId))
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    PhoneLlmOperationResult.error(
+                        requestId = requestId,
+                        operation = DEFAULT_PHONE_LLM_OPERATION,
+                        errorMessage = exception.message ?: "Failed to parse LLM operation request."
+                    )
+                }
+            }
+
+            sendPhoneLlmOperationResult(result.copy(requestId = requestId))
+        }
+    }
+
+    private suspend fun sendPhoneLlmOperationResult(
+        result: PhoneLlmOperationResult,
+    ) {
+        try {
+            val resultPath = DataLayerPaths.buildPath(
+                DataLayerPaths.PHONE_LLM_OPERATION_RESULT_PREFIX,
+                result.requestId
+            )
+            val resultRequest = PutDataMapRequest.create(resultPath).apply {
+                dataMap.putString(PhoneLlmDataMapKeys.REQUEST_ID, result.requestId)
+                dataMap.putString(PhoneLlmDataMapKeys.RESULT_JSON, gson.toJson(result))
+                dataMap.putString(
+                    PhoneLlmDataMapKeys.TIMESTAMP,
+                    System.currentTimeMillis().toString()
+                )
+            }.asPutDataRequest().setUrgent()
+
+            Tasks.await(dataClient.putDataItem(resultRequest))
+            Log.d(
+                "PhoneLlmOperation",
+                "Sent LLM operation result for request: ${result.requestId}, status: ${result.status}"
+            )
+        } catch (exception: Exception) {
+            Log.e(
+                "PhoneLlmOperation",
+                "Failed to send LLM operation result for request: ${result.requestId}",
+                exception
+            )
+        }
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         val packageName = this.packageName
         try {
@@ -548,6 +630,14 @@ class DataLayerListenerService : WearableListenerService() {
                 }
                 val path = uri.path ?: return@forEach
                 when {
+                    DataLayerPaths.matchesPrefix(
+                        path,
+                        DataLayerPaths.PHONE_LLM_OPERATION_REQUEST_PREFIX
+                    ) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        handlePhoneLlmOperationRequest(path, dataMap)
+                    }
+
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {
                         val transactionId = DataLayerPaths.parseTransactionId(
                             path,

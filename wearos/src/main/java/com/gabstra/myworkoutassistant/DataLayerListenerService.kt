@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.core.content.edit
 import com.gabstra.myworkoutassistant.data.combineChunks
 import com.gabstra.myworkoutassistant.data.showSyncCompleteNotification
+import com.gabstra.myworkoutassistant.llm.PhoneLlmOperationResultRegistry
 import com.gabstra.myworkoutassistant.scheduling.WorkoutAlarmScheduler
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
@@ -21,6 +22,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
 import com.gabstra.myworkoutassistant.shared.decompressToString
+import com.gabstra.myworkoutassistant.shared.llm.DEFAULT_PHONE_LLM_OPERATION
+import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmDataMapKeys
+import com.gabstra.myworkoutassistant.shared.llm.PhoneLlmOperationResult
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.workout.model.mergeWorkoutRecordsForBackup
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -575,6 +579,50 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
+    private fun handlePhoneLlmOperationResult(
+        path: String,
+        dataMap: com.google.android.gms.wearable.DataMap,
+    ) {
+        val requestId = DataLayerPaths.parseTransactionId(
+            path,
+            DataLayerPaths.PHONE_LLM_OPERATION_RESULT_PREFIX
+        ) ?: dataMap.getString(PhoneLlmDataMapKeys.REQUEST_ID)
+
+        if (requestId.isNullOrBlank()) {
+            Log.w("PhoneLlmOperation", "Received LLM operation result without requestId")
+            return
+        }
+
+        val resultJson = dataMap.getString(PhoneLlmDataMapKeys.RESULT_JSON)
+        val result = if (resultJson.isNullOrBlank()) {
+            PhoneLlmOperationResult.error(
+                requestId = requestId,
+                operation = DEFAULT_PHONE_LLM_OPERATION,
+                errorMessage = "Missing LLM operation result payload."
+            )
+        } else {
+            runCatching {
+                val parsedResult = gson.fromJson(
+                    resultJson,
+                    PhoneLlmOperationResult::class.java
+                ) ?: error("Invalid LLM operation result payload.")
+                parsedResult.copy(requestId = requestId)
+            }.getOrElse { exception ->
+                PhoneLlmOperationResult.error(
+                    requestId = requestId,
+                    operation = DEFAULT_PHONE_LLM_OPERATION,
+                    errorMessage = exception.message ?: "Failed to parse LLM operation result."
+                )
+            }
+        }
+
+        PhoneLlmOperationResultRegistry.completeResult(requestId, result)
+        Log.d(
+            "PhoneLlmOperation",
+            "Received LLM operation result for request: $requestId, status: ${result.status}"
+        )
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         try {
             // Collect events first to avoid multiple iterations
@@ -593,6 +641,14 @@ class DataLayerListenerService : WearableListenerService() {
 
                 val path = uri.path ?: return@forEach
                 when {
+                    DataLayerPaths.matchesPrefix(
+                        path,
+                        DataLayerPaths.PHONE_LLM_OPERATION_RESULT_PREFIX
+                    ) -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        handlePhoneLlmOperationResult(path, dataMap)
+                    }
+
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_ACK_PREFIX) -> {
                         val transactionId =
                             DataLayerPaths.parseTransactionId(path, DataLayerPaths.SYNC_ACK_PREFIX)
