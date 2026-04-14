@@ -69,7 +69,6 @@ import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.data.isReady
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
 import com.gabstra.myworkoutassistant.presentation.theme.MyWorkoutAssistantTheme
 import com.gabstra.myworkoutassistant.shared.HeartRateSource
@@ -85,7 +84,6 @@ import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrat
 import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
-import com.google.android.horologist.compose.ambient.AmbientAware
 import com.google.android.horologist.compose.ambient.AmbientAwareTime
 import com.google.android.horologist.compose.ambient.AmbientState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -117,9 +115,6 @@ fun WorkoutScreen(
     val workoutState = screenState.workoutState
     var hrStatus by remember(workoutState) { mutableStateOf<HeartRateStatus?>(null) }
     val selectedWorkout = screenState.selectedWorkout
-    val forceAmbientOverlay = remember(context) {
-        E2eRuntimePreferences.isAmbientWorkoutOverlayForced(context)
-    }
     val userAge = screenState.userAge
     val measuredMaxHeartRate = screenState.measuredMaxHeartRate
     val restingHeartRate = screenState.restingHeartRate
@@ -445,8 +440,8 @@ fun WorkoutScreen(
         }
     )
 
-    AmbientAware { ambientState ->
-        CompositionLocalProvider(LocalTopOverlayController provides topOverlayController) {
+    // Ambient mode is intentionally disabled while KeepOn owns the active workout screen.
+    CompositionLocalProvider(LocalTopOverlayController provides topOverlayController) {
             LaunchedEffect(showHeartRateTutorial) {
                 if (showHeartRateTutorial) {
                     viewModel.setDimming(false)
@@ -742,14 +737,7 @@ fun WorkoutScreen(
 
             TopOverlayHost(controller = topOverlayController)
 
-            if (ambientState.isAmbient || forceAmbientOverlay) {
-                AmbientWorkoutOverlay(
-                    ambientState = ambientState,
-                    screenState = screenState,
-                    viewModel = viewModel
-                )
-            }
-        }
+            // AmbientWorkoutOverlay remains below for future re-enablement, but is not rendered.
         }
     }
 }

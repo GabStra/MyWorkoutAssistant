@@ -81,7 +81,6 @@ import com.gabstra.myworkoutassistant.screens.WorkoutSelectionScreen
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.viewmodels.HeartRateChangeViewModel
-import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
@@ -467,21 +466,10 @@ fun WearApp(
             LoadingScreen(appViewModel)
         } else {
             val enableDimming by appViewModel.enableDimming
-            val screenState by appViewModel.screenState.collectAsState()
-            val keepInteractive = remember(
-                screenState.workoutState,
-                screenState.keepScreenOn,
-                appViewModel.exercisesById
-            ) {
-                val setState = screenState.workoutState as? WorkoutState.Set
-                screenState.keepScreenOn ||
-                    setState?.let { appViewModel.exercisesById[it.exerciseId]?.keepScreenOn } == true
-            }
-
             KeepOn(
-                appViewModel,
-                keepInteractive = keepInteractive,
-                enableDimming = enableDimming && keepInteractive
+                appViewModel = appViewModel,
+                keepInteractive = true,
+                enableDimming = enableDimming
             ) {
                 EdgeSwipeBackHandler(
                     enabled = enableManualSwipe,

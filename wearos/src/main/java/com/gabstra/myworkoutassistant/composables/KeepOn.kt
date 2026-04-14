@@ -127,6 +127,14 @@ fun KeepOn(
 
     var isCoolingDown by remember { mutableStateOf(false) }
 
+    fun deactivateInteractiveMode() {
+        dimmingJob?.cancel()
+        clearWindowFlags()
+        setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
+        isDimmed = false
+        releaseWakeLock()
+    }
+
     fun wakeUpAndResetTimer() {
         dimmingJob?.cancel()
 
@@ -152,44 +160,39 @@ fun KeepOn(
         }
     }
 
+    fun applyInteractiveMode() {
+        if (!updatedKeepInteractive) {
+            deactivateInteractiveMode()
+            return
+        }
+
+        applyWindowFlags()
+        acquireWakeLock()
+        wakeUpAndResetTimer()
+    }
+
     LifecycleObserver(
         onPaused = {
-            dimmingJob?.cancel()
-            clearWindowFlags()
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-            releaseWakeLock()
+            if (!updatedKeepInteractive) {
+                deactivateInteractiveMode()
+            }
         },
         onStarted = {
-            if (updatedKeepInteractive) {
-                applyWindowFlags()
-                acquireWakeLock()
-                wakeUpAndResetTimer()
-            }
+            applyInteractiveMode()
         },
         onResumed = {
-            if (updatedKeepInteractive) {
-                applyWindowFlags()
-                acquireWakeLock()
-                wakeUpAndResetTimer()
-            }
+            applyInteractiveMode()
         },
         onStopped = {
-            releaseWakeLock()
+            deactivateInteractiveMode()
         }
     )
 
     DisposableEffect(Unit) {
-        if (keepInteractive) {
-            applyWindowFlags()
-            acquireWakeLock()
-        }
+        applyInteractiveMode()
         onDispose {
-            dimmingJob?.cancel()
-            // Ensure flags and brightness are reset when leaving the screen
-            clearWindowFlags()
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            releaseWakeLock()
+            // Ensure flags and brightness are reset when leaving the screen.
+            deactivateInteractiveMode()
         }
     }
 
@@ -200,32 +203,8 @@ fun KeepOn(
         }
     }
 
-    LaunchedEffect(enableDimming) {
-        if(!enableDimming){
-            dimmingJob?.cancel()
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-            if (keepInteractive) {
-                applyWindowFlags()
-                acquireWakeLock()
-            }
-        }else{
-            wakeUpAndResetTimer()
-        }
-    }
-
-    LaunchedEffect(keepInteractive) {
-        if (keepInteractive) {
-            applyWindowFlags()
-            acquireWakeLock()
-            wakeUpAndResetTimer()
-        } else {
-            dimmingJob?.cancel()
-            clearWindowFlags()
-            setScreenBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
-            isDimmed = false
-            releaseWakeLock()
-        }
+    LaunchedEffect(keepInteractive, enableDimming) {
+        applyInteractiveMode()
     }
 
     Box(
