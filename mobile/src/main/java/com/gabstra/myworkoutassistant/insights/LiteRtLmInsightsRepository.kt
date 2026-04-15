@@ -37,6 +37,7 @@ data class WorkoutInsightsRequest(
     val title: String,
     val prompt: String,
     val systemPrompt: String = WORKOUT_INSIGHTS_SYSTEM_PROMPT,
+    val customInstructions: String = "",
     val imagePngBytes: ByteArray? = null,
     val toolContext: WorkoutInsightsToolContext? = null,
     val chartAnalysisContext: String? = null,

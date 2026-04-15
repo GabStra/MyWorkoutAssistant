@@ -1,8 +1,7 @@
 package com.gabstra.myworkoutassistant.insights
 
-internal const val FINAL_SYNTHESIS_PLACEHOLDER = "Generating final insight..."
-internal const val PREPARING_TOOLS_PLACEHOLDER = "Preparing insight context..."
-internal const val CHART_ANALYSIS_DISABLED_PLACEHOLDER = PREPARING_TOOLS_PLACEHOLDER
+internal const val FINAL_SYNTHESIS_PLACEHOLDER = "Generating insight..."
+internal const val PREPARING_TOOLS_PLACEHOLDER = "Loading insight model..."
 private const val HEART_RATE_CHART_ANALYSIS_SYSTEM_PROMPT_BASE = """
 You are extracting observational context from an attached workout session heart-rate chart.
 Use only what is clearly visible in the chart.
@@ -50,6 +49,17 @@ internal data class WorkoutInsightsTransportRequest(
     val responseLogLabel: String,
 )
 
+private const val MAX_FINAL_SYNTHESIS_ATTEMPTS = 2
+private const val REPEATED_TEXT_RESTART_STATUS = "Repeated text detected. Restarting insight generation..."
+private const val REPEATED_TEXT_RETRY_SYSTEM_INSTRUCTION = """
+The previous generation was stopped because it began repeating text.
+Regenerate the insight from scratch. Keep each idea once, do not repeat sentences or clauses, and finish concisely.
+"""
+
+private class RepeatedInsightTextException(
+    val result: InsightRepetitionResult,
+) : RuntimeException("Repeated insight text detected: ${result.reason}")
+
 internal suspend fun runWorkoutInsightsGeneration(
     request: WorkoutInsightsRequest,
     logTag: String,
@@ -69,52 +79,87 @@ internal suspend fun runWorkoutInsightsGeneration(
             title = request.title,
             text = PREPARING_TOOLS_PLACEHOLDER,
             phase = WorkoutInsightsPhase.PREPARING_TOOLS,
-            statusText = "Preparing insight context..."
+            statusText = PREPARING_TOOLS_PLACEHOLDER
         )
     )
     val finalPrompt = finalSynthesisBasePrompt
 
     logWorkoutInsightsBlock(logTag, "${transportLabel}_final_prompt", finalPrompt)
     val accumulated = StringBuilder()
-    streamText(
-        WorkoutInsightsTransportRequest(
-            systemPrompt = buildFinalSynthesisSystemPrompt(request),
-            prompt = finalPrompt,
-            imagePngBytes = null,
-            toolContext = null,
-            requestLogLabel = "${transportLabel}_final_request",
-            responseLogLabel = "${transportLabel}_final_raw_response",
-        ),
-        { chunk ->
-            accumulated.append(chunk)
-            emitChunk(
-                WorkoutInsightsChunk(
-                    title = request.title,
-                    text = accumulated.toString(),
-                    phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                    statusText = "Generating final insight..."
+    var finalAttempt = 1
+    while (true) {
+        val repetitionDetector = InsightRepetitionDetector()
+        try {
+            streamText(
+                WorkoutInsightsTransportRequest(
+                    systemPrompt = buildFinalSynthesisSystemPrompt(request)
+                        .withRepeatedTextRetryInstruction(finalAttempt),
+                    prompt = finalPrompt,
+                    imagePngBytes = null,
+                    toolContext = null,
+                    requestLogLabel = "${transportLabel}_final_request".withAttemptLogSuffix(finalAttempt),
+                    responseLogLabel = "${transportLabel}_final_raw_response".withAttemptLogSuffix(finalAttempt),
+                ),
+                { chunk ->
+                    accumulated.append(chunk)
+                    repetitionDetector.detect(accumulated.toString())?.let { result ->
+                        throw RepeatedInsightTextException(result)
+                    }
+                    emitChunk(
+                        WorkoutInsightsChunk(
+                            title = request.title,
+                            text = accumulated.toString(),
+                            phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                            statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                        )
+                    )
+                },
+                { phase, statusText ->
+                    emitChunk(
+                        WorkoutInsightsChunk(
+                            title = request.title,
+                            text = accumulated.toString().ifBlank {
+                                when (phase) {
+                                    WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
+                                    WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
+                                    WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
+                                    WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { FINAL_SYNTHESIS_PLACEHOLDER }
+                                    WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
+                                }
+                            },
+                            phase = phase,
+                            statusText = statusText
+                        )
+                    )
+                }
+            )
+            break
+        } catch (exception: RepeatedInsightTextException) {
+            logWorkoutInsightsBlock(
+                logTag,
+                "${transportLabel}_final_repeated_text_attempt_$finalAttempt",
+                buildRepeatedTextLog(
+                    partialText = accumulated.toString(),
+                    result = exception.result
                 )
             )
-        },
-        { phase, statusText ->
+            if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
+                throw IllegalStateException(
+                    "Insight generation repeated text after retry. Please try again."
+                )
+            }
+            finalAttempt += 1
+            accumulated.clear()
             emitChunk(
                 WorkoutInsightsChunk(
                     title = request.title,
-                    text = accumulated.toString().ifBlank {
-                        when (phase) {
-                            WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
-                            WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
-                            WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
-                            WorkoutInsightsPhase.CHART_ANALYSIS -> CHART_ANALYSIS_DISABLED_PLACEHOLDER
-                            WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
-                        }
-                    },
-                    phase = phase,
-                    statusText = statusText
+                    text = REPEATED_TEXT_RESTART_STATUS,
+                    phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                    statusText = REPEATED_TEXT_RESTART_STATUS
                 )
             )
         }
-    )
+    }
     val rawInsight = accumulated.toString()
     logWorkoutInsightsBlock(
         logTag,
@@ -139,11 +184,35 @@ internal suspend fun runWorkoutInsightsGeneration(
                 title = request.title,
                 text = normalizedInsight,
                 phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
-                statusText = "Generating final insight..."
+                statusText = FINAL_SYNTHESIS_PLACEHOLDER
             )
         )
     }
     onAfterChartAnalysis?.invoke()
+}
+
+private fun String.withAttemptLogSuffix(
+    attempt: Int,
+): String = if (attempt == 1) this else "${this}_retry_$attempt"
+
+private fun String.withRepeatedTextRetryInstruction(
+    attempt: Int,
+): String {
+    if (attempt == 1) return this
+    return listOf(
+        trimEnd(),
+        REPEATED_TEXT_RETRY_SYSTEM_INSTRUCTION.trimIndent()
+    ).joinToString("\n\n")
+}
+
+private fun buildRepeatedTextLog(
+    partialText: String,
+    result: InsightRepetitionResult,
+): String = buildString {
+    appendLine("Reason: ${result.reason}")
+    appendLine("Repeated text: ${result.repeatedText}")
+    appendLine()
+    append(partialText.ifBlank { "<empty>" })
 }
 
 internal fun buildFinalSynthesisInlinePrompt(
@@ -163,9 +232,31 @@ internal fun buildFinalSynthesisInlinePrompt(
 internal fun buildFinalSynthesisSystemPrompt(
     request: WorkoutInsightsRequest,
 ): String {
-    return when (request.toolContext) {
+    val basePrompt = when (request.toolContext) {
         is WorkoutInsightsToolContext.Exercise -> EXERCISE_INSIGHTS_SYSTEM_PROMPT.trimIndent()
         is WorkoutInsightsToolContext.WorkoutSession -> WORKOUT_INSIGHTS_SYSTEM_PROMPT.trimIndent()
         null -> request.systemPrompt.trimIndent()
     }
+    return appendCustomInsightInstructions(
+        systemPrompt = basePrompt,
+        customInstructions = request.customInstructions
+    )
+}
+
+private fun appendCustomInsightInstructions(
+    systemPrompt: String,
+    customInstructions: String,
+): String {
+    val normalizedInstructions = customInstructions
+        .trim()
+        .takeIf { it.isNotBlank() }
+        ?: return systemPrompt
+    return listOf(
+        systemPrompt.trimEnd(),
+        """
+        User insight preferences:
+        Follow these additional user-provided instructions when they do not conflict with the evidence, safety rules, or required output format:
+        $normalizedInstructions
+        """.trimIndent()
+    ).joinToString("\n\n")
 }

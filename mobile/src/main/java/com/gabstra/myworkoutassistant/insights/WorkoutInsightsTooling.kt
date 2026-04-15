@@ -261,7 +261,7 @@ Retrieval policy:
 - Start with the smallest useful retrieval.
 - Treat the first overview as scouting context, not final evidence, unless it already covers the needed exercises and comparisons explicitly.
 - Prefer latest explicit metrics first, then recent trend context.
-- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for final synthesis or next-session guidance.
+- Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail needed for final synthesis.
 - If a workout has multiple main exercises, verify the relevant lagging or improving exercise with a narrower retrieval before concluding.
 - Use summarization tools only when raw scoped context would be too verbose.
 - Stop calling tools once you have enough evidence to answer confidently.
@@ -271,7 +271,7 @@ Final synthesis policy:
 - Base the final answer only on retrieved tool outputs.
 - If evidence is partial, say so plainly instead of overreaching.
 - If a tool payload says `truncated: true` or the returned text ends with `...`, fetch narrower context before concluding.
-- Do not write a workout-level risk or next-step recommendation from a generic overview alone when an exercise section is available.
+- Do not write a workout-level risk from a generic overview alone when an exercise section is available.
 """.trimIndent()
 
 internal fun buildExerciseToolCallingPrompt(
@@ -283,7 +283,7 @@ Workflow:
 1. Fetch the latest session or recent sessions first.
 2. Fetch broader context only if the latest data is insufficient.
 3. Summarize older history only when needed.
-4. Stop tool use and write the final answer once you can explain latest performance, recent trend, and the clearest risk or next-step cue.
+4. Stop tool use and write the final answer once you can explain latest performance, recent trend, and the clearest risk or constraint.
 """.trimIndent()
 
 internal fun buildWorkoutSessionToolCallingPrompt(
@@ -299,8 +299,8 @@ Workflow:
 3. Use summary tools only when the remaining context is too large.
 4. If the session was not completed normally, treat that as an important constraint on interpretation.
 5. For lifting-dominant sessions, do not use modest session HR or 0% high-intensity exposure as the main risk by itself.
-6. Before writing final synthesis or next-session guidance, verify the clearest lagging or improving exercise with a narrower retrieval when available.
-7. Stop tool use and write the final answer once you can explain what went well, what drifted, any important constraint, and the grounded next-session guidance.
+6. Before writing final synthesis, verify the clearest lagging or improving exercise with a narrower retrieval when available.
+7. Stop tool use and write the final answer once you can explain what went well, what drifted, and any important constraint.
 """.trimIndent()
 
 private class InsightsOpenApiTool(

@@ -49,9 +49,21 @@ class ConfigurableWorkoutInsightsEngine(
     override fun generateInsights(
         request: WorkoutInsightsRequest,
     ): Flow<WorkoutInsightsChunk> {
+        val preparedRequest = request.withConfiguredCustomInstructions()
         return when (WorkoutInsightsSettingsStore.getMode(context)) {
-            WorkoutInsightsMode.LOCAL -> localEngine.generateInsights(request)
-            WorkoutInsightsMode.REMOTE -> remoteEngine.generateInsights(request)
+            WorkoutInsightsMode.LOCAL -> localEngine.generateInsights(preparedRequest)
+            WorkoutInsightsMode.REMOTE -> remoteEngine.generateInsights(preparedRequest)
+        }
+    }
+
+    private fun WorkoutInsightsRequest.withConfiguredCustomInstructions(): WorkoutInsightsRequest {
+        if (customInstructions.isNotBlank()) return this
+        if (toolContext == null) return this
+        val configuredInstructions = WorkoutInsightsSettingsStore.getCustomInstructions(context)
+        return if (configuredInstructions.isBlank()) {
+            this
+        } else {
+            copy(customInstructions = configuredInstructions)
         }
     }
 }

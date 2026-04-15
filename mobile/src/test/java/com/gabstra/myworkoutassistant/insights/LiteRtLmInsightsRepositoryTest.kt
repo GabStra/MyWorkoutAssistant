@@ -2,6 +2,8 @@ package com.gabstra.myworkoutassistant.insights
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -192,5 +194,41 @@ class LiteRtLmInsightsRepositoryTest {
         assertFalse(finalPrompt.contains("Fetch the compact session overview first."))
         assertFalse(finalSystemPrompt.contains("Retrieval policy:"))
         assertFalse(finalSystemPrompt.contains("You have tools for scoped workout-history retrieval"))
+    }
+
+    @Test
+    fun insightRepetitionDetector_detectsTrailingRepeatedInsightText() {
+        val detector = InsightRepetitionDetector()
+        val repeatedSentence =
+            "Bench press volume stayed stable, so keep the load steady and focus on controlled reps. "
+        val text = """
+            ## What stood out
+            Squat work moved well across the session, with no obvious drop-off.
+            Pulling volume was lower than the last comparable day, so keep the next session conservative.
+
+            $repeatedSentence$repeatedSentence$repeatedSentence
+        """.trimIndent()
+
+        val result = detector.detect(text)
+
+        assertNotNull(result)
+        assertTrue(result!!.repeatedText.contains("bench press volume stayed stable"))
+    }
+
+    @Test
+    fun insightRepetitionDetector_ignoresNormalInsightWithRepeatedExerciseNames() {
+        val detector = InsightRepetitionDetector()
+        val text = """
+            ## What stood out
+            - Bench Press matched the previous session and stayed within the target range.
+            - Bench Press back-off work looked consistent without a sharp performance drop.
+            - Back Squat volume improved compared with the last comparable workout.
+
+            ## Next session
+            Keep Bench Press at the same load and aim for one cleaner rep before adding weight.
+            Keep Back Squat progression unchanged unless warm-up speed feels unusually slow.
+        """.trimIndent()
+
+        assertNull(detector.detect(text))
     }
 }

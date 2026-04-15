@@ -8,6 +8,7 @@ private const val MODE_KEY = "mode"
 private const val REMOTE_BASE_URL_KEY = "remote_base_url"
 private const val REMOTE_API_KEY_KEY = "remote_api_key"
 private const val REMOTE_MODEL_KEY = "remote_model"
+private const val CUSTOM_INSTRUCTIONS_KEY = "custom_instructions"
 
 object WorkoutInsightsSettingsStore {
     fun getMode(context: Context): WorkoutInsightsMode =
@@ -50,6 +51,25 @@ object WorkoutInsightsSettingsStore {
             remove(REMOTE_BASE_URL_KEY)
             remove(REMOTE_API_KEY_KEY)
             remove(REMOTE_MODEL_KEY)
+        }
+    }
+
+    fun getCustomInstructions(context: Context): String =
+        context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)
+            .getString(CUSTOM_INSTRUCTIONS_KEY, null)
+            .orEmpty()
+
+    fun setCustomInstructions(
+        context: Context,
+        instructions: String,
+    ) {
+        val trimmedInstructions = instructions.trim()
+        context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
+            if (trimmedInstructions.isBlank()) {
+                remove(CUSTOM_INSTRUCTIONS_KEY)
+            } else {
+                putString(CUSTOM_INSTRUCTIONS_KEY, trimmedInstructions)
+            }
         }
     }
 

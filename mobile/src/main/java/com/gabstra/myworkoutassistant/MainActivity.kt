@@ -1081,6 +1081,9 @@ fun MyWorkoutAssistantNavHost(
     var remoteInsightsConfig by remember {
         mutableStateOf(WorkoutInsightsSettingsStore.getRemoteConfig(context))
     }
+    var workoutInsightsCustomInstructions by remember {
+        mutableStateOf(WorkoutInsightsSettingsStore.getCustomInstructions(context))
+    }
     var isImportingLiteRtModel by remember { mutableStateOf(false) }
 
     val liteRtModelPickerLauncher =
@@ -1418,16 +1421,19 @@ fun MyWorkoutAssistantNavHost(
                             liteRtModelName = configuredLiteRtModelName,
                             liteRtBackendPreference = liteRtBackendPreference,
                             remoteInsightsConfig = remoteInsightsConfig,
-            onImportLiteRtModel = {
-                liteRtModelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes)
-            },
-                            onSaveInsightsSettings = { mode, backendPreference, remoteConfig ->
+                            workoutInsightsCustomInstructions = workoutInsightsCustomInstructions,
+                            onImportLiteRtModel = {
+                                liteRtModelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes)
+                            },
+                            onSaveInsightsSettings = { mode, backendPreference, remoteConfig, customInstructions ->
                                 WorkoutInsightsSettingsStore.setMode(context, mode)
                                 LiteRtLmModelStore.setBackendPreference(context, backendPreference)
                                 WorkoutInsightsSettingsStore.setRemoteConfig(context, remoteConfig)
+                                WorkoutInsightsSettingsStore.setCustomInstructions(context, customInstructions)
                                 workoutInsightsMode = mode
                                 liteRtBackendPreference = backendPreference
                                 remoteInsightsConfig = remoteConfig
+                                workoutInsightsCustomInstructions = customInstructions.trim()
                             },
                             onClearLiteRtModel = {
                                 LiteRtLmModelStore.clearConfiguredModel(context)

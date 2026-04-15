@@ -85,7 +85,7 @@ fun WorkoutInsightsDialog(
                         CenteredInsightBodySurface {
                             LoadingText(
                                 when (configurationState.mode) {
-                                    WorkoutInsightsMode.LOCAL -> "Preparing local model..."
+                                    WorkoutInsightsMode.LOCAL -> "Loading local insight model..."
                                     WorkoutInsightsMode.REMOTE -> "Preparing remote request..."
                                 }
                             )
@@ -216,10 +216,10 @@ private fun LoadingText(label: String) {
 private fun defaultProgressLabel(
     phase: WorkoutInsightsPhase,
 ): String = when (phase) {
-    WorkoutInsightsPhase.PREPARING_TOOLS -> "Preparing insight tools..."
+    WorkoutInsightsPhase.PREPARING_TOOLS -> "Loading insight model..."
     WorkoutInsightsPhase.FETCHING_CONTEXT -> "Fetching workout context..."
     WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> "Summarizing relevant history..."
-    WorkoutInsightsPhase.CHART_ANALYSIS -> "Preparing insight context..."
+    WorkoutInsightsPhase.CHART_ANALYSIS -> "Analyzing heart-rate chart..."
     WorkoutInsightsPhase.FINAL_SYNTHESIS -> "Generating insight..."
 }
 
@@ -228,7 +228,9 @@ private fun InsightBodySurface(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = rememberScrollState()
-    SecondarySurface {
+    SecondarySurface(
+        backgroundColor = MaterialTheme.colorScheme.surface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()

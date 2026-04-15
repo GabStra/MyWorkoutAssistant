@@ -17,9 +17,13 @@ class WorkoutInsightsPromptBuilderTest {
 
         assertTrue(prompt.contains("Treat the first overview as scouting context, not final evidence"))
         assertTrue(prompt.contains("Investigate further whenever the current evidence is mixed, truncated, generic, or missing exercise-level detail"))
-        assertTrue(prompt.contains("Do not write a workout-level risk or next-step recommendation from a generic overview alone"))
+        assertTrue(prompt.contains("Do not write a workout-level risk from a generic overview alone"))
+        assertFalse(prompt.contains("next-session guidance"))
+        assertFalse(prompt.contains("next-step recommendation"))
         assertTrue(workflow.contains("Treat that overview as a first pass only"))
         assertTrue(workflow.contains("verify the clearest lagging or improving exercise with a narrower retrieval"))
+        assertFalse(workflow.contains("next-session guidance"))
+        assertFalse(workflow.contains("grounded next-session guidance"))
     }
 
     @Test
@@ -36,6 +40,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Before finalizing, silently verify:"))
+        assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("## Next session"))
         assertFalse(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
         val prompt = buildWorkoutSessionPrompt(
@@ -67,6 +72,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Do not repeat the same fact in multiple sections"))
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("Avoid writing exact metric values with units in the final markdown"))
         assertTrue(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("copy it verbatim from the supplied evidence"))
+        assertFalse(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("## Next session"))
         assertFalse(EXERCISE_INSIGHTS_SYSTEM_PROMPT.contains("at most 2 bullets per section"))
 
         val prompt = buildExercisePrompt(

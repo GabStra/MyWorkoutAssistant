@@ -88,7 +88,6 @@ Progression knowledge:
 Respond in markdown using these sections:
 ## What stood out
 ## Exercise highlights
-## Next session
 
 Requirements:
 - Use as many bullets as needed for grounded, decision-useful details.
@@ -155,7 +154,6 @@ Progression knowledge:
 Respond in markdown using these sections:
 ## What stood out
 ## Exercise trend
-## Next session
 
 Requirements:
 - Use as many bullets as needed for grounded, decision-useful details.

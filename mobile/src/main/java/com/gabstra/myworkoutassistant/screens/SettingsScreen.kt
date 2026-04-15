@@ -79,11 +79,13 @@ fun SettingsScreen(
     liteRtModelName: String?,
     liteRtBackendPreference: LiteRtLmBackendPreference,
     remoteInsightsConfig: RemoteOpenAiConfig,
+    workoutInsightsCustomInstructions: String,
     onImportLiteRtModel: () -> Unit,
     onSaveInsightsSettings: (
         WorkoutInsightsMode,
         LiteRtLmBackendPreference,
         RemoteOpenAiConfig,
+        String,
     ) -> Unit,
     onClearLiteRtModel: () -> Unit,
     isSaving: Boolean = false,
@@ -110,6 +112,7 @@ fun SettingsScreen(
     val remoteBaseUrlState = remember { mutableStateOf(remoteInsightsConfig.baseUrl) }
     val remoteApiKeyState = remember { mutableStateOf(remoteInsightsConfig.apiKey) }
     val remoteModelState = remember { mutableStateOf(remoteInsightsConfig.model) }
+    val workoutInsightsCustomInstructionsState = remember { mutableStateOf(workoutInsightsCustomInstructions) }
 
     var isLoadingRestingHeartRate by remember { mutableStateOf(false) }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
@@ -521,6 +524,22 @@ fun SettingsScreen(
                                 .padding(8.dp)
                         )
                     }
+
+                    OutlinedTextField(
+                        value = workoutInsightsCustomInstructionsState.value,
+                        onValueChange = { workoutInsightsCustomInstructionsState.value = it },
+                        label = { Text("Insight instructions") },
+                        placeholder = { Text("Example: Focus on strength progression and keep advice brief.") },
+                        minLines = 3,
+                        maxLines = 6,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                    ContentSubtitle(
+                        text = "These instructions are added to workout and exercise insight requests when they do not conflict with the app's evidence and safety rules.",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
@@ -605,7 +624,8 @@ fun SettingsScreen(
                                 baseUrl = remoteBaseUrlState.value,
                                 apiKey = remoteApiKeyState.value,
                                 model = remoteModelState.value,
-                            )
+                            ),
+                            workoutInsightsCustomInstructionsState.value
                         )
                         onSave(newWorkoutStore)
                     },
