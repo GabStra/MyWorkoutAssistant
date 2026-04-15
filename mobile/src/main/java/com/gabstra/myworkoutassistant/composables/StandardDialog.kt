@@ -76,7 +76,7 @@ fun StandardDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                     ){
                         if (hasDismissButton) {
-                            AppTextButton(
+                            DialogOutlinedButton(
                                 text = dismissText.orEmpty(),
                                 onClick = onDismissButton ?: onDismissRequest,
                                 modifier = Modifier.heightIn(min = 48.dp),
