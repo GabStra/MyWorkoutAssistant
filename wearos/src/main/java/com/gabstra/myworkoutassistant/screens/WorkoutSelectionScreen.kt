@@ -6,7 +6,6 @@ import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -188,51 +187,6 @@ fun rememberCanScheduleExactAlarmsState(context: Context): State<Boolean> {
     return canScheduleState
 }
 
-private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
-    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    return powerManager.isIgnoringBatteryOptimizations(context.packageName)
-}
-
-@Composable
-fun rememberIsIgnoringBatteryOptimizationsState(context: Context): State<Boolean> {
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val isIgnoringState = remember {
-        mutableStateOf(isIgnoringBatteryOptimizations(context))
-    }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isIgnoringState.value = isIgnoringBatteryOptimizations(context)
-            }
-        }
-
-        lifecycleOwner.lifecycle.addObserver(observer)
-
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    return isIgnoringState
-}
-
-private fun requestDisableBatteryOptimization(context: Context) {
-    val packageUri = "package:${context.packageName}".toUri()
-    val requestIntent = Intent(
-        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-        packageUri
-    )
-    val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-
-    try {
-        context.startActivity(requestIntent)
-    } catch (_: Exception) {
-        context.startActivity(fallbackIntent)
-    }
-}
-
-
 @OptIn(ExperimentalHorologistApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun WorkoutSelectionScreen(
@@ -302,7 +256,6 @@ fun WorkoutSelectionScreen(
     val versionName = getVersionName(context);
 
     val canScheduleExactAlarms by rememberCanScheduleExactAlarmsState(context)
-    val isIgnoringBatteryOptimizations by rememberIsIgnoringBatteryOptimizationsState(context)
 
     var showClearData by remember { mutableStateOf(false) }
     var showOpenOnPhoneDialog by remember { mutableStateOf(false) }
@@ -386,38 +339,6 @@ fun WorkoutSelectionScreen(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                         }
-                    }
-                }
-
-                if (!isIgnoringBatteryOptimizations) {
-                    item {
-                        Text(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 5.dp)
-                                .transformedHeight(this, spec)
-                                .animateItem(),
-                            text = "Turn off battery optimization for reliable timers and reminders",
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Normal),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    item {
-                        Spacer(modifier = Modifier.height(5.dp))
-                    }
-                    item {
-                        WearPrimaryButton(
-                            modifier = Modifier
-                                .transformedHeight(this, spec)
-                                .animateItem(),
-                            transformation = SurfaceTransformation(spec),
-                            text = "Open battery settings",
-                            onClick = {
-                                hapticsViewModel.doGentleVibration()
-                                requestDisableBatteryOptimization(context)
-                            }
-                        )
                     }
                 }
 

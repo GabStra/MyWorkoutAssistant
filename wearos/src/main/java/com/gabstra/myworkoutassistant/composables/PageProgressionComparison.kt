@@ -74,6 +74,18 @@ enum class SetComparison {
     BETTER, EQUAL, WORSE, MIXED
 }
 
+data class SetDifference(
+    val weightText: String? = null,
+    val repsText: String? = null,
+    val durationText: String? = null
+) {
+    val displayText: String
+        get() {
+            val parts = listOfNotNull(weightText, repsText, durationText)
+            return if (parts.isEmpty()) "No change" else parts.joinToString(" ")
+        }
+}
+
 fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison {
     if (beforeSetData == null || afterSetData == null) {
         return SetComparison.EQUAL
@@ -146,44 +158,30 @@ fun calculateSetDifference(
     beforeSetData: SetData?,
     afterSetData: SetData?,
     equipment: Equipment?
-): String {
+): SetDifference {
     if (beforeSetData == null || afterSetData == null) {
-        return "No change"
+        return SetDifference()
     }
 
     return when {
         beforeSetData is WeightSetData && afterSetData is WeightSetData -> {
-            val weightDiff = afterSetData.actualWeight - beforeSetData.actualWeight
-            val repsDiff = afterSetData.actualReps - beforeSetData.actualReps
-
-            val parts = mutableListOf<String>()
-            if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
-                val sign = if (weightDiff > 0) "+" else ""
-                parts.add("$sign${equipment.formatWeight(weightDiff)} kg")
-            }
-            if (repsDiff != 0) {
-                val sign = if (repsDiff > 0) "+" else ""
-                parts.add("$sign$repsDiff reps")
-            }
-
-            if (parts.isEmpty()) "No change" else parts.joinToString(" ")
+            calculateWeightAndRepsSetDifference(
+                beforeWeight = beforeSetData.actualWeight,
+                afterWeight = afterSetData.actualWeight,
+                beforeReps = beforeSetData.actualReps,
+                afterReps = afterSetData.actualReps,
+                equipment = equipment
+            )
         }
 
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
-            val weightDiff = afterSetData.getWeight() - beforeSetData.getWeight()
-            val repsDiff = afterSetData.actualReps - beforeSetData.actualReps
-
-            val parts = mutableListOf<String>()
-            if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
-                val sign = if (weightDiff > 0) "+" else ""
-                parts.add("$sign${equipment.formatWeight(weightDiff)} kg")
-            }
-            if (repsDiff != 0) {
-                val sign = if (repsDiff > 0) "+" else ""
-                parts.add("$sign$repsDiff reps")
-            }
-
-            if (parts.isEmpty()) "No change" else parts.joinToString(" ")
+            calculateWeightAndRepsSetDifference(
+                beforeWeight = beforeSetData.getWeight(),
+                afterWeight = afterSetData.getWeight(),
+                beforeReps = beforeSetData.actualReps,
+                afterReps = afterSetData.actualReps,
+                equipment = equipment
+            )
         }
 
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
@@ -192,10 +190,10 @@ fun calculateSetDifference(
             val durationDiff = afterDuration - beforeDuration
 
             if (durationDiff == 0) {
-                "No change"
+                SetDifference()
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
-                "$sign${FormatTime(durationDiff)}"
+                SetDifference(durationText = "$sign${FormatTime(durationDiff)}")
             }
         }
 
@@ -205,15 +203,37 @@ fun calculateSetDifference(
             val durationDiff = afterDuration - beforeDuration
 
             if (durationDiff == 0) {
-                "No change"
+                SetDifference()
             } else {
                 val sign = if (durationDiff > 0) "+" else ""
-                "$sign${FormatTime(durationDiff)}"
+                SetDifference(durationText = "$sign${FormatTime(durationDiff)}")
             }
         }
 
-        else -> "No change"
+        else -> SetDifference()
     }
+}
+
+private fun calculateWeightAndRepsSetDifference(
+    beforeWeight: Double,
+    afterWeight: Double,
+    beforeReps: Int,
+    afterReps: Int,
+    equipment: Equipment?
+): SetDifference {
+    val weightDiff = afterWeight - beforeWeight
+    val repsDiff = afterReps - beforeReps
+
+    val weightText = if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
+        val sign = if (weightDiff > 0) "+" else ""
+        "$sign${equipment.formatWeight(weightDiff)} kg"
+    } else null
+    val repsText = if (repsDiff != 0) {
+        val sign = if (repsDiff > 0) "+" else ""
+        "$sign$repsDiff reps"
+    } else null
+
+    return SetDifference(weightText = weightText, repsText = repsText)
 }
 
 private fun isWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
@@ -477,7 +497,7 @@ fun PageProgressionComparison(
             }
         }
 
-        val differenceText by remember(beforeSetData, afterSetData, afterSetState?.equipmentId, beforeSetState?.equipmentId) {
+        val setDifference by remember(beforeSetData, afterSetData, afterSetState?.equipmentId, beforeSetState?.equipmentId) {
             derivedStateOf {
                 val afterEquipment = afterSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
                 val beforeEquipment = beforeSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -488,6 +508,7 @@ fun PageProgressionComparison(
                 )
             }
         }
+        val differenceText = setDifference.displayText
 
         val rowIndex = currentSetIndex
         val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.onBackground) {

@@ -34,9 +34,10 @@ fun HistoricalSetDeltaBadge(
     val comparison by remember(previousSetData, currentSetData) {
         derivedStateOf { compareSets(previousSetData, currentSetData) }
     }
-    val differenceText by remember(previousSetData, currentSetData, equipment) {
+    val setDifference by remember(previousSetData, currentSetData, equipment) {
         derivedStateOf { calculateSetDifference(previousSetData, currentSetData, equipment) }
     }
+    val differenceText = setDifference.displayText
 
     if(comparison == SetComparison.EQUAL) return
 
@@ -92,10 +93,23 @@ fun HistoricalSetDeltaBadge(
             }
         }
 
-        ScalableText(
-            text = differenceText,
-            style = MaterialTheme.typography.bodySmall,
-            color = comparisonColor
-        )
+        val differenceParts = listOfNotNull(
+            setDifference.weightText,
+            setDifference.repsText,
+            setDifference.durationText
+        ).ifEmpty { listOf(differenceText) }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            differenceParts.forEach { differencePart ->
+                ScalableText(
+                    text = differencePart,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = comparisonColor
+                )
+            }
+        }
     }
 }
