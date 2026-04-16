@@ -165,6 +165,13 @@ fun ExerciseDetailScreen(
     var showDeleteSetsDialog by remember { mutableStateOf(false) }
     var showRest by remember { mutableStateOf(true) }
     var pendingSetBringIntoViewId by remember { mutableStateOf<UUID?>(null) }
+    val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
+    var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
+        mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
+    }
+    var displayedWorkoutHistoryId by remember(workout.id, exercise.id) {
+        mutableStateOf(initialWorkoutHistoryId)
+    }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
     val selectedEquipmentId = exercise.equipmentId
@@ -306,6 +313,18 @@ fun ExerciseDetailScreen(
         selectedSetIds = emptySet()
     }
 
+    LaunchedEffect(initialWorkoutHistoryId) {
+        if (initialWorkoutHistoryId != displayedWorkoutHistoryId) {
+            displayedWorkoutHistoryId = initialWorkoutHistoryId
+        }
+    }
+
+    LaunchedEffect(selectedTopTab) {
+        if (selectedTopTab == 0 && displayedWorkoutHistoryId != null) {
+            displayedWorkoutHistoryId = null
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
@@ -338,16 +357,18 @@ fun ExerciseDetailScreen(
                     },
 
                     actions = {
-                        IconButton(
-                            onClick = {
-                                showInsightsDialog = true
-                                insightsState = WorkoutInsightsUiState.Idle
+                        if (selectedTopTab in 1..2 && displayedWorkoutHistoryId != null) {
+                            IconButton(
+                                onClick = {
+                                    showInsightsDialog = true
+                                    insightsState = WorkoutInsightsUiState.Idle
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "Insights"
+                                )
                             }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Insights"
-                            )
                         }
                         ExerciseDetailMenu(
                             onEditExercise = {
@@ -661,27 +682,6 @@ fun ExerciseDetailScreen(
                     .padding(paddingValues),
                 verticalArrangement = Arrangement.Top,
             ) {
-                val tabTitles = remember { listOf("Overview", "Graph History", "Set History") }
-
-                var selectedTopTab by remember(exercise.id, initialSelectedTabIndex) {
-                    mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, tabTitles.lastIndex))
-                }
-                var displayedWorkoutHistoryId by remember(workout.id, exercise.id) {
-                    mutableStateOf(initialWorkoutHistoryId)
-                }
-
-                LaunchedEffect(initialWorkoutHistoryId) {
-                    if (initialWorkoutHistoryId != displayedWorkoutHistoryId) {
-                        displayedWorkoutHistoryId = initialWorkoutHistoryId
-                    }
-                }
-
-                LaunchedEffect(selectedTopTab) {
-                    if (selectedTopTab == 0 && displayedWorkoutHistoryId != null) {
-                        displayedWorkoutHistoryId = null
-                    }
-                }
-
                 SwipeableTabs(
                     tabTitles = tabTitles,
                     selectedTabIndex = selectedTopTab,

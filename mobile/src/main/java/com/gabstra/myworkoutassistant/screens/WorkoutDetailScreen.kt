@@ -1137,17 +1137,18 @@ fun WorkoutDetailScreen(
                         }
                     },
                     actions = {
-                        IconButton(
-                            enabled = displayedWorkoutHistoryId != null && selectedTopTab in 1..2,
-                            onClick = {
-                                showInsightsDialog = true
-                                insightsState = WorkoutInsightsUiState.Idle
+                        if (displayedWorkoutHistoryId != null && selectedTopTab in 1..2) {
+                            IconButton(
+                                onClick = {
+                                    showInsightsDialog = true
+                                    insightsState = WorkoutInsightsUiState.Idle
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "Insights"
+                                )
                             }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Insights"
-                            )
                         }
                         Menu(
                             onEditWorkout = {

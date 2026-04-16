@@ -85,7 +85,7 @@ fun WorkoutInsightsDialog(
                         CenteredInsightBodySurface {
                             LoadingText(
                                 when (configurationState.mode) {
-                                    WorkoutInsightsMode.LOCAL -> "Loading local insight model..."
+                                    WorkoutInsightsMode.LOCAL -> "Preparing local request..."
                                     WorkoutInsightsMode.REMOTE -> "Preparing remote request..."
                                 }
                             )
@@ -246,7 +246,9 @@ private fun InsightBodySurface(
 private fun CenteredInsightBodySurface(
     content: @Composable () -> Unit,
 ) {
-    SecondarySurface {
+    SecondarySurface(
+        backgroundColor = MaterialTheme.colorScheme.surface
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
