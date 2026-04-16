@@ -214,7 +214,9 @@ fun BarbellForm(
                     .sortedBy { it.weight }
                     .forEachIndexed { index, plate ->
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = Spacing.xs),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {

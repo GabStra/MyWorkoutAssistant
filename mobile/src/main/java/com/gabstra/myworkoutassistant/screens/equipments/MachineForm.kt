@@ -206,7 +206,9 @@ fun MachineForm(
 
                 availableWeightsState.value.sortedBy { it.weight }.forEachIndexed { index, weight ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.xs),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
