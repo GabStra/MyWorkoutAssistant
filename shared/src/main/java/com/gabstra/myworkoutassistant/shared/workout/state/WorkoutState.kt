@@ -100,6 +100,7 @@ sealed class WorkoutState {
         val setIndex: UInt,
         val previousSetData: SetData?,
         val currentSetDataState: androidx.compose.runtime.MutableState<SetData>,        // constructor param
+        val historicalSetData: SetData? = null,
         val hasNoHistory: Boolean,
         var startTime : LocalDateTime? = null,
         var skipped: Boolean,

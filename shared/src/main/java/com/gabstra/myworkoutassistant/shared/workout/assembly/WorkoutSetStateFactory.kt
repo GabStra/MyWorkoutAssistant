@@ -68,6 +68,7 @@ class WorkoutSetStateFactory {
         setIndex: Int,
         previousSetData: SetData?,
         currentSetData: SetData,
+        historicalSetData: SetData? = null,
         historySet: SetHistory?,
         plateChangeResult: PlateCalculator.Companion.PlateChangeResult?,
         exerciseInfo: ExerciseInfo?,
@@ -86,6 +87,7 @@ class WorkoutSetStateFactory {
             setIndex.toUInt(),
             previousSetData,
             currentSetDataState = mutableStateOf(currentSetData),
+            historicalSetData = historicalSetData,
             hasNoHistory = historySet == null,
             startTime = null,
             skipped = false,
@@ -139,4 +141,3 @@ class WorkoutSetStateFactory {
         )
     }
 }
-

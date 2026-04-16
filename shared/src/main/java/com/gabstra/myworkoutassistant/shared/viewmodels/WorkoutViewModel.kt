@@ -2457,10 +2457,10 @@ open class WorkoutViewModel(
                         currentSetData.copy(volume = currentSetData.calculateVolume())
                 }
 
-                var previousSetData = copySetData(currentSetData)
+                var historicalSetData: SetData? = null
                 val baselineSet = getProgressionComparisonBaselineSet(exercise.id, set.id)
                 if (baselineSet != null) {
-                    previousSetData = buildProgressionComparisonBaselineSetData(exercise, baselineSet)
+                    historicalSetData = buildProgressionComparisonBaselineSetData(exercise, baselineSet)
                 }
 
                 val historySet = latestSetHistoryMap[SetKey(exercise.id, set.id)]
@@ -2473,11 +2473,12 @@ open class WorkoutViewModel(
                         exerciseProgression == null
                     ) {
                         currentSetData = resetTimeSetProgressForNewSession(copySetData(historySetData))
-                        previousSetData = historySet.setData
+                        historicalSetData = historySet.setData
                     } else if (baselineSet == null && isSetDataValid(set, historySetData)) {
-                        previousSetData = historySet.setData
+                        historicalSetData = historySet.setData
                     }
                 }
+                val previousSetData = copySetData(currentSetData)
 
                 val weightSetIndex = weightSets.indexOf(set)
                 val plateChangeResult = plateChangeResults.getOrNull(weightSetIndex)
@@ -2513,6 +2514,7 @@ open class WorkoutViewModel(
                         setIndex = index,
                         previousSetData = previousSetData,
                         currentSetData = currentSetData,
+                        historicalSetData = historicalSetData,
                         historySet = historySet,
                         plateChangeResult = plateChangeResult,
                         exerciseInfo = exerciseInfo,
@@ -2537,6 +2539,7 @@ open class WorkoutViewModel(
                         setIndex = index,
                         previousSetData = previousSetData,
                         currentSetData = currentSetData,
+                        historicalSetData = historicalSetData,
                         historySet = historySet,
                         plateChangeResult = plateChangeResult,
                         exerciseInfo = exerciseInfo,

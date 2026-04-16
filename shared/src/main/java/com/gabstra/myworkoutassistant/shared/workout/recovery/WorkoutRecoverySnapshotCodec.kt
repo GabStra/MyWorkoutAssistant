@@ -72,6 +72,7 @@ internal data class StateDto(
     val setIndex: Int? = null,
     val order: Int? = null,
     val previousSetDataJson: String? = null,
+    val historicalSetDataJson: String? = null,
     val currentSetDataJson: String,
     val startTimeEpochMs: Long? = null,
     val skipped: Boolean? = null,
@@ -201,6 +202,7 @@ object WorkoutRecoverySnapshotCodec {
             setJson = setGson.toJson(set),
             setIndex = setIndex.toInt(),
             previousSetDataJson = previousSetData?.let { setDataConverter.fromSetData(copySetData(it)) },
+            historicalSetDataJson = historicalSetData?.let { setDataConverter.fromSetData(copySetData(it)) },
             currentSetDataJson = setDataConverter.fromSetData(copySetData(currentSetData)),
             startTimeEpochMs = startTime?.toEpochMillis(),
             skipped = skipped,
@@ -311,13 +313,15 @@ object WorkoutRecoverySnapshotCodec {
             "SET" -> {
                 val parsedSet = setJson?.toSetOrNull() ?: return null
                 val currentData = currentSetDataJson.toSetDataOrNull() ?: initializeSetData(parsedSet)
-                val previousData = previousSetDataJson?.toSetDataOrNull()
+                val legacyPreviousData = previousSetDataJson?.toSetDataOrNull()
+                val historicalData = historicalSetDataJson?.toSetDataOrNull() ?: legacyPreviousData
                 WorkoutState.Set(
                     exerciseId = exerciseId?.toUuidOrNull() ?: return null,
                     set = parsedSet,
                     setIndex = (setIndex ?: return null).toUInt(),
-                    previousSetData = previousData,
+                    previousSetData = copySetData(currentData),
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
+                    historicalSetData = historicalData,
                     hasNoHistory = hasNoHistory ?: false,
                     startTime = startTimeEpochMs?.toLocalDateTime(),
                     skipped = skipped ?: false,
