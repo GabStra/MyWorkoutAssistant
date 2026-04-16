@@ -776,13 +776,15 @@ fun PageExercises(
                     is PageExercisesItem.RestPage -> RestPageFixedHeader(
                         modifier = Modifier
                             .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
-                            .height(headerOverlayHeightDp),
+                            .height(headerOverlayHeightDp)
+                            .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem
                     )
                     else -> ExercisePageFixedHeader(
                         modifier = Modifier
                             .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
-                            .height(headerOverlayHeightDp),
+                            .height(headerOverlayHeightDp)
+                            .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
                         displayCounter = displayCounter,
                         useWeightHeader = useWeightHeader

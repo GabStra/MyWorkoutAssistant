@@ -139,36 +139,38 @@ fun ScalableFadingText(
     }
     
     val marqueeState = rememberTrackableMarqueeState()
-    
+
     val boxModifier = modifier
         .clipToBounds()
         .then(
-            if (isInspectionMode) {
-                Modifier
-            } else {
-                Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-            }
+            when {
+                isInspectionMode -> Modifier
+                hasOverflow -> Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                else -> Modifier
+            },
         )
         .onGloballyPositioned { coordinates ->
             containerWidth = coordinates.size.width.toFloat()
+            containerHeight = coordinates.size.height.toFloat()
         }
         .then(
             if (onClick != null) {
                 Modifier.clickable(onClick = onClick)
             } else {
                 Modifier
-            }
+            },
         )
-    
-    val textModifier = if (isInspectionMode) {
-        Modifier
-    } else {
-        Modifier.trackableMarquee(
-            state = marqueeState,
-            iterations = Int.MAX_VALUE,
-            edgeFadeWidth = fadeWidth,
-            edgeFadeColor = fadeColor,
-        )
+
+    val textModifier = when {
+        isInspectionMode -> Modifier
+        hasOverflow ->
+            Modifier.trackableMarquee(
+                state = marqueeState,
+                iterations = Int.MAX_VALUE,
+                edgeFadeWidth = fadeWidth,
+                edgeFadeColor = fadeColor,
+            )
+        else -> Modifier
     }
 
     Box(modifier = boxModifier, contentAlignment = Alignment.Center) {

@@ -17,6 +17,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.LocalTextConfiguration
@@ -24,6 +25,8 @@ import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import kotlin.math.min
+
+private data class ScalableTextLayout(val fontSize: TextUnit, val widthDp: Dp)
 
 @Composable
 fun ScalableText(
@@ -88,49 +91,60 @@ fun ScalableText(
         // Safety check to ensure layout is actually ready before we calculate
         val isLayoutReady = maxWidthPx > 1 && maxHeightPx > 1
 
-        // 1. Calculate the ideal font size (Linear Math - Fast O(1))
-        val fittedSize = remember(text, maxWidthPx, maxHeightPx, baseStyle, minTextSize, scaleDownOnly) {
-            if (!isLayoutReady) return@remember minTextSize
+        // Font size + ink width: second measure skipped when rendered size matches first measure (upperBound).
+        val layout = remember(text, maxWidthPx, maxHeightPx, baseStyle, minTextSize, scaleDownOnly, density) {
+            if (!isLayoutReady) {
+                val w = measurer.measure(
+                    text = text,
+                    style = baseStyle.copy(fontSize = minTextSize),
+                    maxLines = 1,
+                    softWrap = false,
+                ).size.width
+                return@remember ScalableTextLayout(
+                    fontSize = minTextSize,
+                    widthDp = with(density) { w.toDp() },
+                )
+            }
 
             val baseFontSize = baseStyle.fontSize
             val upperBound = if (scaleDownOnly) baseFontSize
             else if (baseFontSize.value >= 32f) baseFontSize else 32.sp
 
-            // Measure text ONCE at the largest allowed size
             val result = measurer.measure(
                 text = text,
                 style = baseStyle.copy(fontSize = upperBound),
                 maxLines = 1,
-                softWrap = false
+                softWrap = false,
             )
 
-            // Calculate ratios for both dimensions
             val widthRatio = if (result.size.width > 0) maxWidthPx / result.size.width else 1f
             val heightRatio = if (result.size.height > 0) maxHeightPx / result.size.height else 1f
-
-            // Pick the strictest constraint (smallest ratio)
             val bestRatio = min(widthRatio, heightRatio)
 
-            // Apply ratio
             val finalSize = if (bestRatio < 1f || !scaleDownOnly) {
-                (upperBound.value * bestRatio)
+                upperBound.value * bestRatio
             } else {
                 upperBound.value
             }
+            val fittedSizeSp = finalSize.coerceAtLeast(minTextSize.value).sp
 
-            // Return SP directly for instant application
-            finalSize.coerceAtLeast(minTextSize.value).sp
+            val widthDp = if (fittedSizeSp == upperBound) {
+                with(density) { result.size.width.toDp() }
+            } else {
+                val atFitted = measurer.measure(
+                    text = text,
+                    style = baseStyle.copy(fontSize = fittedSizeSp),
+                    maxLines = 1,
+                    softWrap = false,
+                )
+                with(density) { atFitted.size.width.toDp() }
+            }
+
+            ScalableTextLayout(fittedSizeSp, widthDp)
         }
 
-        val fittedTextWidth = remember(text, fittedSize, baseStyle) {
-            val result = measurer.measure(
-                text = text,
-                style = baseStyle.copy(fontSize = fittedSize),
-                maxLines = 1,
-                softWrap = false
-            )
-            with(density) { result.size.width.toDp() }
-        }
+        val fittedSize = layout.fontSize
+        val fittedTextWidth = layout.widthDp
 
         val baseModifier = if (isInspectionMode) {
             textModifier
@@ -140,10 +154,11 @@ fun ScalableText(
             }
         }
 
+        // Bake color into TextStyle so typography defaults cannot override the requested ink color.
         Text(
             text = text,
-            style = baseStyle.copy(fontSize = fittedSize),
-            color = color,
+            style = baseStyle.copy(fontSize = fittedSize, color = color),
+            color = Color.Unspecified,
             maxLines = 1,
             textAlign = textAlign,
             overflow = overflow,
