@@ -1019,12 +1019,19 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    /**
+     * [_workouts] lists enabled+active templates only; DB-driven recovery may reference any template
+     * still present in [workoutStore]. Session resume must resolve from both.
+     */
+    private fun resolveWorkoutTemplateForSession(workoutId: UUID?): Workout? {
+        if (workoutId == null) return null
+        val storeSnapshot = workoutStore
+        return workoutSessionOrchestrator.selectWorkout(_workouts.value, workoutId)
+            ?: workoutSessionOrchestrator.selectWorkout(storeSnapshot.workouts, workoutId)
+    }
 
     fun setSelectedWorkoutId(workoutId: UUID) {
-        // Capture workoutStore value to avoid race conditions with state access
-        val currentWorkoutStore = workoutStore
-        val workout = currentWorkoutStore.workouts.find { it.id == workoutId }
-            ?: workouts.value.find { it.id == workoutId }
+        val workout = resolveWorkoutTemplateForSession(workoutId)
 
         pendingResumeWorkoutHistoryId = null
         _selectedWorkoutId.value = workoutId
@@ -1055,15 +1062,14 @@ open class WorkoutViewModel(
      */
     open fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
         _selectedWorkoutId.value = workoutId
-        workoutSessionOrchestrator.selectWorkout(
-            workouts = _workouts.value,
-            selectedWorkoutId = workoutId
-        )?.let { selectedWorkout ->
-            _selectedWorkout.value = selectedWorkout
-            rebuildScreenState()
-        }
+        val workout = resolveWorkoutTemplateForSession(workoutId) ?: return
+        _selectedWorkout.value = workout
+        _hasExercises.value = workout.workoutComponents.filter { it.enabled }.isNotEmpty()
+        initializeExercisesMaps(workout)
+        getWorkoutRecord(workout)
         pendingResumeWorkoutHistoryId = workoutHistoryId
         _enableWorkoutNotificationFlow.value = null
+        rebuildScreenState()
     }
 
     fun resetAll() {
@@ -1239,11 +1245,25 @@ open class WorkoutViewModel(
                 setStates.clear()
                 weightsByEquipment.clear()
                 _isPaused.value = false
-                val resumeSelectedWorkout = workoutSessionOrchestrator.selectWorkout(
-                    workouts = _workouts.value,
-                    selectedWorkoutId = _selectedWorkoutId.value
-                ) ?: return@withContext
+                val resumeSelectedWorkout =
+                    resolveWorkoutTemplateForSession(_selectedWorkoutId.value)
+                        ?: run {
+                            Log.w(
+                                TAG,
+                                "resumeWorkoutFromRecord: no template for id=${_selectedWorkoutId.value} " +
+                                    "(disabled/inactive workouts are omitted from the picker list)"
+                            )
+                            return@withContext
+                        }
                 _selectedWorkout.value = resumeSelectedWorkout
+                initializeExercisesMaps(resumeSelectedWorkout)
+                if (_workoutRecord == null) {
+                    val recordState = workoutRecordService.resolveWorkoutRecord(resumeSelectedWorkout.id)
+                    _workoutRecord = recordState.workoutRecord
+                    _workoutResumeInfo.value = recordState.workoutRecord?.let { record ->
+                        resolveWorkoutResumeInfo(workout = resumeSelectedWorkout, workoutRecord = record)
+                    }
+                }
                 rebuildScreenState()
 
                 val resumeHistoryId = workoutSessionOrchestrator.resolveResumeHistoryId(
@@ -1251,6 +1271,11 @@ open class WorkoutViewModel(
                     workoutRecord = _workoutRecord
                 )
                 if (resumeHistoryId == null) {
+                    Log.w(
+                        TAG,
+                        "resumeWorkoutFromRecord: no history id (pendingResumeWorkoutHistoryId was null " +
+                            "and no workout record)"
+                    )
                     pendingResumeWorkoutHistoryId = null
                     withContext(dispatchers.main) {
                         _hasWorkoutRecord.value = false
@@ -1660,8 +1685,14 @@ open class WorkoutViewModel(
      * [resumeWorkoutFromRecord] when the session is ready (e.g. after Preparing screen).
      */
     fun resumeLastState() {
-        if (_workoutRecord == null) return
         val executedSetHistories = executedSetStore.executedSets.value
+
+        if (_workoutRecord == null) {
+            if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+                updateStateFlowsFromMachine()
+            }
+            return
+        }
 
         fun isTargetResumeState(state: WorkoutState?): Boolean {
             if (state !is WorkoutState.Set) return false
