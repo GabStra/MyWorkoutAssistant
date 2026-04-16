@@ -128,6 +128,9 @@ fun TimedDurationSetScreen(
     val previousSetStartTimer = remember(state.previousSetData) {
         (state.previousSetData as? TimedDurationSetData)?.startTimer
     }
+    val historicalSetStartTimer = remember(state.historicalSetData) {
+        (state.historicalSetData as? TimedDurationSetData)?.startTimer
+    }
     val timerUiState by viewModel.workoutTimerService.timerUiState(set.id).collectAsState(initial = null)
     var currentSet by remember(set.id) {
         val setData = state.currentSetData as? TimedDurationSetData
@@ -420,7 +423,8 @@ fun TimedDurationSetScreen(
 
     val textComposable = @Composable {
         val previousTimer = previousSetStartTimer ?: currentSet.startTimer
-        val isDifferent = currentSet.startTimer != previousTimer
+        val comparisonTimer = historicalSetStartTimer ?: previousTimer
+        val isDifferent = currentSet.startTimer != comparisonTimer
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

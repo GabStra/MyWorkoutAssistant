@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
@@ -67,6 +70,7 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.ExerciseSetDisplayRow
+import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.display.buildSupersetSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.ExerciseChildItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
@@ -404,7 +408,7 @@ private fun ExercisePageFixedHeader(
         }
 
         Box(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().weight(1f),
             contentAlignment = Alignment.Center
         ) {
             when (pageItem) {
@@ -433,13 +437,11 @@ private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem.RestPage,
 ) {
-    val titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
     val previousPlain = pageItem.previousDisplayName.text
     val nextPlain = pageItem.nextDisplayName.text
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
         ExerciseNameText(
             text = pageItem.previousDisplayName,
@@ -448,13 +450,12 @@ private fun RestPageFixedHeader(
                 .semantics {
                     contentDescription = PageExercisesRestSemantics.previousExerciseDescription(previousPlain)
                 },
-            style = titleStyle,
             textAlign = TextAlign.Center
         )
         Text(
             text = "\u2193",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.semantics {
                 contentDescription = PageExercisesRestSemantics.BetweenExercisesTransitionDescription
@@ -467,7 +468,6 @@ private fun RestPageFixedHeader(
                 .semantics {
                     contentDescription = PageExercisesRestSemantics.nextExerciseDescription(nextPlain)
                 },
-            style = titleStyle,
             textAlign = TextAlign.Center
         )
     }
@@ -514,6 +514,16 @@ private fun TransformingLazyColumnScope.RestPageContent(
                 )
             }
         }
+    }
+}
+
+private fun TransformingLazyColumnScope.InvisibleListSpacer(height: Dp) {
+    item {
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(height)
+        )
     }
 }
 
@@ -594,10 +604,11 @@ fun PageExercises(
         firstSetListItemIndex,
         viewModel.allWorkoutStates.size
     ) {
-        if (selectedPageItem == null || selectedPageItem is PageExercisesItem.RestPage || selectedPageCurrentSet == null) {
-            null
-        } else {
-            resolveExerciseSetsScrollTargetIndex(
+        when {
+            selectedPageItem == null -> null
+            selectedPageItem is PageExercisesItem.RestPage -> firstSetListItemIndex
+            selectedPageCurrentSet == null -> null
+            else -> resolveExerciseSetsScrollTargetIndex(
                 viewModel = viewModel,
                 exercise = selectedPageItem.representativeExercise,
                 currentSet = selectedPageCurrentSet,
@@ -605,13 +616,6 @@ fun PageExercises(
                 firstSetListItemIndex = firstSetListItemIndex
             )
         }
-    }
-    val initialAnchorItemIndex = targetItemIndex ?: -1
-    val transformingLazyColumnState: TransformingLazyColumnState = remember(
-        selectedPageIndex.value,
-        initialAnchorItemIndex
-    ) {
-        TransformingLazyColumnState(initialAnchorItemIndex = initialAnchorItemIndex)
     }
     val transformationSpec = rememberTransformationSpec(
         ResponsiveTransformationSpec.smallScreen(
@@ -626,62 +630,110 @@ fun PageExercises(
         )
     )
     var isAutoScrolling by remember { mutableStateOf(false) }
-    LaunchedEffect(targetItemIndex, selectedPageIndex.value) {
-        val targetIndex = targetItemIndex ?: return@LaunchedEffect
-        if (isAutoScrolling) return@LaunchedEffect
-        isAutoScrolling = true
-        try {
-            transformingLazyColumnState.scrollToItem(targetIndex)
-        } finally {
-            isAutoScrolling = false
-        }
-    }
 
     val useWeightHeader = remember(selectedPageItem, viewModel.allWorkoutStates.size) {
         selectedPageItem?.let { pageItem ->
             shouldUseWeightHeader(viewModel = viewModel, pageItem = pageItem)
         } ?: false
     }
-    val headerOverlayHeightDp =  60.dp
+    val isSelectedPageScrollable = remember(
+        selectedPageItem,
+        viewModel.allWorkoutStates.size,
+        viewModel.supersetIdByExerciseId,
+        viewModel.exercisesBySupersetId
+    ) {
+        when (val pageItem = selectedPageItem) {
+            is PageExercisesItem.ExercisePage -> buildExerciseSetDisplayRows(
+                viewModel = viewModel,
+                exerciseId = pageItem.exercise.id
+            ).size > 1
+            is PageExercisesItem.SupersetPage -> buildSupersetSetDisplayRows(
+                viewModel = viewModel,
+                supersetId = pageItem.supersetId
+            ).size > 1
+            is PageExercisesItem.RestPage,
+            null -> false
+        }
+    }
+    val headerOverlayHeightDp = 62.5.dp
+    val density = LocalDensity.current
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .semantics { contentDescription = "Exercise sets viewer" }
     ) {
+        val topSection = headerOverlayHeightDp + WorkoutPagerPageSafeAreaPadding.calculateTopPadding()
+        val selectedRowHeightDp = 25.dp
+        val itemSpacingDp = 5.dp
+        val selectedRowScrollOffsetPx = with(density) {
+            ((maxHeight / 2) - (selectedRowHeightDp / 2) - topSection - itemSpacingDp/2).roundToPx()
+        }
+        val initialAnchorItemIndex = targetItemIndex ?: 0
+        val transformingLazyColumnState: TransformingLazyColumnState = remember(
+            selectedPageIndex.value,
+            initialAnchorItemIndex,
+            selectedRowScrollOffsetPx
+        ) {
+            TransformingLazyColumnState(
+                initialAnchorItemIndex = initialAnchorItemIndex,
+                initialAnchorItemScrollOffset = selectedRowScrollOffsetPx
+            )
+        }
+        val bottomSpacerHeightDp = (
+            maxHeight -
+                topSection -
+                selectedRowHeightDp -
+                itemSpacingDp -
+                WorkoutPagerPageSafeAreaPadding.calculateBottomPadding()
+            ).coerceAtLeast(0.dp)
+
+        LaunchedEffect(targetItemIndex, selectedPageIndex.value, selectedRowScrollOffsetPx) {
+            val targetIndex = targetItemIndex ?: return@LaunchedEffect
+            if (isAutoScrolling) return@LaunchedEffect
+            isAutoScrolling = true
+            try {
+                transformingLazyColumnState.scrollToItem(
+                    index = targetIndex,
+                    scrollOffset = selectedRowScrollOffsetPx
+                )
+            } finally {
+                isAutoScrolling = false
+            }
+        }
+
         ScreenScaffold(
             modifier = Modifier.fillMaxSize(),
             scrollState = transformingLazyColumnState,
             scrollIndicator = {
-                ScrollIndicator(
-                    state = transformingLazyColumnState,
-                    colors = ScrollIndicatorDefaults.colors(
-                        indicatorColor = MaterialTheme.colorScheme.onBackground,
-                        trackColor = MediumDarkGray
+                if (isSelectedPageScrollable) {
+                    ScrollIndicator(
+                        state = transformingLazyColumnState,
+                        colors = ScrollIndicatorDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.onBackground,
+                            trackColor = MediumDarkGray
+                        )
                     )
-                )
+                }
             }
         ) { _ ->
             if (selectedPageItem is PageExercisesItem.RestPage) {
                 TransformingLazyColumn(
-                    modifier = Modifier.padding(horizontal = 20.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp),
                     state = transformingLazyColumnState,
-                    userScrollEnabled = !isAutoScrolling,
-                    verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
+                    userScrollEnabled = false,
+                    verticalArrangement = Arrangement.spacedBy(itemSpacingDp, Alignment.Top),
                     contentPadding = WorkoutPagerPageSafeAreaPadding
                 ) {
-                    item {
-                        Spacer(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(headerOverlayHeightDp)
-                        )
-                    }
+                    InvisibleListSpacer(headerOverlayHeightDp)
                     RestPageContent(
                         restState = selectedPageItem.restState,
                         progressState = selectedProgressState,
                         transformationSpec = transformationSpec
                     )
+                    InvisibleListSpacer(bottomSpacerHeightDp)
                 }
             } else if (selectedPageItem != null) {
                 val currentSet = resolvePageCurrentSet(selectedPageItem, activeWorkoutState)
@@ -691,17 +743,11 @@ fun PageExercises(
                             .fillMaxSize()
                             .padding(horizontal = 20.dp),
                         state = transformingLazyColumnState,
-                        userScrollEnabled = !isAutoScrolling,
-                        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Top),
+                        userScrollEnabled = isSelectedPageScrollable && !isAutoScrolling,
+                        verticalArrangement = Arrangement.spacedBy(itemSpacingDp, Alignment.Top),
                         contentPadding = WorkoutPagerPageSafeAreaPadding
                     ) {
-                        item {
-                            Spacer(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(headerOverlayHeightDp)
-                            )
-                        }
+                        InvisibleListSpacer(headerOverlayHeightDp)
                         ExerciseSetsViewer(
                             viewModel = viewModel,
                             hapticsViewModel = hapticsViewModel,
@@ -711,6 +757,7 @@ fun PageExercises(
                             stateToMatch = selectedSetStateToMatch,
                             progressState = selectedProgressState,
                         )
+                        InvisibleListSpacer(bottomSpacerHeightDp)
                     }
                 }
             }
@@ -721,17 +768,21 @@ fun PageExercises(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
+
                     .padding(horizontal = 20.dp)
                     .background(MaterialTheme.colorScheme.background)
             ) {
                 when (selectedPageItem) {
                     is PageExercisesItem.RestPage -> RestPageFixedHeader(
-                        modifier = Modifier.height(headerOverlayHeightDp),
+                        modifier = Modifier
+                            .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
+                            .height(headerOverlayHeightDp),
                         pageItem = selectedPageItem
                     )
                     else -> ExercisePageFixedHeader(
-                        modifier = Modifier.height(headerOverlayHeightDp),
+                        modifier = Modifier
+                            .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
+                            .height(headerOverlayHeightDp),
                         pageItem = selectedPageItem,
                         displayCounter = displayCounter,
                         useWeightHeader = useWeightHeader
@@ -796,6 +847,12 @@ private data class PageExercisesPreviewFixture(
     val firstSetState: WorkoutState.Set,
     val supersetSetState: WorkoutState.Set,
     val restState: WorkoutState.Rest,
+)
+
+private data class PageExercisesManySetsPreviewFixture(
+    val viewModel: AppViewModel,
+    val exercise: Exercise,
+    val lastSetState: WorkoutState.Set,
 )
 
 private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
@@ -1091,6 +1148,87 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
     )
 }
 
+private fun buildPageExercisesManySetsPreviewFixture(): PageExercisesManySetsPreviewFixture {
+    val viewModel = AppViewModel()
+    val exerciseId = UUID.fromString("74000000-0000-0000-0000-000000000001")
+    val sets = (1..18).map { index ->
+        WeightSet(
+            id = UUID.fromString("75000000-0000-0000-0000-${index.toString().padStart(12, '0')}"),
+            reps = 8,
+            weight = 80.0 + index,
+            subCategory = SetSubCategory.WorkSet
+        )
+    }
+    val exercise = Exercise(
+        id = exerciseId,
+        enabled = true,
+        name = "Long Set List",
+        notes = "",
+        sets = sets,
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 100.0,
+        minReps = 6,
+        maxReps = 10,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        generateWarmUpSets = false,
+        keepScreenOn = false,
+        showCountDownTimer = false,
+        requiresLoadCalibration = false
+    )
+    val setStates = sets.mapIndexed { index, set ->
+        val setNumber = index + 1
+        WorkoutState.Set(
+            exerciseId = exercise.id,
+            set = set,
+            setIndex = setNumber.toUInt(),
+            previousSetData = WeightSetData(
+                actualReps = 8,
+                actualWeight = set.weight - 2.5,
+                volume = (set.weight - 2.5) * 8
+            ),
+            currentSetDataState = androidx.compose.runtime.mutableStateOf(
+                WeightSetData(
+                    actualReps = 8,
+                    actualWeight = set.weight,
+                    volume = set.weight * 8
+                )
+            ),
+            hasNoHistory = false,
+            skipped = false,
+            currentBodyWeight = 0.0,
+            streak = 1,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null
+        )
+    }
+    val sequence = listOf(
+        WorkoutStateSequenceItem.Container(
+            WorkoutStateContainer.ExerciseState(
+                exerciseId = exercise.id,
+                childItems = setStates.map { state ->
+                    ExerciseChildItem.Normal(state)
+                }.toMutableList()
+            )
+        )
+    )
+    val lastSetState = setStates.last()
+
+    viewModel.exercisesById = mapOf(exercise.id to exercise)
+    setFieldValue(viewModel, "stateMachine", WorkoutStateMachine.fromSequence(sequence, startIndex = setStates.lastIndex))
+    setCurrentWorkoutState(viewModel, lastSetState)
+
+    return PageExercisesManySetsPreviewFixture(
+        viewModel = viewModel,
+        exercise = exercise,
+        lastSetState = lastSetState
+    )
+}
+
 @Preview(
     name = "Standalone Rest Page",
     group = "PageExercises",
@@ -1161,6 +1299,31 @@ private fun PageExercisesSupersetPagePreview() {
             viewModel = fixture.viewModel,
             hapticsViewModel = hapticsViewModel,
             currentExercise = fixture.supersetExercise,
+            onPageSelected = { _, _ -> }
+        )
+    }
+}
+
+@Preview(
+    name = "Many Sets Last Selected",
+    group = "PageExercises",
+    device = WearDevices.LARGE_ROUND,
+    showBackground = true
+)
+@Composable
+private fun PageExercisesManySetsLastSelectedPreview() {
+    val fixture = remember { buildPageExercisesManySetsPreviewFixture() }
+    val context = LocalContext.current
+    val hapticsViewModel = remember(context) { HapticsViewModel(context, HapticsHelper(context)) }
+
+    MyWorkoutAssistantTheme {
+        PageExercises(
+            selectedExercise = fixture.exercise,
+            selectedRestPageId = null,
+            workoutState = fixture.lastSetState,
+            viewModel = fixture.viewModel,
+            hapticsViewModel = hapticsViewModel,
+            currentExercise = fixture.exercise,
             onPageSelected = { _, _ -> }
         )
     }

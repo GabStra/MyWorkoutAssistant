@@ -76,6 +76,8 @@ fun BodyWeightSetScreen(
     val context = LocalContext.current
 
     val previousSetData = state.previousSetData as BodyWeightSetData
+    val historicalSetData = state.historicalSetData as? BodyWeightSetData
+    val comparisonSetData = historicalSetData ?: previousSetData
     var currentSetData by remember(state.set.id) {
         mutableStateOf(state.currentSetData as BodyWeightSetData)
     }
@@ -117,8 +119,8 @@ fun BodyWeightSetScreen(
         state.exerciseId,
         state.set.id,
         shouldShowHistoricalDeltaBadge,
-        previousSetData.additionalWeight,
-        previousSetData.actualReps,
+        historicalSetData?.additionalWeight,
+        historicalSetData?.actualReps,
         currentSetData.additionalWeight,
         currentSetData.actualReps
     ) {
@@ -126,7 +128,7 @@ fun BodyWeightSetScreen(
             TAG,
             "BodyWeightSetScreen badge state exercise=${state.exerciseId}, set=${state.set.id}, " +
                 "showBadge=$shouldShowHistoricalDeltaBadge, " +
-                "baselineAdditionalWeight=${previousSetData.additionalWeight}, baselineReps=${previousSetData.actualReps}, " +
+                "historicalAdditionalWeight=${historicalSetData?.additionalWeight}, historicalReps=${historicalSetData?.actualReps}, " +
                 "currentAdditionalWeight=${currentSetData.additionalWeight}, currentReps=${currentSetData.actualReps}"
         )
     }
@@ -344,8 +346,8 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor  = when {
-                currentSetData.actualReps == previousSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < previousSetData.actualReps  -> Red
+                currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
+                currentSetData.actualReps < comparisonSetData.actualReps  -> Red
                 else -> Green
             }
 
@@ -418,8 +420,8 @@ fun BodyWeightSetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val textColor = when {
-                currentSetData.additionalWeight == previousSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.additionalWeight < previousSetData.additionalWeight  -> Red
+                currentSetData.additionalWeight == comparisonSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
+                currentSetData.additionalWeight < comparisonSetData.additionalWeight  -> Red
                 else -> Green
             }
 
@@ -508,7 +510,7 @@ fun BodyWeightSetScreen(
                     if (shouldShowHistoricalDeltaBadge) {
                         HistoricalSetDeltaBadge(
                             modifier = Modifier.fillMaxWidth(),
-                            previousSetData = previousSetData,
+                            previousSetData = historicalSetData,
                             currentSetData = currentSetData,
                             equipment = equipment
                         )

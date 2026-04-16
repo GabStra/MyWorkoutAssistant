@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -16,12 +17,14 @@ fun ExerciseNameText(
         fontWeight = FontWeight.SemiBold
     ),
     textAlign: TextAlign = TextAlign.Center,
+    color: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     ExerciseNameText(
         text = AnnotatedString(text),
         modifier = modifier,
         style = style,
         textAlign = textAlign,
+        color = color
     )
 }
 
@@ -33,11 +36,13 @@ fun ExerciseNameText(
         fontWeight = FontWeight.SemiBold
     ),
     textAlign: TextAlign = TextAlign.Center,
+    color: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     FadingText(
         modifier = modifier,
         text = text,
         style = style,
         textAlign = textAlign,
+        color = color
     )
 }

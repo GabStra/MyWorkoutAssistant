@@ -99,7 +99,7 @@ internal data class SetTrendIndicator(
 )
 
 internal fun buildSetTrendIndicator(setState: WorkoutState.Set): SetTrendIndicator? {
-    return when (compareSets(setState.previousSetData, setState.currentSetData)) {
+    return when (compareSets(setState.historicalSetData, setState.currentSetData)) {
         SetComparison.BETTER -> SetTrendIndicator(glyph = "↑", color = Green)
         SetComparison.WORSE -> SetTrendIndicator(glyph = "↓", color = Red)
         SetComparison.MIXED -> SetTrendIndicator(glyph = "~", color = Yellow)
@@ -205,7 +205,7 @@ private fun isWorkSet(setState: WorkoutState.Set): Boolean = when (val set = set
 
 internal fun trendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
     if (!isWorkSet(setState)) return null
-    val prev = setState.previousSetData ?: return null
+    val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
     when {
         curr is WeightSetData && prev is WeightSetData -> {
@@ -228,7 +228,7 @@ internal fun trendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
 
 internal fun trendForReps(setState: WorkoutState.Set): SetTrendIndicator? {
     if (!isWorkSet(setState)) return null
-    val prev = setState.previousSetData ?: return null
+    val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
     when {
         curr is WeightSetData && prev is WeightSetData -> {
@@ -250,7 +250,7 @@ internal fun trendForReps(setState: WorkoutState.Set): SetTrendIndicator? {
 }
 
 internal fun trendForTime(setState: WorkoutState.Set): SetTrendIndicator? {
-    val prev = setState.previousSetData ?: return null
+    val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
     when {
         curr is TimedDurationSetData && prev is TimedDurationSetData -> {
