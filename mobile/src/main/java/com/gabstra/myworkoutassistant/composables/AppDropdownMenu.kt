@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 @Composable
@@ -34,7 +33,7 @@ fun AppDropdownMenu(
         modifier = modifier,
         offset = offset,
         shape = MaterialTheme.shapes.small,
-        containerColor = DarkGray,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(1.dp, appMenuBorderColor()),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,
@@ -65,7 +64,7 @@ fun MenuSurface(
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
-        color = DarkGray,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(1.dp, appMenuBorderColor()),
         tonalElevation = 0.dp,
         shadowElevation = 4.dp,

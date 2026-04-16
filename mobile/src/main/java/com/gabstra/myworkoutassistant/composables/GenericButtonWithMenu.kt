@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import com.gabstra.myworkoutassistant.Spacing
 
 data class MenuItem(
     val label: String,
@@ -78,14 +77,11 @@ fun GenericButtonWithMenu(
                             max = maxPopupWidth
                         )
                     ) {
-                        Box(modifier = Modifier.padding(vertical = Spacing.md)){
-                            Column(
+                        Column(
                             modifier = Modifier
                                 .width(IntrinsicSize.Max)
                                 .heightIn(max = 240.dp)
                                 .verticalScroll(scrollState)
-                                .padding(horizontal = Spacing.md)
-
                         ) {
                             menuItems.forEachIndexed { index, item ->
                                 Text(
@@ -108,7 +104,6 @@ fun GenericButtonWithMenu(
                                     )
                                 }
                             }
-                        }
                         }
                     }
                 }
