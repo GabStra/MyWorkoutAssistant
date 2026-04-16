@@ -16,11 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -40,18 +35,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
-import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.shared.ExerciseType
-import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.Orange
-import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.equipments.Equipment
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
@@ -69,172 +59,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-enum class SetComparison {
-    BETTER, EQUAL, WORSE, MIXED
-}
-
-data class SetDifference(
-    val weightText: String? = null,
-    val repsText: String? = null,
-    val durationText: String? = null
-) {
-    val displayText: String
-        get() {
-            val parts = listOfNotNull(weightText, repsText, durationText)
-            return if (parts.isEmpty()) "No change" else parts.joinToString(" ")
-        }
-}
-
-fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison {
-    if (beforeSetData == null || afterSetData == null) {
-        return SetComparison.EQUAL
-    }
-
-    return when {
-        beforeSetData is WeightSetData && afterSetData is WeightSetData -> {
-            val beforeReps = beforeSetData.actualReps
-            val beforeWeight = beforeSetData.actualWeight
-            val afterReps = afterSetData.actualReps
-            val afterWeight = afterSetData.actualWeight
-
-            when {
-                afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
-                (afterWeight > beforeWeight && afterReps < beforeReps) ||
-                        (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
-                (afterWeight == beforeWeight && afterReps > beforeReps) ||
-                        (afterReps == beforeReps && afterWeight > beforeWeight) ||
-                        (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
-
-                else -> SetComparison.WORSE
-            }
-        }
-
-        beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
-            val beforeReps = beforeSetData.actualReps
-            val beforeWeight = beforeSetData.getWeight()
-            val afterReps = afterSetData.actualReps
-            val afterWeight = afterSetData.getWeight()
-
-            when {
-                afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
-                (afterWeight > beforeWeight && afterReps < beforeReps) ||
-                        (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
-                (afterWeight == beforeWeight && afterReps > beforeReps) ||
-                        (afterReps == beforeReps && afterWeight > beforeWeight) ||
-                        (afterReps > beforeReps && afterWeight > beforeWeight) -> SetComparison.BETTER
-
-                else -> SetComparison.WORSE
-            }
-        }
-
-        beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
-            val beforeDuration = beforeSetData.endTimer - beforeSetData.startTimer
-            val afterDuration = afterSetData.endTimer - afterSetData.startTimer
-
-            when {
-                afterDuration == beforeDuration -> SetComparison.EQUAL
-                afterDuration > beforeDuration -> SetComparison.BETTER
-                else -> SetComparison.WORSE
-            }
-        }
-
-        beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData -> {
-            val beforeDuration = beforeSetData.endTimer - beforeSetData.startTimer
-            val afterDuration = afterSetData.endTimer - afterSetData.startTimer
-
-            when {
-                afterDuration == beforeDuration -> SetComparison.EQUAL
-                afterDuration > beforeDuration -> SetComparison.BETTER
-                else -> SetComparison.WORSE
-            }
-        }
-
-        else -> SetComparison.EQUAL
-    }
-}
-
-fun calculateSetDifference(
-    beforeSetData: SetData?,
-    afterSetData: SetData?,
-    equipment: Equipment?
-): SetDifference {
-    if (beforeSetData == null || afterSetData == null) {
-        return SetDifference()
-    }
-
-    return when {
-        beforeSetData is WeightSetData && afterSetData is WeightSetData -> {
-            calculateWeightAndRepsSetDifference(
-                beforeWeight = beforeSetData.actualWeight,
-                afterWeight = afterSetData.actualWeight,
-                beforeReps = beforeSetData.actualReps,
-                afterReps = afterSetData.actualReps,
-                equipment = equipment
-            )
-        }
-
-        beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData -> {
-            calculateWeightAndRepsSetDifference(
-                beforeWeight = beforeSetData.getWeight(),
-                afterWeight = afterSetData.getWeight(),
-                beforeReps = beforeSetData.actualReps,
-                afterReps = afterSetData.actualReps,
-                equipment = equipment
-            )
-        }
-
-        beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData -> {
-            val beforeDuration = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000
-            val afterDuration = (afterSetData.endTimer - afterSetData.startTimer) / 1000
-            val durationDiff = afterDuration - beforeDuration
-
-            if (durationDiff == 0) {
-                SetDifference()
-            } else {
-                val sign = if (durationDiff > 0) "+" else ""
-                SetDifference(durationText = "$sign${FormatTime(durationDiff)}")
-            }
-        }
-
-        beforeSetData is TimedDurationSetData && afterSetData is TimedDurationSetData -> {
-            val beforeDuration = (beforeSetData.endTimer - beforeSetData.startTimer) / 1000
-            val afterDuration = (afterSetData.endTimer - afterSetData.startTimer) / 1000
-            val durationDiff = afterDuration - beforeDuration
-
-            if (durationDiff == 0) {
-                SetDifference()
-            } else {
-                val sign = if (durationDiff > 0) "+" else ""
-                SetDifference(durationText = "$sign${FormatTime(durationDiff)}")
-            }
-        }
-
-        else -> SetDifference()
-    }
-}
-
-private fun calculateWeightAndRepsSetDifference(
-    beforeWeight: Double,
-    afterWeight: Double,
-    beforeReps: Int,
-    afterReps: Int,
-    equipment: Equipment?
-): SetDifference {
-    val weightDiff = afterWeight - beforeWeight
-    val repsDiff = afterReps - beforeReps
-
-    val weightText = if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
-        val sign = if (weightDiff > 0) "+" else ""
-        "$sign${equipment.formatWeight(weightDiff)} kg"
-    } else null
-    val repsText = if (repsDiff != 0) {
-        val sign = if (repsDiff > 0) "+" else ""
-        "$sign$repsDiff reps"
-    } else null
-
-    return SetDifference(weightText = weightText, repsText = repsText)
-}
 
 private fun isWorkSet(set: com.gabstra.myworkoutassistant.shared.sets.Set): Boolean = when (set) {
     is RestSet -> false
@@ -491,12 +315,6 @@ fun PageProgressionComparison(
             }
         }
 
-        val comparison by remember(beforeSetData, afterSetData) {
-            derivedStateOf {
-                compareSets(beforeSetData, afterSetData)
-            }
-        }
-
         val setDifference by remember(beforeSetData, afterSetData, afterSetState?.equipmentId, beforeSetState?.equipmentId) {
             derivedStateOf {
                 val afterEquipment = afterSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -509,6 +327,7 @@ fun PageProgressionComparison(
             }
         }
         val differenceText = setDifference.displayText
+        val comparison = setDifference.comparison
 
         val rowIndex = currentSetIndex
         val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.onBackground) {
@@ -581,62 +400,9 @@ fun PageProgressionComparison(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val comparisonColor by remember(comparison, colorScheme.onBackground, colorScheme.tertiary) {
-                derivedStateOf {
-                    when (comparison) {
-                        SetComparison.BETTER -> Green
-                        SetComparison.WORSE -> Red
-                        SetComparison.EQUAL -> colorScheme.onBackground
-                        SetComparison.MIXED -> colorScheme.tertiary
-                    }
-                }
-            }
+            val comparisonColor = colorForSetComparisonSummary(comparison)
 
-            when (comparison) {
-                SetComparison.EQUAL -> {
-                    Icon(
-                        imageVector = Icons.Filled.DragHandle,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(20.dp),
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-
-                SetComparison.BETTER -> {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowUpward,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(20.dp),
-                        tint = Green
-                    )
-                }
-
-                SetComparison.WORSE -> {
-                    Icon(
-                        imageVector = Icons.Filled.ArrowDownward,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(20.dp),
-                        tint = Red
-                    )
-                }
-
-                SetComparison.MIXED -> {
-                    Icon(
-                        imageVector = Icons.Filled.SwapVert,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .width(20.dp)
-                            .height(20.dp),
-                        tint = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-            }
+            SetComparisonDeltaIcon(comparison = comparison, iconSize = 20.dp)
 
             Spacer(modifier = Modifier.width(5.dp))
 
