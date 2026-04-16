@@ -32,7 +32,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
@@ -334,12 +333,6 @@ fun WearApp(
 
                 appViewModel.initWorkoutStoreRepository(workoutStoreRepository)
 
-                try {
-                    appViewModel.maybeShowRecoveryPromptOnLaunch()
-                } catch (exception: Exception) {
-                    Log.e("MainActivity", "Error checking workout recovery state", exception)
-                }
-
                 val now = System.currentTimeMillis()
                 if (now - startTime < 2000) {
                     delay(2000 - (now - startTime))
@@ -348,6 +341,12 @@ fun WearApp(
                 initialized = true
 
                 onNavControllerAvailable(navController)
+
+                try {
+                    appViewModel.maybeShowRecoveryPromptOnLaunch()
+                } catch (exception: Exception) {
+                    Log.e("MainActivity", "Error checking workout recovery state", exception)
+                }
             } catch (exception: Exception) {
                 Log.e("MainActivity", "Error initializing workout store repository", exception)
                 // Must set both or LoadingScreen shows forever (!initialized || startDestination == null).
@@ -504,8 +503,8 @@ fun WearApp(
                                         .zIndex(1f),
                                     visible = showWorkoutSelectionTutorial,
                                     steps = listOf(
-                                        TutorialStep("Welcome!", "Tap any workout to see details and start."),
-                                        TutorialStep("Quick tips", "Long-press the header for app info.\nDouble-tap the header for sync tools.")
+                                        TutorialStep("Start a workout", "Tap a workout to open its details, then start from that screen."),
+                                        TutorialStep("List header", "Long press the header for app info and options.\nDouble tap the header for sync tools.")
                                     ),
                                     onDismiss = {
                                         showWorkoutSelectionTutorial = false
@@ -614,22 +613,6 @@ fun WearApp(
                 android.Manifest.permission.ACCESS_COARSE_LOCATION,
                 android.Manifest.permission.POST_NOTIFICATIONS
             )
-            val recoveryScope = rememberCoroutineScope()
-
-            suspend fun waitForWorkoutStoreEntry(
-                workoutId: UUID,
-                timeoutMs: Long = 5_000
-            ): Boolean {
-                val deadline = System.currentTimeMillis() + timeoutMs
-                while (System.currentTimeMillis() < deadline) {
-                    if (appViewModel.workouts.value.any { it.id == workoutId }) {
-                        return true
-                    }
-                    delay(100)
-                }
-                return appViewModel.workouts.value.any { it.id == workoutId }
-            }
-
             val resumeRecoveredWorkout = {
                 val workoutId = appViewModel.selectedWorkoutId.value
                 if (workoutId != null) {
@@ -640,15 +623,12 @@ fun WearApp(
                     prefs.edit()
                         .putBoolean("isWorkoutInProgress", true)
                         .apply()
-                    recoveryScope.launch {
-                        if (waitForWorkoutStoreEntry(workoutId)) {
-                            appViewModel.resumeWorkoutFromRecord {
-                                withContext(Dispatchers.Main) {
-                                    navController.navigate(Screen.Workout.route)
-                                }
-                            }
-                        }
+                    // Navigate before hydration: resumeWorkoutFromRecord does heavy IO first; showing
+                    // WorkoutScreen immediately avoids a dead air gap after the recovery dialog closes.
+                    navController.navigate(Screen.Workout.route) {
+                        popUpTo(0) { inclusive = true }
                     }
+                    appViewModel.resumeWorkoutFromRecord {}
                 }
             }
 
