@@ -12,9 +12,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -56,6 +58,38 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
 
 enum class ProgressState { PAST, CURRENT, FUTURE }
+
+private fun trendPreferHigher(current: Int, previous: Int): SetTrendIndicator? = when {
+    current > previous -> SetTrendIndicator(glyph = "↑", color = Green)
+    current < previous -> SetTrendIndicator(glyph = "↓", color = Red)
+    else -> null
+}
+
+private fun trendPreferHigher(current: Double, previous: Double): SetTrendIndicator? = when {
+    current > previous -> SetTrendIndicator(glyph = "↑", color = Green)
+    current < previous -> SetTrendIndicator(glyph = "↓", color = Red)
+    else -> null
+}
+
+@Composable
+private fun ExerciseSetRowFadingCell(
+    text: String,
+    hideSetListRowText: Boolean,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    if (hideSetListRowText) {
+        Box(modifier = modifier)
+    } else {
+        ScalableFadingText(
+            modifier = modifier,
+            text = text,
+            style = style,
+            color = color,
+        )
+    }
+}
 
 internal fun buildSetIdentifier(
     viewModel: AppViewModel,
@@ -122,24 +156,10 @@ internal fun userEditedTrendForWeight(setState: WorkoutState.Set): SetTrendIndic
     val previousSetData = setState.previousSetData ?: return null
     val currentSetData = setState.currentSetData
     return when {
-        previousSetData is WeightSetData && currentSetData is WeightSetData -> {
-            when {
-                currentSetData.actualWeight > previousSetData.actualWeight ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.actualWeight < previousSetData.actualWeight ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        previousSetData is BodyWeightSetData && currentSetData is BodyWeightSetData -> {
-            when {
-                currentSetData.additionalWeight > previousSetData.additionalWeight ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.additionalWeight < previousSetData.additionalWeight ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
+        previousSetData is WeightSetData && currentSetData is WeightSetData ->
+            trendPreferHigher(currentSetData.actualWeight, previousSetData.actualWeight)
+        previousSetData is BodyWeightSetData && currentSetData is BodyWeightSetData ->
+            trendPreferHigher(currentSetData.additionalWeight, previousSetData.additionalWeight)
         else -> null
     }
 }
@@ -148,24 +168,10 @@ internal fun userEditedTrendForReps(setState: WorkoutState.Set): SetTrendIndicat
     val previousSetData = setState.previousSetData ?: return null
     val currentSetData = setState.currentSetData
     return when {
-        previousSetData is WeightSetData && currentSetData is WeightSetData -> {
-            when {
-                currentSetData.actualReps > previousSetData.actualReps ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.actualReps < previousSetData.actualReps ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        previousSetData is BodyWeightSetData && currentSetData is BodyWeightSetData -> {
-            when {
-                currentSetData.actualReps > previousSetData.actualReps ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.actualReps < previousSetData.actualReps ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
+        previousSetData is WeightSetData && currentSetData is WeightSetData ->
+            trendPreferHigher(currentSetData.actualReps, previousSetData.actualReps)
+        previousSetData is BodyWeightSetData && currentSetData is BodyWeightSetData ->
+            trendPreferHigher(currentSetData.actualReps, previousSetData.actualReps)
         else -> null
     }
 }
@@ -174,24 +180,10 @@ internal fun userEditedTrendForTime(setState: WorkoutState.Set): SetTrendIndicat
     val previousSetData = setState.previousSetData ?: return null
     val currentSetData = setState.currentSetData
     return when {
-        previousSetData is TimedDurationSetData && currentSetData is TimedDurationSetData -> {
-            when {
-                currentSetData.startTimer > previousSetData.startTimer ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.startTimer < previousSetData.startTimer ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        previousSetData is EnduranceSetData && currentSetData is EnduranceSetData -> {
-            when {
-                currentSetData.startTimer > previousSetData.startTimer ->
-                    SetTrendIndicator(glyph = "↑", color = Green)
-                currentSetData.startTimer < previousSetData.startTimer ->
-                    SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
+        previousSetData is TimedDurationSetData && currentSetData is TimedDurationSetData ->
+            trendPreferHigher(currentSetData.startTimer, previousSetData.startTimer)
+        previousSetData is EnduranceSetData && currentSetData is EnduranceSetData ->
+            trendPreferHigher(currentSetData.startTimer, previousSetData.startTimer)
         else -> null
     }
 }
@@ -207,22 +199,12 @@ internal fun trendForWeight(setState: WorkoutState.Set): SetTrendIndicator? {
     if (!isWorkSet(setState)) return null
     val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
-    when {
-        curr is WeightSetData && prev is WeightSetData -> {
-            return when {
-                curr.actualWeight > prev.actualWeight -> SetTrendIndicator(glyph = "↑", color = Green)
-                curr.actualWeight < prev.actualWeight -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        curr is BodyWeightSetData && prev is BodyWeightSetData -> {
-            return when {
-                curr.getWeight() > prev.getWeight() -> SetTrendIndicator(glyph = "↑", color = Green)
-                curr.getWeight() < prev.getWeight() -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        else -> return null
+    return when {
+        curr is WeightSetData && prev is WeightSetData ->
+            trendPreferHigher(curr.actualWeight, prev.actualWeight)
+        curr is BodyWeightSetData && prev is BodyWeightSetData ->
+            trendPreferHigher(curr.getWeight(), prev.getWeight())
+        else -> null
     }
 }
 
@@ -230,48 +212,30 @@ internal fun trendForReps(setState: WorkoutState.Set): SetTrendIndicator? {
     if (!isWorkSet(setState)) return null
     val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
-    when {
-        curr is WeightSetData && prev is WeightSetData -> {
-            return when {
-                curr.actualReps > prev.actualReps -> SetTrendIndicator(glyph = "↑", color = Green)
-                curr.actualReps < prev.actualReps -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        curr is BodyWeightSetData && prev is BodyWeightSetData -> {
-            return when {
-                curr.actualReps > prev.actualReps -> SetTrendIndicator(glyph = "↑", color = Green)
-                curr.actualReps < prev.actualReps -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
-        }
-        else -> return null
+    return when {
+        curr is WeightSetData && prev is WeightSetData ->
+            trendPreferHigher(curr.actualReps, prev.actualReps)
+        curr is BodyWeightSetData && prev is BodyWeightSetData ->
+            trendPreferHigher(curr.actualReps, prev.actualReps)
+        else -> null
     }
 }
 
 internal fun trendForTime(setState: WorkoutState.Set): SetTrendIndicator? {
     val prev = setState.historicalSetData ?: return null
     val curr = setState.currentSetData
-    when {
+    return when {
         curr is TimedDurationSetData && prev is TimedDurationSetData -> {
             val beforeDuration = prev.endTimer - prev.startTimer
             val afterDuration = curr.endTimer - curr.startTimer
-            return when {
-                afterDuration > beforeDuration -> SetTrendIndicator(glyph = "↑", color = Green)
-                afterDuration < beforeDuration -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
+            trendPreferHigher(afterDuration, beforeDuration)
         }
         curr is EnduranceSetData && prev is EnduranceSetData -> {
             val beforeDuration = prev.endTimer - prev.startTimer
             val afterDuration = curr.endTimer - curr.startTimer
-            return when {
-                afterDuration > beforeDuration -> SetTrendIndicator(glyph = "↑", color = Green)
-                afterDuration < beforeDuration -> SetTrendIndicator(glyph = "↓", color = Red)
-                else -> null
-            }
+            trendPreferHigher(afterDuration, beforeDuration)
         }
-        else -> return null
+        else -> null
     }
 }
 
@@ -344,7 +308,8 @@ fun SetTableRow(
     isCurrentSet: Boolean,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
     hasUnconfirmedLoadSelectionForExercise: Boolean = false,
-){
+    hideSetListRowText: Boolean = false,
+) {
     val itemStyle = MaterialTheme.typography.numeralSmall
 
     val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
@@ -380,7 +345,11 @@ fun SetTableRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             val baseSetDisplayText = rowSetContentDescription ?: ""
-            ScalableFadingText(
+            ExerciseSetRowFadingCell(
+                text = baseSetDisplayText,
+                hideSetListRowText = hideSetListRowText,
+                style = itemStyle,
+                color = textColor,
                 modifier = Modifier
                     .weight(1f)
                     .then(
@@ -390,9 +359,6 @@ fun SetTableRow(
                             }
                         } else Modifier
                     ),
-                text = baseSetDisplayText,
-                style = itemStyle,
-                color = textColor
             )
 
             when (setState.currentSetData) {
@@ -412,8 +378,9 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = displayWeightText,
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
                             color = textColor,
                         )
@@ -423,8 +390,9 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = "${weightSetData.actualReps}",
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
                             color = textColor,
                         )
@@ -451,10 +419,11 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = displayWeightText,
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
-                            color = textColor
+                            color = textColor,
                         )
                     }
                     Row(
@@ -462,10 +431,11 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = "${bodyWeightSetData.actualReps}",
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
-                            color = textColor
+                            color = textColor,
                         )
                     }
                 }
@@ -478,10 +448,11 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = FormatTime(timedDurationSetData.startTimer / 1000),
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
-                            color = textColor
+                            color = textColor,
                         )
                     }
                 }
@@ -494,10 +465,11 @@ fun SetTableRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.5.dp,Alignment.CenterHorizontally)
                     ) {
-                        ScalableFadingText(
+                        ExerciseSetRowFadingCell(
                             text = FormatTime(enduranceSetData.startTimer / 1000),
+                            hideSetListRowText = hideSetListRowText,
                             style = itemStyle,
-                            color = textColor
+                            color = textColor,
                         )
                     }
                 }
@@ -509,10 +481,86 @@ fun SetTableRow(
 }
 
 @Composable
+private fun FastPageExercisesSetTableRow(
+    rowModel: PageExercisesRowModel,
+    hideSetListRowText: Boolean,
+    modifier: Modifier = Modifier,
+    textColor: Color = MaterialTheme.colorScheme.onBackground,
+) {
+    val itemStyle = MaterialTheme.typography.numeralSmall
+
+    Row(
+        modifier = modifier
+            .padding(2.5.dp)
+            .then(
+                rowModel.semanticsLabel?.let { contentDescription ->
+                    Modifier.semantics(mergeDescendants = false) {
+                        this.contentDescription = contentDescription
+                    }
+                } ?: Modifier
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FastPageExercisesCellText(
+            modifier = Modifier
+                .weight(1f)
+                .then(
+                    if (!rowModel.setIdentifier.isNullOrBlank()) {
+                        Modifier.semantics(mergeDescendants = false) {
+                            contentDescription = rowModel.setIdentifier
+                        }
+                    } else {
+                        Modifier
+                    }
+                ),
+            text = rowModel.setText.orEmpty(),
+            color = textColor,
+            style = itemStyle,
+            hideSetListRowText = hideSetListRowText,
+        )
+
+        FastPageExercisesCellText(
+            modifier = Modifier.weight(rowModel.valueWeight),
+            text = rowModel.valueText.orEmpty(),
+            color = textColor,
+            style = itemStyle,
+            hideSetListRowText = hideSetListRowText,
+        )
+        rowModel.repsText?.let { repsText ->
+            FastPageExercisesCellText(
+                modifier = Modifier.weight(1f),
+                text = repsText,
+                color = textColor,
+                style = itemStyle,
+                hideSetListRowText = hideSetListRowText,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FastPageExercisesCellText(
+    text: String,
+    color: Color,
+    style: TextStyle,
+    hideSetListRowText: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    ExerciseSetRowFadingCell(
+        text = text,
+        hideSetListRowText = hideSetListRowText,
+        style = style,
+        color = color,
+        modifier = modifier,
+    )
+}
+
+@Composable
 private fun CenteredLabelRow(
     modifier: Modifier,
     text: String,
     textColor: Color,
+    hideSetListRowText: Boolean,
 ) {
     val itemStyle = MaterialTheme.typography.numeralSmall
     Box(
@@ -521,30 +569,61 @@ private fun CenteredLabelRow(
             .padding(vertical = 2.5.dp, horizontal = 5.dp),
         contentAlignment = Alignment.Center
     ) {
-        ScalableText(
-            text = text,
-            color = textColor,
-            style = itemStyle,
-        )
+        if (!hideSetListRowText) {
+            ScalableText(
+                text = text,
+                color = textColor,
+                style = itemStyle,
+            )
+        }
     }
 }
 
-fun TransformingLazyColumnScope.ExerciseSetsViewer(
+internal enum class PageExercisesRowContentType {
+    Set,
+    Rest,
+    CalibrationLoad,
+    CalibrationRir
+}
+
+@Immutable
+internal data class PageExercisesPreparedRows(
+    val rowModels: List<PageExercisesRowModel>,
+    val setIndex: Int
+)
+
+@Immutable
+internal data class PageExercisesRowModel(
+    val rowIndex: Int,
+    val key: String,
+    val contentType: PageExercisesRowContentType,
+    val setIdentifier: String? = null,
+    val semanticsLabel: String? = null,
+    val setText: String? = null,
+    val valueText: String? = null,
+    val repsText: String? = null,
+    val valueWeight: Float = 3f,
+    val centeredText: String? = null
+)
+
+private data class PageExercisesSetRowTexts(
+    val valueText: String,
+    val repsText: String?,
+    val valueWeight: Float
+)
+
+internal fun buildPageExercisesPreparedRows(
     viewModel: AppViewModel,
-    hapticsViewModel: HapticsViewModel,
     exercise: Exercise,
     currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
-    transformationSpec: TransformationSpec,
     stateToMatch: WorkoutState?,
-    progressState: ProgressState = ProgressState.CURRENT,
-){
+): PageExercisesPreparedRows {
     val supersetId = viewModel.supersetIdByExerciseId[exercise.id]
     val displayRows = if (supersetId != null) {
         buildSupersetSetDisplayRows(viewModel = viewModel, supersetId = supersetId)
     } else {
         buildExerciseSetDisplayRows(viewModel = viewModel, exerciseId = exercise.id)
     }
-
     val setIndex = stateToMatch?.let {
         findDisplayRowIndex(
             displayRows = displayRows,
@@ -552,8 +631,31 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
             fallbackSetId = currentSet.id
         )
     } ?: 0
+    val unilateralSideBadgeByRowIndex = buildUnilateralSideBadgeByRowIndex(displayRows)
+    val hasUnconfirmedLoadByExerciseId = buildHasUnconfirmedLoadByExerciseId(viewModel, displayRows)
 
-    val unilateralSideBadgeByRowIndex = displayRows.mapIndexedNotNull { rowIndex, displayRow ->
+    return PageExercisesPreparedRows(
+        rowModels = displayRows.mapIndexed { rowIndex, displayRow ->
+            buildPageExercisesRowModel(
+                viewModel = viewModel,
+                displayRow = displayRow,
+                rowIndex = rowIndex,
+                sideBadge = unilateralSideBadgeByRowIndex[rowIndex],
+                hasUnconfirmedLoadSelectionForExercise = (displayRow as? ExerciseSetDisplayRow.SetRow)
+                    ?.state
+                    ?.exerciseId
+                    ?.let { hasUnconfirmedLoadByExerciseId[it] }
+                    ?: false
+            )
+        },
+        setIndex = setIndex
+    )
+}
+
+private fun buildUnilateralSideBadgeByRowIndex(
+    displayRows: List<ExerciseSetDisplayRow>,
+): Map<Int, String> {
+    return displayRows.mapIndexedNotNull { rowIndex, displayRow ->
         val setRow = displayRow as? ExerciseSetDisplayRow.SetRow ?: return@mapIndexedNotNull null
         val intraSetTotal = setRow.state.intraSetTotal?.toInt() ?: return@mapIndexedNotNull null
         if (!setRow.state.isUnilateral) return@mapIndexedNotNull null
@@ -569,110 +671,238 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
         ) ?: return@mapIndexedNotNull null
         rowIndex to sideBadge
     }.toMap()
+}
 
-    val exerciseIdsForLoadFlag: Set<UUID> = displayRows.mapNotNull { row ->
+private fun buildHasUnconfirmedLoadByExerciseId(
+    viewModel: AppViewModel,
+    displayRows: List<ExerciseSetDisplayRow>,
+): Map<UUID, Boolean> {
+    val exerciseIdsForLoadFlag = displayRows.mapNotNull { row ->
         (row as? ExerciseSetDisplayRow.SetRow)?.state?.exerciseId
     }.toSet()
+    return if (exerciseIdsForLoadFlag.isEmpty()) {
+        emptyMap()
+    } else {
+        exerciseIdsForLoadFlag.associateWith { exerciseId ->
+            CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
+                allWorkoutStates = viewModel.allWorkoutStates,
+                exerciseId = exerciseId
+            )
+        }
+    }
+}
 
-    val hasUnconfirmedLoadByExerciseId: Map<UUID, Boolean> =
-        if (exerciseIdsForLoadFlag.isEmpty()) {
-            emptyMap()
-        } else {
-            exerciseIdsForLoadFlag.associateWith { exerciseId ->
-                CalibrationHelper.hasUnconfirmedLoadSelectionForExercise(
-                    allWorkoutStates = viewModel.allWorkoutStates,
-                    exerciseId = exerciseId
-                )
+private fun buildPageExercisesRowModel(
+    viewModel: AppViewModel,
+    displayRow: ExerciseSetDisplayRow,
+    rowIndex: Int,
+    sideBadge: String?,
+    hasUnconfirmedLoadSelectionForExercise: Boolean,
+): PageExercisesRowModel {
+    return when (displayRow) {
+        is ExerciseSetDisplayRow.SetRow -> {
+            val setState = displayRow.state
+            val setIdentifier = buildSetIdentifier(
+                viewModel = viewModel,
+                exerciseId = setState.exerciseId,
+                setState = setState
+            )
+            val rowSetContentDescription = when {
+                !setIdentifier.isNullOrBlank() && !sideBadge.isNullOrBlank() -> "$setIdentifier$sideBadge"
+                !setIdentifier.isNullOrBlank() -> setIdentifier
+                !sideBadge.isNullOrBlank() -> sideBadge
+                else -> null
             }
+            val rowTexts = buildPageExercisesSetRowTexts(
+                viewModel = viewModel,
+                setState = setState,
+                hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
+            )
+
+            PageExercisesRowModel(
+                rowIndex = rowIndex,
+                key = buildPageExercisesRowKey(displayRow, rowIndex),
+                contentType = PageExercisesRowContentType.Set,
+                setIdentifier = setIdentifier,
+                semanticsLabel = rowSetContentDescription,
+                setText = rowSetContentDescription.orEmpty(),
+                valueText = rowTexts.valueText,
+                repsText = rowTexts.repsText,
+                valueWeight = rowTexts.valueWeight
+            )
         }
 
-    val scrollKey = supersetId ?: exercise.id
+        is ExerciseSetDisplayRow.RestRow -> PageExercisesRowModel(
+            rowIndex = rowIndex,
+            key = buildPageExercisesRowKey(displayRow, rowIndex),
+            contentType = PageExercisesRowContentType.Rest,
+            centeredText = buildWorkoutRestRowLabel(displayRow.state)
+        )
+
+        is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> PageExercisesRowModel(
+            rowIndex = rowIndex,
+            key = buildPageExercisesRowKey(displayRow, rowIndex),
+            contentType = PageExercisesRowContentType.CalibrationLoad,
+            centeredText = "SET LOAD"
+        )
+
+        is ExerciseSetDisplayRow.CalibrationRIRRow -> PageExercisesRowModel(
+            rowIndex = rowIndex,
+            key = buildPageExercisesRowKey(displayRow, rowIndex),
+            contentType = PageExercisesRowContentType.CalibrationRir,
+            centeredText = "SET RIR"
+        )
+    }
+}
+
+private fun buildPageExercisesSetRowTexts(
+    viewModel: AppViewModel,
+    setState: WorkoutState.Set,
+    hasUnconfirmedLoadSelectionForExercise: Boolean,
+): PageExercisesSetRowTexts {
+    val equipment = setState.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(setState.set)
+    val isPendingCalibration = CalibrationHelper.shouldShowPendingCalibrationForWorkSet(
+        setState = setState,
+        hasUnconfirmedLoadSelectionForExercise
+    )
+    val shouldHideCalibrationExecutionWeight = CalibrationHelper.shouldHideCalibrationExecutionWeight(
+        setState = setState,
+        hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadSelectionForExercise
+    )
+
+    return when (val currentSetData = setState.currentSetData) {
+        is WeightSetData -> {
+            val weightText = equipment?.formatWeight(currentSetData.actualWeight) ?: "-"
+            val displayWeightText = when {
+                shouldHideCalibrationExecutionWeight -> "TBD"
+                isCalibrationSet && setState.isCalibrationSet -> weightText
+                isPendingCalibration -> "TBD"
+                else -> weightText
+            }
+            PageExercisesSetRowTexts(
+                valueText = displayWeightText,
+                repsText = currentSetData.actualReps.toString(),
+                valueWeight = 2f
+            )
+        }
+
+        is BodyWeightSetData -> {
+            val baseWeightText = if (equipment != null && currentSetData.additionalWeight != 0.0) {
+                equipment.formatWeight(currentSetData.additionalWeight)
+            } else {
+                "BW"
+            }
+            val displayWeightText = when {
+                shouldHideCalibrationExecutionWeight -> "TBD"
+                isCalibrationSet && setState.isCalibrationSet && equipment != null && currentSetData.additionalWeight != 0.0 -> baseWeightText
+                isPendingCalibration -> "TBD"
+                else -> baseWeightText
+            }
+            PageExercisesSetRowTexts(
+                valueText = displayWeightText,
+                repsText = currentSetData.actualReps.toString(),
+                valueWeight = 2f
+            )
+        }
+
+        is TimedDurationSetData -> PageExercisesSetRowTexts(
+            valueText = FormatTime(currentSetData.startTimer / 1000),
+            repsText = null,
+            valueWeight = 3f
+        )
+
+        is EnduranceSetData -> PageExercisesSetRowTexts(
+            valueText = FormatTime(currentSetData.startTimer / 1000),
+            repsText = null,
+            valueWeight = 3f
+        )
+
+        else -> throw RuntimeException("Unsupported set type")
+    }
+}
+
+private fun buildPageExercisesRowKey(row: ExerciseSetDisplayRow, rowIndex: Int): String {
+    return buildString {
+        append(row::class.simpleName ?: "row")
+        append(":")
+        append(row.setLikeIdOrNull()?.toString() ?: "no-set")
+        append(":")
+        append(rowIndex)
+    }
+}
+
+internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
+    viewModel: AppViewModel,
+    exercise: Exercise,
+    currentSet: com.gabstra.myworkoutassistant.shared.sets.Set,
+    transformationSpec: TransformationSpec,
+    stateToMatch: WorkoutState?,
+    progressState: ProgressState = ProgressState.CURRENT,
+    preparedRows: PageExercisesPreparedRows? = null,
+    hideSetListRowText: Boolean = false,
+) {
+    val rows = preparedRows ?: buildPageExercisesPreparedRows(
+        viewModel = viewModel,
+        exercise = exercise,
+        currentSet = currentSet,
+        stateToMatch = stateToMatch
+    )
+    val setIndex = rows.setIndex
 
     @Composable
     fun MeasuredSetTableRow(
-        displayRow: ExerciseSetDisplayRow,
-        rowIndex: Int,
+        rowModel: PageExercisesRowModel,
     ) {
         val currentExercisePendingColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
         val borderColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
-                rowIndex == setIndex -> Orange
-                rowIndex < setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex == setIndex -> Orange
+                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.primary
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
         }
 
-        val textColor = borderColor
+        val rowModifier = Modifier
+            .fillMaxWidth()
+            .height(25.dp)
+            .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(25))
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(25.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            val shape = RoundedCornerShape(25)
-
-            val rowModifier = Modifier
-                .height(25.dp)
-                //.padding(bottom = 2.5.dp)
-                .border(BorderStroke(1.dp, borderColor), shape)
-                //.background(backgroundColor, shape)
-
-            when (displayRow) {
-                is ExerciseSetDisplayRow.SetRow -> SetTableRow(
-                    modifier = rowModifier,
-                    hapticsViewModel = hapticsViewModel,
-                    viewModel = viewModel,
-                    setState = displayRow.state,
-                    setIdentifier = buildSetIdentifier(
-                        viewModel = viewModel,
-                        exerciseId = displayRow.state.exerciseId,
-                        setState = displayRow.state
-                    ),
-                    sideBadge = unilateralSideBadgeByRowIndex[rowIndex],
-                    index = rowIndex,
-                    isCurrentSet = rowIndex == setIndex,
-                    textColor = textColor,
-                    hasUnconfirmedLoadSelectionForExercise = hasUnconfirmedLoadByExerciseId[displayRow.state.exerciseId]
-                        ?: false
-                )
-                is ExerciseSetDisplayRow.CalibrationLoadSelectRow -> CenteredLabelRow(
-                    modifier = rowModifier,
-                    text = "SET LOAD",
-                    textColor = textColor
-                )
-                is ExerciseSetDisplayRow.RestRow -> CenteredLabelRow(
-                    modifier = rowModifier,
-                    text = buildWorkoutRestRowLabel(displayRow.state),
-                    textColor = textColor
-                )
-                is ExerciseSetDisplayRow.CalibrationRIRRow -> CenteredLabelRow(
-                    modifier = rowModifier,
-                    text = "SET RIR",
-                    textColor = textColor
-                )
-            }
+        when (rowModel.contentType) {
+            PageExercisesRowContentType.Set -> FastPageExercisesSetTableRow(
+                rowModel = rowModel,
+                hideSetListRowText = hideSetListRowText,
+                modifier = rowModifier,
+                textColor = borderColor
+            )
+            PageExercisesRowContentType.CalibrationLoad -> CenteredLabelRow(
+                modifier = rowModifier,
+                text = rowModel.centeredText.orEmpty(),
+                textColor = borderColor,
+                hideSetListRowText = hideSetListRowText,
+            )
+            PageExercisesRowContentType.Rest -> CenteredLabelRow(
+                modifier = rowModifier,
+                text = rowModel.centeredText.orEmpty(),
+                textColor = borderColor,
+                hideSetListRowText = hideSetListRowText,
+            )
+            PageExercisesRowContentType.CalibrationRir -> CenteredLabelRow(
+                modifier = rowModifier,
+                text = rowModel.centeredText.orEmpty(),
+                textColor = borderColor,
+                hideSetListRowText = hideSetListRowText,
+            )
         }
     }
 
     items(
-        items = displayRows.withIndex().toList(),
-        key = { indexedRow ->
-            val row = indexedRow.value
-            buildString {
-                append(row::class.simpleName ?: "row")
-                append(":")
-                append(row.setLikeIdOrNull()?.toString() ?: "no-set")
-                append(":")
-                append(indexedRow.index)
-            }
-        }
-    ) { indexedRow ->
-        val rowIndex = indexedRow.index
-        val displayRow = indexedRow.value
+        items = rows.rowModels,
+        key = { rowModel -> rowModel.key },
+        contentType = { rowModel -> rowModel.contentType }
+    ) { rowModel ->
         val rowModifier = Modifier
             .fillMaxWidth()
             .transformedHeight(this, transformationSpec)
@@ -682,13 +912,7 @@ fun TransformingLazyColumnScope.ExerciseSetsViewer(
             modifier = rowModifier,
             contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier.graphicsLayer {
-                    with(transformationSpec) { applyContentTransformation(scrollProgress) }
-                }
-            ) {
-                MeasuredSetTableRow(displayRow = displayRow, rowIndex = rowIndex)
-            }
+            MeasuredSetTableRow(rowModel = rowModel)
         }
     }
 }

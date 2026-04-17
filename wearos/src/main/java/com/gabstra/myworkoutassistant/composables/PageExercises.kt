@@ -597,24 +597,38 @@ fun PageExercises(
     val selectedPageCurrentSet = selectedPageItem?.let { page ->
         if (page is PageExercisesItem.RestPage) null else resolvePageCurrentSet(page, activeWorkoutState)
     }
+    val selectedPagePreparedRows = remember(
+        selectedPageItem,
+        selectedPageCurrentSet,
+        selectedSetStateToMatch,
+        viewModel.allWorkoutStates.size,
+        viewModel.supersetIdByExerciseId,
+        viewModel.exercisesBySupersetId,
+        viewModel.workoutStore.equipments
+    ) {
+        val pageItem = selectedPageItem
+        val currentSet = selectedPageCurrentSet
+        if (pageItem != null && pageItem !is PageExercisesItem.RestPage && currentSet != null) {
+            buildPageExercisesPreparedRows(
+                viewModel = viewModel,
+                exercise = pageItem.representativeExercise,
+                currentSet = currentSet,
+                stateToMatch = selectedSetStateToMatch
+            )
+        } else {
+            null
+        }
+    }
     val targetItemIndex = remember(
         selectedPageItem,
-        selectedPageCurrentSet?.id,
-        selectedSetStateToMatch,
+        selectedPagePreparedRows,
         firstSetListItemIndex,
-        viewModel.allWorkoutStates.size
     ) {
         when {
             selectedPageItem == null -> null
             selectedPageItem is PageExercisesItem.RestPage -> firstSetListItemIndex
-            selectedPageCurrentSet == null -> null
-            else -> resolveExerciseSetsScrollTargetIndex(
-                viewModel = viewModel,
-                exercise = selectedPageItem.representativeExercise,
-                currentSet = selectedPageCurrentSet,
-                stateToMatch = selectedSetStateToMatch,
-                firstSetListItemIndex = firstSetListItemIndex
-            )
+            selectedPagePreparedRows == null -> null
+            else -> (firstSetListItemIndex + selectedPagePreparedRows.setIndex).coerceAtLeast(firstSetListItemIndex)
         }
     }
     val transformationSpec = rememberTransformationSpec(
@@ -680,6 +694,7 @@ fun PageExercises(
                 initialAnchorItemScrollOffset = selectedRowScrollOffsetPx
             )
         }
+        val hideSetListRowText = transformingLazyColumnState.isScrollInProgress
         val bottomSpacerHeightDp = (
             maxHeight -
                 topSection -
@@ -750,12 +765,13 @@ fun PageExercises(
                         InvisibleListSpacer(headerOverlayHeightDp)
                         ExerciseSetsViewer(
                             viewModel = viewModel,
-                            hapticsViewModel = hapticsViewModel,
                             exercise = selectedPageItem.representativeExercise,
                             currentSet = currentSet,
                             transformationSpec = transformationSpec,
                             stateToMatch = selectedSetStateToMatch,
                             progressState = selectedProgressState,
+                            preparedRows = selectedPagePreparedRows,
+                            hideSetListRowText = hideSetListRowText,
                         )
                         InvisibleListSpacer(bottomSpacerHeightDp)
                     }
