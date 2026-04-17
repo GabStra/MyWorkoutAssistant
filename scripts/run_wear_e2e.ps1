@@ -300,10 +300,21 @@ function Invoke-Instrumentation {
     $hasOkSummary = $outputText -match "(?m)^OK \("
     $hasFailureMarker = $outputText -match "FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed"
     $missingInstrumentation = $outputText -match "Unable to find instrumentation info|INSTRUMENTATION_FAILED: .* does not exist"
+    $benchmarkMetrics = [ordered]@{}
+    [regex]::Matches($outputText, "BENCHMARK_METRIC\s+([A-Za-z0-9_.-]+)\s+(\{[^\r\n]*\})") | ForEach-Object {
+        $metricName = $_.Groups[1].Value
+        $metricJson = $_.Groups[2].Value
+        try {
+            $benchmarkMetrics[$metricName] = $metricJson | ConvertFrom-Json
+        } catch {
+            Write-Host "Failed to parse benchmark metric '$metricName': $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
 
     return [PSCustomObject]@{
         ExitCode = if ($exitCode -ne 0 -or $hasFailureMarker -or -not $hasOkSummary) { if ($exitCode -eq 0) { 1 } else { $exitCode } } else { 0 }
         MissingInstrumentation = $missingInstrumentation
+        BenchmarkMetrics = $benchmarkMetrics
     }
 }
 
@@ -390,7 +401,10 @@ if ($TestMethod) {
     $classArgument = $classes -join ","
 } elseif ($SmokeOnly) {
     $classArgument = "com.gabstra.myworkoutassistant.e2e.WearSmokeE2ETest"
-} elseif (-not $IncludeCrossDeviceTests) {
+} else {
+    $excludedBenchmarkClasses = @(
+        "com.gabstra.myworkoutassistant.benchmark.PageExercisesScrollBenchmark"
+    )
     $excludedCrossDeviceClasses = @(
         "com.gabstra.myworkoutassistant.e2e.WearCrossDeviceSyncProducerE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearMinimalCrossDeviceSetSyncProducerE2ETest",
@@ -415,10 +429,19 @@ if ($TestMethod) {
         "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionRoundTripSetBadgeCrossDeviceE2ETest",
         "com.gabstra.myworkoutassistant.e2e.WearDoubleProgressionNoHistoryRoundTripSetBadgeCrossDeviceE2ETest"
     )
-    $notClassArgument = $excludedCrossDeviceClasses -join ","
-    Write-Host "Excluding cross-device Wear E2E classes by default:" -ForegroundColor Yellow
-    $excludedCrossDeviceClasses | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
-    Write-Host "Use -IncludeCrossDeviceTests to include them." -ForegroundColor Yellow
+    $excludedClasses = @()
+    $excludedClasses += $excludedBenchmarkClasses
+    if (-not $IncludeCrossDeviceTests) {
+        $excludedClasses += $excludedCrossDeviceClasses
+    }
+    $notClassArgument = $excludedClasses -join ","
+    Write-Host "Excluding Wear benchmark classes from normal E2E runs:" -ForegroundColor Yellow
+    $excludedBenchmarkClasses | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    if (-not $IncludeCrossDeviceTests) {
+        Write-Host "Excluding cross-device Wear E2E classes by default:" -ForegroundColor Yellow
+        $excludedCrossDeviceClasses | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+        Write-Host "Use -IncludeCrossDeviceTests to include cross-device E2E classes." -ForegroundColor Yellow
+    }
 }
 
 $exitCode = 0
@@ -497,6 +520,9 @@ try {
     $result = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile -runner $runner
     $instrumentPhase.Stop()
     $timings["instrumentationSeconds"] = [math]::Round($instrumentPhase.Elapsed.TotalSeconds, 3)
+    if ($result.BenchmarkMetrics.Count -gt 0) {
+        $timings["benchmarkMetrics"] = $result.BenchmarkMetrics
+    }
     $exitCode = $result.ExitCode
 
     if ($exitCode -ne 0 -and $SkipInstall -and $result.MissingInstrumentation) {
@@ -511,6 +537,9 @@ try {
         $retryResult = Invoke-Instrumentation -serial $targetWearSerial -classArgument $classArgument -notClassArgument $notClassArgument -fastProfile $FastTimeoutProfile -runner $runner
         $retryInstrumentPhase.Stop()
         $timings["retryInstrumentationSeconds"] = [math]::Round($retryInstrumentPhase.Elapsed.TotalSeconds, 3)
+        if ($retryResult.BenchmarkMetrics.Count -gt 0) {
+            $timings["benchmarkMetrics"] = $retryResult.BenchmarkMetrics
+        }
         $exitCode = $retryResult.ExitCode
     }
 } catch {
