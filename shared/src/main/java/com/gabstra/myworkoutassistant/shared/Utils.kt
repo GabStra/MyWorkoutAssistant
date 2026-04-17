@@ -47,9 +47,11 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.util.LinkedHashMap
 import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
@@ -226,6 +228,7 @@ fun fromAppBackupToJSONPrettyPrint(appBackup: AppBackup) : String {
 
 enum class BackupFileType {
     APP_BACKUP,
+    INCREMENTAL_APP_BACKUP,
     WORKOUT_PLAN_PACKAGE,
     WORKOUT_STORE,
     UNKNOWN
@@ -249,6 +252,11 @@ fun detectBackupFileType(json: String): BackupFileType {
         
         val jsonObject = jsonElement.asJsonObject
         
+        val format = jsonObject.get("format")?.takeIf { it.isJsonPrimitive }?.asString
+        if (format == APP_BACKUP_ARCHIVE_FORMAT) {
+            return BackupFileType.INCREMENTAL_APP_BACKUP
+        }
+
         // Check for AppBackup structure (has "WorkoutStore" field)
         if (jsonObject.has("WorkoutStore")) {
             return BackupFileType.APP_BACKUP
@@ -300,6 +308,232 @@ fun fromJSONtoAppBackup(json: String) : AppBackup {
         .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
         .create()
     return gson.fromJson(json, AppBackup::class.java)
+}
+
+fun fromBackupJsonToAppBackup(json: String): AppBackup {
+    return when (detectBackupFileType(json)) {
+        BackupFileType.INCREMENTAL_APP_BACKUP -> {
+            fromIncrementalBackupArchiveToAppBackup(fromJSONToAppBackupArchive(json))
+        }
+
+        BackupFileType.APP_BACKUP -> fromJSONtoAppBackup(json)
+        else -> fromJSONtoAppBackup(json)
+    }
+}
+
+fun fromAppBackupArchiveToJSON(appBackupArchive: AppBackupArchive): String {
+    return appBackupArchiveGsonBuilder().create().toJson(appBackupArchive)
+}
+
+fun fromAppBackupArchiveToJSONPrettyPrint(appBackupArchive: AppBackupArchive): String {
+    return appBackupArchiveGsonBuilder()
+        .setPrettyPrinting()
+        .create()
+        .toJson(appBackupArchive)
+}
+
+fun fromJSONToAppBackupArchive(json: String): AppBackupArchive {
+    return appBackupArchiveGsonBuilder()
+        .create()
+        .fromJson(json, AppBackupArchive::class.java)
+}
+
+fun createAppBackupArchive(
+    appBackup: AppBackup,
+    createdAt: LocalDateTime = LocalDateTime.now()
+): AppBackupArchive {
+    return AppBackupArchive(
+        baseBackup = appBackup,
+        baseHash = calculateAppBackupHash(appBackup),
+        createdAt = createdAt,
+        lastCompactedAt = createdAt,
+    )
+}
+
+fun compactAppBackupArchive(
+    appBackup: AppBackup,
+    existingArchive: AppBackupArchive,
+    compactedAt: LocalDateTime = LocalDateTime.now()
+): AppBackupArchive {
+    return AppBackupArchive(
+        baseBackup = appBackup,
+        baseHash = calculateAppBackupHash(appBackup),
+        createdAt = existingArchive.createdAt,
+        lastCompactedAt = compactedAt,
+    )
+}
+
+fun buildAppBackupArchiveWithCurrentBackup(
+    existingArchive: AppBackupArchive,
+    currentBackup: AppBackup,
+    createdAt: LocalDateTime = LocalDateTime.now()
+): AppBackupArchive {
+    val previousBackup = fromIncrementalBackupArchiveToAppBackup(existingArchive)
+    val delta = buildAppBackupDelta(
+        previousBackup = previousBackup,
+        currentBackup = currentBackup,
+        createdAt = createdAt
+    )
+    if (delta.isEmpty()) {
+        return existingArchive
+    }
+    return existingArchive.copy(deltas = existingArchive.deltas + delta)
+}
+
+fun buildAppBackupDelta(
+    previousBackup: AppBackup,
+    currentBackup: AppBackup,
+    createdAt: LocalDateTime = LocalDateTime.now()
+): AppBackupDelta {
+    return AppBackupDelta(
+        createdAt = createdAt,
+        previousHash = calculateAppBackupHash(previousBackup),
+        resultHash = calculateAppBackupHash(currentBackup),
+        workoutStore = currentBackup.WorkoutStore.takeIf { it != previousBackup.WorkoutStore },
+        workoutHistories = buildListDelta(previousBackup.WorkoutHistories, currentBackup.WorkoutHistories) { it.id.toString() },
+        setHistories = buildListDelta(previousBackup.SetHistories, currentBackup.SetHistories) { it.id.toString() },
+        restHistories = buildListDelta(previousBackup.RestHistories.orEmpty(), currentBackup.RestHistories.orEmpty()) { it.id.toString() },
+        exerciseInfos = buildListDelta(previousBackup.ExerciseInfos, currentBackup.ExerciseInfos) { it.id.toString() },
+        workoutSchedules = buildListDelta(previousBackup.WorkoutSchedules, currentBackup.WorkoutSchedules) { it.id.toString() },
+        workoutRecords = buildListDelta(previousBackup.WorkoutRecords, currentBackup.WorkoutRecords) { it.id.toString() },
+        exerciseSessionProgressions = buildListDelta(
+            previousBackup.ExerciseSessionProgressions,
+            currentBackup.ExerciseSessionProgressions
+        ) { it.id.toString() },
+        errorLogs = buildListDelta(previousBackup.ErrorLogs.orEmpty(), currentBackup.ErrorLogs.orEmpty()) { it.id },
+    )
+}
+
+fun fromIncrementalBackupArchiveToAppBackup(appBackupArchive: AppBackupArchive): AppBackup {
+    require(appBackupArchive.format == APP_BACKUP_ARCHIVE_FORMAT) {
+        "Unsupported backup archive format: ${appBackupArchive.format}"
+    }
+    require(appBackupArchive.formatVersion == APP_BACKUP_ARCHIVE_FORMAT_VERSION) {
+        "Unsupported backup archive format version: ${appBackupArchive.formatVersion}"
+    }
+
+    var currentBackup = appBackupArchive.baseBackup
+    var currentHash = calculateAppBackupHash(currentBackup)
+    require(currentHash == appBackupArchive.baseHash) {
+        "Incremental backup base hash mismatch."
+    }
+
+    appBackupArchive.deltas.forEach { delta ->
+        require(delta.previousHash == currentHash) {
+            "Incremental backup delta chain is out of order or corrupted."
+        }
+        currentBackup = applyAppBackupDelta(currentBackup, delta)
+        currentHash = calculateAppBackupHash(currentBackup)
+        require(delta.resultHash == currentHash) {
+            "Incremental backup delta result hash mismatch."
+        }
+    }
+
+    return currentBackup
+}
+
+fun calculateAppBackupHash(appBackup: AppBackup): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hashBytes = digest.digest(fromAppBackupToJSON(appBackup).toByteArray(Charsets.UTF_8))
+    return hashBytes.joinToString("") { "%02x".format(it) }
+}
+
+private fun appBackupArchiveGsonBuilder(): GsonBuilder {
+    return GsonBuilder()
+        .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
+        .registerTypeAdapter(WorkoutComponent::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Exercise::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Rest::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Superset::class.java, WorkoutComponentAdapter())
+        .registerTypeAdapter(Dumbbells::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Dumbbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Machine::class.java, EquipmentAdapter())
+        .registerTypeAdapter(PlateLoadedCable::class.java, EquipmentAdapter())
+        .registerTypeAdapter(Barbell::class.java, EquipmentAdapter())
+        .registerTypeAdapter(WeightLoadedEquipment::class.java, EquipmentAdapter())
+        .registerTypeAdapter(AccessoryEquipment::class.java, AccessoryEquipmentAdapter())
+        .registerTypeAdapter(WeightSet::class.java, SetAdapter())
+        .registerTypeAdapter(BodyWeightSet::class.java, SetAdapter())
+        .registerTypeAdapter(TimedDurationSet::class.java, SetAdapter())
+        .registerTypeAdapter(EnduranceSet::class.java, SetAdapter())
+        .registerTypeAdapter(RestSet::class.java, SetAdapter())
+        .registerTypeAdapter(Set::class.java, SetAdapter())
+        .registerTypeAdapter(BodyWeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(EnduranceSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(TimedDurationSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(WeightSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(RestSetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(SetData::class.java, SetDataAdapter())
+        .registerTypeAdapter(ExerciseSessionSnapshot::class.java, ExerciseSessionSnapshotAdapter())
+        .registerTypeAdapter(LocalDate::class.java, LocalDateAdapter())
+        .registerTypeAdapter(LocalTime::class.java, LocalTimeAdapter())
+        .registerTypeAdapter(LocalDateTime::class.java, LocalDateTimeAdapter())
+        .registerTypeAdapter(ExternalHeartRateConfig::class.java, ExternalHeartRateConfigAdapter())
+        .registerTypeAdapter(Workout::class.java, WorkoutAdapter())
+        .registerTypeAdapter(WorkoutRecord::class.java, WorkoutRecordAdapter())
+}
+
+private fun applyAppBackupDelta(
+    appBackup: AppBackup,
+    delta: AppBackupDelta
+): AppBackup {
+    val restHistories = if (appBackup.RestHistories == null && delta.restHistories.isEmpty()) {
+        null
+    } else {
+        applyListDelta(appBackup.RestHistories.orEmpty(), delta.restHistories) { it.id.toString() }
+    }
+    val errorLogs = if (appBackup.ErrorLogs == null && delta.errorLogs.isEmpty()) {
+        null
+    } else {
+        applyListDelta(appBackup.ErrorLogs.orEmpty(), delta.errorLogs) { it.id }.takeIf { it.isNotEmpty() }
+    }
+    return appBackup.copy(
+        WorkoutStore = delta.workoutStore ?: appBackup.WorkoutStore,
+        WorkoutHistories = applyListDelta(appBackup.WorkoutHistories, delta.workoutHistories) { it.id.toString() },
+        SetHistories = applyListDelta(appBackup.SetHistories, delta.setHistories) { it.id.toString() },
+        RestHistories = restHistories,
+        ExerciseInfos = applyListDelta(appBackup.ExerciseInfos, delta.exerciseInfos) { it.id.toString() },
+        WorkoutSchedules = applyListDelta(appBackup.WorkoutSchedules, delta.workoutSchedules) { it.id.toString() },
+        WorkoutRecords = applyListDelta(appBackup.WorkoutRecords, delta.workoutRecords) { it.id.toString() },
+        ExerciseSessionProgressions = applyListDelta(
+            appBackup.ExerciseSessionProgressions,
+            delta.exerciseSessionProgressions
+        ) { it.id.toString() },
+        ErrorLogs = errorLogs,
+    )
+}
+
+private fun <T> buildListDelta(
+    previousItems: List<T>,
+    currentItems: List<T>,
+    idOf: (T) -> String
+): BackupListDelta<T> {
+    val previousById = previousItems.associateBy(idOf)
+    val currentById = currentItems.associateBy(idOf)
+    val upserts = currentItems.filter { currentItem ->
+        previousById[idOf(currentItem)] != currentItem
+    }
+    val deletes = (previousById.keys - currentById.keys).sorted()
+    return BackupListDelta(upserts = upserts, deletes = deletes)
+}
+
+private fun <T> applyListDelta(
+    previousItems: List<T>,
+    delta: BackupListDelta<T>,
+    idOf: (T) -> String
+): List<T> {
+    val deletes = delta.deletes.toHashSet()
+    val itemsById = LinkedHashMap<String, T>()
+    previousItems.forEach { item ->
+        val id = idOf(item)
+        if (id !in deletes) {
+            itemsById[id] = item
+        }
+    }
+    delta.upserts.forEach { item ->
+        itemsById[idOf(item)] = item
+    }
+    return itemsById.values.toList()
 }
 
 fun initializeSetData(set: Set): SetData = when (set) {

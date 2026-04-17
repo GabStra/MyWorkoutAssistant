@@ -80,4 +80,21 @@ class WorkoutStoreAdapterTest {
 
         assertEquals(BackupFileType.WORKOUT_PLAN_PACKAGE, detectBackupFileType(json))
     }
+
+    @Test
+    fun detectBackupFileType_identifiesIncrementalBackupArchive() {
+        val json = """
+            {
+              "format": "$APP_BACKUP_ARCHIVE_FORMAT",
+              "formatVersion": 1,
+              "baseBackup": {},
+              "baseHash": "abc",
+              "createdAt": "2026-04-17T12:00:00",
+              "lastCompactedAt": "2026-04-17T12:00:00",
+              "deltas": []
+            }
+        """.trimIndent()
+
+        assertEquals(BackupFileType.INCREMENTAL_APP_BACKUP, detectBackupFileType(json))
+    }
 }
