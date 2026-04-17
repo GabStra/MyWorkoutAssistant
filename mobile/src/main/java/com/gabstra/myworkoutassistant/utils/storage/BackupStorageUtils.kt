@@ -50,9 +50,10 @@ import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
-import com.gabstra.myworkoutassistant.composables.FilterRange
 import com.gabstra.myworkoutassistant.shared.AppBackup
+import com.gabstra.myworkoutassistant.shared.AppBackupArchive
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.BackupFileType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
@@ -68,7 +69,10 @@ import com.gabstra.myworkoutassistant.shared.WorkoutPlan
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.compressString
+import com.gabstra.myworkoutassistant.shared.compactAppBackupArchive
+import com.gabstra.myworkoutassistant.shared.createAppBackupArchive
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.detectBackupFileType
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
@@ -77,9 +81,15 @@ import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResul
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
+import com.gabstra.myworkoutassistant.shared.fromAppBackupArchiveToJSON
+import com.gabstra.myworkoutassistant.shared.fromAppBackupArchiveToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
+import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
+import com.gabstra.myworkoutassistant.shared.fromIncrementalBackupArchiveToAppBackup
+import com.gabstra.myworkoutassistant.shared.fromJSONToAppBackupArchive
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
+import com.gabstra.myworkoutassistant.shared.buildAppBackupArchiveWithCurrentBackup
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -119,6 +129,7 @@ import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -136,6 +147,8 @@ private const val AUTO_BACKUP_DOCUMENT_URI_KEY = "auto_backup_document_uri"
 private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME = "workout_store_backup"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME.json"
+private const val AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME = "${AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME}_incremental.json"
+private const val MAX_AUTOMATIC_BACKUP_DELTAS = 50
 
 fun buildWorkoutStoreBackupFileName(
     now: Date = Date()
@@ -210,6 +223,70 @@ private fun writeTextToUri(
     } ?: false
 }
 
+private fun buildAutomaticBackupArchive(
+    existingContent: String?,
+    currentBackup: AppBackup
+): AppBackupArchive {
+    val now = LocalDateTime.now()
+    val existingArchive = existingContent
+        ?.let { content ->
+            runCatching {
+                when (detectBackupFileType(content)) {
+                    BackupFileType.INCREMENTAL_APP_BACKUP -> fromJSONToAppBackupArchive(content)
+                    BackupFileType.APP_BACKUP -> createAppBackupArchive(fromJSONtoAppBackup(content), now)
+                    else -> null
+                }
+            }.onFailure { exception ->
+                Log.w("Utils", "Couldn't read existing automatic backup content, creating a fresh archive", exception)
+            }.getOrNull()
+        }
+
+    val updatedArchive = existingArchive?.let { archive ->
+        runCatching {
+            buildAppBackupArchiveWithCurrentBackup(
+                existingArchive = archive,
+                currentBackup = currentBackup,
+                createdAt = now
+            )
+        }.onFailure { exception ->
+            Log.w("Utils", "Couldn't extend existing automatic backup archive, creating a fresh archive", exception)
+        }.getOrNull()
+    } ?: createAppBackupArchive(currentBackup, now)
+
+    return if (shouldCompactAutomaticBackupArchive(updatedArchive)) {
+        compactAppBackupArchive(
+            appBackup = fromIncrementalBackupArchiveToAppBackup(updatedArchive),
+            existingArchive = updatedArchive,
+            compactedAt = now
+        )
+    } else {
+        updatedArchive
+    }
+}
+
+private fun shouldCompactAutomaticBackupArchive(archive: AppBackupArchive): Boolean {
+    if (archive.deltas.size > MAX_AUTOMATIC_BACKUP_DELTAS) {
+        return true
+    }
+
+    if (archive.deltas.isEmpty()) {
+        return false
+    }
+
+    val archiveBytes = fromAppBackupArchiveToJSON(archive).toByteArray(Charsets.UTF_8).size
+    val baseBytes = fromAppBackupToJSON(archive.baseBackup).toByteArray(Charsets.UTF_8).size
+    val approximateDeltaBytes = (archiveBytes - baseBytes).coerceAtLeast(0)
+    return approximateDeltaBytes > baseBytes
+}
+
+private fun buildAutomaticBackupArchiveContent(
+    existingContent: String?,
+    currentBackup: AppBackup
+): String {
+    val archive = buildAutomaticBackupArchive(existingContent, currentBackup)
+    return fromAppBackupArchiveToJSONPrettyPrint(archive)
+}
+
 private suspend fun upsertDownloadsBackupFile(
     context: Context,
     fileName: String,
@@ -272,7 +349,7 @@ private suspend fun loadAppBackupFromConfiguredUri(
         val jsonString = withContext(Dispatchers.IO) {
             readTextFromUri(context, uri)
         } ?: return null
-        fromJSONtoAppBackup(jsonString)
+        fromBackupJsonToAppBackup(jsonString)
     } catch (e: SecurityException) {
         Log.w("Utils", "Lost persisted access to backup URI for key=$key", e)
         clearConfiguredBackupUri(context, key)
@@ -520,7 +597,7 @@ private suspend fun loadLatestBackupFromDownloadsFolder(context: Context): AppBa
             continue
         }
 
-        val appBackup = runCatching { fromJSONtoAppBackup(jsonString) }
+        val appBackup = runCatching { fromBackupJsonToAppBackup(jsonString) }
             .onFailure {
                 Log.w("Utils", "Skipping invalid backup file from Downloads: ${backupFile.name}", it)
             }
@@ -732,7 +809,9 @@ private suspend fun readFileContentFromDownloadsFolder(context: Context, uri: an
 private suspend fun findAllBackupFiles(context: Context): List<BackupFileEntry> {
     return withContext(Dispatchers.IO) {
         try {
-            val automaticBackups = findAllBackupFilesInDownloadsFolder(context, "workout_store_backup.json")
+            val automaticBackups =
+                findAllBackupFilesInDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME) +
+                    findAllBackupFilesInDownloadsFolder(context, AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME)
             
             // Find manual backups (workout_backup_*.json pattern)
             val manualBackups = findManualBackupFiles(context)
@@ -1224,20 +1303,20 @@ suspend fun saveWorkoutStoreToExternalStorage(
                     return@withContext
                 }
 
-                val jsonString = fromAppBackupToJSONPrettyPrint(appBackup)
                 val backupUri = readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
                 var wroteBackup = false
 
                 if (backupUri != null) {
                     try {
                         val existingContent = readTextFromUri(context, backupUri)
-                        if (existingContent == jsonString) {
+                        val archiveContent = buildAutomaticBackupArchiveContent(existingContent, appBackup)
+                        if (existingContent == archiveContent) {
                             Log.d("Utils", "Automatic backup content unchanged, skipping SAF save")
                             wroteBackup = true
                         } else {
-                            wroteBackup = writeTextToUri(context, backupUri, jsonString)
+                            wroteBackup = writeTextToUri(context, backupUri, archiveContent)
                             if (wroteBackup) {
-                                Log.d("Utils", "Automatic backup saved to persisted SAF document")
+                                Log.d("Utils", "Incremental automatic backup saved to persisted SAF document")
                             } else {
                                 Log.e("Utils", "Failed to open output stream for automatic backup document")
                             }
@@ -1251,10 +1330,22 @@ suspend fun saveWorkoutStoreToExternalStorage(
                 }
 
                 if (!wroteBackup) {
+                    val existingDownloadsContent = findFileInDownloadsFolder(
+                        context,
+                        AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME
+                    )?.let { uri ->
+                        readTextFromUri(context, uri)
+                    } ?: findAllBackupFilesInDownloadsFolder(
+                        context,
+                        AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+                    ).maxByOrNull { it.dateModified }?.let { backupFile ->
+                        readTextFromUri(context, backupFile.uri)
+                    }
+                    val archiveContent = buildAutomaticBackupArchiveContent(existingDownloadsContent, appBackup)
                     upsertDownloadsBackupFile(
                         context = context,
-                        fileName = buildWorkoutStoreBackupFileName(),
-                        content = jsonString
+                        fileName = AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME,
+                        content = archiveContent
                     )
                 }
             } catch (e: Exception) {
@@ -1332,7 +1423,7 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
             }
 
             val oldJsonString = backupFile.readText()
-            val appBackup = fromJSONtoAppBackup(oldJsonString)
+            val appBackup = fromBackupJsonToAppBackup(oldJsonString)
             Log.d("Utils", "Backup loaded successfully from old location (external files dir)")
             appBackup
         } catch (e: Exception) {

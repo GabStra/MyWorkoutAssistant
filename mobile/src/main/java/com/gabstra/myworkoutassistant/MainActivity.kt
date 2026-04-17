@@ -105,8 +105,8 @@ import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
+import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
-import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
 import com.gabstra.myworkoutassistant.shared.fromWorkoutStoreToJSON
 import com.gabstra.myworkoutassistant.shared.sanitizeRestPlacementInSetHistoriesByWorkoutAndExercise
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
@@ -538,7 +538,8 @@ fun MyWorkoutAssistantNavHost(
                         val content = reader.readText()
                         val fileType = detectBackupFileType(content)
                         when (fileType) {
-                            BackupFileType.APP_BACKUP -> {
+                            BackupFileType.APP_BACKUP,
+                            BackupFileType.INCREMENTAL_APP_BACKUP -> {
                                 Toast.makeText(
                                     context,
                                     "That file is a backup. Use Restore Backup instead.",
@@ -1000,7 +1001,8 @@ fun MyWorkoutAssistantNavHost(
                                 return@let
                             }
 
-                            BackupFileType.APP_BACKUP -> {
+                            BackupFileType.APP_BACKUP,
+                            BackupFileType.INCREMENTAL_APP_BACKUP -> {
                                 // File type is valid, proceed with restore
                             }
                         }
@@ -1008,7 +1010,7 @@ fun MyWorkoutAssistantNavHost(
                         setAutomaticRestoreDocumentUri(context, it)
 
                         val appBackup = try {
-                            fromJSONtoAppBackup(content)
+                            fromBackupJsonToAppBackup(content)
                         } catch (e: Exception) {
                             throw e
                         }
