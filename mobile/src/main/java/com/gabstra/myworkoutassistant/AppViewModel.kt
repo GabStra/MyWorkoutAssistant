@@ -368,6 +368,12 @@ class AppViewModel(
         screenDataStack[screenDataStack.size - 1] = screenData
     }
 
+    fun updateScreenDataIfChanged(screenData: ScreenData) {
+        if (currentScreenData.toSaveableKey() != screenData.toSaveableKey()) {
+            updateScreenData(screenData)
+        }
+    }
+
     fun goBack(): Boolean {
         if (screenDataStack.size > 1) {
             screenDataStack.removeAt(screenDataStack.size - 1)

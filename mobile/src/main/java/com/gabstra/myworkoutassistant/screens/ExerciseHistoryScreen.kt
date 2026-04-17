@@ -44,20 +44,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
-import com.gabstra.myworkoutassistant.composables.FilterRange
+import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
 import com.gabstra.myworkoutassistant.composables.SetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.StandardChart
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
-import com.gabstra.myworkoutassistant.filterBy
+import com.gabstra.myworkoutassistant.shared.FilterRange
+import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -105,6 +107,8 @@ fun ExerciseHistoryScreen(
     exercise: Exercise,
     workoutHistoryId: UUID? = null,
     selectedHistoryMode: Int = 0,
+    historyFilterRange: FilterRange? = null,
+    onHistoryFilterRangeChange: ((FilterRange) -> Unit)? = null,
     onGoBack: () -> Unit,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
 ) {
@@ -121,7 +125,10 @@ fun ExerciseHistoryScreen(
     var chartWorkoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
     var hasLoadedWorkoutHistories by remember { mutableStateOf(false) }
 
-    var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
+    val (selectedRange, onHistoryRangeSelected) = rememberHistoryFilterRangeSelection(
+        historyFilterRange = historyFilterRange,
+        onHistoryFilterRangeChange = onHistoryFilterRangeChange,
+    )
     val historiesToShow = remember(workoutHistories, selectedRange) {
         workoutHistories.filterBy(selectedRange)
     }
@@ -295,12 +302,6 @@ fun ExerciseHistoryScreen(
         )
 
         if (volumes.any { it.second != 0.0 }) {
-            if (volumes.count() == 1) {
-                volumeMarkerTarget = volumes.last()
-            } /*else if (volumes.count() > 1) {
-                volumeMarkerTarget = volumes.maxBy { it.second }
-            }*/
-
             volumeEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
                     series(volumes.map { it.first },volumes.map { it.second })
@@ -308,12 +309,6 @@ fun ExerciseHistoryScreen(
         }
 
         if (durations.any { it.second != 0f }) {
-            if (durations.count() == 1) {
-                durationMarkerTarget = durations.last()
-            } /*else if (durations.count() > 1) {
-                durationMarkerTarget = durations.maxBy { it.second }
-            }*/
-
             durationEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
                     series(durations.map { it.first },durations.map { it.second })
@@ -321,12 +316,6 @@ fun ExerciseHistoryScreen(
         }
 
         if (oneRepMaxes.any { it.second != 0.0 }) {
-            if (oneRepMaxes.count() == 1) {
-                oneRepMaxMarkerTarget = oneRepMaxes.last()
-            } /*else if (oneRepMaxes.count() > 1) {
-                oneRepMaxMarkerTarget = oneRepMaxes.maxBy { it.second }
-            }*/
-
             oneRepMaxEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
                     series(oneRepMaxes.map { it.first },oneRepMaxes.map { it.second })
@@ -410,6 +399,33 @@ fun ExerciseHistoryScreen(
         if (selectedWorkoutHistoryId != workoutHistoryId) {
             onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistoryId)
         }
+    }
+
+    LaunchedEffect(
+        selectedWorkoutHistory?.id,
+        chartWorkoutHistories,
+        volumeEntryModel,
+        durationEntryModel,
+        oneRepMaxEntryModel,
+        hasLoadedWorkoutHistories,
+    ) {
+        if (!hasLoadedWorkoutHistories) return@LaunchedEffect
+        val history = selectedWorkoutHistory ?: run {
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            oneRepMaxMarkerTarget = null
+            return@LaunchedEffect
+        }
+        val idx = chartWorkoutHistories.indexOfFirst { it.id == history.id }
+        if (idx < 0) {
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            oneRepMaxMarkerTarget = null
+            return@LaunchedEffect
+        }
+        volumeMarkerTarget = volumes.find { it.first == idx }
+        durationMarkerTarget = durations.find { it.first == idx }
+        oneRepMaxMarkerTarget = oneRepMaxes.find { it.first == idx }
     }
 
     val workoutSelector = @Composable {
@@ -506,14 +522,32 @@ fun ExerciseHistoryScreen(
                     setHistoriesByWorkoutHistoryId.isNotEmpty() &&
                     selectedWorkoutHistory == null
 
-        Spacer(modifier = Modifier.height(10.dp))
-        RangeDropdown(selectedRange) { selectedRange = it }
-        Spacer(modifier = Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .zIndex(1f)
+                .fillMaxWidth(),
+        ) {
+            Spacer(modifier = Modifier.height(10.dp))
+            RangeDropdown(selectedRange, onHistoryRangeSelected)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (hasLoadedWorkoutHistories &&
+                selectedWorkoutHistory != null &&
+                setHistoriesByWorkoutHistoryId.isNotEmpty()
+            ) {
+                Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
+                    workoutSelector()
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
 
         when {
             isLoading || isSetHistorySelectionPending -> {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(
@@ -525,7 +559,9 @@ fun ExerciseHistoryScreen(
             }
             historiesToShow.isEmpty() -> {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     PrimarySurface(modifier = Modifier.padding(15.dp)) {
@@ -576,6 +612,7 @@ fun ExerciseHistoryScreen(
                                     startAxisValueFormatter = volumeAxisValueFormatter,
                                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                     xAxisTickValues = volumes.map { it.first.toDouble() },
+                                    markerPosition = volumeMarkerTarget?.first?.toDouble(),
                                     onInteractionChange = { isChartInteractionActive = it },
                                 )
                             }
@@ -589,6 +626,7 @@ fun ExerciseHistoryScreen(
                                     },
                                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                     xAxisTickValues = oneRepMaxes.map { it.first.toDouble() },
+                                    markerPosition = oneRepMaxMarkerTarget?.first?.toDouble(),
                                     onInteractionChange = { isChartInteractionActive = it },
                                 )
                             }
@@ -603,6 +641,7 @@ fun ExerciseHistoryScreen(
                                     startAxisValueFormatter = durationAxisValueFormatter,
                                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                                     xAxisTickValues = durations.map { it.first.toDouble() },
+                                    markerPosition = durationMarkerTarget?.first?.toDouble(),
                                     onInteractionChange = { isChartInteractionActive = it },
                                 )
                             }
@@ -693,9 +732,6 @@ fun ExerciseHistoryScreen(
                             state = lazyListState,
                             verticalArrangement = Arrangement.spacedBy(15.dp),
                         ) {
-                            item {
-                                workoutSelector()
-                            }
                             if (hasTarget) {
                                 item {
                                     PrimarySurface {

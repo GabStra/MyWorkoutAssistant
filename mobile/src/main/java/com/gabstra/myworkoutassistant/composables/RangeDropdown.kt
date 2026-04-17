@@ -6,15 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.shared.FilterRange
 
-enum class FilterRange {
-    LAST_WEEK,
-    LAST_7_DAYS,
-    LAST_30_DAYS,
-    THIS_MONTH,
-    LAST_3_MONTHS,
-    ALL
-}
 @Composable
 fun RangeDropdown(
     selectedRange: FilterRange,

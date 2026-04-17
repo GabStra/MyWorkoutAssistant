@@ -2,11 +2,13 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -87,9 +89,10 @@ fun AppDropdownMenuItem(
     modifier: Modifier = Modifier,
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    contentPadding: PaddingValues = MenuDefaults.DropdownMenuItemContentPadding,
 ) {
-    val baseColor = MaterialTheme.colorScheme.onSurface
+    val baseColor = MaterialTheme.colorScheme.onBackground
     val contentColor = if (enabled) baseColor else DisabledContentGray
 
     fun wrapContent(content: @Composable () -> Unit): @Composable () -> Unit = {
@@ -104,6 +107,7 @@ fun AppDropdownMenuItem(
         modifier = modifier,
         leadingIcon = leadingIcon?.let { wrapContent(it) },
         trailingIcon = trailingIcon?.let { wrapContent(it) },
-        enabled = enabled
+        enabled = enabled,
+        contentPadding = contentPadding,
     )
 }

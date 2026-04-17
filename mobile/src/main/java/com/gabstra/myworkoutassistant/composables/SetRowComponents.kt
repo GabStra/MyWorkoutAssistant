@@ -182,7 +182,7 @@ private fun SetTableDataRow(
             .padding(horizontal = 12.dp, vertical = 9.dp)
     }
 
-    val primaryStyle = MaterialTheme.typography.bodyMedium.let { base ->
+    val primaryStyle = MaterialTheme.typography.bodyLarge.let { base ->
         if (row.monospacePrimary) base.copy(fontFamily = FontFamily.Monospace) else base
     }
 
@@ -191,7 +191,7 @@ private fun SetTableDataRow(
             Text(
                 text = row.identifier,
                 modifier = Modifier.weight(SetColumnWeight),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = textColor,
                 textAlign = TextAlign.Center,
             )
@@ -206,7 +206,7 @@ private fun SetTableDataRow(
                 Text(
                     text = row.secondaryValue.orEmpty(),
                     modifier = Modifier.weight(RepsColumnWeight),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     color = textColor,
                     textAlign = TextAlign.Center,
                 )
@@ -226,7 +226,7 @@ private fun SetTableRestRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 9.dp),
-        style = MaterialTheme.typography.bodyMedium,
+        style = MaterialTheme.typography.bodyLarge,
         color = textColor,
         textAlign = TextAlign.Center,
     )

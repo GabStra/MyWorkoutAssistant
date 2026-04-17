@@ -308,6 +308,8 @@ fun WorkoutOverviewTab(
                 keySelector = { component -> component.id }
             )
 
+            Spacer(Modifier.height(Spacing.md))
+
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center

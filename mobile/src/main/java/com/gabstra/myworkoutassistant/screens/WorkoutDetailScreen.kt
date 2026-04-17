@@ -80,6 +80,7 @@ import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
+import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.ExerciseTemplateRenderer
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -322,12 +323,7 @@ fun WorkoutDetailScreen(
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
     }
     var displayedWorkoutHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
-
-    LaunchedEffect(selectedTopTab) {
-        if (selectedTopTab == 0) {
-            displayedWorkoutHistoryId = null
-        }
-    }
+    var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
     val startWorkoutDirectly = {
@@ -1206,14 +1202,15 @@ fun WorkoutDetailScreen(
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
+                        val persistedHistoryId =
+                            if (index in 1..2) displayedWorkoutHistoryId ?: initialWorkoutHistoryId
+                            else initialWorkoutHistoryId
                         val targetScreenData = ScreenData.WorkoutDetail(
                             workoutId = workout.id,
                             selectedTabIndex = index,
-                            workoutHistoryId = initialWorkoutHistoryId
+                            workoutHistoryId = persistedHistoryId,
                         )
-                        if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
-                            appViewModel.updateScreenData(targetScreenData)
-                        }
+                        appViewModel.updateScreenDataIfChanged(targetScreenData)
                     },
                     modifier = Modifier.fillMaxSize(),
                     pagerModifier = Modifier.fillMaxSize(),
@@ -1256,35 +1253,43 @@ fun WorkoutDetailScreen(
                             workoutScheduleDao = workoutScheduleDao,
                             workoutHistoryIdForExerciseNavigation = displayedWorkoutHistoryId,
                         )
-                        1, 2 -> WorkoutHistoryTab(
+                        1, 2 -> WorkoutHistoryScreen(
                             appViewModel = appViewModel,
                             healthConnectClient = healthConnectClient,
                             workoutHistoryDao = workoutHistoryDao,
                             workoutRecordDao = workoutRecordDao,
-                            workoutHistoryId = initialWorkoutHistoryId,
+                            workoutHistoryId = displayedWorkoutHistoryId ?: initialWorkoutHistoryId,
                             setHistoryDao = setHistoryDao,
                             restHistoryDao = restHistoryDao,
                             workout = workout,
                             selectedHistoryMode = pageIndex - 1,
-                            pageIndex = pageIndex,
-                            selectedTopTab = selectedTopTab,
-                            onDisplayedWorkoutHistoryIdChange = { id ->
-                                displayedWorkoutHistoryId = id
+                            historyFilterRange = historyFilterRange,
+                            onHistoryFilterRangeChange = { historyFilterRange = it },
+                            onGoBack = onGoBack,
+                            onSelectedWorkoutHistoryIdChanged = { id ->
+                                if (pageIndex == selectedTopTab) {
+                                    displayedWorkoutHistoryId = id
+                                }
                             },
-                            onGoBack = onGoBack
                         )
                     }
                 }
 
-                LaunchedEffect(selectedTopTab, workout.id, initialWorkoutHistoryId) {
+                LaunchedEffect(
+                    selectedTopTab,
+                    workout.id,
+                    initialWorkoutHistoryId,
+                    displayedWorkoutHistoryId,
+                ) {
+                    val persistedHistoryId =
+                        if (selectedTopTab in 1..2) displayedWorkoutHistoryId ?: initialWorkoutHistoryId
+                        else initialWorkoutHistoryId
                     val targetScreenData = ScreenData.WorkoutDetail(
                         workoutId = workout.id,
                         selectedTabIndex = selectedTopTab,
-                        workoutHistoryId = initialWorkoutHistoryId
+                        workoutHistoryId = persistedHistoryId,
                     )
-                    if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
-                        appViewModel.updateScreenData(targetScreenData)
-                    }
+                    appViewModel.updateScreenDataIfChanged(targetScreenData)
                 }
 
 

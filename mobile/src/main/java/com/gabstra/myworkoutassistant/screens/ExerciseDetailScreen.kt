@@ -66,6 +66,7 @@ import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
+import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
@@ -171,6 +172,9 @@ fun ExerciseDetailScreen(
     }
     var displayedWorkoutHistoryId by remember(workout.id, exercise.id) {
         mutableStateOf(initialWorkoutHistoryId)
+    }
+    var historyFilterRange by remember(workout.id, exercise.id) {
+        mutableStateOf(FilterRange.ALL)
     }
 
     val equipments by appViewModel.equipmentsFlow.collectAsState()
@@ -316,12 +320,6 @@ fun ExerciseDetailScreen(
     LaunchedEffect(initialWorkoutHistoryId) {
         if (initialWorkoutHistoryId != displayedWorkoutHistoryId) {
             displayedWorkoutHistoryId = initialWorkoutHistoryId
-        }
-    }
-
-    LaunchedEffect(selectedTopTab) {
-        if (selectedTopTab == 0 && displayedWorkoutHistoryId != null) {
-            displayedWorkoutHistoryId = null
         }
     }
 
@@ -693,9 +691,7 @@ fun ExerciseDetailScreen(
                             selectedTabIndex = index,
                             workoutHistoryId = if (index in 1..2) displayedWorkoutHistoryId else null,
                         )
-                        if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
-                            appViewModel.updateScreenData(targetScreenData)
-                        }
+                        appViewModel.updateScreenDataIfChanged(targetScreenData)
                     },
                     tabEnabled = { true },
                     unselectedContentColor = MaterialTheme.colorScheme.onBackground,
@@ -731,29 +727,29 @@ fun ExerciseDetailScreen(
                             }
                         )
 
-                        1, 2 -> ExerciseHistoryTab(
+                        1, 2 -> ExerciseHistoryScreen(
                             appViewModel = appViewModel,
                             workout = workout,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
                             exercise = exercise,
                             workoutHistoryId = displayedWorkoutHistoryId,
-                            pageIndex = pageIndex,
-                            selectedTopTab = selectedTopTab,
                             selectedHistoryMode = pageIndex - 1,
+                            historyFilterRange = historyFilterRange,
+                            onHistoryFilterRangeChange = { historyFilterRange = it },
                             onGoBack = onGoBack,
-                            onDisplayedWorkoutHistoryIdChange = { id ->
-                                if (displayedWorkoutHistoryId != id) {
-                                    displayedWorkoutHistoryId = id
-                                }
-                                val targetScreenData = ScreenData.ExerciseDetail(
-                                    workoutId = workout.id,
-                                    selectedExerciseId = exercise.id,
-                                    selectedTabIndex = selectedTopTab,
-                                    workoutHistoryId = id,
-                                )
-                                if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
-                                    appViewModel.updateScreenData(targetScreenData)
+                            onSelectedWorkoutHistoryIdChanged = { id ->
+                                if (pageIndex == selectedTopTab) {
+                                    if (displayedWorkoutHistoryId != id) {
+                                        displayedWorkoutHistoryId = id
+                                    }
+                                    val targetScreenData = ScreenData.ExerciseDetail(
+                                        workoutId = workout.id,
+                                        selectedExerciseId = exercise.id,
+                                        selectedTabIndex = selectedTopTab,
+                                        workoutHistoryId = id,
+                                    )
+                                    appViewModel.updateScreenDataIfChanged(targetScreenData)
                                 }
                             },
                         )
@@ -767,9 +763,7 @@ fun ExerciseDetailScreen(
                         selectedTabIndex = selectedTopTab,
                         workoutHistoryId = if (selectedTopTab in 1..2) displayedWorkoutHistoryId else null,
                     )
-                    if (appViewModel.currentScreenData.toSaveableKey() != targetScreenData.toSaveableKey()) {
-                        appViewModel.updateScreenData(targetScreenData)
-                    }
+                    appViewModel.updateScreenDataIfChanged(targetScreenData)
                 }
 
             }

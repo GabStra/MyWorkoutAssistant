@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -89,7 +90,6 @@ fun <T> StandardFilterDropdown(
                 onDismissRequest = { expanded = false },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
                     .heightIn(max = 320.dp),
                 offset = DpOffset(0.dp, 8.dp)
             ) {
@@ -99,10 +99,22 @@ fun <T> StandardFilterDropdown(
                     AppDropdownMenuItem(
                         text = {
                             Text(
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(iterations = Int.MAX_VALUE)
+                                    .clickable {
+                                        onItemSelected(item.value)
+                                        expanded = false
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
                                 text = item.label,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                             )
                         },
+                        // Menu item padding lives on the Text so marquee + tap target stay aligned; default
+                        // dropdown padding would shrink the scrollable label area.
+                        contentPadding = PaddingValues(0.dp),
                         trailingIcon = if (selected) {
                             {
                                 Icon(

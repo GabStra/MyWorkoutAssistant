@@ -44,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -59,7 +60,7 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.ExerciseHistoryRenderer
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
-import com.gabstra.myworkoutassistant.composables.FilterRange
+import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
@@ -69,7 +70,8 @@ import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SupersetSetHistoriesRenderer
 import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
-import com.gabstra.myworkoutassistant.filterBy
+import com.gabstra.myworkoutassistant.shared.FilterRange
+import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.formatTimeHourMinutes
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -342,6 +344,8 @@ fun WorkoutHistoryScreen(
     restHistoryDao: RestHistoryDao,
     workout: Workout,
     selectedHistoryMode: Int = 0,
+    historyFilterRange: FilterRange? = null,
+    onHistoryFilterRangeChange: ((FilterRange) -> Unit)? = null,
     onGoBack: () -> Unit,
     onSelectedWorkoutHistoryIdChanged: (UUID?) -> Unit = {},
 ) {
@@ -363,7 +367,10 @@ fun WorkoutHistoryScreen(
         DateTimeFormatter.ofPattern("HH:mm", currentLocale)
     }
 
-    var selectedRange by remember { mutableStateOf(FilterRange.ALL) }
+    val (selectedRange, onHistoryRangeSelected) = rememberHistoryFilterRangeSelection(
+        historyFilterRange = historyFilterRange,
+        onHistoryFilterRangeChange = onHistoryFilterRangeChange,
+    )
 
     var workoutHistories by remember { mutableStateOf(listOf<WorkoutHistory>()) }
     var workoutSessionStatuses by remember { mutableStateOf<Map<UUID, WorkoutSessionStatus>>(emptyMap()) }
@@ -513,14 +520,7 @@ fun WorkoutHistoryScreen(
             )
         }
 
-        //check if volumes are not all 0
         if (volumes.any { it.second != 0.0 }) {
-            if (volumes.count() == 1) {
-                volumeMarkerTarget = volumes.last()
-            } /*else if (volumes.count() > 1) {
-                volumeMarkerTarget = volumes.maxBy { it.second }
-            }*/
-
             volumeEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
                     series(volumes.map { it.first }, volumes.map { it.second })
@@ -528,24 +528,11 @@ fun WorkoutHistoryScreen(
         }
 
         if (durations.any { it.second != 0f }) {
-            if (durations.count() == 1) {
-                durationMarkerTarget = durations.last()
-            } /*else if (volumes.count() > 1) {
-                durationMarkerTarget = durations.maxBy { it.second }
-            }*/
-
             durationEntryModel =
                 CartesianChartModel(LineCartesianLayerModel.build {
                     series(durations.map { it.first }, durations.map { it.second })
                 })
         }
-
-        if (workoutDurations.count() == 1) {
-            workoutDurationMarkerTarget = workoutDurations.last()
-        } /*else if (workoutDurations.count() > 1) {
-            workoutDurationMarkerTarget = workoutDurations.maxBy { it.second }
-        }*/
-
 
         workoutDurationEntryModel =
             CartesianChartModel(LineCartesianLayerModel.build { series(*(workoutDurations.map { it.second }).toTypedArray()) })
@@ -607,6 +594,15 @@ fun WorkoutHistoryScreen(
             if (selectedWorkoutHistory == null) {
                 isLoading = false
             }
+        }
+    }
+
+    LaunchedEffect(workoutHistoryId, workoutHistories, hasLoadedWorkoutHistories) {
+        if (!hasLoadedWorkoutHistories || workoutHistories.isEmpty()) return@LaunchedEffect
+        val resolved = workoutHistoryId?.let { id -> workoutHistories.find { it.id == id } }
+            ?: workoutHistories.lastOrNull()
+        if (selectedWorkoutHistory?.id != resolved?.id) {
+            selectedWorkoutHistory = resolved
         }
     }
 
@@ -741,6 +737,33 @@ fun WorkoutHistoryScreen(
         isLoading = false
     }
 
+    LaunchedEffect(
+        selectedWorkoutHistory?.id,
+        historiesToShow,
+        volumeEntryModel,
+        durationEntryModel,
+        workoutDurationEntryModel,
+        hasLoadedWorkoutHistories,
+    ) {
+        if (!hasLoadedWorkoutHistories) return@LaunchedEffect
+        val history = selectedWorkoutHistory ?: run {
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            workoutDurationMarkerTarget = null
+            return@LaunchedEffect
+        }
+        val idx = historiesToShow.indexOfFirst { it.id == history.id }
+        if (idx < 0) {
+            volumeMarkerTarget = null
+            durationMarkerTarget = null
+            workoutDurationMarkerTarget = null
+            return@LaunchedEffect
+        }
+        volumeMarkerTarget = volumes.find { it.first == idx }
+        durationMarkerTarget = durations.find { it.first == idx }
+        workoutDurationMarkerTarget = workoutDurations.find { it.first == idx }
+    }
+
     val scrollState = rememberScrollState()
     val setHistoryLazyListState = rememberLazyListState()
 
@@ -757,35 +780,6 @@ fun WorkoutHistoryScreen(
                 .padding(horizontal = Spacing.md),
             verticalArrangement = Arrangement.spacedBy(15.dp),
         ) {
-            selectedWorkoutHistory?.let { history ->
-                PrimarySurface(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Text(
-                            text = history.date.format(dateFormatter) + " " + history.time.format(timeFormatter),
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        workoutSessionDisplayLabel(
-                            workoutSessionStatuses[history.id]
-                        )?.let { statusLabel ->
-                            Text(
-                                text = statusLabel,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                    }
-                }
-            }
-
             if (historiesToShow.isEmpty()) {
                 PrimarySurface(
                     modifier = Modifier.fillMaxWidth()
@@ -811,6 +805,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = volumeAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = volumes.map { it.first.toDouble() },
+                    markerPosition = volumeMarkerTarget?.first?.toDouble(),
                     onInteractionChange = { isChartInteractionActive = it },
                 )
             }
@@ -823,6 +818,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = durationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = durations.map { it.first.toDouble() },
+                    markerPosition = durationMarkerTarget?.first?.toDouble(),
                     onInteractionChange = { isChartInteractionActive = it },
                 )
             }
@@ -836,6 +832,7 @@ fun WorkoutHistoryScreen(
                     startAxisValueFormatter = workoutDurationAxisValueFormatter,
                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
                     xAxisTickValues = workoutDurations.map { it.first.toDouble() },
+                    markerPosition = workoutDurationMarkerTarget?.first?.toDouble(),
                     onInteractionChange = { isChartInteractionActive = it },
                 )
             }
@@ -994,10 +991,6 @@ fun WorkoutHistoryScreen(
             state = setHistoryLazyListState,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
-                workoutSelector()
-            }
-
             if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
                 item {
                     PrimarySurface {
@@ -1447,14 +1440,29 @@ fun WorkoutHistoryScreen(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Top,
     ) {
-        Spacer(modifier = Modifier.height(10.dp))
-        RangeDropdown(selectedRange) { selectedRange = it }
-        Spacer(modifier = Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .zIndex(1f)
+                .fillMaxWidth(),
+        ) {
+            Spacer(modifier = Modifier.height(10.dp))
+            RangeDropdown(selectedRange, onHistoryRangeSelected)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (hasLoadedWorkoutHistories && selectedWorkoutHistory != null) {
+                Column(modifier = Modifier.padding(horizontal = Spacing.md)) {
+                    workoutSelector()
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
 
         when {
             !hasLoadedWorkoutHistories -> {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     CircularProgressIndicator(
@@ -1465,44 +1473,24 @@ fun WorkoutHistoryScreen(
                 }
             }
             isLoading -> {
-                if (selectedHistoryMode == 1 && selectedWorkoutHistory != null) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(15.dp),
-                    ) {
-                        workoutSelector()
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(32.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MediumDarkGray,
-                            )
-                        }
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(32.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MediumDarkGray,
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(32.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MediumDarkGray,
+                    )
                 }
             }
             selectedWorkoutHistory == null -> {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     PrimarySurface(modifier = Modifier.padding(15.dp)) {
