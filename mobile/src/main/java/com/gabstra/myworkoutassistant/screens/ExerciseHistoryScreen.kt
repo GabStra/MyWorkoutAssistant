@@ -726,7 +726,7 @@ fun ExerciseHistoryScreen(
                             item {
                                 PrimarySurface {
                                     Column(
-                                        modifier = Modifier.padding(vertical = 5.dp),
+                                        modifier = Modifier.padding(vertical = Spacing.md),
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         val historicalEquipmentName = setHistories.selectedExerciseSetHistories

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -46,7 +47,7 @@ fun ExerciseMetadataStrip(
     ) {
         FlowRow(
             modifier = clickableModifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
         ) {
             exerciseLabel?.let {
                 Text(

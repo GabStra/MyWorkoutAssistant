@@ -74,7 +74,11 @@ fun SwipeableTabs(
         initialPage = clampedSelectedIndex,
         pageCount = { tabTitles.size }
     )
-    val activeTabIndex = clampedSelectedIndex
+    val activeTabIndex = if (renderPager) {
+        pagerState.currentPage.coerceIn(tabTitles.indices)
+    } else {
+        clampedSelectedIndex
+    }
 
     if (renderPager) {
         LaunchedEffect(clampedSelectedIndex, tabTitles.size) {
