@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Block
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
@@ -322,7 +324,9 @@ fun WorkoutDetailScreen(
     var selectedTopTab by remember(workout.id, initialSelectedTabIndex) {
         mutableIntStateOf(initialSelectedTabIndex.coerceIn(0, 2))
     }
-    var displayedWorkoutHistoryId by remember(workout.id) { mutableStateOf<UUID?>(null) }
+    var displayedWorkoutHistoryId by remember(workout.id) {
+        mutableStateOf(initialWorkoutHistoryId)
+    }
     var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
@@ -360,6 +364,12 @@ fun WorkoutDetailScreen(
         if (!isCheckingWorkoutRecord && currentSelectedWorkoutId == workout.id) {
             hasWorkoutRecord = hasWorkoutRecordFlow
             workoutResumeInfo = if (hasWorkoutRecordFlow) workoutResumeInfoFlow else null
+        }
+    }
+
+    LaunchedEffect(initialWorkoutHistoryId) {
+        if (displayedWorkoutHistoryId != initialWorkoutHistoryId) {
+            displayedWorkoutHistoryId = initialWorkoutHistoryId
         }
     }
 
@@ -454,7 +464,15 @@ fun WorkoutDetailScreen(
     }
 
     fun generateWorkoutInsights() {
-        val historyId = displayedWorkoutHistoryId ?: return
+        if (!MobileLlmFeatureFlags.ENABLED) return
+        val historyId = displayedWorkoutHistoryId
+        if (historyId == null) {
+            insightsState = WorkoutInsightsUiState.Error(
+                "Select a completed session before generating workout insights."
+            )
+            showInsightsDialog = true
+            return
+        }
         showInsightsDialog = true
         scope.launch {
             insightsState = WorkoutInsightsUiState.PreparingModel
@@ -1133,7 +1151,24 @@ fun WorkoutDetailScreen(
                         }
                     },
                     actions = {
-                        if (displayedWorkoutHistoryId != null && selectedTopTab in 1..2) {
+                        if (MobileLlmFeatureFlags.ENABLED && displayedWorkoutHistoryId != null && selectedTopTab in 1..2) {
+                            IconButton(
+                                onClick = {
+                                    displayedWorkoutHistoryId?.let { historyId ->
+                                        appViewModel.setScreenData(
+                                            ScreenData.HistoryChatWorkoutSession(
+                                                workoutId = workout.id,
+                                                workoutHistoryId = historyId,
+                                            )
+                                        )
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QuestionAnswer,
+                                    contentDescription = "Chat with session history"
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     showInsightsDialog = true
@@ -1535,19 +1570,21 @@ fun WorkoutDetailScreen(
                 }
             )
             LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving changes...")
-            WorkoutInsightsDialog(
-                show = showInsightsDialog,
-                title = "Workout insights",
-                state = insightsState,
-                configurationState = insightsConfigurationState,
-                onDismiss = { showInsightsDialog = false },
-                onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
-                    { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
-                } else {
-                    null
-                },
-                onGenerate = { generateWorkoutInsights() },
-            )
+            if (MobileLlmFeatureFlags.ENABLED) {
+                WorkoutInsightsDialog(
+                    show = showInsightsDialog,
+                    title = "Workout insights",
+                    state = insightsState,
+                    configurationState = insightsConfigurationState,
+                    onDismiss = { showInsightsDialog = false },
+                    onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
+                        { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
+                    } else {
+                        null
+                    },
+                    onGenerate = { generateWorkoutInsights() },
+                )
+            }
         }
     }
 }

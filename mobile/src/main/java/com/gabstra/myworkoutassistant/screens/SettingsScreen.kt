@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
+import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
@@ -385,161 +386,163 @@ fun SettingsScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(Spacing.sm))
-            FormSectionTitle("Workout Insights")
-            StyledCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    ContentSubtitle(
-                        text = "Choose whether workout insights run with the on-device LiteRT-LM model or your hosted OpenAI-compatible API.",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
-                    WorkoutInsightsMode.entries.forEach { mode ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = workoutInsightsModeState.value == mode,
-                                    enabled = !isImportingLiteRtModel,
-                                    onClick = { workoutInsightsModeState.value = mode }
-                                )
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-                        ) {
-                            RadioButton(
-                                selected = workoutInsightsModeState.value == mode,
-                                onClick = null,
-                                enabled = !isImportingLiteRtModel
-                            )
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = mode.label,
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                ContentSubtitle(
-                                    text = if (mode == WorkoutInsightsMode.LOCAL) {
-                                        "Run insight generation fully on-device with LiteRT-LM."
-                                    } else {
-                                        "Call your hosted OpenAI-compatible API on demand."
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    if (workoutInsightsModeState.value == WorkoutInsightsMode.LOCAL) {
-                        OutlinedTextField(
-                            value = liteRtModelName.orEmpty(),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("LiteRT-LM model") },
-                            placeholder = { Text("No local model selected") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                        )
-
+            if (MobileLlmFeatureFlags.ENABLED) {
+                Spacer(modifier = Modifier.height(Spacing.sm))
+                FormSectionTitle("Workout Insights")
+                StyledCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
                         ContentSubtitle(
-                            text = "Use GPU for faster on-device insights when available, or CPU for broader device compatibility.",
+                            text = "Choose whether workout insights run with the on-device LiteRT-LM model or your hosted OpenAI-compatible API.",
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                         )
-
-                        LiteRtLmBackendPreference.entries.forEach { preference ->
+                        WorkoutInsightsMode.entries.forEach { mode ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .selectable(
-                                        selected = liteRtBackendPreferenceState.value == preference,
+                                        selected = workoutInsightsModeState.value == mode,
                                         enabled = !isImportingLiteRtModel,
-                                        onClick = { liteRtBackendPreferenceState.value = preference }
+                                        onClick = { workoutInsightsModeState.value = mode }
                                     )
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
                             ) {
                                 RadioButton(
-                                    selected = liteRtBackendPreferenceState.value == preference,
+                                    selected = workoutInsightsModeState.value == mode,
                                     onClick = null,
                                     enabled = !isImportingLiteRtModel
                                 )
                                 Column(modifier = Modifier.fillMaxWidth()) {
                                     Text(
-                                        text = preference.label,
+                                        text = mode.label,
                                         style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    ContentSubtitle(
+                                        text = if (mode == WorkoutInsightsMode.LOCAL) {
+                                            "Run insight generation fully on-device with LiteRT-LM."
+                                        } else {
+                                            "Call your hosted OpenAI-compatible API on demand."
+                                        }
                                     )
                                 }
                             }
                         }
 
-                        AppPrimaryOutlinedButton(
-                            text = if (liteRtModelPath == null) {
-                                "Import LiteRT-LM model"
-                            } else {
-                                "Replace LiteRT-LM model"
-                            },
-                            onClick = onImportLiteRtModel,
-                            enabled = !isImportingLiteRtModel,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                        )
+                        if (workoutInsightsModeState.value == WorkoutInsightsMode.LOCAL) {
+                            OutlinedTextField(
+                                value = liteRtModelName.orEmpty(),
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("LiteRT-LM model") },
+                                placeholder = { Text("No local model selected") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
 
-                        AppSecondaryButton(
-                            text = "Clear LiteRT-LM model",
-                            onClick = onClearLiteRtModel,
-                            enabled = liteRtModelPath != null && !isImportingLiteRtModel,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                        )
-                    } else {
-                        OutlinedTextField(
-                            value = remoteBaseUrlState.value,
-                            onValueChange = { remoteBaseUrlState.value = it },
-                            label = { Text("Remote base URL") },
-                            placeholder = { Text("https://your-host.example.com/v1") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                        )
+                            ContentSubtitle(
+                                text = "Use GPU for faster on-device insights when available, or CPU for broader device compatibility.",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+
+                            LiteRtLmBackendPreference.entries.forEach { preference ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .selectable(
+                                            selected = liteRtBackendPreferenceState.value == preference,
+                                            enabled = !isImportingLiteRtModel,
+                                            onClick = { liteRtBackendPreferenceState.value = preference }
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                ) {
+                                    RadioButton(
+                                        selected = liteRtBackendPreferenceState.value == preference,
+                                        onClick = null,
+                                        enabled = !isImportingLiteRtModel
+                                    )
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Text(
+                                            text = preference.label,
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                    }
+                                }
+                            }
+
+                            AppPrimaryOutlinedButton(
+                                text = if (liteRtModelPath == null) {
+                                    "Import LiteRT-LM model"
+                                } else {
+                                    "Replace LiteRT-LM model"
+                                },
+                                onClick = onImportLiteRtModel,
+                                enabled = !isImportingLiteRtModel,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
+
+                            AppSecondaryButton(
+                                text = "Clear LiteRT-LM model",
+                                onClick = onClearLiteRtModel,
+                                enabled = liteRtModelPath != null && !isImportingLiteRtModel,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
+                        } else {
+                            OutlinedTextField(
+                                value = remoteBaseUrlState.value,
+                                onValueChange = { remoteBaseUrlState.value = it },
+                                label = { Text("Remote base URL") },
+                                placeholder = { Text("https://your-host.example.com/v1") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = remoteModelState.value,
+                                onValueChange = { remoteModelState.value = it },
+                                label = { Text("Remote model") },
+                                placeholder = { Text("gpt-4.1-mini or your hosted model id") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = remoteApiKeyState.value,
+                                onValueChange = { remoteApiKeyState.value = it },
+                                label = { Text("Remote API key") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                            )
+                        }
 
                         OutlinedTextField(
-                            value = remoteModelState.value,
-                            onValueChange = { remoteModelState.value = it },
-                            label = { Text("Remote model") },
-                            placeholder = { Text("gpt-4.1-mini or your hosted model id") },
+                            value = workoutInsightsCustomInstructionsState.value,
+                            onValueChange = { workoutInsightsCustomInstructionsState.value = it },
+                            label = { Text("Insight instructions") },
+                            placeholder = { Text("Example: Focus on strength progression and keep advice brief.") },
+                            minLines = 3,
+                            maxLines = 6,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
                         )
-
-                        OutlinedTextField(
-                            value = remoteApiKeyState.value,
-                            onValueChange = { remoteApiKeyState.value = it },
-                            label = { Text("Remote API key") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
+                        ContentSubtitle(
+                            text = "These instructions are added to workout and exercise insight requests when they do not conflict with the app's evidence and safety rules.",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                         )
                     }
-
-                    OutlinedTextField(
-                        value = workoutInsightsCustomInstructionsState.value,
-                        onValueChange = { workoutInsightsCustomInstructionsState.value = it },
-                        label = { Text("Insight instructions") },
-                        placeholder = { Text("Example: Focus on strength progression and keep advice brief.") },
-                        minLines = 3,
-                        maxLines = 6,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp)
-                    )
-                    ContentSubtitle(
-                        text = "These instructions are added to workout and exercise insight requests when they do not conflict with the app's evidence and safety rules.",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
                 }
             }
             Spacer(modifier = Modifier.height(Spacing.sm))
@@ -617,16 +620,18 @@ fun SettingsScreen(
                             measuredMaxHeartRate = measuredMaxHeartRate,
                             restingHeartRate = restingHeartRate
                         )
-                        onSaveInsightsSettings(
-                            workoutInsightsModeState.value,
-                            liteRtBackendPreferenceState.value,
-                            RemoteOpenAiConfig(
-                                baseUrl = remoteBaseUrlState.value,
-                                apiKey = remoteApiKeyState.value,
-                                model = remoteModelState.value,
-                            ),
-                            workoutInsightsCustomInstructionsState.value
-                        )
+                        if (MobileLlmFeatureFlags.ENABLED) {
+                            onSaveInsightsSettings(
+                                workoutInsightsModeState.value,
+                                liteRtBackendPreferenceState.value,
+                                RemoteOpenAiConfig(
+                                    baseUrl = remoteBaseUrlState.value,
+                                    apiKey = remoteApiKeyState.value,
+                                    model = remoteModelState.value,
+                                ),
+                                workoutInsightsCustomInstructionsState.value
+                            )
+                        }
                         onSave(newWorkoutStore)
                     },
                     text = "Save",

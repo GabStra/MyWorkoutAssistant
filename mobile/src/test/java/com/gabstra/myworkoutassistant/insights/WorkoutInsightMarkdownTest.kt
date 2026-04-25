@@ -7,6 +7,107 @@ import org.junit.Test
 
 class WorkoutInsightMarkdownTest {
     @Test
+    fun sanitizeInsightMarkdown_normalizes_triple_star_exercise_headings() {
+        val raw =
+            "Analysis of your performance:***Squat:** You did well.***Bench Press:** More text."
+        val sanitized = sanitizeInsightMarkdown(raw)
+        assertTrue(sanitized.contains("## Squat"))
+        assertTrue(sanitized.contains("## Bench Press"))
+        assertFalse(sanitized.contains("***Squat:**"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_normalizes_double_star_colon_inside_headings() {
+        val sanitized = sanitizeInsightMarkdown("Intro **Leg Press:** next line **Row:** done.")
+        assertTrue(sanitized.contains("## Leg Press"))
+        assertTrue(sanitized.contains("## Row"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_normalizes_four_or_more_star_headings() {
+        val sanitized = sanitizeInsightMarkdown("Start ****Accessory:** body here.")
+        assertTrue(sanitized.contains("## Accessory"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_preserves_bold_then_colon_not_heading() {
+        val raw = "- **Back Squat**: text here."
+        val sanitized = sanitizeInsightMarkdown(raw)
+        assertTrue(sanitized.contains("**Back Squat**"))
+        assertFalse(sanitized.contains("## Back Squat"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_does_not_turn_metric_bold_into_heading() {
+        val raw = "Peak **84:** kg range."
+        val sanitized = sanitizeInsightMarkdown(raw)
+        assertTrue(sanitized.contains("**84:**"))
+        assertFalse(sanitized.contains("## 84"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_splits_glued_exclamation_sentence() {
+        val sanitized = sanitizeInsightMarkdown("Great work!Overall solid effort.")
+        assertTrue(sanitized.contains("work!\n\nOverall"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_splits_paren_before_new_sentence() {
+        val sanitized = sanitizeInsightMarkdown("Volume was 536 kg).The history shows more.")
+        assertTrue("Sanitized output was: $sanitized", sanitized.contains("536 kg).\n\nThe history"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_strips_decorative_leading_indent_on_body_lines() {
+        val raw = """
+            ## Progression State
+
+                  You are in the `PROGRESS` state.
+
+                 ## Volume Trend
+
+                  Your volume increased.
+        """.trimIndent()
+        val sanitized = sanitizeInsightMarkdown(raw)
+        assertTrue(sanitized.contains("You are in the"))
+        assertFalse(sanitized.contains("\n                  You"))
+        assertTrue(sanitized.contains("Your volume increased."))
+    }
+
+    @Test
+    fun compactTopLevelHeadingLevelsForDisplay_demotes_h2_to_h3_only() {
+        val inMd = "## Volume Trend\n\n### Already small\n\n## Next\n"
+        val out = compactTopLevelHeadingLevelsForDisplay(inMd)
+        assertEquals(
+            "### Volume Trend\n\n### Already small\n\n### Next\n",
+            out,
+        )
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_splits_glued_sentences_and_colon_star_lists() {
+        val raw = """
+            Based on the history, you are in a PROGRESS state across all recorded sessions.Here is a summary of the progression:*Volume Trend: Your volume has increased.*Intensity/Load: You progressed.*Set/Rep Structure: Adjusted.
+        """.trimIndent()
+
+        val sanitized = sanitizeInsightMarkdown(raw)
+
+        assertTrue(sanitized.contains("sessions.\n\nHere"))
+        // List markers are normalized to "- " for MarkdownText.
+        assertTrue(sanitized.contains("progression:\n\n- Volume"))
+        assertTrue(sanitized.contains("- Intensity"))
+    }
+
+    @Test
+    fun sanitizeInsightMarkdown_splits_glued_numbered_list_items() {
+        val raw = "1. There is no evidence of a plateau based on the last three sessions.2. The last three sessions show matched performance against the target."
+
+        val sanitized = sanitizeInsightMarkdown(raw)
+
+        assertTrue(sanitized.contains("sessions.\n\n2. The last three sessions"))
+    }
+
+    @Test
     fun sanitizeInsightMarkdown_collapsesNestedDashBullets() {
         val sanitized = sanitizeInsightMarkdown(
             """
@@ -151,5 +252,42 @@ class WorkoutInsightMarkdownTest {
         assertFalse(processed.contains("425 kg"))
         assertFalse(processed.contains("10 bpm"))
         assertTrue(processed.contains("the recorded value"))
+    }
+
+    @Test
+    fun postProcessInsightMarkdown_usesToolContextMarkdownForHistoryChatMetricAllowList() {
+        val markdown = """
+            You started using 677 kg and a different bodyweight of 5 kg.
+            Compare S8 (677 x 8) with S9 (67 x 8).
+        """.trimIndent()
+
+        val processed = postProcessInsightMarkdown(
+            markdown = markdown,
+            toolContext = WorkoutInsightsToolContext.Exercise(
+                title = "Pull-Ups chat",
+                exerciseName = "Pull-Ups",
+                markdown = """
+                    # Pull-Ups
+                    ## S8
+                    - Sets: 67x8, 67x7, 67x7
+                    - Session BW: 65 kg
+                    ## S9
+                    - Sets: 67x8, 67x8, 67x7
+                    - Session BW: 65 kg
+                """.trimIndent()
+            ),
+            evidencePrompt = """
+                Current task: answer the User question at the end of this message.
+                User question:
+                am i in a plateau?
+            """.trimIndent()
+        )
+
+        assertFalse(processed.contains("677 kg"))
+        assertFalse(processed.contains("5 kg"))
+        assertFalse(processed.contains("677 x 8"))
+        assertTrue(processed.contains("67 x 8"))
+        assertTrue(processed.contains("the recorded value"))
+        assertTrue(processed.contains("the recorded set"))
     }
 }

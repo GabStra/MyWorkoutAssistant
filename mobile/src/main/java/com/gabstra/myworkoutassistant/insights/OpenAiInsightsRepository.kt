@@ -16,7 +16,9 @@ import com.openai.models.chat.completions.ChatCompletionMessageParam
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import org.json.JSONObject
@@ -193,11 +195,15 @@ class OpenAiInsightsRepository(
             transportRequest.prompt
         )
 
-        repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
-            val builder = ChatCompletionCreateParams.builder()
-                .model(config.model.trim())
-                .messages(messages)
-                .parallelToolCalls(false)
+        for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
+            coroutineContext.ensureActive()
+            val builder = applyMaxOutputTokensIfSet(
+                ChatCompletionCreateParams.builder()
+                    .model(config.model.trim())
+                    .messages(messages)
+                    .parallelToolCalls(false),
+                transportRequest,
+            )
 
             toolExecutor.openAiFunctionDefinitions().forEach { definition ->
                 builder.addTool(ChatCompletionFunctionTool.builder().function(definition).build())
@@ -304,11 +310,15 @@ class OpenAiInsightsRepository(
             "${transportRequest.requestLogLabel}_turn_1_user_message",
             transportRequest.prompt
         )
-        repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
-            val builder = ChatCompletionCreateParams.builder()
-                .model(config.model.trim())
-                .messages(messages)
-                .parallelToolCalls(false)
+        for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
+            coroutineContext.ensureActive()
+            val builder = applyMaxOutputTokensIfSet(
+                ChatCompletionCreateParams.builder()
+                    .model(config.model.trim())
+                    .messages(messages)
+                    .parallelToolCalls(false),
+                transportRequest,
+            )
 
             toolExecutor.openAiFunctionDefinitions().forEach { definition ->
                 builder.addTool(ChatCompletionFunctionTool.builder().function(definition).build())
@@ -383,9 +393,12 @@ class OpenAiInsightsRepository(
         config: RemoteOpenAiConfig,
         transportRequest: WorkoutInsightsTransportRequest,
     ): ChatCompletionCreateParams {
-        val builder = ChatCompletionCreateParams.builder()
-            .model(config.model.trim())
-            .addSystemMessage(transportRequest.systemPrompt)
+        val builder = applyMaxOutputTokensIfSet(
+            ChatCompletionCreateParams.builder()
+                .model(config.model.trim())
+                .addSystemMessage(transportRequest.systemPrompt),
+            transportRequest,
+        )
 
         if (transportRequest.imagePngBytes != null) {
             val imageDataUrl = "data:image/png;base64," + Base64.encodeToString(transportRequest.imagePngBytes, Base64.NO_WRAP)
@@ -435,6 +448,16 @@ class OpenAiInsightsRepository(
     ): String {
         val trimmed = baseUrl.trim().trimEnd('/')
         return if (trimmed.endsWith("/v1", ignoreCase = true)) trimmed else "$trimmed/v1"
+    }
+
+    private fun applyMaxOutputTokensIfSet(
+        builder: ChatCompletionCreateParams.Builder,
+        transportRequest: WorkoutInsightsTransportRequest,
+    ): ChatCompletionCreateParams.Builder {
+        transportRequest.maxOutputTokens?.let { cap ->
+            builder.maxCompletionTokens(cap.toLong())
+        }
+        return builder
     }
 
     private fun ChatCompletionMessageToolCall.toolName(): String {

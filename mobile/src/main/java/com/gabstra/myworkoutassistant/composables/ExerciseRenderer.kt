@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatTime
@@ -32,13 +34,17 @@ import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 
+@Composable
+fun historyExerciseNameTextStyle(): TextStyle =
+    MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+
 fun buildExerciseTemplateRows(
     sets: List<Set>,
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
 ): List<SetTableRowUiModel> {
     val rows = mutableListOf<SetTableRowUiModel>()
-    var index = 0
+    val identifierCounter = SetRowIdentifierCounter()
     sets.forEach { set ->
         when (set) {
             is RestSet -> {
@@ -48,7 +54,7 @@ fun buildExerciseTemplateRows(
             }
 
             is WeightSet -> {
-                index += 1
+                val subCategory = resolveSetSubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
                     set = set
@@ -59,17 +65,14 @@ fun buildExerciseTemplateRows(
                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = buildSetRowIdentifier(
-                        baseIdentifier = index,
-                        setSubCategory = resolveSetSubCategory(set),
-                    ),
+                    identifier = identifierCounter.nextIdentifier(subCategory),
                     primaryValue = weightText,
                     secondaryValue = "${set.reps}",
                 )
             }
 
             is BodyWeightSet -> {
-                index += 1
+                val subCategory = resolveSetSubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
                     set = set
@@ -81,32 +84,25 @@ fun buildExerciseTemplateRows(
                     else -> "BW"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = buildSetRowIdentifier(
-                        baseIdentifier = index,
-                        setSubCategory = resolveSetSubCategory(set),
-                    ),
+                    identifier = identifierCounter.nextIdentifier(subCategory),
                     primaryValue = weightText,
                     secondaryValue = "${set.reps}",
                 )
             }
 
             is TimedDurationSet -> {
-                index += 1
                 rows += SetTableRowUiModel.Data(
-                    identifier = index.toString(),
+                    identifier = identifierCounter.nextIdentifier(null),
                     primaryValue = formatTime(set.timeInMillis / 1000),
                     secondaryValue = null,
-                    monospacePrimary = true,
                 )
             }
 
             is EnduranceSet -> {
-                index += 1
                 rows += SetTableRowUiModel.Data(
-                    identifier = index.toString(),
+                    identifier = identifierCounter.nextIdentifier(null),
                     primaryValue = formatTime(set.timeInMillis / 1000),
                     secondaryValue = null,
-                    monospacePrimary = true,
                 )
             }
         }
@@ -122,7 +118,7 @@ private fun buildExerciseHistoryRows(
     intraExerciseRestHistories: List<RestHistory>,
 ): List<SetTableRowUiModel> {
     val rows = mutableListOf<SetTableRowUiModel>()
-    var index = 0
+    val identifierCounter = SetRowIdentifierCounter()
     sets.forEach { set ->
         when (set) {
             is RestSet -> {
@@ -137,7 +133,7 @@ private fun buildExerciseHistoryRows(
             }
 
             is WeightSet -> {
-                index += 1
+                val subCategory = resolveSetSubCategory(set)
                 val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
@@ -162,17 +158,14 @@ private fun buildExerciseHistoryRows(
                     "${set.reps}"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = buildSetRowIdentifier(
-                        baseIdentifier = index,
-                        setSubCategory = resolveSetSubCategory(set),
-                    ),
+                    identifier = identifierCounter.nextIdentifier(subCategory),
                     primaryValue = weightText,
                     secondaryValue = secondaryReps,
                 )
             }
 
             is BodyWeightSet -> {
-                index += 1
+                val subCategory = resolveSetSubCategory(set)
                 val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
                 val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
                     exercise = exercise,
@@ -209,32 +202,25 @@ private fun buildExerciseHistoryRows(
                     "${set.reps}"
                 }
                 rows += SetTableRowUiModel.Data(
-                    identifier = buildSetRowIdentifier(
-                        baseIdentifier = index,
-                        setSubCategory = resolveSetSubCategory(set),
-                    ),
+                    identifier = identifierCounter.nextIdentifier(subCategory),
                     primaryValue = weightText,
                     secondaryValue = secondaryReps,
                 )
             }
 
             is TimedDurationSet -> {
-                index += 1
                 rows += SetTableRowUiModel.Data(
-                    identifier = index.toString(),
+                    identifier = identifierCounter.nextIdentifier(null),
                     primaryValue = formatTime(set.timeInMillis / 1000),
                     secondaryValue = null,
-                    monospacePrimary = true,
                 )
             }
 
             is EnduranceSet -> {
-                index += 1
                 rows += SetTableRowUiModel.Data(
-                    identifier = index.toString(),
+                    identifier = identifierCounter.nextIdentifier(null),
                     primaryValue = formatTime(set.timeInMillis / 1000),
                     secondaryValue = null,
-                    monospacePrimary = true,
                 )
             }
         }
@@ -260,7 +246,7 @@ private fun ExerciseTitleOnlyRow(
                 .basicMarquee(iterations = Int.MAX_VALUE),
             text = exercise.name,
             maxLines = 2,
-            style = MaterialTheme.typography.bodyLarge,
+            style = historyExerciseNameTextStyle(),
             color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
         )
     }
@@ -297,11 +283,9 @@ private fun ExerciseExpandableSetTableBody(
                     DisabledContentGray
                 }
 
-                ExerciseMetadataStrip(
-                    equipmentName = equipment?.name,
-                    accessoryNames = accessoryEquipments
-                        .joinToString(", ") { it.name }
-                        .takeIf { accessoryEquipments.isNotEmpty() },
+                    ExerciseMetadataStrip(
+                        equipmentName = equipment?.name,
+                    accessoryNameList = accessoryEquipments.map { it.name },
                     textColor = metadataTextColor,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -356,7 +340,7 @@ fun ExerciseTemplateRenderer(
                     .basicMarquee(iterations = Int.MAX_VALUE),
                 text = exercise.name,
                 maxLines = 2,
-                style = MaterialTheme.typography.bodyLarge,
+                style = historyExerciseNameTextStyle(),
                 color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
             )
         },
@@ -424,7 +408,7 @@ fun ExerciseHistoryRenderer(
                         .basicMarquee(iterations = Int.MAX_VALUE),
                     text = exercise.name,
                     maxLines = 2,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = historyExerciseNameTextStyle(),
                     color = if (exercise.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray
                 )
             }

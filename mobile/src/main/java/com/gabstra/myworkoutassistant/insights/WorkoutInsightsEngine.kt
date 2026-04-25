@@ -1,7 +1,9 @@
 package com.gabstra.myworkoutassistant.insights
 
 import android.content.Context
+import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 enum class WorkoutInsightsMode(
     val label: String,
@@ -49,6 +51,16 @@ class ConfigurableWorkoutInsightsEngine(
     override fun generateInsights(
         request: WorkoutInsightsRequest,
     ): Flow<WorkoutInsightsChunk> {
+        if (!MobileLlmFeatureFlags.ENABLED) {
+            return flowOf(
+                WorkoutInsightsChunk(
+                    title = request.title,
+                    text = "LLM features are temporarily disabled.",
+                    phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                    statusText = "LLM features are temporarily disabled."
+                )
+            )
+        }
         val preparedRequest = request.withConfiguredCustomInstructions()
         return when (WorkoutInsightsSettingsStore.getMode(context)) {
             WorkoutInsightsMode.LOCAL -> localEngine.generateInsights(preparedRequest)

@@ -299,7 +299,7 @@ fun ExerciseScreen(
                                 currentSideIndex = state.intraSetCounter.takeIf { state.intraSetTotal != null },
                                 isUnilateral = state.isUnilateral,
                                 equipmentName = equipment?.name,
-                                accessoryNames = accessoryEquipments.joinToString(", ") { it.name }.takeIf { accessoryEquipments.isNotEmpty() },
+                                accessoryNameList = accessoryEquipments.map { it.name },
                                 textColor = MaterialTheme.colorScheme.onBackground,
                                 onTap = {
                                     hapticsViewModel.doGentleVibration()

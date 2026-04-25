@@ -340,9 +340,13 @@ private fun buildExerciseSpecs(
     toolContext: WorkoutInsightsToolContext.Exercise,
 ): List<WorkoutInsightsToolSpec> {
     val trimmedMarkdown = toolContext.markdown.trim()
-    val blocks = splitMarkdownBlocks(trimmedMarkdown, Regex("(?m)^## S\\d+:"))
-    val header = blocks.firstOrNull().orEmpty().trim()
-    val sessions = blocks.drop(1).map { it.trim() }
+    val compactHistory = compactExerciseHistoryParts(trimmedMarkdown)
+    val header = compactHistory.header.trim()
+    val sessions = compactHistory.sessions.ifEmpty {
+        splitMarkdownBlocks(trimmedMarkdown, Regex("(?m)^## S\\d+:"))
+            .drop(1)
+            .map { it.trim() }
+    }
 
     return listOf(
         WorkoutInsightsToolSpec(

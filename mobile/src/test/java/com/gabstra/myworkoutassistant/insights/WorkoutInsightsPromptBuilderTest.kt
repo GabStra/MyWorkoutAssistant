@@ -286,7 +286,7 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(compacted.contains("High-intensity exposure: 0% of samples"))
         assertTrue(compacted.contains("CONTEXT Type WEIGHT"))
         assertFalse(compacted.contains("PLAN "))
-        assertTrue(compacted.contains("Volume: 2160 kg"))
+        assertTrue(compacted, compacted.contains("Volume: 2160 kg"))
         assertTrue(compacted.contains("Sets: 1 set at 9 kg for 5 reps; 1 set at 34 kg for 5 reps; 1 set at 49 kg for 3 reps; 1 set at 69 kg for 9 reps"))
         assertTrue(compacted.contains("Vs best: matched"))
         assertTrue(compacted.contains("Vs prev: above"))
@@ -506,6 +506,10 @@ class WorkoutInsightsPromptBuilderTest {
             - Average as % of max HR: 55.0%
             - Peak as % of max HR: 69.1%
             - Time at or above 85% of max HR: 0% of samples
+            - Valid HR samples: 600
+            - Standard zones (% of samples, bpm range):
+              - Z0 (0.0%50.0% reserve): 70% of samples, 50120 bpm
+              - Z1 (50.0%60.0% reserve): 30% of samples, 120140 bpm
 
             #### Progression Context
             - State: PROGRESS
@@ -518,21 +522,31 @@ class WorkoutInsightsPromptBuilderTest {
 
             #### Executed Timeline
             S1: 9kg5 Vol:45kg | HR: 107 bpm (93119)
+            Rest: 1:35 elapsed (2:00 planned) [intra-exercise]
+            S2: 84kg7 Vol:588kg | HR: 108 bpm (94120)
+            Rest: 1:42 elapsed (2:00 planned) [intra-exercise]
+            S3: 84kg7 Vol:588kg | HR: 109 bpm (95121)
         """.trimIndent()
 
-        val compacted = compactExerciseHistoryMarkdown(markdown, markdownCharBudget = 1_400)
+        val compacted = compactExerciseHistoryMarkdown(markdown, markdownCharBudget = 1_600)
 
         assertFalse(compacted.contains("| Weights:"))
         assertFalse(compacted.contains("## S1:"))
         assertTrue(compacted.contains("S4 "))
         assertFalse(compacted.contains("- Age:"))
         assertFalse(compacted.contains("Range: 69 to 132 bpm"))
-        assertTrue(compacted.contains("HR Avg % max HR: 55% | Peak % max HR: 69%"))
+        assertFalse(compacted.contains("Avg % max HR"))
+        assertFalse(compacted.contains("Peak % max HR"))
+        assertTrue(compacted.contains("HR Approx zone time: Z0 07:00 | Z1 03:00"))
         assertTrue(compacted.contains("PROG State: PROGRESS"))
         assertTrue(compacted.contains("Expected: 3 sets at 84 kg for 7 reps"))
         assertTrue(compacted.contains("Executed: 1 set at 9 kg for 5 reps; 1 set at 41.5 kg for 5 reps; 1 set at 59 kg for 3 reps; 3 sets at 84 kg for 7 reps"))
+        assertFalse(Regex("""\d+(\.\d+)?kg[×x]?\d+""").containsMatchIn(compacted))
+        assertTrue(compacted.contains("Rest between sets: 1:35, 1:42 (planned 2:00)"))
         assertTrue(compacted.contains("Vs success baseline: EQUAL"))
-        assertTrue(compacted.contains("Volume: Prev 0 kg | Exp 1.76 k kg | Exec 1.76 k kg"))
+        assertTrue(compacted.contains("Volume: Prev 0 kg | Exp 1760 kg | Exec 1760 kg"))
+        assertFalse(compacted.contains("Kkg"))
+        assertFalse(compacted.contains("k kg"))
         assertFalse(compacted.contains("Set Differences"))
         assertFalse(compacted.contains("Stored HR samples"))
         assertFalse(compacted.contains("sessionId"))
@@ -619,7 +633,7 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertFalse(compacted.contains("Date: 2026-04-01"))
-        assertTrue(compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
+        assertTrue(compacted, compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
         assertTrue(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 2610 kg"))
         assertTrue(compacted.contains("BEST Volume: 2610 kg"))
         assertFalse(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 2610 kg | State: PROGRESS"))
@@ -691,7 +705,7 @@ class WorkoutInsightsPromptBuilderTest {
 
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
-        assertTrue(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 1764 kg"))
+        assertTrue(compacted, compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 1764 kg"))
         assertFalse(compacted.contains("PREV Sets: 3 sets at 84 kg for 7 reps | Volume: 1764 kg | State: PROGRESS"))
     }
 
@@ -718,7 +732,7 @@ class WorkoutInsightsPromptBuilderTest {
 
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
-        assertTrue(compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
+        assertTrue(compacted, compacted.contains("EXEC Sets: 3 sets at 84 kg for 7 reps | Volume: 2190 kg"))
         assertTrue(compacted.contains("PREV Sets: 2 sets at 81.5 kg for 11 reps; 1 set at 81.5 kg for 10 reps | Volume: 2610 kg"))
         assertTrue(compacted.contains("SIGNALS State: progress | Vs target: equal | Vs prev: below | Load profile vs prev: above | Top load vs prev: above (84 kg vs 81.5 kg) | Sets at top load: 3 vs 3"))
         assertTrue(compacted.contains("TAKEAWAY successful load increase; lower reps and volume are expected after the jump; met the plan."))
@@ -887,7 +901,7 @@ class WorkoutInsightsPromptBuilderTest {
         val compacted = compactWorkoutSessionMarkdown(markdown)
 
         assertTrue(compacted.contains("HR Mean: 105 bpm | Range: 69 to 132 bpm | Avg % max HR: 55% | Peak % max HR: 69% | High-intensity exposure: 0% of samples | Approx zone time: Z0 07:00 | Z1 03:00"))
-        assertTrue(compacted.contains("EXEC Volume: 2190 kg"))
+        assertTrue(compacted, compacted.contains("EXEC Volume: 2190 kg"))
         assertTrue(compacted.contains("PREV Volume: 2610 kg"))
         assertTrue(compacted.contains("BEST Volume: 2610 kg"))
         assertTrue(compacted.contains("PREV Volume: 1250 kg"))

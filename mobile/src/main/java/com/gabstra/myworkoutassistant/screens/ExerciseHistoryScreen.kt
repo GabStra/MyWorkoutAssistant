@@ -17,10 +17,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -51,6 +49,10 @@ import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.ScreenData
+import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
+import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
+import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
+import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
 import com.gabstra.myworkoutassistant.composables.PrimarySurface
 import com.gabstra.myworkoutassistant.composables.RangeDropdown
@@ -578,36 +580,17 @@ fun ExerciseHistoryScreen(
                 val scrollState = rememberScrollState()
                 when (selectedHistoryMode.coerceIn(0, 1)) {
                     0 -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .fillMaxSize()
-                                .verticalScroll(
-                                    state = scrollState,
-                                    enabled = !isChartInteractionActive,
-                                )
-                                .padding(horizontal = Spacing.md),
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
+                        HistoryGraphTabColumn(
+                            scrollState = scrollState,
+                            isScrollEnabled = !isChartInteractionActive,
                         ) {
                             if (setHistoriesByWorkoutHistoryId.isEmpty()) {
-                                PrimarySurface(
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(15.dp),
-                                        text = "No history in selected range",
-                                        textAlign = TextAlign.Center,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
-                                    )
-                                }
+                                HistoryGraphEmptyState(text = "No history in selected range.")
                             }
                             if (volumeEntryModel != null) {
                                 StandardChart(
                                     cartesianChartModel = volumeEntryModel!!,
-                                    title = "Volume (KG)",
+                                    title = "Volume (kg)",
                                     markerTextFormatter = { formatNumber(it) },
                                     startAxisValueFormatter = volumeAxisValueFormatter,
                                     bottomAxisValueFormatter = horizontalAxisValueFormatter,
@@ -620,7 +603,7 @@ fun ExerciseHistoryScreen(
                             if (oneRepMaxEntryModel != null) {
                                 StandardChart(
                                     cartesianChartModel = oneRepMaxEntryModel!!,
-                                    title = "Estimated 1RM/Session (KG)",
+                                    title = "Estimated 1RM / session (kg)",
                                     startAxisValueFormatter = CartesianValueFormatter { _, value, _ ->
                                         value.round(2).toString()
                                     },
@@ -649,18 +632,7 @@ fun ExerciseHistoryScreen(
                     }
                     1 -> {
                         if (setHistoriesByWorkoutHistoryId.isEmpty() || selectedWorkoutHistory == null) {
-                            PrimarySurface(
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(15.dp),
-                                    text = "No history in selected range",
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .87f),
-                                )
-                            }
+                            HistoryGraphEmptyState(text = "No history in selected range.")
                             return@Column
                         }
 
@@ -724,13 +696,8 @@ fun ExerciseHistoryScreen(
                             }
                         }
 
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .fillMaxSize(),
+                        HistorySetsTabColumn(
                             state = lazyListState,
-                            verticalArrangement = Arrangement.spacedBy(15.dp),
                         ) {
                             if (hasTarget) {
                                 item {
@@ -758,20 +725,41 @@ fun ExerciseHistoryScreen(
                             }
                             item {
                                 PrimarySurface {
-                                    if (setHistories.isSupersetSession) {
-                                        SupersetSetHistoriesRenderer(
-                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                            setHistories = setHistories.renderSetHistories,
-                                            workout = workout,
-                                            getEquipmentById = { appViewModel.getEquipmentById(it) }
+                                    Column(
+                                        modifier = Modifier.padding(vertical = 5.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val historicalEquipmentName = setHistories.selectedExerciseSetHistories
+                                            .firstOrNull()
+                                            ?.equipmentNameSnapshot
+                                        val historicalEquipmentId = setHistories.selectedExerciseSetHistories
+                                            .firstOrNull()
+                                            ?.equipmentIdSnapshot
+                                        val equipmentName = when {
+                                            !historicalEquipmentName.isNullOrBlank() -> historicalEquipmentName
+                                            historicalEquipmentId != null -> appViewModel.getEquipmentById(historicalEquipmentId)?.name
+                                            else -> exercise.equipmentId?.let { appViewModel.getEquipmentById(it)?.name }
+                                        }
+                                        val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                                            .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+                                        EquipmentAccessoryMetadata(
+                                            equipmentName = equipmentName,
+                                            accessoryNames = accessoryNames,
                                         )
-                                    } else {
-                                        SetHistoriesRenderer(
-                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 5.dp),
-                                            setHistories = setHistories.renderSetHistories,
-                                            appViewModel = appViewModel,
-                                            workout = workout
-                                        )
+                                        if (setHistories.isSupersetSession) {
+                                            SupersetSetHistoriesRenderer(
+                                                setHistories = setHistories.renderSetHistories,
+                                                workout = workout,
+                                                getEquipmentById = { appViewModel.getEquipmentById(it) }
+                                            )
+                                        } else {
+                                            SetHistoriesRenderer(
+                                                setHistories = setHistories.renderSetHistories,
+                                                appViewModel = appViewModel,
+                                                workout = workout,
+                                                showMetadata = false,
+                                            )
+                                        }
                                     }
                                 }
                             }

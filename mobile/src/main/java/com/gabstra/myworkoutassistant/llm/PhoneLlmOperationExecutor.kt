@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.llm
 
 import android.content.Context
+import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPhase
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
@@ -21,6 +22,13 @@ class PhoneLlmOperationExecutor(
     ): PhoneLlmOperationResult {
         val requestId = request.requestId.trim()
         val operation = request.operation.trim().ifBlank { DEFAULT_PHONE_LLM_OPERATION }
+        if (!MobileLlmFeatureFlags.ENABLED) {
+            return PhoneLlmOperationResult.error(
+                requestId = requestId,
+                operation = operation,
+                errorMessage = "Phone LLM operations are temporarily disabled."
+            )
+        }
         val prompt = request.prompt.trim()
         if (requestId.isBlank()) {
             return PhoneLlmOperationResult.error(

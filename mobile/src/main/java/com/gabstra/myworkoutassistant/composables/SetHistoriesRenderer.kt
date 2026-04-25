@@ -2,13 +2,9 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.formatSecondsToMinutesSeconds
@@ -27,7 +23,8 @@ fun SetHistoriesRenderer(
     modifier: Modifier = Modifier,
     setHistories: List<SetHistory>,
     appViewModel: AppViewModel,
-    workout: Workout
+    workout: Workout,
+    showMetadata: Boolean = true,
 ) {
     if (setHistories.isEmpty()) {
         return
@@ -51,24 +48,22 @@ fun SetHistoriesRenderer(
         modifier = modifier.padding(5.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val headerText = when {
-            !historicalEquipmentName.isNullOrBlank() -> "Equipment: $historicalEquipmentName"
-            equipment != null -> "Equipment: ${equipment.name}"
+        val equipmentName = when {
+            !historicalEquipmentName.isNullOrBlank() -> historicalEquipmentName
+            equipment != null -> equipment.name
             else -> null
         }
-
-        if (headerText != null) {
-            Text(
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                text = headerText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        if (showMetadata) {
+            val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+            EquipmentAccessoryMetadata(
+                equipmentName = equipmentName,
+                accessoryNames = accessoryNames,
             )
         }
 
         val rows = mutableListOf<SetTableRowUiModel>()
-        var index = 0
+        val identifierCounter = SetRowIdentifierCounter()
         setHistories.forEach { set ->
             val setData = set.setData
             if (setData is RestSetData) {
@@ -78,11 +73,8 @@ fun SetHistoriesRenderer(
                 return@forEach
             }
 
-            index += 1
-            val identifier = buildSetRowIdentifier(
-                baseIdentifier = index,
-                setSubCategory = resolveSetSubCategory(setData),
-            )
+            val setSubCategory = resolveSetSubCategory(setData)
+            val identifier = identifierCounter.nextIdentifier(setSubCategory)
             when (setData) {
                 is WeightSetData -> {
                     val isCal = setData.subCategory == SetSubCategory.CalibrationSet
@@ -125,7 +117,6 @@ fun SetHistoriesRenderer(
                         identifier = identifier,
                         primaryValue = primaryTime,
                         secondaryValue = null,
-                        monospacePrimary = true,
                     )
                 }
 
@@ -139,7 +130,6 @@ fun SetHistoriesRenderer(
                         identifier = identifier,
                         primaryValue = primaryTime,
                         secondaryValue = null,
-                        monospacePrimary = true,
                     )
                 }
 

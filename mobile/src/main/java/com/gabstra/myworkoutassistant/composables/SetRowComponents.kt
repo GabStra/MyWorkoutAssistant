@@ -129,12 +129,12 @@ fun SetTableHeaderRow(
 ) {
     val hasSecondaryColumn = header.secondaryLabel != null
     val primaryColumnWeight = if (hasSecondaryColumn) WeightColumnWeight else TimeColumnWeight
-    val labelStyle = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+    val labelStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
             text = header.setLabel,
@@ -175,11 +175,11 @@ private fun SetTableDataRow(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = row.onClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     } else {
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     }
 
     val primaryStyle = MaterialTheme.typography.bodyLarge.let { base ->
@@ -225,7 +225,7 @@ private fun SetTableRestRow(
         text = row.text,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         style = MaterialTheme.typography.bodyLarge,
         color = textColor,
         textAlign = TextAlign.Center,

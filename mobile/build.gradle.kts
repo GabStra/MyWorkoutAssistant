@@ -157,12 +157,12 @@ dependencies {
 
     // Room runtime only; shared owns Room annotation processing.
     implementation("androidx.room:room-runtime:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
-    implementation("com.openai:openai-java:4.31.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    implementation("com.openai:openai-java:4.32.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
     // Misc
-    implementation("com.google.code.gson:gson:2.13.2")
+    implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.patrykandpatrick.vico:compose:3.1.0")
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")

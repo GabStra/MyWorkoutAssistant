@@ -202,6 +202,11 @@ private data class CompactWorkoutSubsectionData(
     val lines: List<String>,
 )
 
+internal data class CompactExerciseHistoryParts(
+    val header: String,
+    val sessions: List<String>,
+)
+
 private val WORKOUT_SESSION_ALLOWED_SUBSECTIONS = linkedSetOf(
     "Context",
     "Planned",
@@ -456,6 +461,26 @@ internal fun compactExerciseHistoryMarkdown(
     }.trim().takeWithinBudget(markdownCharBudget)
 }
 
+internal fun compactExerciseHistoryParts(
+    markdown: String,
+): CompactExerciseHistoryParts {
+    val trimmed = markdown.trim()
+    val sessionBlocks = splitMarkdownBlocks(trimmed, Regex("(?m)^## S\\d+:"))
+    if (sessionBlocks.size <= 1) {
+        return CompactExerciseHistoryParts(
+            header = trimmed,
+            sessions = emptyList()
+        )
+    }
+
+    return CompactExerciseHistoryParts(
+        header = compactExerciseHeader(sessionBlocks.first()),
+        sessions = addExerciseHistoryTakeaways(
+            sessionBlocks.drop(1).mapNotNull(::compactExerciseSessionBlock)
+        )
+    )
+}
+
 private fun compactExerciseHeader(
     headerMarkdown: String,
 ): String {
@@ -507,6 +532,7 @@ private fun compactExerciseSessionBlock(
         val title = normalized.substringBefore('\n').removePrefix("#### ").trim()
         when (title) {
             "Session Heart Rate" -> compactExerciseSessionHeartRateSubsection(normalized)
+            "Exercise Heart Rate" -> compactExerciseSessionHeartRateSubsection(normalized)
             "Progression Context" -> compactExerciseProgressionSubsection(normalized)
             "Executed Timeline" -> compactExerciseTimelineSubsection(normalized)
             else -> null
@@ -766,16 +792,7 @@ private fun compactExerciseSessionHeartRateSubsection(
         .filter { it.isNotBlank() }
         .toList()
 
-    val compactedLines = compactSessionHeartRateLines(lines)
-        .filter { line ->
-            line.startsWith("- Avg % max HR:") ||
-                line.startsWith("- Peak % max HR:") ||
-                line.startsWith("- High-intensity exposure:")
-        }
-        .filterNot { line ->
-            line == "- High-intensity exposure: 0% of samples"
-        }
-        .take(3)
+    val compactedLines = listOfNotNull(buildApproxZoneTimeLine(lines))
 
     if (compactedLines.isEmpty()) return null
     return renderExerciseSubsection("Session Heart Rate", compactedLines)
@@ -806,10 +823,12 @@ private fun compactExerciseProgressionSubsection(
         .map(::compactRepeatedEntryListLine)
         .filter { line ->
             line.startsWith("- Progression state:") ||
+                line.startsWith("- Previous:") ||
                 line.startsWith("- Expected:") ||
                 line.startsWith("- Executed:") ||
                 line.startsWith("- Vs expected:") ||
                 line.startsWith("- Vs previous baseline:") ||
+                line.startsWith("- Vs success baseline:") ||
                 line.startsWith("- Volume:")
         }
         .map(::compactLabelLine)
@@ -829,16 +848,81 @@ private fun compactExerciseTimelineSubsection(
         .filter { it.isNotBlank() }
         .toList()
 
-    val compactedLines = lines
-        .filter { line ->
-            line.startsWith("S") || line.startsWith("[skipped] S")
-        }
+    val compactedSetLines = lines
+        .filter(::isExerciseTimelineWorkSetLine)
         .map(::normalizeCompactRangeLine)
         .map(::humanizeDenseMetrics)
         .take(2)
+    val compactedLines = compactedSetLines
+        .plus(listOfNotNull(buildRestBetweenWorkSetsLine(lines)))
 
     if (compactedLines.isEmpty()) return null
     return renderExerciseSubsection("Executed Timeline", compactedLines)
+}
+
+private data class RestBetweenWorkSetsEntry(
+    val elapsed: String?,
+    val planned: String?,
+)
+
+private fun buildRestBetweenWorkSetsLine(
+    lines: List<String>,
+): String? {
+    val restEntries = mutableListOf<RestBetweenWorkSetsEntry>()
+    var previousWasWork = false
+    lines.forEachIndexed { index, line ->
+        val isWork = isExerciseTimelineWorkSetLine(line)
+        if (line.startsWith("Rest:", ignoreCase = true) && previousWasWork) {
+            val hasLaterWork = lines.drop(index + 1).any(::isExerciseTimelineWorkSetLine)
+            if (hasLaterWork) {
+                parseRestBetweenWorkSetsEntry(line)?.let(restEntries::add)
+            }
+        }
+        if (isWork) previousWasWork = true
+    }
+    if (restEntries.isEmpty()) return null
+
+    val elapsedValues = restEntries.mapNotNull { it.elapsed }.take(5)
+    if (elapsedValues.isEmpty()) return null
+    val hiddenCount = (restEntries.size - elapsedValues.size).coerceAtLeast(0)
+    val plannedValues = restEntries.mapNotNull { it.planned }.distinct()
+    val plannedSuffix = when (plannedValues.size) {
+        0 -> ""
+        1 -> " (planned ${plannedValues.first()})"
+        else -> " (planned varies)"
+    }
+    val overflowSuffix = if (hiddenCount > 0) " +$hiddenCount more" else ""
+    return "- Rest between sets: ${elapsedValues.joinToString(", ")}$overflowSuffix$plannedSuffix"
+}
+
+private fun isExerciseTimelineWorkSetLine(
+    line: String,
+): Boolean {
+    val trimmed = line.trim()
+    return Regex("""^(?:\[skipped]\s*)?(?:S)?\d+:""").containsMatchIn(trimmed)
+}
+
+private fun parseRestBetweenWorkSetsEntry(
+    line: String,
+): RestBetweenWorkSetsEntry? {
+    val elapsed = Regex("""Rest:\s*([0-9:]+)\s+elapsed""", RegexOption.IGNORE_CASE)
+        .find(line)
+        ?.groupValues
+        ?.getOrNull(1)
+    val plannedFromElapsed = Regex("""\(([0-9:]+)\s+planned\)""", RegexOption.IGNORE_CASE)
+        .find(line)
+        ?.groupValues
+        ?.getOrNull(1)
+    val plannedOnly = Regex("""Rest:\s*([0-9:]+)\s+planned""", RegexOption.IGNORE_CASE)
+        .find(line)
+        ?.groupValues
+        ?.getOrNull(1)
+    val planned = plannedFromElapsed ?: plannedOnly
+    if (elapsed == null && planned == null) return null
+    return RestBetweenWorkSetsEntry(
+        elapsed = elapsed ?: planned,
+        planned = planned
+    )
 }
 
 private fun renderExerciseSubsection(
@@ -1053,9 +1137,9 @@ private fun compactSignalLines(lines: List<String>): List<String> {
 private fun compactExecutedLines(lines: List<String>): List<String> {
     val compacted = compactSignalLines(lines)
         .filter { line ->
-            line.startsWith("- Total volume:") ||
-                line.startsWith("- Total duration:") ||
-                line.startsWith("- Set summary:")
+            line.startsWith("- Total volume:", ignoreCase = true) ||
+                line.startsWith("- Total duration:", ignoreCase = true) ||
+                line.startsWith("- Set summary:", ignoreCase = true)
         }
         .map(::stripLikelyWarmupSetSummaryLine)
         .map(::compactRepeatedEntryListLine)
@@ -1077,9 +1161,9 @@ private fun compactPreviousSessionLines(lines: List<String>): List<String> {
     val setsLine = buildHistoricalSessionSetsLine(lines)
     val compacted = compactSignalLines(lines)
         .filter { line ->
-            line.startsWith("- Total volume:") ||
-                line.startsWith("- Total duration:") ||
-                line.startsWith("- Progression state:")
+            line.startsWith("- Total volume:", ignoreCase = true) ||
+                line.startsWith("- Total duration:", ignoreCase = true) ||
+                line.startsWith("- Progression state:", ignoreCase = true)
         }
         .map(::compactLabelLine)
 
@@ -1097,7 +1181,7 @@ private fun compactPreviousSessionLines(lines: List<String>): List<String> {
 private fun buildHistoricalSessionSetsLine(
     lines: List<String>,
 ): String? {
-    val explicitSetSummary = lines.firstOrNull { it.startsWith("- Set summary:") }
+    val explicitSetSummary = lines.firstOrNull { it.startsWith("- Set summary:", ignoreCase = true) }
         ?.let(::stripLikelyWarmupSetSummaryLine)
         ?.let(::compactRepeatedEntryListLine)
         ?.let(::normalizeMetricLine)
@@ -1133,9 +1217,9 @@ private fun extractHistoricalSetEntry(
 private fun compactBestToDateLines(lines: List<String>): List<String> {
     val compacted = compactSignalLines(lines)
         .filter { line ->
-            line.startsWith("- Total volume:") ||
-                line.startsWith("- Total duration:") ||
-                line.startsWith("- Progression state:")
+            line.startsWith("- Total volume:", ignoreCase = true) ||
+                line.startsWith("- Total duration:", ignoreCase = true) ||
+                line.startsWith("- Progression state:", ignoreCase = true)
         }
         .map(::compactLabelLine)
 
@@ -1347,9 +1431,10 @@ private fun compactCoachingSignalLines(lines: List<String>): List<String> {
 private fun compactRepeatedEntryListLine(
     line: String,
 ): String {
-    val prefix = listOf("- Set summary:", "- Expected:", "- Executed:")
-        .firstOrNull { line.startsWith(it) } ?: return line
-    val value = line.removePrefix(prefix).trim()
+    val normalizedLine = normalizeMetricLine(line)
+    val prefix = listOf("- Set summary:", "- Previous:", "- Expected:", "- Executed:")
+        .firstOrNull { normalizedLine.startsWith(it) } ?: return normalizedLine
+    val value = normalizedLine.removePrefix(prefix).trim()
     if (value.isBlank()) return line
     return "$prefix ${renderCompactSetSummaryForPrompt(compactRepeatedEntryList(value))}"
 }
@@ -1539,13 +1624,22 @@ private fun String.takeWithinBudget(
 private fun humanizeDenseMetrics(line: String): String {
     return line
         .replace('×', 'x')
-        .replace("Kkg", "k kg")
-        .replace(" K kg", " k kg")
+        .replace(
+            Regex("""\b([0-9]+(?:\.[0-9]+)?)\s*Kkg\b""", RegexOption.IGNORE_CASE)
+        ) { match ->
+            val kilograms = match.groupValues[1].toDoubleOrNull()
+                ?.times(1000.0)
+                ?.let(::formatKilogramVolume)
+                ?: return@replace match.value
+            "$kilograms kg"
+        }
         .replace(" kgx ", " kg x ")
         .replace(Regex("(?<=\\d)\\s*kgx\\s*(?=\\d)"), " kg x ")
         .replace(Regex("(?<=\\d)kg(?=\\d)"), " kg x ")
         .replace(Regex("(?<=\\d)kg\\b"), " kg")
         .replace(Regex("Vol:\\s*"), "Volume: ")
+        .replace(Regex("""\bVolume:\s*([0-9]+(?:\.[0-9]+)?)\s*kg\b""", RegexOption.IGNORE_CASE), "Volume: $1 kg")
+        .replace(Regex("""\b(Prev|Exp|Exec)\s+([0-9]+(?:\.[0-9]+)?)\s*kg\b""", RegexOption.IGNORE_CASE), "$1 $2 kg")
         .replace(Regex("Dur:\\s*"), "Duration: ")
         .replace(Regex("""Range:\s*(\d{4,6})(?:\s*bpm|\bbpm\b)""")) { match ->
             expandCompactBpmRange(match.groupValues[1])
@@ -1572,14 +1666,6 @@ private fun humanizeDenseMetrics(line: String): String {
 
 private fun normalizeRenderedPromptMetrics(line: String): String {
     return normalizeMetricLine(line)
-        .replace(
-            Regex("""\bVolume:\s*([0-9]+(?:\.[0-9]+)?)\s*k kg\b""", RegexOption.IGNORE_CASE)
-        ) { match ->
-            val kilograms = (match.groupValues[1].toDoubleOrNull()?.times(1000.0))
-                ?.let(::formatKilogramVolume)
-                ?: return@replace match.value
-            "Volume: $kilograms kg"
-        }
 }
 
 private fun formatKilogramVolume(kilograms: Double): String {
@@ -2082,6 +2168,7 @@ private fun signalValueToComparisonStatus(value: String?): String? {
 
 private fun buildApproxZoneTimeLine(lines: List<String>): String? {
     val validSampleCount = lines.firstNotNullOfOrNull(::parseValidHeartRateSampleCount)
+        ?: lines.firstNotNullOfOrNull(::parseStoredHeartRateSampleCount)
         ?: lines.firstNotNullOfOrNull(::parseRecordedHeartRateSpanSeconds)
         ?: return null
     val zoneDurations = lines
@@ -2119,11 +2206,27 @@ private fun parseRecordedHeartRateSpanSeconds(
     }
 }
 
+private fun parseStoredHeartRateSampleCount(
+    line: String,
+): Int? {
+    return Regex("""^- Stored HR samples:\s*(\d+)""", RegexOption.IGNORE_CASE)
+        .find(line.trim())
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+}
+
 private fun parseHeartRateZoneFraction(
     line: String,
 ): Pair<String, Int>? {
-    val match = Regex(
+    Regex(
         """^- Z\s*(\d+)\s*\([^)]*\):\s*(\d{1,3})%\s+of\s+samples""",
+        RegexOption.IGNORE_CASE
+    ).find(line.trim())?.let { match ->
+        return "Z${match.groupValues[1]}" to (match.groupValues[2].toIntOrNull() ?: return null)
+    }
+    val match = Regex(
+        """^- Z\s*(\d+):\s*(\d{1,3})%""",
         RegexOption.IGNORE_CASE
     ).find(line.trim()) ?: return null
     return "Z${match.groupValues[1]}" to (match.groupValues[2].toIntOrNull() ?: return null)
@@ -2666,7 +2769,9 @@ private fun compactLabelLine(
     line: String,
 ): String {
     return line
+        .replace("- Total Volume:", "- Volume:")
         .replace("- Total volume:", "- Volume:")
+        .replace("- Total Duration:", "- Duration:")
         .replace("- Total duration:", "- Duration:")
         .replace("- Set summary:", "- Sets:")
         .replace("- Progression state:", "- State:")

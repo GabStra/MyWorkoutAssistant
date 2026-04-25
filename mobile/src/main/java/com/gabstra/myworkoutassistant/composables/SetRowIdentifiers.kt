@@ -9,6 +9,8 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSubCategory
 
 private const val CalibrationSetIdentifier = "Cal"
 private const val WarmupSetIdentifierPrefix = "W"
@@ -21,6 +23,29 @@ internal fun buildSetRowIdentifier(
         SetSubCategory.WarmupSet -> "$WarmupSetIdentifierPrefix$baseIdentifier"
         SetSubCategory.CalibrationSet -> CalibrationSetIdentifier
         else -> baseIdentifier.toString()
+    }
+}
+
+internal class SetRowIdentifierCounter {
+    private var workSetCount = 0
+    private var warmupSetCount = 0
+    private var calibrationSetCount = 0
+
+    fun nextIdentifier(setSubCategory: SetSubCategory?): String {
+        return when (displayCounterKindForSubCategory(setSubCategory)) {
+            SetDisplayCounterKind.Warmup -> {
+                warmupSetCount += 1
+                buildSetRowIdentifier(warmupSetCount, setSubCategory)
+            }
+            SetDisplayCounterKind.Calibration -> {
+                calibrationSetCount += 1
+                buildSetRowIdentifier(calibrationSetCount, setSubCategory)
+            }
+            SetDisplayCounterKind.Work -> {
+                workSetCount += 1
+                buildSetRowIdentifier(workSetCount, setSubCategory)
+            }
+        }
     }
 }
 

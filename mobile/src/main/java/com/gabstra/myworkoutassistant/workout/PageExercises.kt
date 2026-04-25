@@ -231,7 +231,7 @@ fun PageExercises(
                         } else null,
                         isUnilateral = currentExercise == selectedExercise && setBelongsToSelected && setState.isUnilateral,
                         equipmentName = selectedExerciseEquipment?.name,
-                        accessoryNames = selectedExerciseAccessories.joinToString(", ") { it.name }.takeIf { selectedExerciseAccessories.isNotEmpty() },
+                        accessoryNameList = selectedExerciseAccessories.map { it.name },
                         textColor = MaterialTheme.colorScheme.onBackground,
                         onTap = {
                             hapticsViewModel.doGentleVibration()

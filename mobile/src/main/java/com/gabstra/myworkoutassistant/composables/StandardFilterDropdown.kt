@@ -3,10 +3,15 @@ package com.gabstra.myworkoutassistant.composables
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandMore
@@ -23,9 +28,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 
 data class StandardFilterDropdownItem<T>(
     val value: T,
@@ -43,7 +56,16 @@ fun <T> StandardFilterDropdown(
     enabled: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
     val fieldTextStyle = MaterialTheme.typography.bodyLarge
+    val maxPopupWidth = (configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val popupPositionProvider = remember(density) {
+        FilterMenuPositionProvider(
+            verticalMarginPx = with(density) { 4.dp.roundToPx() }
+        )
+    }
 
     Box(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -85,59 +107,86 @@ fun <T> StandardFilterDropdown(
                     .clickable(enabled = enabled) { expanded = true }
             )
 
-            AppDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp),
-                offset = DpOffset(0.dp, 8.dp)
-            ) {
-                items.forEachIndexed { index, item ->
-                    val selected = isItemSelected(item.value)
+            if (expanded) {
+                Popup(
+                    popupPositionProvider = popupPositionProvider,
+                    onDismissRequest = { expanded = false },
+                    properties = PopupProperties(focusable = true)
+                ) {
+                    MenuSurface(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .width(IntrinsicSize.Max)
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(scrollState)
+                        ) {
+                            items.forEachIndexed { index, item ->
+                                val selected = isItemSelected(item.value)
 
-                    AppDropdownMenuItem(
-                        text = {
-                            Text(
-                                maxLines = 1,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .basicMarquee(iterations = Int.MAX_VALUE)
-                                    .clickable {
-                                        onItemSelected(item.value)
-                                        expanded = false
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onItemSelected(item.value)
+                                            expanded = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        maxLines = 1,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .basicMarquee(iterations = Int.MAX_VALUE),
+                                        text = item.label,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                    if (selected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null
+                                        )
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                text = item.label,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                        },
-                        // Menu item padding lives on the Text so marquee + tap target stay aligned; default
-                        // dropdown padding would shrink the scrollable label area.
-                        contentPadding = PaddingValues(0.dp),
-                        trailingIcon = if (selected) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        onClick = {
-                            expanded = false
-                            onItemSelected(item.value)
-                        }
-                    )
+                                }
 
-                    if (index < items.lastIndex) {
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                        )
+                                if (index < items.lastIndex) {
+                                    HorizontalDivider(
+                                        color = appMenuBorderColor()
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+private class FilterMenuPositionProvider(
+    private val verticalMarginPx: Int
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val popupWidth = popupContentSize.width
+        val popupHeight = popupContentSize.height
+        val maxX = (windowSize.width - popupWidth).coerceAtLeast(0)
+        val maxY = (windowSize.height - popupHeight).coerceAtLeast(0)
+
+        val centeredX = anchorBounds.left + (anchorBounds.width - popupWidth) / 2
+        val belowY = anchorBounds.bottom + verticalMarginPx
+        val aboveY = anchorBounds.top - popupHeight - verticalMarginPx
+        val resolvedY = if (belowY <= maxY) belowY else aboveY
+
+        return IntOffset(
+            x = centeredX.coerceIn(0, maxX),
+            y = resolvedY.coerceIn(0, maxY)
+        )
     }
 }

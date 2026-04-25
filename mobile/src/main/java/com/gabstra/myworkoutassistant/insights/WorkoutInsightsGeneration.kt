@@ -47,6 +47,11 @@ internal data class WorkoutInsightsTransportRequest(
     val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
     val requestLogLabel: String,
     val responseLogLabel: String,
+    /**
+     * When set, caps generated tokens for this request (LiteRT: decode limit; OpenAI-compatible:
+     * `max_completion_tokens`). Null leaves the backend default (full insight generations).
+     */
+    val maxOutputTokens: Int? = null,
 )
 
 private const val MAX_FINAL_SYNTHESIS_ATTEMPTS = 2
@@ -73,7 +78,134 @@ internal suspend fun runWorkoutInsightsGeneration(
     ) -> Unit,
     onAfterChartAnalysis: (suspend () -> Unit)? = null,
 ) {
-    val finalSynthesisBasePrompt = buildFinalSynthesisInlinePrompt(request)
+    if (request.useTransportToolCalling && request.toolContext != null) {
+        emitChunk(
+            WorkoutInsightsChunk(
+                title = request.title,
+                text = PREPARING_TOOLS_PLACEHOLDER,
+                phase = WorkoutInsightsPhase.PREPARING_TOOLS,
+                statusText = PREPARING_TOOLS_PLACEHOLDER
+            )
+        )
+        val chatSystemPrompt = appendCustomInsightInstructions(
+            systemPrompt = request.systemPrompt.trimIndent(),
+            customInstructions = request.customInstructions
+        )
+        logWorkoutInsightsBlock(logTag, "${transportLabel}_chat_system_prompt", chatSystemPrompt)
+        logWorkoutInsightsBlock(logTag, "${transportLabel}_chat_user_prompt", request.prompt)
+        val accumulated = StringBuilder()
+        var finalAttempt = 1
+        while (true) {
+            val repetitionDetector = InsightRepetitionDetector()
+            try {
+                streamText(
+                    WorkoutInsightsTransportRequest(
+                        systemPrompt = chatSystemPrompt.withRepeatedTextRetryInstruction(finalAttempt),
+                        prompt = request.prompt,
+                        imagePngBytes = null,
+                        toolContext = request.toolContext,
+                        chartTimelineToolContext = null,
+                        requestLogLabel = "${transportLabel}_chat_request".withAttemptLogSuffix(finalAttempt),
+                        responseLogLabel = "${transportLabel}_chat_raw_response".withAttemptLogSuffix(finalAttempt),
+                        maxOutputTokens = HistoryChatLimits.MAX_OUTPUT_TOKENS,
+                    ),
+                    { chunk ->
+                        accumulated.append(chunk)
+                        repetitionDetector.detect(accumulated.toString())?.let { result ->
+                            throw RepeatedInsightTextException(result)
+                        }
+                        emitChunk(
+                            WorkoutInsightsChunk(
+                                title = request.title,
+                                text = accumulated.toString(),
+                                phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                                statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                            )
+                        )
+                    },
+                    { phase, statusText ->
+                        emitChunk(
+                            WorkoutInsightsChunk(
+                                title = request.title,
+                                text = accumulated.toString().ifBlank {
+                                    when (phase) {
+                                        WorkoutInsightsPhase.PREPARING_TOOLS -> PREPARING_TOOLS_PLACEHOLDER
+                                        WorkoutInsightsPhase.FETCHING_CONTEXT -> statusText
+                                        WorkoutInsightsPhase.SUMMARIZING_CONTEXT -> statusText
+                                        WorkoutInsightsPhase.CHART_ANALYSIS -> statusText.ifBlank { FINAL_SYNTHESIS_PLACEHOLDER }
+                                        WorkoutInsightsPhase.FINAL_SYNTHESIS -> FINAL_SYNTHESIS_PLACEHOLDER
+                                    }
+                                },
+                                phase = phase,
+                                statusText = statusText
+                            )
+                        )
+                    }
+                )
+                break
+            } catch (exception: RepeatedInsightTextException) {
+                logWorkoutInsightsBlock(
+                    logTag,
+                    "${transportLabel}_chat_repeated_text_attempt_$finalAttempt",
+                    buildRepeatedTextLog(
+                        partialText = accumulated.toString(),
+                        result = exception.result
+                    )
+                )
+                if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
+                    throw IllegalStateException(
+                        "Chat generation repeated text after retry. Please try again."
+                    )
+                }
+                finalAttempt += 1
+                accumulated.clear()
+                emitChunk(
+                    WorkoutInsightsChunk(
+                        title = request.title,
+                        text = REPEATED_TEXT_RESTART_STATUS,
+                        phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                        statusText = REPEATED_TEXT_RESTART_STATUS
+                    )
+                )
+            }
+        }
+        val rawReply = accumulated.toString()
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_chat_final_raw_response",
+            rawReply.ifBlank { "No reply was generated." }
+        )
+        val normalizedReply = postProcessInsightMarkdown(
+            markdown = rawReply,
+            toolContext = request.toolContext,
+            evidencePrompt = request.prompt
+        )
+        if (normalizedReply != rawReply) {
+            logWorkoutInsightsBlock(
+                logTag,
+                "${transportLabel}_chat_final_postprocessed_response",
+                normalizedReply.ifBlank { "No reply was generated." }
+            )
+            accumulated.clear()
+            accumulated.append(normalizedReply)
+            emitChunk(
+                WorkoutInsightsChunk(
+                    title = request.title,
+                    text = normalizedReply,
+                    phase = WorkoutInsightsPhase.FINAL_SYNTHESIS,
+                    statusText = FINAL_SYNTHESIS_PLACEHOLDER
+                )
+            )
+        }
+        onAfterChartAnalysis?.invoke()
+        return
+    }
+
+    val finalSynthesisBasePrompt = if (request.historyChatSystemIncludesData && request.toolContext != null) {
+        request.prompt
+    } else {
+        buildFinalSynthesisInlinePrompt(request)
+    }
     emitChunk(
         WorkoutInsightsChunk(
             title = request.title,
@@ -90,15 +222,28 @@ internal suspend fun runWorkoutInsightsGeneration(
     while (true) {
         val repetitionDetector = InsightRepetitionDetector()
         try {
+            val synthesisSystemPrompt = if (request.historyChatSystemIncludesData && request.toolContext != null) {
+                appendCustomInsightInstructions(
+                    systemPrompt = request.systemPrompt.trimIndent(),
+                    customInstructions = request.customInstructions,
+                )
+            } else {
+                buildFinalSynthesisSystemPrompt(request)
+            }
             streamText(
                 WorkoutInsightsTransportRequest(
-                    systemPrompt = buildFinalSynthesisSystemPrompt(request)
+                    systemPrompt = synthesisSystemPrompt
                         .withRepeatedTextRetryInstruction(finalAttempt),
                     prompt = finalPrompt,
                     imagePngBytes = null,
                     toolContext = null,
                     requestLogLabel = "${transportLabel}_final_request".withAttemptLogSuffix(finalAttempt),
                     responseLogLabel = "${transportLabel}_final_raw_response".withAttemptLogSuffix(finalAttempt),
+                    maxOutputTokens = if (request.historyChatSystemIncludesData) {
+                        HistoryChatLimits.MAX_OUTPUT_TOKENS
+                    } else {
+                        null
+                    },
                 ),
                 { chunk ->
                     accumulated.append(chunk)

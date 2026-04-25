@@ -69,6 +69,8 @@ import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
+import com.gabstra.myworkoutassistant.screens.HistoryChatScreen
+import com.gabstra.myworkoutassistant.screens.HistoryChatScreenMode
 import com.gabstra.myworkoutassistant.screens.RestForm
 import com.gabstra.myworkoutassistant.screens.RestSetForm
 import com.gabstra.myworkoutassistant.screens.SetForm
@@ -1803,6 +1805,54 @@ fun MyWorkoutAssistantNavHost(
                                     appViewModel.goBack()
                                 }
                             }
+                        }
+                    }
+
+                    is ScreenData.HistoryChatExercise -> {
+                        if (!MobileLlmFeatureFlags.ENABLED) {
+                            LaunchedEffect(currentScreen) {
+                                appViewModel.goBack()
+                            }
+                            LoadingScreen()
+                        } else {
+                            val screenData = currentScreen
+                            HistoryChatScreen(
+                                mode = HistoryChatScreenMode.Exercise(
+                                    workoutId = screenData.workoutId,
+                                    exerciseId = screenData.exerciseId,
+                                ),
+                                appViewModel = appViewModel,
+                                workoutHistoryDao = workoutHistoryDao,
+                                workoutRecordDao = workoutRecordDao,
+                                setHistoryDao = setHistoryDao,
+                                restHistoryDao = restHistoryDao,
+                                exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                onGoBack = { appViewModel.goBack() },
+                            )
+                        }
+                    }
+
+                    is ScreenData.HistoryChatWorkoutSession -> {
+                        if (!MobileLlmFeatureFlags.ENABLED) {
+                            LaunchedEffect(currentScreen) {
+                                appViewModel.goBack()
+                            }
+                            LoadingScreen()
+                        } else {
+                            val screenData = currentScreen
+                            HistoryChatScreen(
+                                mode = HistoryChatScreenMode.WorkoutSession(
+                                    workoutId = screenData.workoutId,
+                                    workoutHistoryId = screenData.workoutHistoryId,
+                                ),
+                                appViewModel = appViewModel,
+                                workoutHistoryDao = workoutHistoryDao,
+                                workoutRecordDao = workoutRecordDao,
+                                setHistoryDao = setHistoryDao,
+                                restHistoryDao = restHistoryDao,
+                                exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                onGoBack = { appViewModel.goBack() },
+                            )
                         }
                     }
 

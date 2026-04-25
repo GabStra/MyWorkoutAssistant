@@ -11,8 +11,11 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ToolProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
@@ -42,6 +45,16 @@ data class WorkoutInsightsRequest(
     val toolContext: WorkoutInsightsToolContext? = null,
     val chartAnalysisContext: String? = null,
     val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
+    /**
+     * When true and [toolContext] is non-null, the transport layer runs tool-calling with
+     * [prompt] as the first user message instead of inlining full markdown.
+     */
+    val useTransportToolCalling: Boolean = false,
+    /**
+     * When true with non-null [toolContext], [systemPrompt] is expected to already include the compacted
+     * export once; [prompt] is only the conversation + question. Used for history chat.
+     */
+    val historyChatSystemIncludesData: Boolean = false,
 )
 
 class LiteRtLmInsightsRepository(
@@ -278,13 +291,10 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
             "${transportRequest.requestLogLabel}_user_prompt",
             transportRequest.prompt
         )
-        val conversationConfig = ConversationConfig(
-            systemInstruction = Contents.of(transportRequest.systemPrompt),
-            samplerConfig = SamplerConfig(
-                temperature = 1.0,
-                topK = 64,
-                topP = 0.95
-            )
+        val conversationConfig = liteRtConversationConfig(
+            systemPrompt = transportRequest.systemPrompt,
+            tools = null,
+            automaticToolCalling = false,
         )
         engineHandle.engine.createConversation(conversationConfig).use { conversation ->
             val responseFlow = if (transportRequest.imagePngBytes != null) {
@@ -325,17 +335,13 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
     val toolExecutor = WorkoutInsightsChartTimelineToolExecutor(timeline)
 
     try {
-        val conversationConfig = ConversationConfig(
-            systemInstruction = Contents.of(transportRequest.systemPrompt),
-            samplerConfig = SamplerConfig(
-                temperature = 1.0,
-                topK = 64,
-                topP = 0.95
-            ),
+        val conversationConfig = liteRtConversationConfig(
+            systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
-            automaticToolCalling = false
+            automaticToolCalling = false,
         )
-        engineHandle.engine.createConversation(conversationConfig).use { conversation ->
+        val conversation = engineHandle.engine.createConversation(conversationConfig)
+        try {
             onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
@@ -363,14 +369,18 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                 turnNumber = 1,
                 message = responseMessage
             )
-            repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
+            for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
+                coroutineContext.ensureActive()
                 val toolCalls = responseMessage.toolCalls
                 if (toolCalls.isEmpty()) {
                     Log.d(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                     )
-                    return extractLiteRtText(responseMessage)
+                    return capLiteRtAssistantText(
+                        transportRequest = transportRequest,
+                        text = extractLiteRtText(responseMessage),
+                    )
                 }
 
                 Log.d(
@@ -422,7 +432,12 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
             )
-            return extractLiteRtText(responseMessage)
+            return capLiteRtAssistantText(
+                transportRequest = transportRequest,
+                text = extractLiteRtText(responseMessage),
+            )
+        } finally {
+            conversation.close()
         }
     } finally {
         LiteRtLmEnginePool.release(engineHandle)
@@ -445,17 +460,13 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
     val toolExecutor = WorkoutInsightsToolExecutor(toolContext)
 
     try {
-        val conversationConfig = ConversationConfig(
-            systemInstruction = Contents.of(transportRequest.systemPrompt),
-            samplerConfig = SamplerConfig(
-                temperature = 1.0,
-                topK = 64,
-                topP = 0.95
-            ),
+        val conversationConfig = liteRtConversationConfig(
+            systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
-            automaticToolCalling = false
+            automaticToolCalling = false,
         )
-        engineHandle.engine.createConversation(conversationConfig).use { conversation ->
+        val conversation = engineHandle.engine.createConversation(conversationConfig)
+        try {
             onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
@@ -478,14 +489,18 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                 turnNumber = 1,
                 message = responseMessage
             )
-            repeat(MAX_INSIGHTS_TOOL_ROUNDS) { round ->
+            for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
+                coroutineContext.ensureActive()
                 val toolCalls = responseMessage.toolCalls
                 if (toolCalls.isEmpty()) {
                     Log.d(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_loop_exit reason=no_tool_calls turn=${round + 1}"
                     )
-                    return extractLiteRtText(responseMessage)
+                    return capLiteRtAssistantText(
+                        transportRequest = transportRequest,
+                        text = extractLiteRtText(responseMessage),
+                    )
                 }
 
                 Log.d(
@@ -537,10 +552,57 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_loop_exit reason=tool_budget_exhausted rounds=$MAX_INSIGHTS_TOOL_ROUNDS"
             )
-            return extractLiteRtText(responseMessage)
+            return capLiteRtAssistantText(
+                transportRequest = transportRequest,
+                text = extractLiteRtText(responseMessage),
+            )
+        } finally {
+            conversation.close()
         }
     } finally {
         LiteRtLmEnginePool.release(engineHandle)
+    }
+}
+
+/**
+ * litertlm-android 0.10.0 does not expose decode `maxOutputTokens` on [ConversationConfig].
+ * When [WorkoutInsightsTransportRequest.maxOutputTokens] is set (history chat), approximate a
+ * shorter reply by trimming decoded text (OpenAI path uses real `max_completion_tokens`).
+ */
+private fun capLiteRtAssistantText(
+    transportRequest: WorkoutInsightsTransportRequest,
+    text: String,
+): String {
+    val cap = transportRequest.maxOutputTokens ?: return text
+    val maxChars = (cap * 4).coerceIn(200, 24_000)
+    if (text.length <= maxChars) return text
+    return text.take(maxChars).trimEnd() +
+        "\n\n_(Reply trimmed to stay within the chat length limit.)_"
+}
+
+private fun liteRtConversationConfig(
+    systemPrompt: String,
+    tools: List<ToolProvider>?,
+    automaticToolCalling: Boolean,
+): ConversationConfig {
+    val systemInstruction = Contents.of(systemPrompt)
+    val samplerConfig = SamplerConfig(
+        temperature = 1.0,
+        topK = 64,
+        topP = 0.95
+    )
+    return if (tools != null) {
+        ConversationConfig(
+            systemInstruction = systemInstruction,
+            samplerConfig = samplerConfig,
+            tools = tools,
+            automaticToolCalling = automaticToolCalling,
+        )
+    } else {
+        ConversationConfig(
+            systemInstruction = systemInstruction,
+            samplerConfig = samplerConfig,
+        )
     }
 }
 

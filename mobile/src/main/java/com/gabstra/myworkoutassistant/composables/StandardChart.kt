@@ -5,6 +5,7 @@ import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,7 +18,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -394,6 +395,15 @@ fun StandardChart(
     onInteractionChange: ((Boolean) -> Unit)? = null,
 ) {
     val onBackgroundColor = MaterialTheme.colorScheme.onBackground
+    val axisLabelStyle = MaterialTheme.typography.labelMedium.copy(
+        color = onBackgroundColor,
+        fontSize = 13.sp,
+        textAlign = TextAlign.End,
+    )
+    val markerLabelStyle = MaterialTheme.typography.labelLarge.copy(
+        color = onBackgroundColor,
+        textAlign = TextAlign.Center,
+    )
     val onBackgroundColorArgb = onBackgroundColor.toArgb()
     val chartNestedScrollConnection = remember {
         object : NestedScrollConnection {
@@ -415,7 +425,7 @@ fun StandardChart(
 
     val marker = rememberDefaultCartesianMarker(
         label = rememberTextComponent(
-            style = TextStyle(color = onBackgroundColor, textAlign = TextAlign.Center),
+            style = markerLabelStyle,
             padding = Insets(8.dp),
         ),
         guideline = markerGuideline,
@@ -467,14 +477,16 @@ fun StandardChart(
                     text = title,
                     textAlign = TextAlign.Start,
                     color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 )
             },
             content = {
                 CartesianChartHost(
                     modifier = Modifier
-                        .padding(horizontal = 10.dp)
-                        .padding(bottom = 10.dp)
+                        .fillMaxWidth()
+                        .heightIn(min = 260.dp)
+                        .padding(horizontal = 12.dp)
+                        .padding(top = 8.dp, bottom = 14.dp)
                         .nestedScroll(chartNestedScrollConnection)
                         .chartTouchInterop(onInteractionChange = onInteractionChange),
                     zoomState = rememberVicoZoomState(
@@ -499,12 +511,8 @@ fun StandardChart(
                         startAxis = rememberBottomPaddedStartVerticalAxis(
                             line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                style = TextStyle(
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.End,
-                                ),
-                                padding = Insets(4.dp, 4.dp),
+                                style = axisLabelStyle,
+                                padding = Insets(6.dp, 4.dp),
                             ),
                             valueFormatter = startAxisValueFormatter,
                             itemPlacer = remember { VerticalAxis.ItemPlacer.count() },
@@ -517,12 +525,8 @@ fun StandardChart(
                         bottomAxis = HorizontalAxis.rememberBottom(
                             line = rememberAxisLineComponent(Fill(MaterialTheme.colorScheme.onBackground)),
                             label = rememberTextComponent(
-                                style = TextStyle(
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.End,
-                                ),
-                                padding = Insets(4.dp, 4.dp),
+                                style = axisLabelStyle,
+                                padding = Insets(6.dp, 4.dp),
                                 //minWidth = TextComponent.MinWidth.fixed(20f)
                             ),
                             labelRotationDegrees = -90f,

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
@@ -29,13 +28,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.Spacing
 import com.gabstra.myworkoutassistant.composables.AppPrimaryButton
 import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
+import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
@@ -98,30 +97,16 @@ fun ExerciseOverviewTab(
                 )
             }
         } else {
+            val selectedEquipment =
+                if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
+            val accessoryNames = (exercise.requiredAccessoryEquipmentIds ?: emptyList())
+                .mapNotNull { id -> appViewModel.getAccessoryEquipmentById(id)?.name }
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    modifier = Modifier.then(
-                        if (selectedEquipmentId == null) Modifier.alpha(0f) else Modifier
-                    )
-                ) {
-                    Text(
-                        text = "Equipment:",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    val selectedEquipment =
-                        if (selectedEquipmentId == null) null else equipments.find { it.id == selectedEquipmentId }
-                    Text(
-                        text = selectedEquipment?.name ?: "None",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-
                 Row(
                     modifier = Modifier.padding(vertical = 15.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -142,6 +127,11 @@ fun ExerciseOverviewTab(
                     )
                 }
             }
+            EquipmentAccessoryMetadata(
+                modifier = Modifier.padding(bottom = Spacing.md),
+                equipmentName = selectedEquipment?.name,
+                accessoryNames = accessoryNames,
+            )
 
             if (exercise.requiresLoadCalibration &&
                 CalibrationHelper.supportsCalibrationForExercise(exercise)
@@ -162,13 +152,11 @@ fun ExerciseOverviewTab(
             }
 
             val displaySets = if (!showRest) sets.filter { it !is RestSet } else sets
-            val equipment = selectedEquipmentId?.let { id -> equipments.find { it.id == id } }
-            val tableRows = remember(displaySets, exercise.id, equipment?.id) {
-                buildExerciseTemplateRows(displaySets, exercise, equipment)
+            val tableRows = remember(displaySets, exercise.id, selectedEquipment?.id) {
+                buildExerciseTemplateRows(displaySets, exercise, selectedEquipment)
             }
             val tableHeader = remember(tableRows) { inferSetTableHeader(tableRows) }
             val headerColor = MaterialTheme.colorScheme.onSurfaceVariant
-            val tableDividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
 
             if (displaySets.isNotEmpty()) {
                 SetTableHeaderRow(header = tableHeader, headerColor = headerColor)
@@ -224,9 +212,6 @@ fun ExerciseOverviewTab(
                             StyledCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(
-                                        if (set is RestSet) Modifier else Modifier.heightIn(min = 48.dp)
-                                    )
                                     .combinedClickable(
                                         onClick = onItemClick,
                                         onLongClick = onItemLongClick

@@ -85,4 +85,72 @@ class WorkoutInsightsToolingTest {
         assertTrue(overview.contains("EXERCISE Abs"))
         assertFalse(overview.endsWith("..."))
     }
+
+    @Test
+    fun exerciseTools_return_compact_session_markdown() {
+        val markdown = """
+            # Bench Press
+            Type: WEIGHT | Equipment: Barbell | Weights: 20,40,60 kg
+
+            #### Athlete Context
+            - Age: 31 years
+            - Weight (kg): 65
+
+            Sessions: 2 | Range: 2026-03-25 to 2026-04-01
+
+            ## S1: 2026-03-25 19:24:20 | Push A | Dur: 01:00:00
+            Session: start at 2026-03-25T18:24:20 | sessionId: old | globalId: old
+            - Template position: exercise 1 of 4 (flattened workout order)
+            #### Session Heart Rate
+            - Mean: 107 bpm
+            - Median: 107 bpm
+            - MinMax: 67132 bpm
+            - Std dev: 10.1 bpm
+            - Average as % of max HR: 56.0%
+            - Peak as % of max HR: 69.1%
+            - Time at or above 85% of max HR: 0% of samples
+            - Stored HR samples: 3741
+
+            #### Progression Context
+            - State: PROGRESS
+            - Expected: 60kg10, 60kg10, 60kg10
+            - Executed: 60kg10, 60kg10, 60kg10
+            - Set Differences: verbose details
+            - Comparison vs expected: EQUAL
+            - Comparison vs previous successful baseline: EQUAL
+            - Volume: Prev 0kg | Exp 1.8Kkg | Exec 1.8Kkg
+
+            #### Executed Timeline
+            S1: 60kg10 Vol:600kg | HR: 98 bpm (90109)
+            S2: 60kg10 Vol:600kg | HR: 99 bpm (90110)
+            S3: 60kg10 Vol:600kg | HR: 100 bpm (90111)
+
+            ## S2: 2026-04-01 19:24:20 | Push A | Dur: 01:00:00
+            Session: start at 2026-04-01T18:24:20 | sessionId: new | globalId: new
+            - Template position: exercise 1 of 4 (flattened workout order)
+            #### Progression Context
+            - State: PROGRESS
+            - Expected: 62kg7, 62kg7, 62kg7
+            - Executed: 62kg7, 62kg7, 62kg8
+            - Set Differences: verbose details
+            - Comparison vs expected: ABOVE
+            - Comparison vs previous successful baseline: ABOVE
+            - Volume: Prev 0kg | Exp 1.30Kkg | Exec 1.36Kkg
+        """.trimIndent()
+
+        val compactHistory = compactExerciseHistoryParts(markdown)
+        val latest = compactHistory.sessions.last()
+        val overview = compactHistory.header
+
+        assertTrue(latest.contains("S2 2026-04-01"))
+        assertTrue(latest.contains("PROG State: PROGRESS"))
+        assertTrue(latest.contains("Executed: 2 sets at 62 kg for 7 reps; 1 set at 62 kg for 8 reps"))
+        assertTrue(latest.contains("TAKEAWAY successful load increase"))
+        assertFalse(latest.contains("Session: start at"))
+        assertFalse(latest.contains("sessionId"))
+        assertFalse(latest.contains("Set Differences"))
+        assertFalse(latest.contains("Stored HR samples"))
+        assertFalse(overview.contains("| Weights:"))
+        assertFalse(overview.contains("- Age:"))
+    }
 }

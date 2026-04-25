@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckBox
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
+import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
@@ -252,6 +254,7 @@ fun ExerciseDetailScreen(
     }
 
     fun generateExerciseInsights() {
+        if (!MobileLlmFeatureFlags.ENABLED) return
         showInsightsDialog = true
         scope.launch {
             insightsState = WorkoutInsightsUiState.PreparingModel
@@ -355,7 +358,22 @@ fun ExerciseDetailScreen(
                     },
 
                     actions = {
-                        if (selectedTopTab in 1..2 && displayedWorkoutHistoryId != null) {
+                        if (MobileLlmFeatureFlags.ENABLED && selectedTopTab in 1..2 && displayedWorkoutHistoryId != null) {
+                            IconButton(
+                                onClick = {
+                                    appViewModel.setScreenData(
+                                        ScreenData.HistoryChatExercise(
+                                            workoutId = workout.id,
+                                            exerciseId = exercise.id,
+                                        )
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QuestionAnswer,
+                                    contentDescription = "Chat with exercise history"
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     showInsightsDialog = true
@@ -797,18 +815,20 @@ fun ExerciseDetailScreen(
             }
         )
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
-        WorkoutInsightsDialog(
-            show = showInsightsDialog,
-            title = "Exercise insights",
-            state = insightsState,
-            configurationState = insightsConfigurationState,
-            onDismiss = { showInsightsDialog = false },
-            onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
-                { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
-            } else {
-                null
-            },
-            onGenerate = { generateExerciseInsights() },
-        )
+        if (MobileLlmFeatureFlags.ENABLED) {
+            WorkoutInsightsDialog(
+                show = showInsightsDialog,
+                title = "Exercise insights",
+                state = insightsState,
+                configurationState = insightsConfigurationState,
+                onDismiss = { showInsightsDialog = false },
+                onConfigure = if (insightsConfigurationState.mode == com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode.LOCAL) {
+                    { modelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes) }
+                } else {
+                    null
+                },
+                onGenerate = { generateExerciseInsights() },
+            )
+        }
     }
 }

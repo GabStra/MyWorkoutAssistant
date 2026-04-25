@@ -85,6 +85,18 @@ sealed class ScreenData() {
         val workoutHistoryId: UUID? = null
     ) : ScreenData()
 
+    /** Multi-turn chat over exported exercise history (tool-backed retrieval). */
+    class HistoryChatExercise(
+        val workoutId: UUID,
+        val exerciseId: UUID,
+    ) : ScreenData()
+
+    /** Multi-turn chat over one completed workout session export. */
+    class HistoryChatWorkoutSession(
+        val workoutId: UUID,
+        val workoutHistoryId: UUID,
+    ) : ScreenData()
+
     class NewExercise(val workoutId: UUID) : ScreenData()
     class EditExercise(val workoutId: UUID, val selectedExerciseId: UUID) : ScreenData()
 
@@ -121,6 +133,8 @@ sealed class ScreenData() {
             is WorkoutHistory -> "WorkoutHistory_${workoutId}_${workoutHistoryId?.toString() ?: "null"}_${selectedTabIndex}"
             is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
             is ExerciseHistory -> "ExerciseHistory_${workoutId}_${selectedExerciseId}_${selectedTabIndex}_${workoutHistoryId?.toString() ?: "null"}"
+            is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"
+            is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
             is NewSuperset -> "NewSuperset_${workoutId}"
@@ -154,6 +168,8 @@ sealed class ScreenData() {
             is WorkoutHistory -> "WorkoutDetail_${workoutId}"
             is ExerciseDetail -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
             is ExerciseHistory -> "ExerciseDetail_${workoutId}_${selectedExerciseId}"
+            is HistoryChatExercise -> "HistoryChatExercise_${workoutId}_${exerciseId}"
+            is HistoryChatWorkoutSession -> "HistoryChatWorkoutSession_${workoutId}_${workoutHistoryId}"
             is NewExercise -> "NewExercise_${workoutId}"
             is EditExercise -> "EditExercise_${workoutId}_${selectedExerciseId}"
             is NewSuperset -> "NewSuperset_${workoutId}"

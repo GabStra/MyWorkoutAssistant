@@ -44,7 +44,7 @@ fun SupersetSetHistoriesRenderer(
 
     Column(
         modifier = modifier.padding(5.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         timeline.forEach { item ->
             when (item) {
@@ -62,9 +62,11 @@ fun SupersetSetHistoriesRenderer(
                         }
                     }.let { if (it) "Calibration • " else "" }
                     Text(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         text = "R$round • $exerciseName: $calibrationPrefix$value",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
@@ -72,9 +74,11 @@ fun SupersetSetHistoriesRenderer(
                     val rh = item.history
                     val exerciseName = rh.exerciseId?.let { exerciseNameById[it] } ?: "Rest"
                     Text(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         text = "Rest • $exerciseName: ${formatRestHistoryDisplayLine(rh)}",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }

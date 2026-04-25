@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 
 @Composable
 fun LoadingScreen() {
@@ -23,7 +24,10 @@ fun LoadingScreen() {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MediumDarkGray,
+            )
             Spacer(Modifier.height(Spacing.md))
             Text(
                 text = "Loading...",
