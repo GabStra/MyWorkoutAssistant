@@ -43,17 +43,18 @@ object DoubleProgressionHelper {
         require(repsRange.first > 0 && repsRange.last >= repsRange.first) { "Invalid repsRange" }
         require(previousSets.all { it.weight > 0 && it.reps >= 0 })
 
-        val setCount = previousSets.size
+        val orderedSets = sortSetsForDoubleProgression(previousSets)
+        val setCount = orderedSets.size
         val bottom = repsRange.first
         val top = repsRange.last
 
         // 1) Working anchor = heaviest weight used last time (floored to available)
-        val rawAnchor = previousSets.maxOf { it.weight }
+        val rawAnchor = orderedSets.maxOf { it.weight }
         val lastWorkingWeight = anchorToAvailable(rawAnchor, availableWeights)
-        val wasNormalized = previousSets.any { kotlin.math.abs(it.weight - lastWorkingWeight) > EPS }
+        val wasNormalized = orderedSets.any { kotlin.math.abs(it.weight - lastWorkingWeight) > EPS }
 
         // 2) Normalize previous reps to the working weight (no stepping: below → bottom)
-        val normalizedPrevReps = previousSets.map { s ->
+        val normalizedPrevReps = orderedSets.map { s ->
             if (s.weight < lastWorkingWeight - EPS) bottom
             else s.reps.coerceAtLeast(bottom)
         }
@@ -105,7 +106,7 @@ object DoubleProgressionHelper {
                 nextRepsSameWeight(normalizedPrevReps, effectiveTop, strategy).toMutableList()
             }
 
-        val previousVolume = previousSets.sumOf { it.weight * it.reps }
+        val previousVolume = orderedSets.sumOf { it.weight * it.reps }
         val nextSets = List(setCount) { i -> SimpleSet(nextWorkingWeight, nextReps[i]) }
         val newVolume = nextSets.sumOf { it.weight * it.reps }
 
@@ -117,6 +118,10 @@ object DoubleProgressionHelper {
     }
 
     // ---- helpers ----
+
+    /** Heaviest load first, then higher reps first (stable tie-break). */
+    private fun sortSetsForDoubleProgression(sets: List<SimpleSet>): List<SimpleSet> =
+        sets.sortedWith(compareByDescending<SimpleSet> { it.weight }.thenByDescending { it.reps })
 
     private fun nextRepsSameWeight(
         prev: List<Int>,
@@ -158,9 +163,10 @@ object DoubleProgressionHelper {
         require(availableWeights.isNotEmpty()) { "availableWeights cannot be empty" }
         require(repsRange.first > 0 && repsRange.last >= repsRange.first) { "Invalid repsRange" }
 
+        val orderedSets = sortSetsForDoubleProgression(previousSets)
         val bottom = repsRange.first
         val top = repsRange.last
-        val lastWorkingWeight = previousSets.maxOf { it.weight }
+        val lastWorkingWeight = orderedSets.maxOf { it.weight }
 
         // Target lighter working weight
         val target1 = lastWorkingWeight * options.weightFactor
@@ -168,12 +174,11 @@ object DoubleProgressionHelper {
         val nextWorkingWeight = if (w1 < lastWorkingWeight) w1 else lastWorkingWeight
 
         // Decide set count (optionally cut)
-        val setCount = options.cutSetsTo?.coerceAtLeast(1)?.coerceAtMost(previousSets.size) ?: previousSets.size
+        val setCount = options.cutSetsTo?.coerceAtLeast(1)?.coerceAtMost(orderedSets.size) ?: orderedSets.size
 
         // New reps: reduce by repsDrop, clamp to [bottom, top], and never increase relative to previous
-        val basePrevReps = previousSets
-            .sortedByDescending { it.weight } // prioritize keeping the heavier sets if cutting
-            .take(setCount)
+        val basePrevReps = orderedSets
+            .take(setCount) // heaviest / highest-rep sets first if cutting
             .map { it.reps.coerceIn(bottom, top) }
 
         val nextReps = basePrevReps.map { prev -> maxOf(bottom, prev - options.repsDrop) }
@@ -181,7 +186,7 @@ object DoubleProgressionHelper {
         // Build sets: single working weight across all sets
         val nextSets = List(setCount) { i -> SimpleSet(nextWorkingWeight, nextReps[i]) }
 
-        val previousVolume = previousSets.sumOf { it.weight * it.reps }
+        val previousVolume = orderedSets.sumOf { it.weight * it.reps }
         val newVolume = nextSets.sumOf { it.weight * it.reps }
 
         return Plan(
