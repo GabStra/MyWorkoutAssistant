@@ -13,6 +13,7 @@ import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
@@ -52,14 +53,20 @@ class GetSetCounterForExerciseTest {
         exerciseId: UUID,
         setId: UUID,
         setIndex: UInt,
-        isCalibrationSet: Boolean = false
+        isCalibrationSet: Boolean = false,
+        isWarmupSet: Boolean = false,
+        subCategory: SetSubCategory = when {
+            isCalibrationSet -> SetSubCategory.CalibrationSet
+            isWarmupSet -> SetSubCategory.WarmupSet
+            else -> SetSubCategory.WorkSet
+        }
     ): WorkoutState.Set {
         return WorkoutState.Set(
             exerciseId = exerciseId,
-            set = WeightSet(setId, 10, 100.0),
+            set = WeightSet(setId, 10, 100.0, subCategory = subCategory),
             setIndex = setIndex,
             previousSetData = null,
-            currentSetDataState = mutableStateOf(WeightSetData(10, 100.0, 1000.0)),
+            currentSetDataState = mutableStateOf(WeightSetData(10, 100.0, 1000.0, subCategory = subCategory)),
             hasNoHistory = true,
             startTime = null,
             skipped = false,
@@ -69,7 +76,7 @@ class GetSetCounterForExerciseTest {
             plateChangeResult = null,
             streak = 0,
             progressionState = null,
-            isWarmupSet = false,
+            isWarmupSet = isWarmupSet,
             equipmentId = null,
             isUnilateral = false,
             intraSetTotal = null,
@@ -205,7 +212,7 @@ class GetSetCounterForExerciseTest {
         stateMachineField.set(viewModel, machine)
 
         val result = viewModel.getSetCounterForExercise(exerciseId, calibrationRIR)
-        assertEquals(Pair(2, 2), result)
+        assertNull(result)
     }
 
     @Test
@@ -248,6 +255,39 @@ class GetSetCounterForExerciseTest {
         assertEquals(Pair(1, 2), viewModel.getSetCounterForExercise(exerciseId, set1))
         assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, set2Left))
         assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, set2Right))
+    }
+
+    @Test
+    fun workSetsStartAtOneAfterWarmups() {
+        val warmup1 = createSetState(
+            exerciseId = exerciseId,
+            setId = UUID.randomUUID(),
+            setIndex = 0u,
+            isWarmupSet = true
+        )
+        val warmup2 = createSetState(
+            exerciseId = exerciseId,
+            setId = UUID.randomUUID(),
+            setIndex = 1u,
+            isWarmupSet = true
+        )
+        val workSet1 = createSetState(exerciseId, setId1, 2u)
+        val workSet2 = createSetState(exerciseId, setId2, 3u)
+        val container = WorkoutStateContainer.ExerciseState(
+            exerciseId,
+            mutableListOf(warmup1, warmup2, workSet1, workSet2).map { ExerciseChildItem.Normal(it) }
+                .toMutableList()
+        )
+        val machine = WorkoutStateMachine.fromSequence(
+            listOf(WorkoutStateSequenceItem.Container(container)),
+            startIndex = 2
+        )
+        stateMachineField.set(viewModel, machine)
+
+        assertEquals(Pair(1, 2), viewModel.getSetCounterForExercise(exerciseId, workSet1))
+        assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, workSet2))
+        assertEquals(Pair(1, 2), viewModel.getSetCounterForExercise(exerciseId, warmup1))
+        assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, warmup2))
     }
 
     @Test
@@ -295,7 +335,7 @@ class GetSetCounterForExerciseTest {
         )
         stateMachineField.set(viewModel, machine)
 
-        assertEquals(Pair(2, 2), viewModel.getSetCounterForExercise(exerciseId, calibrationExecutionSet))
+        assertEquals(Pair(1, 1), viewModel.getSetCounterForExercise(exerciseId, calibrationExecutionSet))
         assertEquals(2, viewModel.getTotalSetCountForExercise(exerciseId))
     }
 

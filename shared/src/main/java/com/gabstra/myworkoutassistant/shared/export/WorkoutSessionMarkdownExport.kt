@@ -206,7 +206,7 @@ suspend fun buildWorkoutSessionMarkdown(
                 appendExerciseTimelineToMarkdown(
                     markdown = markdown,
                     exercise = exercise,
-                    activeSetHistories = active,
+                    setHistories = allSets,
                     restsForExercise = rests,
                     workoutHistory = workoutHistory,
                     workoutStore = workoutStore,
@@ -316,7 +316,7 @@ suspend fun buildWorkoutSessionMarkdown(
                     appendExerciseTimelineToMarkdown(
                         markdown = markdown,
                         exercise = ex,
-                        activeSetHistories = active,
+                        setHistories = setsForEx,
                         restsForExercise = restsForExercise,
                         workoutHistory = workoutHistory,
                         workoutStore = workoutStore,

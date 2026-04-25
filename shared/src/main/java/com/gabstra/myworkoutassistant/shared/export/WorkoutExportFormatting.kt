@@ -13,7 +13,7 @@ import kotlin.math.abs
 internal fun formatSetInlineForExport(set: Set): String {
     return when (set) {
         is WeightSet -> {
-            var str = "${formatNumber(set.weight)} kg × ${set.reps} reps"
+            var str = "${formatNumber(set.weight)} kg x ${set.reps} reps"
             if (set.subCategory != SetSubCategory.WorkSet) {
                 str += " [${set.subCategory.name}]"
             }
@@ -26,7 +26,7 @@ internal fun formatSetInlineForExport(set: Set): String {
             } else if (set.additionalWeight < 0) {
                 str += " - ${formatNumber(-set.additionalWeight)} kg"
             }
-            str += " × ${set.reps} reps"
+            str += " x ${set.reps} reps"
             if (set.subCategory != SetSubCategory.WorkSet) {
                 str += " [${set.subCategory.name}]"
             }
@@ -52,4 +52,15 @@ internal fun normalizeWeightForExport(
 ): Double {
     if (achievableWeights.isNullOrEmpty()) return targetWeight
     return achievableWeights.minByOrNull { achievable -> abs(achievable - targetWeight) } ?: targetWeight
+}
+
+internal fun formatVolumeKgForExport(volumeKg: Double): String {
+    val rounded = kotlin.math.round(volumeKg)
+    return if (abs(volumeKg - rounded) < 0.0001) {
+        rounded.toInt().toString()
+    } else {
+        "%.2f".format(volumeKg)
+            .replace(",", ".")
+            .replace(Regex("""\.?0+$"""), "")
+    }
 }

@@ -100,6 +100,7 @@ import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutResumeInfo
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
+import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSetState
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
@@ -1411,19 +1412,28 @@ open class WorkoutViewModel(
 
     /**
      * Returns (currentSetIndex1Based, totalSetCount) for the given exercise and current state.
-     * Uses the state machine's exercise states as source of truth (not exercise.sets, which can be updated).
-     * Handles any state that maps to a counted set id.
-     * Returns null when the current state does not represent a set (e.g. Rest) or is not for this exercise.
+     * Counters are category-aware for display: warmups count from W1, calibration sets count separately,
+     * and work sets always start at 1 even when warmups or calibration sets precede them.
      */
     fun getSetCounterForExercise(exerciseId: UUID, currentState: WorkoutState): Pair<Int, Int>? {
-        val total = getTotalSetCountForExercise(exerciseId)
-        if (total == 0) return null
-        val exerciseStates = getStatesForExercise(exerciseId)
-        val orderedSetIds = WorkoutStateQueries.orderedUniqueLogicalSetIds(exerciseStates)
         val currentExerciseId = WorkoutStateQueries.stateExerciseId(currentState)
         if (currentExerciseId != exerciseId) return null
-        val currentSetId = WorkoutStateQueries.stateSetId(currentState) ?: return null
-        val currentIndex = orderedSetIds.indexOf(currentSetId)
+        val currentSetState = currentState as? WorkoutState.Set ?: return null
+        val currentKind = displayCounterKindForSetState(currentSetState) ?: return null
+        val orderedSetIds = mutableListOf<UUID>()
+        getStatesForExercise(exerciseId)
+            .filterIsInstance<WorkoutState.Set>()
+            .filter { setState ->
+                displayCounterKindForSetState(setState) == currentKind
+            }
+            .forEach { setState ->
+                if (setState.set.id !in orderedSetIds) {
+                    orderedSetIds += setState.set.id
+                }
+            }
+        val total = orderedSetIds.size
+        if (total == 0) return null
+        val currentIndex = orderedSetIds.indexOf(currentSetState.set.id)
         return if (currentIndex >= 0) Pair(currentIndex + 1, total) else null
     }
 

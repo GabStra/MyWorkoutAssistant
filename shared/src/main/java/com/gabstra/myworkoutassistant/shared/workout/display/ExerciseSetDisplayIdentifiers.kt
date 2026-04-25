@@ -1,7 +1,12 @@
 package com.gabstra.myworkoutassistant.shared.workout.display
 
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
-import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
+import com.gabstra.myworkoutassistant.shared.sets.Set
+import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
+import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import java.util.UUID
@@ -19,6 +24,38 @@ fun toSupersetLetter(index: Int): String {
         value = (value / 26) - 1
     } while (value >= 0)
     return builder.reverse().toString()
+}
+
+enum class SetDisplayCounterKind {
+    Work,
+    Warmup,
+    Calibration,
+}
+
+fun displayCounterKindForSet(set: Set): SetDisplayCounterKind? {
+    return when (set) {
+        is WeightSet -> displayCounterKindForSubCategory(set.subCategory)
+        is BodyWeightSet -> displayCounterKindForSubCategory(set.subCategory)
+        is TimedDurationSet,
+        is EnduranceSet -> SetDisplayCounterKind.Work
+        is RestSet -> null
+    }
+}
+
+fun displayCounterKindForSetState(setState: WorkoutState.Set): SetDisplayCounterKind? {
+    return when {
+        setState.isWarmupSet -> SetDisplayCounterKind.Warmup
+        setState.isCalibrationSet -> SetDisplayCounterKind.Calibration
+        else -> displayCounterKindForSet(setState.set)
+    }
+}
+
+fun displayCounterKindForSubCategory(subCategory: SetSubCategory?): SetDisplayCounterKind {
+    return when (subCategory) {
+        SetSubCategory.WarmupSet -> SetDisplayCounterKind.Warmup
+        SetSubCategory.CalibrationSet -> SetDisplayCounterKind.Calibration
+        else -> SetDisplayCounterKind.Work
+    }
 }
 
 /**
@@ -43,9 +80,11 @@ fun buildWorkoutSetDisplayIdentifier(
         current.toString()
     }
 
-    return when {
-        CalibrationHelper.isWarmupSet(setState.set) -> "W$baseIdentifier"
-        else -> baseIdentifier
+    return when (displayCounterKindForSetState(setState)) {
+        SetDisplayCounterKind.Warmup -> "W$baseIdentifier"
+        SetDisplayCounterKind.Calibration -> "Cal"
+        SetDisplayCounterKind.Work -> baseIdentifier
+        null -> null
     }
 }
 

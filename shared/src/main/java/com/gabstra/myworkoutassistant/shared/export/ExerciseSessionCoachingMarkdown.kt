@@ -193,9 +193,6 @@ internal fun appendHistoricalSessionBlockMarkdown(
     markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
     session.workout?.name?.let { markdown.append("- Workout: $it\n") }
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
-    if (metrics.totalVolume > 0.0) {
-        markdown.append("- Total volume: ${formatNumber(metrics.totalVolume)} kg\n")
-    }
     if (metrics.totalDurationSeconds > 0) {
         markdown.append("- Total duration: ${formatDurationForExport(metrics.totalDurationSeconds)}\n")
     }
@@ -206,7 +203,7 @@ internal fun appendHistoricalSessionBlockMarkdown(
         markdown.append("- Note: selected session\n")
     }
     session.activeSetHistories.forEachIndexed { index, setHistory ->
-        markdown.append("- S${index + 1}: ${formatSetHistoryInline(setHistory, achievableWeights)}\n")
+        markdown.append("- ${index + 1}: ${formatSetHistoryInline(setHistory, achievableWeights)}\n")
     }
     markdown.append("\n")
 }
@@ -220,9 +217,6 @@ internal fun appendExecutedSummaryMarkdown(
     markdown.append("#### Executed\n")
     markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
-    if (metrics.totalVolume > 0.0) {
-        markdown.append("- Total volume: ${formatNumber(metrics.totalVolume)} kg\n")
-    }
     if (metrics.totalDurationSeconds > 0) {
         markdown.append("- Total duration: ${formatDurationForExport(metrics.totalDurationSeconds)}\n")
     }
@@ -252,9 +246,6 @@ internal fun appendExerciseTrendMarkdown(
             if (metrics.setSummaryEntries.isNotEmpty()) {
                 append(" | ")
                 append(metrics.setSummaryEntries.joinToString(", "))
-            }
-            if (metrics.totalVolume > 0.0) {
-                append(" | Vol: ${formatNumber(metrics.totalVolume)}kg")
             }
             if (metrics.totalDurationSeconds > 0) {
                 append(" | Dur: ${formatDurationForExport(metrics.totalDurationSeconds)}")
@@ -497,7 +488,7 @@ private fun formatSimpleSetSummaryEntry(
     autoRegulationRIR: Double? = null,
 ): String = buildString {
     append(formatNumber(weight))
-    append("kg×")
+    append(" kg x ")
     append(reps)
     autoRegulationRIR?.let { rir ->
         append(" (auto RIR ")

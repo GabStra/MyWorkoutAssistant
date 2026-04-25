@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.workout.history
 
 import com.gabstra.myworkoutassistant.shared.RestHistory
-import com.gabstra.myworkoutassistant.shared.RestHistoryScope
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 
 /**
@@ -16,21 +15,15 @@ fun formatRestLineForMarkdown(restHistory: RestHistory): String {
         plannedSeconds = plannedSec,
     )
 
-    val scopeSuffix = when (restHistory.scope) {
-        RestHistoryScope.INTRA_EXERCISE -> " [intra-exercise]"
-        RestHistoryScope.BETWEEN_WORKOUT_COMPONENTS -> " [between components]"
-    }
-
-    val body = when {
+    return when {
         elapsedSec != null -> buildString {
             append("Rest: ${formatDurationSecondsForMarkdown(elapsedSec)} elapsed")
-            if (plannedSec > 0 && plannedSec != elapsedSec) {
+            if (plannedSec > 0) {
                 append(" (${formatDurationSecondsForMarkdown(plannedSec)} planned)")
             }
         }
         else -> "Rest: ${formatDurationSecondsForMarkdown(plannedSec)} planned"
     }
-    return body + scopeSuffix
 }
 
 fun formatDurationSecondsForMarkdown(seconds: Int): String {

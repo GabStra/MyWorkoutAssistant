@@ -559,12 +559,7 @@ class WorkoutViewModelDatabaseTest {
         val benchProgression = exercise1Progression!!
         val extraSetTemplate = benchProgression.expectedSets.firstOrNull() ?: SimpleSet(95.0, 10)
         val mismatchExpectedSets = benchProgression.expectedSets + extraSetTemplate
-        val mismatchExpectedSetCount = mismatchExpectedSets.size
         database.exerciseSessionProgressionDao().insert(benchProgression.copy(expectedSets = mismatchExpectedSets))
-
-        val benchExecutedSetCount = database.setHistoryDao()
-            .getSetHistoriesByWorkoutHistoryIdAndExerciseId(workoutHistory!!.id, testExercise1Id)
-            .count { it.setData !is RestSetData }
 
         // Phase 7: Verify Markdown Export Content
         val benchPress = viewModel.exercisesById[testExercise1Id]!!
@@ -582,12 +577,22 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Bench export should include header", benchMarkdown.contains("# Bench Press"))
         assertTrue("Bench export should include athlete context", benchMarkdown.contains("#### Athlete Context"))
         assertTrue("Bench export should list available weights", benchMarkdown.contains("Weights:") && (benchMarkdown.contains("20,") || benchMarkdown.contains("20 kg") || benchMarkdown.contains("20.0 kg")))
-        assertTrue("Bench export should include first set", benchMarkdown.contains("S1: 97.5kg×10 Vol:975kg"))
-        assertTrue("Bench export should include second set", benchMarkdown.contains("S2: 97.5kg×8 Vol:780kg"))
-        assertTrue("Bench export should include total volume", benchMarkdown.contains("Total Vol: 1.76Kkg"))
-        assertTrue("Bench export should include session metadata line", benchMarkdown.contains("Session: start at"))
-        assertTrue("Bench export should include heart rate subsection", benchMarkdown.contains("#### Session Heart Rate"))
-        assertTrue("Bench export should include mean HR line", benchMarkdown.contains("- Mean:"))
+        assertTrue("Bench export should include compact sets line", benchMarkdown.contains("- Sets:"))
+        assertTrue("Bench export should include top set line", benchMarkdown.contains("- Top set:"))
+        assertTrue("Bench export should include total reps line", benchMarkdown.contains("- Total reps:"))
+        assertTrue("Bench export should include rest line", benchMarkdown.contains("- Rest:"))
+        assertTrue("Bench export should include performance section", benchMarkdown.contains("### Performance"))
+        assertTrue("Bench export should include context section", benchMarkdown.contains("### Context"))
+        assertTrue("Bench export should include target section", benchMarkdown.contains("### Target"))
+        assertTrue("Bench export should include exercise HR duration line", benchMarkdown.contains("- Exercise HR duration:"))
+        assertTrue("Bench export should include HR zones line", benchMarkdown.contains("- HR zones:"))
+        assertTrue("Bench export should include planned sets line", benchMarkdown.contains("- Planned sets:"))
+        assertTrue("Bench export should include outcome line", benchMarkdown.contains("- Outcome:"))
+        assertTrue("Bench export should omit whole-session heart rate subsection", !benchMarkdown.contains("#### Session Heart Rate"))
+        assertTrue("Bench export should omit session ids", !benchMarkdown.contains("sessionId:"))
+        assertTrue("Bench export should omit verbose HR mean", !benchMarkdown.contains("- Mean:"))
+        assertTrue("Bench export should omit progression context heading", !benchMarkdown.contains("#### Progression Context"))
+        assertTrue("Bench export should omit executed timeline heading", !benchMarkdown.contains("#### Executed Timeline"))
 
         val squats = viewModel.exercisesById[testExercise2Id]!!
         val squatsResult = buildExerciseHistoryMarkdown(
@@ -602,63 +607,15 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Squats export should succeed", squatsResult is ExerciseHistoryMarkdownResult.Success)
         val squatsMarkdown = (squatsResult as ExerciseHistoryMarkdownResult.Success).markdown
         assertTrue("Squats export should include header", squatsMarkdown.contains("# Squats"))
-        assertTrue("Squats export should include set details", squatsMarkdown.contains("S1: 80kg×13 Vol:1.04Kkg"))
-        assertTrue("Squats export should include total volume", squatsMarkdown.contains("Total Vol: 1.04Kkg"))
-        assertTrue("Squats export should include session metadata line", squatsMarkdown.contains("Session: start at"))
-        assertTrue("Squats export should include heart rate subsection", squatsMarkdown.contains("#### Session Heart Rate"))
+        assertTrue("Squats export should include compact sets line", squatsMarkdown.contains("- Sets:"))
+        assertTrue("Squats export should include target section", squatsMarkdown.contains("### Target"))
+        assertTrue("Squats export should omit whole-session heart rate subsection", !squatsMarkdown.contains("#### Session Heart Rate"))
 
-        // Phase 8: Verify Progression Markdown Format
-        // Verify progression section exists when progression data is present
-        assertTrue("Bench export should include progression section", benchMarkdown.contains("#### Progression Context"))
-        
-        // Verify no bold formatting is used in progression section
-        val progressionSectionStart = benchMarkdown.indexOf("#### Progression Context")
-        val progressionSectionEnd = benchMarkdown.indexOf("\n\n", progressionSectionStart)
-        val progressionSection = if (progressionSectionEnd != -1) {
-            benchMarkdown.substring(progressionSectionStart, progressionSectionEnd)
-        } else {
-            benchMarkdown.substring(progressionSectionStart)
-        }
-        assertTrue("Progression section should not contain bold formatting", !progressionSection.contains("**"))
-        
-        // Verify state is shown without bold formatting
-        assertTrue("Progression should show state without bold", progressionSection.contains("- State:"))
-        assertTrue("Progression should not show state with bold", !progressionSection.contains("**State**"))
-        
-        // Verify expected sets are shown
-        assertTrue("Progression should show expected sets", progressionSection.contains("- Expected:"))
-        
-        // Verify executed sets are shown when available
-        assertTrue("Progression should show executed sets", progressionSection.contains("- Executed:"))
-
-        // Expect a clear note when expected vs executed set counts differ
-        val mismatchNote = "- Note: Expected $mismatchExpectedSetCount sets but executed $benchExecutedSetCount sets."
-        assertTrue("Progression should highlight set count mismatch", progressionSection.contains(mismatchNote))
-
-        // Set differences should not be shown when the counts differ
-        assertTrue("Progression should not show set differences when counts mismatch", !progressionSection.contains("- Set Differences:"))
-        
-        // Verify comparison icons (↑, =, ↓, ~) are present
-        assertTrue("Progression should include comparison icons", 
-            progressionSection.contains("↑") || progressionSection.contains("=") || 
-            progressionSection.contains("↓") || progressionSection.contains("~"))
-        
-        // Verify labels match the current explicit wording
-        assertTrue("Progression should include comparison vs expected label", progressionSection.contains("- Comparison vs expected:"))
-        assertTrue(
-            "Progression should include comparison vs previous baseline label",
-            progressionSection.contains("- Comparison vs previous successful baseline:")
-        )
-        assertTrue("Progression should use volume label", progressionSection.contains("- Volume:"))
-        
-        // Verify comparison line format
-        assertTrue("Progression should show comparison line", progressionSection.contains("- Comparison vs expected:"))
-        
-        // Verify volumes line format
-        assertTrue("Progression should show volumes line", progressionSection.contains("- Volume:"))
-        assertTrue("Progression volumes should include Prev", progressionSection.contains("Prev"))
-        assertTrue("Progression volumes should include Exp", progressionSection.contains("Exp"))
-        assertTrue("Progression volumes should include Exec", progressionSection.contains("Exec"))
+        // Phase 8: Verify compact session format
+        assertTrue("Bench export should include compact session heading", benchMarkdown.contains("## S1 ("))
+        assertTrue("Bench export should use compact set token format", benchMarkdown.contains("x"))
+        assertTrue("Bench export should not contain old progression section", !benchMarkdown.contains("#### Progression Context"))
+        assertTrue("Bench export should not contain old timeline section", !benchMarkdown.contains("#### Executed Timeline"))
     }
 
     @Test

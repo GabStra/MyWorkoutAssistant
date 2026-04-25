@@ -2,9 +2,9 @@ package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.getEffectiveMaxHeartRate
+import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
-import com.gabstra.myworkoutassistant.shared.zoneRanges
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlin.math.roundToInt
 
@@ -22,74 +22,26 @@ internal fun appendSessionHeartRateMarkdown(
     val records = workoutHistory.heartBeatRecords
     val valid = records.filter { it > 0 }
     if (valid.isEmpty()) return
-    val storedSampleCount = records.size
-    val recordedSpanSeconds = storedSampleCount
 
     val zoneBounds = heartRateZoneBoundsBpm(
         userAge,
         workoutStore.measuredMaxHeartRate,
         workoutStore.restingHeartRate
     )
-    val fractions = standardZoneSampleFractions(valid, zoneBounds)
-    val derived = computeSessionHrDerived(
-        valid,
-        userAge,
-        workoutStore.measuredMaxHeartRate,
-        workoutStore.restingHeartRate
-    ) ?: return
-
-    markdown.append("#### Session Heart Rate\n\n")
-    markdown.append("- Mean: ${derived.mean} bpm\n")
-    derived.median?.let { markdown.append("- Median: $it bpm\n") }
-    markdown.append("- Min–Max: ${derived.min}–${derived.max} bpm\n")
-    derived.stdDev?.let { sd ->
-        markdown.append("- Std dev: ${"%.1f".format(sd)} bpm\n")
-    }
-    derived.avgPctOfMaxHr?.let {
-        markdown.append("- Average as % of max HR: ${"%.1f".format(it)}%\n")
-    }
-    derived.peakPctOfMaxHr?.let {
-        markdown.append("- Peak as % of max HR: ${"%.1f".format(it)}%\n")
-    }
-    if (workoutStore.restingHeartRate != null) {
-        derived.avgHrrPct?.let {
-            markdown.append("- Average as % heart-rate reserve: ${"%.1f".format(it)}%\n")
+    val zoneCounts = countZoneSamples(valid, zoneBounds)
+    val zoneTime = zoneCounts
+        .indices
+        .mapNotNull { index ->
+            val count = zoneCounts[index]
+            if (count <= 0) null else "Z$index ${formatDurationForSessionHr(count)}"
         }
-        derived.peakHrrPct?.let {
-            markdown.append("- Peak as % heart-rate reserve: ${"%.1f".format(it)}%\n")
-        }
-    }
-    derived.fractionAbove85PctMax?.let { f ->
-        markdown.append("- Time at or above 85% of max HR: ${(f * 100.0).roundToInt()}% of samples\n")
-    }
-    derived.fractionAbove90PctMax?.let { f ->
-        markdown.append("- Time at or above 90% of max HR: ${(f * 100.0).roundToInt()}% of samples\n")
-    }
+        .joinToString(" | ")
+        .takeIf { it.isNotBlank() }
+        ?: return
 
-    markdown.append("- Standard zones (% of samples, bpm range):\n")
-    for (i in fractions.indices) {
-        val pct = (fractions[i] * 100.0).roundToInt()
-        val range = zoneBounds[i]
-        val (loPct, hiPct) = zoneRanges[i]
-        markdown.append(
-            "  - Z$i (${loPct}%–${hiPct}% reserve): $pct% of samples, ${range.first}–${range.last} bpm\n"
-        )
-    }
-
-    markdown.append("- Stored HR samples: $storedSampleCount\n")
-    markdown.append("- Valid HR samples: ${derived.validSampleCount}\n")
-    if (storedSampleCount > 0) {
-        val coveragePct = (derived.validSampleCount.toDouble() / storedSampleCount.toDouble() * 100.0).roundToInt()
-        markdown.append("- Valid HR coverage: $coveragePct% of stored samples\n")
-    }
-    markdown.append(
-        "- Approx. recorded HR span (from stored samples): ${formatDurationForSessionHr(recordedSpanSeconds)} (~1.0 s between samples)\n"
-    )
-    if (workoutHistory.duration > 0 && recordedSpanSeconds < workoutHistory.duration - 30) {
-        markdown.append(
-            "- Workout duration: ${formatDurationForSessionHr(workoutHistory.duration)} (stored HR span may be shorter if the sensor stream paused or samples were not captured)\n"
-        )
-    }
+    markdown.append("#### Session Heart Rate\n")
+    markdown.append("- Duration: ${formatDurationForSessionHr(valid.size)}\n")
+    markdown.append("- Zone time: $zoneTime\n")
 
     exerciseForTargetBand?.let { exercise ->
         val loBoundPct = exercise.lowerBoundMaxHRPercent
@@ -112,18 +64,89 @@ internal fun appendSessionHeartRateMarkdown(
                 (hrInZoneCount.toFloat() / valid.size * 100).roundToInt()
             } else 0
             markdown.append(
-                "- Exercise target band: $zonePct% of samples between $lowHr–$highHr bpm (exercise-configured zone)\n"
+                "- Target band: $zonePct% between $lowHr-$highHr bpm\n"
             )
         }
     }
+    markdown.append("\n")
+}
 
-    val maxHrResolved = getEffectiveMaxHeartRate(userAge, workoutStore.measuredMaxHeartRate)
-    markdown.append("- Max HR reference: ")
-    if (workoutStore.measuredMaxHeartRate != null) {
-        markdown.append("measured ${workoutStore.measuredMaxHeartRate} bpm\n\n")
-    } else {
-        markdown.append("age-based estimate ($maxHrResolved bpm)\n\n")
+internal fun appendExerciseHeartRateMarkdown(
+    markdown: StringBuilder,
+    workoutHistory: WorkoutHistory,
+    setHistories: List<SetHistory>,
+    restsForExercise: List<RestHistory>,
+    userAge: Int,
+    workoutStore: WorkoutStore,
+    exerciseForTargetBand: Exercise,
+) {
+    val records = workoutHistory.heartBeatRecords
+    if (records.isEmpty()) return
+
+    val intervalSamples = buildList {
+        setHistories.forEach { setHistory ->
+            addAll(
+                sliceHeartRateRecords(
+                    workoutStart = workoutHistory.startTime,
+                    records = records,
+                    intervalStart = setHistory.startTime,
+                    intervalEnd = setHistory.endTime
+                )
+            )
+        }
+        restsForExercise.forEach { restHistory ->
+            addAll(
+                sliceHeartRateRecords(
+                    workoutStart = workoutHistory.startTime,
+                    records = records,
+                    intervalStart = restHistory.startTime,
+                    intervalEnd = restHistory.endTime
+                )
+            )
+        }
+    }.filter { it > 0 }
+    if (intervalSamples.isEmpty()) return
+
+    val zoneBounds = heartRateZoneBoundsBpm(
+        userAge,
+        workoutStore.measuredMaxHeartRate,
+        workoutStore.restingHeartRate
+    )
+    val zoneCounts = countZoneSamples(intervalSamples, zoneBounds)
+    val zoneTime = zoneCounts
+        .indices
+        .mapNotNull { index ->
+            val count = zoneCounts[index]
+            if (count <= 0) null else "Z$index ${formatDurationForSessionHr(count)}"
+        }
+        .joinToString(" | ")
+        .takeIf { it.isNotBlank() }
+        ?: return
+
+    markdown.append("#### Exercise Heart Rate\n")
+    markdown.append("- Duration: ${formatDurationForSessionHr(intervalSamples.size)}\n")
+    markdown.append("- Zone time: $zoneTime\n")
+
+    val loBoundPct = exerciseForTargetBand.lowerBoundMaxHRPercent
+    val hiBoundPct = exerciseForTargetBand.upperBoundMaxHRPercent
+    if (loBoundPct != null && hiBoundPct != null) {
+        val lowHr = getHeartRateFromPercentage(
+            loBoundPct,
+            userAge,
+            workoutStore.measuredMaxHeartRate,
+            workoutStore.restingHeartRate
+        )
+        val highHr = getHeartRateFromPercentage(
+            hiBoundPct,
+            userAge,
+            workoutStore.measuredMaxHeartRate,
+            workoutStore.restingHeartRate
+        )
+        val hrInZoneCount = intervalSamples.count { it in lowHr..highHr }
+        val zonePct = (hrInZoneCount.toFloat() / intervalSamples.size * 100).roundToInt()
+        markdown.append("- Target band: $zonePct% between $lowHr-$highHr bpm\n")
     }
+    markdown.append("\n")
 }
 
 private fun formatDurationForSessionHr(seconds: Int): String {
@@ -135,4 +158,18 @@ private fun formatDurationForSessionHr(seconds: Int): String {
     } else {
         String.format("%02d:%02d", minutes, remainingSeconds)
     }
+}
+
+private fun countZoneSamples(
+    samples: List<Int>,
+    zoneBounds: List<IntRange>,
+): IntArray {
+    if (zoneBounds.isEmpty()) return IntArray(0)
+    val counts = IntArray(zoneBounds.size)
+    samples.forEach { sample ->
+        if (sample <= 0) return@forEach
+        val zoneIndex = zoneIndexForBpm(sample, zoneBounds).coerceIn(0, zoneBounds.lastIndex)
+        counts[zoneIndex]++
+    }
+    return counts
 }

@@ -14,6 +14,8 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
 import com.gabstra.myworkoutassistant.shared.workout.history.formatRestLineForMarkdown
 import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
+import com.gabstra.myworkoutassistant.shared.workout.display.SetDisplayCounterKind
+import com.gabstra.myworkoutassistant.shared.workout.display.displayCounterKindForSubCategory
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.time.LocalDateTime
 import kotlin.math.roundToInt
@@ -24,7 +26,7 @@ import kotlin.math.roundToInt
 internal fun appendExerciseTimelineToMarkdown(
     markdown: StringBuilder,
     exercise: Exercise,
-    activeSetHistories: List<SetHistory>,
+    setHistories: List<SetHistory>,
     restsForExercise: List<RestHistory>,
     workoutHistory: WorkoutHistory,
     workoutStore: WorkoutStore,
@@ -32,58 +34,43 @@ internal fun appendExerciseTimelineToMarkdown(
     achievableWeights: List<Double>?,
     equipmentNameForHeader: String?,
 ) {
-    var totalVolume = 0.0
-    var totalDuration = 0
-    val timeline = mergeSessionTimeline(activeSetHistories, restsForExercise)
-    var workSetOrdinal = 0
+    val timeline = mergeSessionTimeline(setHistories, restsForExercise)
+    val setOrdinalCounter = TimelineSetOrdinalCounter()
     markdown.append("#### Executed Timeline\n")
     for (step in timeline) {
         when (step) {
             is SessionTimelineItem.RestStep -> {
                 val rh = step.history
-                val restLine = StringBuilder(formatRestLineForMarkdown(rh))
-                appendIntervalHeartRateLineForExport(
-                    restLine,
-                    workoutHistory,
-                    rh.startTime,
-                    rh.endTime,
-                    exercise,
-                    userAge,
-                    workoutStore
-                )
-                markdown.append(restLine.toString()).append("\n")
+                markdown.append(formatRestLineForMarkdown(rh)).append("\n")
             }
             is SessionTimelineItem.SetStep -> {
-                workSetOrdinal += 1
                 val setHistory = step.history
                 val setLine = StringBuilder()
                 if (setHistory.skipped) {
                     setLine.append("[skipped] ")
                 }
-                setLine.append("S$workSetOrdinal: ")
                 when (val setData = setHistory.setData) {
                     is WeightSetData -> {
+                        setLine.append("${setOrdinalCounter.nextLabel(setData.subCategory)}: ")
                         val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
-                        val adjustedVolume = adjustedWeight * setData.actualReps
-                        setLine.append("${formatNumber(adjustedWeight)}kg×${setData.actualReps} Vol:${formatNumber(adjustedVolume)}kg")
-                        if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                        totalVolume += adjustedVolume
+                        setLine.append("${formatNumber(adjustedWeight)} kg x ${setData.actualReps}")
+                        appendSetCategoryLabel(setLine, setData.subCategory)
                     }
                     is BodyWeightSetData -> {
+                        setLine.append("${setOrdinalCounter.nextLabel(setData.subCategory)}: ")
                         val totalWeight = setData.getWeight()
-                        setLine.append("${formatNumber(totalWeight)}kg×${setData.actualReps} Vol:${formatNumber(setData.volume)}kg")
-                        if (setData.subCategory == SetSubCategory.RestPauseSet) setLine.append(" [RP]")
-                        totalVolume += setData.volume
+                        setLine.append("${formatNumber(totalWeight)} kg x ${setData.actualReps}")
+                        appendSetCategoryLabel(setLine, setData.subCategory)
                     }
                     is TimedDurationSetData -> {
+                        setLine.append("${setOrdinalCounter.nextLabel(null)}: ")
                         val durationSeconds = (setData.endTimer - setData.startTimer) / 1000
                         setLine.append("Dur:${formatDurationForExport(durationSeconds)}")
-                        totalDuration += durationSeconds
                     }
                     is EnduranceSetData -> {
+                        setLine.append("${setOrdinalCounter.nextLabel(null)}: ")
                         val durationSeconds = setData.endTimer / 1000
                         setLine.append("Dur:${formatDurationForExport(durationSeconds)}")
-                        totalDuration += durationSeconds
                     }
                     else -> setLine.append("Rest/Other")
                 }
@@ -91,29 +78,45 @@ internal fun appendExerciseTimelineToMarkdown(
                 if (!snapName.isNullOrBlank() && snapName != equipmentNameForHeader) {
                     setLine.append(" (@ $snapName)")
                 }
-                appendIntervalHeartRateLineForExport(
-                    setLine,
-                    workoutHistory,
-                    setHistory.startTime,
-                    setHistory.endTime,
-                    exercise,
-                    userAge,
-                    workoutStore
-                )
                 markdown.append(setLine.toString()).append("\n")
             }
         }
     }
-    val totalsLine = StringBuilder()
-    if (totalVolume > 0) {
-        totalsLine.append("Total Vol: ${formatNumber(totalVolume)}kg")
+}
+
+private class TimelineSetOrdinalCounter {
+    private var workSetCount = 0
+    private var warmupSetCount = 0
+    private var calibrationSetCount = 0
+
+    fun nextLabel(subCategory: SetSubCategory?): String {
+        return when (displayCounterKindForSubCategory(subCategory)) {
+            SetDisplayCounterKind.Warmup -> {
+                warmupSetCount += 1
+                "W$warmupSetCount"
+            }
+            SetDisplayCounterKind.Calibration -> {
+                calibrationSetCount += 1
+                "Cal"
+            }
+            SetDisplayCounterKind.Work -> {
+                workSetCount += 1
+                workSetCount.toString()
+            }
+        }
     }
-    if (totalDuration > 0) {
-        if (totalsLine.isNotEmpty()) totalsLine.append(" | ")
-        totalsLine.append("Total Dur: ${formatDurationForExport(totalDuration)}")
-    }
-    if (totalsLine.isNotEmpty()) {
-        markdown.append(totalsLine.toString()).append("\n")
+}
+
+private fun appendSetCategoryLabel(
+    line: StringBuilder,
+    subCategory: SetSubCategory,
+) {
+    when (subCategory) {
+        SetSubCategory.WarmupSet -> line.append(" [warm-up]")
+        SetSubCategory.RestPauseSet -> line.append(" [rest-pause]")
+        SetSubCategory.CalibrationSet -> line.append(" [calibration]")
+        SetSubCategory.CalibrationPendingSet -> line.append(" [calibration-pending]")
+        else -> Unit
     }
 }
 

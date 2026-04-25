@@ -308,7 +308,7 @@ private fun appendExerciseDetails(
                     if (warmups.isNotEmpty()) {
                         markdown.append("\n")
                         warmups.forEachIndexed { index, (weight, reps) ->
-                            markdown.append("    Warm-up ${index + 1}: ${formatNumber(weight)} kg × $reps reps\n")
+                            markdown.append("    Warm-up ${index + 1}: ${formatNumber(weight)} kg x $reps reps\n")
                         }
                     } else {
                         markdown.append("Enabled\n")
