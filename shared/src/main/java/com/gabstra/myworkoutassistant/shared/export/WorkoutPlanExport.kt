@@ -24,8 +24,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
-import com.gabstra.myworkoutassistant.shared.utils.WarmupContextBuilder
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import kotlin.math.roundToInt
 
@@ -194,17 +192,11 @@ private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, inde
         workout.workoutComponents.forEachIndexed { componentIndex, component ->
             when (component) {
                 is Exercise -> {
-                    val warmupContext = WarmupContextBuilder.build(
-                        exercise = component,
-                        priorExercises = processedExercises,
-                        isSupersetFollowUp = false
-                    )
                     appendExerciseDetails(
                         markdown,
                         component,
                         componentIndex + 1,
                         workoutStore,
-                        warmupContext,
                         processedExercises
                     )
                     processedExercises.add(component)
@@ -228,7 +220,6 @@ private fun appendExerciseDetails(
     exercise: Exercise,
     index: Int,
     workoutStore: WorkoutStore,
-    warmupContext: WarmupContext?,
     priorExercises: List<Exercise> = emptyList()
 ) {
     markdown.append("${index}. **${exercise.name}**\n\n")
@@ -290,7 +281,6 @@ private fun appendExerciseDetails(
                             initialSetup = emptyList(),
                             maxWarmups = 3,
                             additionalWorkWeights = additionalWorkWeights,
-                            warmupContext = warmupContext
                         )
                     } else {
                         WarmupPlanner.buildWarmupSets(
@@ -301,7 +291,6 @@ private fun appendExerciseDetails(
                             priorExercises = priorExercises,
                             equipment = equipment,
                             maxWarmups = 3,
-                            warmupContext = warmupContext
                         )
                     }
                     

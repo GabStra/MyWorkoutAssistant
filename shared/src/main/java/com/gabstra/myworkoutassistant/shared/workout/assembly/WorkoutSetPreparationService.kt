@@ -9,7 +9,6 @@ import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
-import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
@@ -21,7 +20,6 @@ class WorkoutSetPreparationService {
         equipment: WeightLoadedEquipment?,
         bodyWeightKg: Double,
         getAvailableTotals: (WeightLoadedEquipment) -> kotlin.collections.Set<Double>,
-        warmupContext: WarmupContext? = null,
     ): List<Set> {
         val exerciseAllSets = mutableListOf<Set>()
         val exerciseSets = exercise.sets
@@ -104,7 +102,6 @@ class WorkoutSetPreparationService {
                     initialSetup = emptyList(),
                     maxWarmups = 3,
                     additionalWorkWeights = additionalWorkWeights,
-                    warmupContext = warmupContext
                 )
             } else {
                 WarmupPlanner.buildWarmupSets(
@@ -115,7 +112,6 @@ class WorkoutSetPreparationService {
                     priorExercises = priorExercises,
                     equipment = equipment,
                     maxWarmups = 3,
-                    warmupContext = warmupContext
                 )
             }
 

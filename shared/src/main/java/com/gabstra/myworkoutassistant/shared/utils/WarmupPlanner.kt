@@ -9,13 +9,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlin.math.abs
 import kotlin.math.max
 
-data class WarmupContext(
-    val isFirstExerciseInWorkout: Boolean,
-    val muscleOverlapRatio: Double,
-    val previousExerciseSameEquipment: Boolean,
-    val isSupersetFollowUp: Boolean,
-)
-
 object WarmupPlanner {
     private const val TAG = "WarmupPlanner"
     private const val EPS = 1e-9
@@ -35,7 +28,6 @@ object WarmupPlanner {
         exercise: Exercise,
         priorExercises: List<Exercise>,
         equipment: Equipment?,
-        warmupContext: WarmupContext?,
     ): WarmupProfile {
         // Category-driven profiles (NSCA/ACSM). When set, use evidence-based volume; otherwise fall back to legacy heuristics.
         val category = exercise.exerciseCategory
@@ -45,9 +37,6 @@ object WarmupPlanner {
                 workReps = workReps,
                 maxWarmups = maxWarmups,
                 equipment = equipment,
-                priorExercises = priorExercises,
-                exercise = exercise,
-                warmupContext = warmupContext
             )
         }
 
@@ -107,28 +96,9 @@ object WarmupPlanner {
         workReps: Int,
         maxWarmups: Int,
         equipment: Equipment?,
-        priorExercises: List<Exercise>,
-        exercise: Exercise,
-        warmupContext: WarmupContext?
     ): WarmupProfile {
 
-        val isRepeatedLift = priorExercises.any { it.id == exercise.id }
         val includeEmptyBar = equipment is Barbell
-
-        fun applyAlreadyWarmReduction(
-            category: ExerciseCategory,
-            steps: List<WarmupStep>,
-        ): List<WarmupStep> {
-            if (steps.size <= 1) return steps
-            val alreadyWarm = isAlreadyWarmForCategory(category, warmupContext, isRepeatedLift)
-            if (!alreadyWarm) return steps
-
-            return when (category) {
-                ExerciseCategory.HEAVY_COMPOUND -> if (steps.size > 2) steps.drop(1) else steps
-                ExerciseCategory.MODERATE_COMPOUND -> steps.takeLast(1)
-                ExerciseCategory.ISOLATION -> emptyList()
-            }
-        }
 
         return when (category) {
 
@@ -153,10 +123,8 @@ object WarmupPlanner {
                     if (includePrimer) add(WarmupStep(0.85, 1))
                 }
 
-                val adjusted = applyAlreadyWarmReduction(category, base)
-
                 WarmupProfile(
-                    steps = capHeavyCompoundSteps(adjusted, maxWarmups)
+                    steps = capHeavyCompoundSteps(base, maxWarmups)
                 )
             }
 
@@ -175,70 +143,27 @@ object WarmupPlanner {
                     add(WarmupStep(0.70, 3))
                 }
 
-                val adjusted = applyAlreadyWarmReduction(category, base)
-
                 WarmupProfile(
-                    steps = capPreservingLast(adjusted, maxWarmups)
+                    steps = capPreservingLast(base, maxWarmups)
                 )
             }
 
             ExerciseCategory.ISOLATION -> {
                 /*
                 * Isolation
-                * Often no warm-up if muscle already trained
-                * Otherwise minimal neural rehearsal
+                * Minimal neural rehearsal
                 *
                 * Base:
                 *   0.65 × 4
                 */
 
-                val muscleAlreadyTrainedFromPriorExercises = priorExercises.any { prior ->
-                    exercise.muscleGroups != null &&
-                    prior.muscleGroups != null &&
-                    exercise.muscleGroups.intersect(prior.muscleGroups).isNotEmpty()
-                }
-                val muscleAlreadyTrainedFromContext = warmupContext != null &&
-                    !warmupContext.isFirstExerciseInWorkout &&
-                    warmupContext.muscleOverlapRatio > 0.0
-                val muscleAlreadyTrained = muscleAlreadyTrainedFromPriorExercises || muscleAlreadyTrainedFromContext
-
-                if (muscleAlreadyTrained) {
-                    WarmupProfile(
-                        steps = emptyList()
+                WarmupProfile(
+                    steps = capPreservingLast(
+                        listOf(WarmupStep(0.65, if (workReps >= 10) 6 else 4)),
+                        maxWarmups
                     )
-                } else {
-                    WarmupProfile(
-                        steps = capPreservingLast(
-                            listOf(WarmupStep(0.65, if (workReps >= 10) 6 else 4)),
-                            maxWarmups
-                        )
-                    )
-                }
+                )
             }
-        }
-    }
-
-    private fun isAlreadyWarmForCategory(
-        category: ExerciseCategory,
-        warmupContext: WarmupContext?,
-        isRepeatedLift: Boolean,
-    ): Boolean {
-        if (isRepeatedLift) return true
-        if (warmupContext == null || warmupContext.isFirstExerciseInWorkout) return false
-
-        val meaningfulOverlap = if (warmupContext.isSupersetFollowUp) {
-            warmupContext.muscleOverlapRatio >= 0.25
-        } else {
-            warmupContext.muscleOverlapRatio >= 0.5
-        }
-
-        return when (category) {
-            ExerciseCategory.HEAVY_COMPOUND -> warmupContext.previousExerciseSameEquipment ||
-                meaningfulOverlap
-            ExerciseCategory.MODERATE_COMPOUND -> warmupContext.previousExerciseSameEquipment ||
-                meaningfulOverlap
-            ExerciseCategory.ISOLATION -> warmupContext.previousExerciseSameEquipment ||
-                warmupContext.muscleOverlapRatio > 0.0
         }
     }
 
@@ -306,7 +231,6 @@ object WarmupPlanner {
         maxWarmups: Int = 3,
         baseAnchorTotal: Double? = null,
         convenienceStepKgTotal: Double? = null,
-        warmupContext: WarmupContext? = null,
     ): List<Pair<Double, Int>> {
         if (availableTotals.isEmpty()) return emptyList()
 
@@ -337,7 +261,6 @@ object WarmupPlanner {
             exercise = exercise,
             priorExercises = priorExercises,
             equipment = equipment,
-            warmupContext = warmupContext
         )
 
         if (profile.steps.isEmpty()) return emptyList()
@@ -404,7 +327,6 @@ object WarmupPlanner {
         baseAnchorTotal: Double? = null,
         convenienceStepKgTotal: Double? = null,
         additionalWorkWeights: List<Double> = emptyList(),
-        warmupContext: WarmupContext? = null,
     ): List<Pair<Double, Int>> {
         if (workWeight <= barbell.barWeight) return emptyList()
 
@@ -415,7 +337,6 @@ object WarmupPlanner {
             exercise = exercise,
             priorExercises = priorExercises,
             equipment = barbell,
-            warmupContext = warmupContext
         )
 
         val steps = profile.steps

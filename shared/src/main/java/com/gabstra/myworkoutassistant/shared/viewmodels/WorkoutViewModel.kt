@@ -106,8 +106,6 @@ import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
-import com.gabstra.myworkoutassistant.shared.utils.WarmupContext
-import com.gabstra.myworkoutassistant.shared.utils.WarmupContextBuilder
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -2249,12 +2247,7 @@ open class WorkoutViewModel(
         for ((index, workoutComponent) in workoutComponents.withIndex()) {
             when (workoutComponent) {
                 is Exercise -> {
-                    val warmupContext = WarmupContextBuilder.build(
-                        exercise = workoutComponent,
-                        priorExercises = processedExercises,
-                        isSupersetFollowUp = false
-                    )
-                    val childItems = addStatesFromExercise(workoutComponent, processedExercises, warmupContext)
+                    val childItems = addStatesFromExercise(workoutComponent, processedExercises)
                     val exerciseContainer = WorkoutStateContainer.ExerciseState(
                         exerciseId = workoutComponent.id,
                         childItems = childItems.toMutableList()
@@ -2287,12 +2280,7 @@ open class WorkoutViewModel(
                         } else {
                             processedExercises + superset.exercises.take(supersetIndex)
                         }
-                        val warmupContext = WarmupContextBuilder.build(
-                            exercise = exercise,
-                            priorExercises = priorExercises,
-                            isSupersetFollowUp = supersetIndex > 0
-                        )
-                        addStatesFromExercise(exercise, priorExercises, warmupContext).flatMap { item ->
+                        addStatesFromExercise(exercise, priorExercises).flatMap { item ->
                             when (item) {
                                 is ExerciseChildItem.Normal -> listOf(item.state)
                                 is ExerciseChildItem.CalibrationExecutionBlock -> item.childStates
@@ -2429,7 +2417,6 @@ open class WorkoutViewModel(
     protected suspend fun addStatesFromExercise(
         exercise: Exercise,
         priorExercises: List<Exercise> = emptyList(),
-        warmupContext: WarmupContext? = null
     ): List<ExerciseChildItem> {
         if (exercise.sets.isEmpty()) return emptyList()
 
@@ -2455,7 +2442,6 @@ open class WorkoutViewModel(
             equipment = equipment,
             bodyWeightKg = bodyWeight.value,
             getAvailableTotals = ::getCachedAvailableTotals,
-            warmupContext = warmupContext
         )
 
         val plateChangeResults = getPlateChangeResults(exercise, exerciseAllSets, equipment)

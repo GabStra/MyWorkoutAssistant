@@ -359,17 +359,11 @@ class WarmupPlannerTest {
     }
 
     @Test
-    fun buildWarmupSetsForBarbell_heavyCompoundContextDropsEarlyWarmupPreservesPrimer() {
+    fun buildWarmupSetsForBarbell_heavyCompoundKeepsFullRampRegardlessOfWorkoutPosition() {
         val barbell = createTestBarbell(barWeight = 20.0)
         val exercise = createTestExercise(
             equipmentId = barbell.id,
             exerciseCategory = ExerciseCategory.HEAVY_COMPOUND
-        )
-        val warmupContext = WarmupContext(
-            isFirstExerciseInWorkout = false,
-            muscleOverlapRatio = 0.75,
-            previousExerciseSameEquipment = true,
-            isSupersetFollowUp = false
         )
 
         val warmups = WarmupPlanner.buildWarmupSetsForBarbell(
@@ -380,12 +374,11 @@ class WarmupPlannerTest {
             exercise = exercise,
             priorExercises = emptyList(),
             maxWarmups = 4,
-            warmupContext = warmupContext
         )
 
-        assertEquals(3, warmups.size)
-        assertEquals(listOf(5, 3, 1), warmups.map { it.second })
-        assertTrue("Already-warm context should drop the empty bar", warmups.first().first > barbell.barWeight)
+        assertEquals(4, warmups.size)
+        assertEquals(listOf(5, 5, 3, 1), warmups.map { it.second })
+        assertEquals("First warmup should be the empty bar", barbell.barWeight, warmups.first().first, 0.0)
         assertTrue("Final primer should be preserved", warmups.last().first in 80.0..90.0)
     }
 
@@ -396,12 +389,6 @@ class WarmupPlannerTest {
             equipmentId = barbell.id,
             exerciseCategory = ExerciseCategory.HEAVY_COMPOUND
         )
-        val warmupContext = WarmupContext(
-            isFirstExerciseInWorkout = false,
-            muscleOverlapRatio = 0.0,
-            previousExerciseSameEquipment = false,
-            isSupersetFollowUp = true
-        )
 
         val warmups = WarmupPlanner.buildWarmupSetsForBarbell(
             availableTotals = barbell.getWeightsCombinationsNoExtra().sorted(),
@@ -411,7 +398,6 @@ class WarmupPlannerTest {
             exercise = exercise,
             priorExercises = emptyList(),
             maxWarmups = 4,
-            warmupContext = warmupContext
         )
 
         assertEquals(4, warmups.size)
@@ -420,17 +406,11 @@ class WarmupPlannerTest {
     }
 
     @Test
-    fun buildWarmupSetsForBarbell_isolationContextSkipsWhenMuscleAlreadyWarm() {
+    fun buildWarmupSetsForBarbell_isolationCategoryStillGeneratesWarmup() {
         val barbell = createTestBarbell(barWeight = 20.0)
         val exercise = createTestExercise(
             equipmentId = barbell.id,
             exerciseCategory = ExerciseCategory.ISOLATION
-        )
-        val warmupContext = WarmupContext(
-            isFirstExerciseInWorkout = false,
-            muscleOverlapRatio = 0.5,
-            previousExerciseSameEquipment = false,
-            isSupersetFollowUp = false
         )
 
         val warmups = WarmupPlanner.buildWarmupSetsForBarbell(
@@ -441,10 +421,11 @@ class WarmupPlannerTest {
             exercise = exercise,
             priorExercises = emptyList(),
             maxWarmups = 4,
-            warmupContext = warmupContext
         )
 
-        assertTrue("Isolation warmups should be skipped when the target muscle is already warm", warmups.isEmpty())
+        assertEquals(1, warmups.size)
+        assertEquals(6, warmups.first().second)
+        assertTrue(warmups.first().first in 60.0..80.0)
     }
 
     @Test
