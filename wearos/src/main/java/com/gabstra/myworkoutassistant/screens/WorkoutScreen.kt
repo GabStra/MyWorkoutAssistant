@@ -870,8 +870,9 @@ private fun AmbientWorkoutOverlayContent(
                 )
 
                 if (!model.metadataText.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "  |  ${model.metadataText}",
+                        text = model.metadataText,
                         color = Color.White,
                         style = MaterialTheme.typography.bodyExtraSmall.copy(fontWeight = FontWeight.Medium),
                         maxLines = 1,
@@ -1049,8 +1050,13 @@ private fun ambientDetailText(workoutState: WorkoutState): String? =
                 is EnduranceSetData -> "Timer --"
                 else -> null
             }
-            listOfNotNull("Set ${workoutState.setIndex.toInt() + 1}", timerText)
-                .joinToString(" | ")
+            buildString {
+                append("Set ${workoutState.setIndex.toInt() + 1}")
+                if (!timerText.isNullOrBlank()) {
+                    append(" ")
+                    append(timerText)
+                }
+            }
         }
         is WorkoutState.Rest -> {
             "Timer --"

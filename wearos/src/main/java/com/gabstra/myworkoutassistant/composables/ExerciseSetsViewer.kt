@@ -10,21 +10,36 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.material3.LocalTextConfiguration
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
@@ -483,6 +498,8 @@ fun SetTableRow(
 @Composable
 private fun FastPageExercisesSetTableRow(
     rowModel: PageExercisesRowModel,
+    fittedRow: PageExercisesFittedRow?,
+    enableFadingText: Boolean,
     hideSetListRowText: Boolean,
     modifier: Modifier = Modifier,
     textColor: Color = MaterialTheme.colorScheme.onBackground,
@@ -504,6 +521,7 @@ private fun FastPageExercisesSetTableRow(
         FastPageExercisesCellText(
             modifier = Modifier
                 .weight(1f)
+                .height(fittedRow?.setText?.containerHeight ?: PageExercisesSetRowInnerHeight)
                 .then(
                     if (!rowModel.setIdentifier.isNullOrBlank()) {
                         Modifier.semantics(mergeDescendants = false) {
@@ -514,22 +532,32 @@ private fun FastPageExercisesSetTableRow(
                     }
                 ),
             text = rowModel.setText.orEmpty(),
+            fittedText = fittedRow?.setText,
+            enableFadingText = enableFadingText,
             color = textColor,
             style = itemStyle,
             hideSetListRowText = hideSetListRowText,
         )
 
         FastPageExercisesCellText(
-            modifier = Modifier.weight(rowModel.valueWeight),
+            modifier = Modifier
+                .weight(rowModel.valueWeight)
+                .height(fittedRow?.valueText?.containerHeight ?: PageExercisesSetRowInnerHeight),
             text = rowModel.valueText.orEmpty(),
+            fittedText = fittedRow?.valueText,
+            enableFadingText = enableFadingText,
             color = textColor,
             style = itemStyle,
             hideSetListRowText = hideSetListRowText,
         )
         rowModel.repsText?.let { repsText ->
             FastPageExercisesCellText(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(fittedRow?.repsText?.containerHeight ?: PageExercisesSetRowInnerHeight),
                 text = repsText,
+                fittedText = fittedRow?.repsText,
+                enableFadingText = enableFadingText,
                 color = textColor,
                 style = itemStyle,
                 hideSetListRowText = hideSetListRowText,
@@ -541,24 +569,37 @@ private fun FastPageExercisesSetTableRow(
 @Composable
 private fun FastPageExercisesCellText(
     text: String,
+    fittedText: PageExercisesFittedTextCell?,
+    enableFadingText: Boolean,
     color: Color,
     style: TextStyle,
     hideSetListRowText: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    ExerciseSetRowFadingCell(
-        text = text,
-        hideSetListRowText = hideSetListRowText,
-        style = style,
-        color = color,
-        modifier = modifier,
-    )
+    if (fittedText != null && !hideSetListRowText) {
+        FastFittedFadingTextCell(
+            fittedText = fittedText,
+            enableFadingText = enableFadingText,
+            color = color,
+            style = style,
+            modifier = modifier,
+        )
+    } else {
+        ExerciseSetRowFadingCell(
+            text = text,
+            hideSetListRowText = hideSetListRowText,
+            style = style,
+            color = color,
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable
 private fun CenteredLabelRow(
     modifier: Modifier,
     text: String,
+    fittedText: PageExercisesFittedTextCell?,
     textColor: Color,
     hideSetListRowText: Boolean,
 ) {
@@ -569,13 +610,352 @@ private fun CenteredLabelRow(
             .padding(vertical = 2.5.dp, horizontal = 5.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (!hideSetListRowText) {
+        if (!hideSetListRowText && fittedText != null) {
+            FastFittedTextCell(
+                fittedText = fittedText,
+                color = textColor,
+                style = itemStyle,
+            )
+        } else if (!hideSetListRowText) {
             ScalableText(
                 text = text,
                 color = textColor,
                 style = itemStyle,
             )
         }
+    }
+}
+
+private val PageExercisesSetRowHeight = 25.dp
+private val PageExercisesSetRowPadding = 2.5.dp
+private val PageExercisesSetRowInnerHeight = PageExercisesSetRowHeight - PageExercisesSetRowPadding * 2
+private val PageExercisesCenteredRowHorizontalPadding = 5.dp
+private val PageExercisesCenteredRowVerticalPadding = 2.5.dp
+
+@Immutable
+internal data class PageExercisesFittedTextCell(
+    val text: String,
+    val fontSize: TextUnit,
+    val inkWidth: Dp,
+    val containerWidth: Dp,
+    val containerHeight: Dp,
+    val overflows: Boolean,
+)
+
+@Immutable
+internal data class PageExercisesFittedRow(
+    val key: String,
+    val setText: PageExercisesFittedTextCell? = null,
+    val valueText: PageExercisesFittedTextCell? = null,
+    val repsText: PageExercisesFittedTextCell? = null,
+    val centeredText: PageExercisesFittedTextCell? = null,
+)
+
+@Immutable
+internal data class PageExercisesFittedRows(
+    val preparedRows: PageExercisesPreparedRows,
+    val rowsByKey: Map<String, PageExercisesFittedRow>,
+)
+
+private data class PageExercisesTextFitKey(
+    val text: String,
+    val widthPx: Int,
+    val heightPx: Int,
+)
+
+@Composable
+internal fun rememberPageExercisesFittedRows(
+    preparedRows: PageExercisesPreparedRows?,
+    rowMaxWidth: Dp,
+    rowMaxHeight: Dp = PageExercisesSetRowHeight,
+): PageExercisesFittedRows? {
+    if (preparedRows == null) return null
+
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val itemStyle = MaterialTheme.typography.numeralSmall
+    val baseStyle = remember(itemStyle) { pageExercisesBaseTextStyle(itemStyle) }
+    val densityValue = density.density
+    val fontScale = density.fontScale
+
+    return remember(
+        preparedRows,
+        rowMaxWidth,
+        rowMaxHeight,
+        baseStyle,
+        densityValue,
+        fontScale,
+    ) {
+        buildPageExercisesFittedRows(
+            preparedRows = preparedRows,
+            rowMaxWidth = rowMaxWidth,
+            rowMaxHeight = rowMaxHeight,
+            baseStyle = baseStyle,
+            textMeasurer = textMeasurer,
+            density = density,
+        )
+    }
+}
+
+internal fun buildPageExercisesFittedRows(
+    preparedRows: PageExercisesPreparedRows,
+    rowMaxWidth: Dp,
+    rowMaxHeight: Dp,
+    baseStyle: TextStyle,
+    textMeasurer: TextMeasurer,
+    density: Density,
+): PageExercisesFittedRows {
+    val cache = mutableMapOf<PageExercisesTextFitKey, PageExercisesFittedTextCell>()
+    val setInnerWidth = (rowMaxWidth - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
+    val setInnerHeight = (rowMaxHeight - PageExercisesSetRowPadding * 2).coerceAtLeast(0.dp)
+    val centeredWidth = (rowMaxWidth - PageExercisesCenteredRowHorizontalPadding * 2).coerceAtLeast(0.dp)
+    val centeredHeight = (rowMaxHeight - PageExercisesCenteredRowVerticalPadding * 2).coerceAtLeast(0.dp)
+
+    val rows = preparedRows.rowModels.associate { rowModel ->
+        val fittedRow = when (rowModel.contentType) {
+            PageExercisesRowContentType.Set -> {
+                val hasReps = rowModel.repsText != null
+                val totalWeight = 1f + rowModel.valueWeight + if (hasReps) 1f else 0f
+                val setTextWidth = setInnerWidth * (1f / totalWeight)
+                val valueTextWidth = setInnerWidth * (rowModel.valueWeight / totalWeight)
+                val repsTextWidth = setInnerWidth * (1f / totalWeight)
+
+                PageExercisesFittedRow(
+                    key = rowModel.key,
+                    setText = fitPageExercisesTextCell(
+                        text = rowModel.setText.orEmpty(),
+                        containerWidth = setTextWidth,
+                        containerHeight = setInnerHeight,
+                        baseStyle = baseStyle,
+                        textMeasurer = textMeasurer,
+                        density = density,
+                        cache = cache,
+                    ),
+                    valueText = fitPageExercisesTextCell(
+                        text = rowModel.valueText.orEmpty(),
+                        containerWidth = valueTextWidth,
+                        containerHeight = setInnerHeight,
+                        baseStyle = baseStyle,
+                        textMeasurer = textMeasurer,
+                        density = density,
+                        cache = cache,
+                    ),
+                    repsText = rowModel.repsText?.let { repsText ->
+                        fitPageExercisesTextCell(
+                            text = repsText,
+                            containerWidth = repsTextWidth,
+                            containerHeight = setInnerHeight,
+                            baseStyle = baseStyle,
+                            textMeasurer = textMeasurer,
+                            density = density,
+                            cache = cache,
+                        )
+                    },
+                )
+            }
+            PageExercisesRowContentType.CalibrationLoad,
+            PageExercisesRowContentType.Rest,
+            PageExercisesRowContentType.CalibrationRir -> PageExercisesFittedRow(
+                key = rowModel.key,
+                centeredText = fitPageExercisesTextCell(
+                    text = rowModel.centeredText.orEmpty(),
+                    containerWidth = centeredWidth,
+                    containerHeight = centeredHeight,
+                    baseStyle = baseStyle,
+                    textMeasurer = textMeasurer,
+                    density = density,
+                    cache = cache,
+                ),
+            )
+        }
+
+        rowModel.key to fittedRow
+    }
+
+    return PageExercisesFittedRows(
+        preparedRows = preparedRows,
+        rowsByKey = rows,
+    )
+}
+
+private fun fitPageExercisesTextCell(
+    text: String,
+    containerWidth: Dp,
+    containerHeight: Dp,
+    baseStyle: TextStyle,
+    textMeasurer: TextMeasurer,
+    density: Density,
+    cache: MutableMap<PageExercisesTextFitKey, PageExercisesFittedTextCell>,
+): PageExercisesFittedTextCell {
+    val widthPx = with(density) { containerWidth.toPx() }.toInt().coerceAtLeast(0)
+    val heightPx = with(density) { containerHeight.toPx() }.toInt().coerceAtLeast(0)
+    val key = PageExercisesTextFitKey(
+        text = text,
+        widthPx = widthPx,
+        heightPx = heightPx,
+    )
+
+    return cache.getOrPut(key) {
+        val layout = measureScalableSingleLineLayout(
+            measurer = textMeasurer,
+            text = AnnotatedString(text),
+            maxWidthPx = widthPx.toFloat(),
+            maxHeightPx = heightPx.toFloat(),
+            baseStyle = baseStyle,
+            minTextSize = 12.sp,
+            scaleDownOnly = true,
+            density = density,
+        )
+        val inkWidthPx = with(density) { layout.widthDp.toPx() }
+
+        PageExercisesFittedTextCell(
+            text = text,
+            fontSize = layout.fontSize,
+            inkWidth = layout.widthDp,
+            containerWidth = containerWidth,
+            containerHeight = containerHeight,
+            overflows = inkWidthPx > widthPx + 0.5f,
+        )
+    }
+}
+
+private fun pageExercisesBaseTextStyle(style: TextStyle): TextStyle {
+    return style.copy(
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.Both
+        )
+    )
+}
+
+@Composable
+private fun FastFittedTextCell(
+    fittedText: PageExercisesFittedTextCell,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    FastFittedTextCellContent(
+        fittedText = fittedText,
+        color = color,
+        style = style,
+        modifier = modifier,
+        fadeOverflow = false,
+    )
+}
+
+@Composable
+private fun FastFittedFadingTextCell(
+    fittedText: PageExercisesFittedTextCell,
+    enableFadingText: Boolean,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    FastFittedTextCellContent(
+        fittedText = fittedText,
+        enableFadingText = enableFadingText,
+        color = color,
+        style = style,
+        modifier = modifier,
+        fadeOverflow = true,
+    )
+}
+
+@Composable
+private fun FastFittedTextCellContent(
+    fittedText: PageExercisesFittedTextCell,
+    enableFadingText: Boolean = false,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    fadeOverflow: Boolean,
+) {
+    if (fadeOverflow && fittedText.overflows && enableFadingText) {
+        MarqueeFittedTextCell(
+            fittedText = fittedText,
+            color = color,
+            style = style,
+            modifier = modifier,
+        )
+    } else {
+        PlainFittedTextCell(
+            fittedText = fittedText,
+            color = color,
+            style = style,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun MarqueeFittedTextCell(
+    fittedText: PageExercisesFittedTextCell,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val baseStyle = remember(style) { pageExercisesBaseTextStyle(style) }
+    val marqueeState = rememberTrackableMarqueeState()
+    val fadeColor = MaterialTheme.colorScheme.background
+
+    Box(
+        modifier = modifier
+            .width(fittedText.containerWidth)
+            .height(fittedText.containerHeight)
+            .clipToBounds(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = fittedText.text,
+                style = baseStyle.copy(fontSize = fittedText.fontSize, color = color),
+                color = Color.Unspecified,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                overflow = LocalTextConfiguration.current.overflow,
+                modifier = Modifier
+                    .trackableMarquee(
+                        state = marqueeState,
+                        iterations = Int.MAX_VALUE,
+                        edgeFadeWidth = 12.dp,
+                        edgeFadeColor = fadeColor,
+                    )
+                    .width(fittedText.inkWidth),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlainFittedTextCell(
+    fittedText: PageExercisesFittedTextCell,
+    color: Color,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val baseStyle = remember(style) { pageExercisesBaseTextStyle(style) }
+
+    Box(
+        modifier = modifier
+            .width(fittedText.containerWidth)
+            .height(fittedText.containerHeight)
+            .clipToBounds(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = fittedText.text,
+            style = baseStyle.copy(fontSize = fittedText.fontSize, color = color),
+            color = Color.Unspecified,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            overflow = LocalTextConfiguration.current.overflow,
+            modifier = Modifier.width(fittedText.inkWidth),
+        )
     }
 }
 
@@ -840,9 +1220,11 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
     stateToMatch: WorkoutState?,
     progressState: ProgressState = ProgressState.CURRENT,
     preparedRows: PageExercisesPreparedRows? = null,
+    fittedRows: PageExercisesFittedRows? = null,
+    enableFadingText: Boolean = true,
     hideSetListRowText: Boolean = false,
 ) {
-    val rows = preparedRows ?: buildPageExercisesPreparedRows(
+    val rows = fittedRows?.preparedRows ?: preparedRows ?: buildPageExercisesPreparedRows(
         viewModel = viewModel,
         exercise = exercise,
         currentSet = currentSet,
@@ -873,6 +1255,8 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         when (rowModel.contentType) {
             PageExercisesRowContentType.Set -> FastPageExercisesSetTableRow(
                 rowModel = rowModel,
+                fittedRow = fittedRows?.rowsByKey?.get(rowModel.key),
+                enableFadingText = enableFadingText,
                 hideSetListRowText = hideSetListRowText,
                 modifier = rowModifier,
                 textColor = borderColor
@@ -880,18 +1264,21 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
             PageExercisesRowContentType.CalibrationLoad -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
+                fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = borderColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.Rest -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
+                fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = borderColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.CalibrationRir -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
+                fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
                 textColor = borderColor,
                 hideSetListRowText = hideSetListRowText,
             )

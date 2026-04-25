@@ -29,10 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
@@ -246,32 +243,27 @@ fun PageProgressionComparison(
         if (maxSets > 0) {
             val baseStyle = MaterialTheme.typography.bodySmall
             val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-            val setIndicatorText = remember(isRetry, currentSetIndex, maxSets, baseStyle, secondaryTextColor) {
-                buildAnnotatedString {
-                    withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
-                        fun pipe() {
-                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Normal)) {
-                                append(" | ")
-                            }
-                        }
-                        if (isRetry) {
-                            withStyle(baseStyle.toSpanStyle().copy(fontWeight = FontWeight.Bold)) {
-                                append("Repeat")
-                            }
-                            pipe()
-                        }
-                        append("Set: ${currentSetIndex + 1}/$maxSets")
-                    }
-                }
-            }
-
-            Text(
-                text = setIndicatorText,
-                style = baseStyle,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 4.dp)
-            )
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isRetry) {
+                    Text(
+                        text = "Repeat",
+                        style = baseStyle,
+                        color = secondaryTextColor
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                }
+                Text(
+                    text = "Set: ${currentSetIndex + 1}/$maxSets",
+                    style = baseStyle,
+                    color = secondaryTextColor
+                )
+            }
         }
 
         // Calculate comparison data - use derivedStateOf for performance

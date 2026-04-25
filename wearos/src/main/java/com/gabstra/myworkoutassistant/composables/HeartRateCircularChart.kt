@@ -429,12 +429,13 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.weight(1f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.5.dp)
         ){
             PulsingHeartWithBpm(
                 bpm = bpm,
                 tint = heartColor
             )
+
 
             Row{
                 Text(
@@ -446,7 +447,7 @@ private fun HeartRateDisplay(
                 )
 
                 if (bpm != 0 && displayMode == 0) {
-                    Spacer(modifier = Modifier.size(5.dp))
+                    Spacer(modifier = Modifier.size(2.5.dp))
                     Text(
                         modifier = Modifier.alignByBaseline(),
                         text = "bpm",
@@ -463,9 +464,7 @@ private fun HeartRateDisplay(
                             color = MaterialTheme.colorScheme.background,
                             shape = shape
                         )
-                        .width(27.5.dp)
-
-                    ,
+                        .width(27.5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

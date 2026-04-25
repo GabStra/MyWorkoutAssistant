@@ -382,7 +382,7 @@ private fun ExercisePageFixedHeader(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -408,7 +408,7 @@ private fun ExercisePageFixedHeader(
         }
 
         Box(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             when (pageItem) {
@@ -442,11 +442,13 @@ private fun RestPageFixedHeader(
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
         ExerciseNameText(
             text = pageItem.previousDisplayName,
             modifier = Modifier
                 .fillMaxWidth()
+                .height(25.dp)
                 .semantics {
                     contentDescription = PageExercisesRestSemantics.previousExerciseDescription(previousPlain)
                 },
@@ -465,6 +467,7 @@ private fun RestPageFixedHeader(
             text = pageItem.nextDisplayName,
             modifier = Modifier
                 .fillMaxWidth()
+                .height(25.dp)
                 .semantics {
                     contentDescription = PageExercisesRestSemantics.nextExerciseDescription(nextPlain)
                 },
@@ -694,7 +697,12 @@ fun PageExercises(
                 initialAnchorItemScrollOffset = selectedRowScrollOffsetPx
             )
         }
-        val hideSetListRowText = transformingLazyColumnState.isScrollInProgress
+        val rowMaxWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
+        val fittedRows = rememberPageExercisesFittedRows(
+            preparedRows = selectedPagePreparedRows,
+            rowMaxWidth = rowMaxWidth,
+            rowMaxHeight = selectedRowHeightDp,
+        )
         val bottomSpacerHeightDp = (
             maxHeight -
                 topSection -
@@ -771,7 +779,8 @@ fun PageExercises(
                             stateToMatch = selectedSetStateToMatch,
                             progressState = selectedProgressState,
                             preparedRows = selectedPagePreparedRows,
-                            hideSetListRowText = hideSetListRowText,
+                            fittedRows = fittedRows,
+                            enableFadingText = !transformingLazyColumnState.isScrollInProgress,
                         )
                         InvisibleListSpacer(bottomSpacerHeightDp)
                     }
@@ -784,7 +793,6 @@ fun PageExercises(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-
                     .padding(horizontal = 20.dp)
                     .background(MaterialTheme.colorScheme.background)
             ) {
