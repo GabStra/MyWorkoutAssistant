@@ -9,6 +9,7 @@ import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
@@ -30,6 +31,17 @@ private data class ExerciseExportSession(
     val setHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>,
     val activeSetHistories: List<com.gabstra.myworkoutassistant.shared.SetHistory>
 )
+
+private data class ExerciseExportEquipment(
+    val equipment: WeightLoadedEquipment?,
+    val fallbackName: String?,
+) {
+    val name: String?
+        get() = equipment?.name ?: fallbackName
+
+    val achievableWeights: List<Double>?
+        get() = equipment?.getWeightsCombinations()?.sorted()
+}
 
 suspend fun buildExerciseHistoryMarkdown(
     exercise: Exercise,
@@ -85,33 +97,20 @@ suspend fun buildExerciseHistoryMarkdown(
     val userAge = Calendar.getInstance().get(Calendar.YEAR) - workoutStore.birthDateYear
     val markdown = StringBuilder()
 
-    val firstSessionWithSets = sessionsWithRecordedSets.firstOrNull { it.activeSetHistories.isNotEmpty() }
-    val firstHistory = firstSessionWithSets?.activeSetHistories?.firstOrNull()
-
-    val historicalEquipmentId = firstHistory?.equipmentIdSnapshot ?: exercise.equipmentId
-    val equipment = historicalEquipmentId?.let { equipmentId ->
-        workoutStore.equipments.find { it.id == equipmentId }
+    val equipmentBySession = sessionsWithRecordedSets.associateWith { session ->
+        resolveEquipmentForSession(session.activeSetHistories, exercise, workoutStore)
     }
-    val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
+    val headerEquipments = collectHeaderEquipments(
+        exercise = exercise,
+        workoutStore = workoutStore,
+        sessions = sessionsWithRecordedSets
+    )
 
     markdown.append("# ${exercise.name}\n")
     markdown.append("Type: ${exercise.exerciseType}")
 
-    if (historicalEquipmentId != null) {
-        if (equipment != null) {
-            markdown.append(" | Equipment: ${equipment.name}")
-            if (exercise.exerciseType == ExerciseType.WEIGHT && !achievableWeights.isNullOrEmpty()) {
-                markdown.append(
-                    " | Weights: ${achievableWeights.joinToString(",") { weight -> formatNumber(weight) }} kg"
-                )
-            }
-        } else {
-            markdown.append(" | Equipment: Unknown")
-        }
-    }
-
     if (exercise.exerciseType == ExerciseType.BODY_WEIGHT) {
-        markdown.append(" | BW: ${formatNumber(workoutStore.weightKg)} kg (current profile; historical sets use stored effective load)")
+        markdown.append(" | BW: ${formatNumber(workoutStore.weightKg)} kg current profile")
     }
 
     if (exercise.notes.isNotEmpty()) {
@@ -119,6 +118,13 @@ suspend fun buildExerciseHistoryMarkdown(
     }
     markdown.append("\n\n")
 
+    appendExerciseEquipmentMarkdown(
+        markdown = markdown,
+        equipments = headerEquipments,
+        includeWeights = exercise.exerciseType == ExerciseType.WEIGHT ||
+            exercise.exerciseType == ExerciseType.BODY_WEIGHT
+    )
+    appendBodyWeightLoadFormulaMarkdown(markdown, exercise)
     appendLlmExportContextMarkdown(markdown, workoutStore, userAge)
 
     val firstSession = sessionsWithRecordedSets.first().workoutHistory
@@ -162,7 +168,7 @@ suspend fun buildExerciseHistoryMarkdown(
             workoutStore = workoutStore,
             exercise = exercise,
             progression = progressionData,
-            achievableWeights = achievableWeights,
+            achievableWeights = equipmentBySession.getValue(session).achievableWeights,
         )
         markdown.append("\n")
     }
@@ -185,11 +191,12 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
     achievableWeights: List<Double>?,
 ) {
     val executedSets = activeSetHistories.toSimpleSets(achievableWeights)
+    val executedSetTokens = activeSetHistories.toCompactSetTokens(achievableWeights)
     markdown.append("### Performance\n")
-    val setsLine = if (executedSets.isEmpty()) {
+    val setsLine = if (executedSetTokens.isEmpty()) {
         "none"
     } else {
-        executedSets.joinToString(", ") { it.toCompactToken() }
+        executedSetTokens.joinToString(", ")
     }
     markdown.append("- Sets: $setsLine\n")
 
@@ -226,6 +233,87 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
     markdown.append("- Outcome: ${describeOutcome(executedSets, plannedSets)}\n")
 }
 
+private fun collectHeaderEquipments(
+    exercise: Exercise,
+    workoutStore: WorkoutStore,
+    sessions: List<ExerciseExportSession>,
+): List<ExerciseExportEquipment> {
+    val ordered = linkedMapOf<String, ExerciseExportEquipment>()
+
+    exercise.equipmentId?.let { equipmentId ->
+        val equipment = workoutStore.equipments.find { it.id == equipmentId }
+        ordered[equipmentId.toString()] = ExerciseExportEquipment(equipment, null)
+    }
+
+    sessions
+        .flatMap { it.activeSetHistories }
+        .forEach { setHistory ->
+            val equipmentId = setHistory.equipmentIdSnapshot
+            val key = equipmentId?.toString() ?: setHistory.equipmentNameSnapshot?.takeIf { it.isNotBlank() }
+            if (key != null && !ordered.containsKey(key)) {
+                val equipment = equipmentId?.let { id -> workoutStore.equipments.find { it.id == id } }
+                ordered[key] = ExerciseExportEquipment(equipment, setHistory.equipmentNameSnapshot)
+            }
+        }
+
+    return ordered.values.filter { it.name != null || it.equipment == null }
+}
+
+private fun resolveEquipmentForSession(
+    activeSetHistories: List<SetHistory>,
+    exercise: Exercise,
+    workoutStore: WorkoutStore,
+): ExerciseExportEquipment {
+    val historyWithEquipment = activeSetHistories.firstOrNull {
+        it.equipmentIdSnapshot != null || !it.equipmentNameSnapshot.isNullOrBlank()
+    }
+    val equipmentId = historyWithEquipment?.equipmentIdSnapshot ?: exercise.equipmentId
+    val equipment = equipmentId?.let { id -> workoutStore.equipments.find { it.id == id } }
+    return ExerciseExportEquipment(equipment, historyWithEquipment?.equipmentNameSnapshot)
+}
+
+private fun appendExerciseEquipmentMarkdown(
+    markdown: StringBuilder,
+    equipments: List<ExerciseExportEquipment>,
+    includeWeights: Boolean,
+) {
+    if (equipments.isEmpty()) return
+
+    markdown.append("#### Equipment\n")
+    equipments.forEach { info ->
+        markdown.append("- ")
+        markdown.append(info.name ?: "Unknown")
+        if (includeWeights) {
+            appendSelectableWeights(markdown, info.achievableWeights)
+        }
+        markdown.append("\n")
+    }
+    markdown.append("\n")
+}
+
+private fun appendSelectableWeights(markdown: StringBuilder, weights: List<Double>?) {
+    markdown.append(" | Weights: ")
+    if (weights.isNullOrEmpty()) {
+        markdown.append("none configured")
+        return
+    }
+    markdown.append(weights.joinToString(",") { weight -> formatNumber(weight) })
+    markdown.append(" kg")
+}
+
+private fun appendBodyWeightLoadFormulaMarkdown(
+    markdown: StringBuilder,
+    exercise: Exercise,
+) {
+    if (exercise.exerciseType != ExerciseType.BODY_WEIGHT) return
+
+    markdown.append("#### Body Weight Load\n")
+    exercise.bodyWeightPercentage?.let { percentage ->
+        markdown.append("- Relative BW = session BW x ${formatNumber(percentage)}%\n")
+    } ?: markdown.append("- Relative BW = stored body-weight load for the set\n")
+    markdown.append("- Set load = relative BW +/- equipment weight\n\n")
+}
+
 private fun List<SetHistory>.toSimpleSets(
     achievableWeights: List<Double>?,
 ): List<SimpleSet> = mapNotNull { setHistory ->
@@ -237,6 +325,41 @@ private fun List<SetHistory>.toSimpleSets(
         is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
         else -> null
     }
+}
+
+private fun List<SetHistory>.toCompactSetTokens(
+    achievableWeights: List<Double>?,
+): List<String> = mapNotNull { setHistory ->
+    when (val setData = setHistory.setData) {
+        is WeightSetData -> {
+            val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
+            "${formatNumber(adjustedWeight)}x${setData.actualReps}"
+        }
+        is BodyWeightSetData -> setData.toBodyWeightFormulaToken()
+        else -> null
+    }
+}
+
+private fun BodyWeightSetData.toBodyWeightFormulaToken(): String = buildString {
+    append(formatNumber(relativeBodyWeightInKg))
+    append(" kg relative BW")
+    bodyWeightPercentageSnapshot?.takeIf { it > 0.0 }?.let { percentage ->
+        val sessionBodyWeight = relativeBodyWeightInKg / (percentage / 100.0)
+        append(" (")
+        append(formatNumber(sessionBodyWeight))
+        append(" kg x ")
+        append(formatNumber(percentage))
+        append("%)")
+    }
+    if (additionalWeight != 0.0) {
+        append(if (additionalWeight > 0.0) " + " else " - ")
+        append(formatNumber(kotlin.math.abs(additionalWeight)))
+        append(" kg equipment")
+    }
+    append(" = ")
+    append(formatNumber(getWeight()))
+    append(" kg x ")
+    append(actualReps)
 }
 
 private fun SimpleSet.toCompactToken(): String = "${formatNumber(weight)}x$reps"
