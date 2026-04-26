@@ -16,12 +16,12 @@ import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.LocalWearCoroutineExceptionHandler
 import com.gabstra.myworkoutassistant.shared.DarkGray
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.LightGray
 import com.gabstra.myworkoutassistant.shared.LighterGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkerGray
 import com.gabstra.myworkoutassistant.shared.MediumGray
 import com.gabstra.myworkoutassistant.shared.MediumLightGray
-import com.gabstra.myworkoutassistant.shared.MediumLighterGray
 import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.Yellow
@@ -49,7 +49,7 @@ val darkScheme = ColorScheme(
     surfaceContainer = MediumDarkGray,
     surfaceContainerHigh = MediumGray,
     onSurface =  LighterGray, //Color(210, 210, 210),
-    onSurfaceVariant = MediumLighterGray,
+    onSurfaceVariant = LightGray,
     outline = MediumGray,
     outlineVariant = MediumLightGray,
 
