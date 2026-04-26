@@ -537,3 +537,10 @@ squat.json
 .specstory/history/2026-01-12_17-31Z-wear-os-workout-calibration-sets.md
 .specstory/history/2026-01-12_18-00Z-add-rest-button-mobile-spacing-and-width.md
 scripts/ingest_specstory_to_pieces_mcp.py
+
+# Python test artifacts
+.pytest_cache/
+.pytest_tmp/
+pytest_tmp*/
+pytest-cache-files-*/
+*.egg-info/
