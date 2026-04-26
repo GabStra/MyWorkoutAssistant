@@ -91,6 +91,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.roundToInt
 
 enum class HeartRateStatus {
     HIGHER_THAN_TARGET,
@@ -429,15 +430,17 @@ private fun HeartRateDisplay(
         Spacer(modifier = Modifier.weight(1f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.5.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ){
             PulsingHeartWithBpm(
                 bpm = bpm,
                 tint = heartColor
             )
 
-
-            Row{
+            Row(
+                modifier = Modifier.width(55.dp),
+                horizontalArrangement = Arrangement.End
+            ){
                 Text(
                     modifier = Modifier.alignByBaseline().widthIn(min = textWidth),
                     text = textToDisplay,
@@ -447,7 +450,7 @@ private fun HeartRateDisplay(
                 )
 
                 if (bpm != 0 && displayMode == 0) {
-                    Spacer(modifier = Modifier.size(2.5.dp))
+                    Spacer(modifier = Modifier.width(2.5.dp))
                     Text(
                         modifier = Modifier.alignByBaseline(),
                         text = "bpm",
@@ -778,7 +781,7 @@ private fun HeartRateView(
         derivedStateOf {
             when (displayMode) {
                 0 -> hr.toString()
-                1 -> "${"%.1f".format(mhrPercentage).replace(',', '.')}%"
+                1 -> "${mhrPercentage.roundToInt()}%"
                 else -> throw IllegalArgumentException("Invalid display mode: $displayMode")
             }
         }
@@ -821,7 +824,7 @@ private fun HeartRateView(
                     contentDescription = "Disconnected",
                     modifier = Modifier
                         .size(15.dp)
-                        .offset(y = (-5).dp)
+                        .offset(y = (-7.5).dp)
                         .then(heartRateDisplayModifier),
                     tint = MediumDarkGray
                 )
@@ -830,7 +833,7 @@ private fun HeartRateView(
                     modifier = Modifier
                         .width(120.dp)
                         .height(25.dp)
-                        .offset(y = (-5).dp)
+                        .offset(y = (-7.5).dp)
                         .clickable(onClick = onSwitchClick)
                         .then(heartRateDisplayModifier),
                     bpm = hr,
@@ -1062,7 +1065,7 @@ private fun HeartRateCircularChartPreview() {
             appViewModel = previewAppViewModel,
             hapticsViewModel = hapticsViewModel,
             heartRateChangeViewModel = previewHeartRateChangeViewModel,
-            hr = getHeartRateFromPercentage(98f, 30),
+            hr = getHeartRateFromPercentage(119f, 30),
             age = 30,
             lowerBoundMaxHRPercent = 65f,
             upperBoundMaxHRPercent = 75f
