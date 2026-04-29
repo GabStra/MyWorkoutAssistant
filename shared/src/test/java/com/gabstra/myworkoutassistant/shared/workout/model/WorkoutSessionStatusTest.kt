@@ -3,7 +3,9 @@ package com.gabstra.myworkoutassistant.shared.workout.model
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -73,6 +75,38 @@ class WorkoutSessionStatusTest {
         assertEquals(
             WorkoutSessionStatus.STALE_ON_WEAR,
             resolveWorkoutSessionStatus(history, record, now = now)
+        )
+    }
+
+    @Test
+    fun `wear record is fresh through stale timeout boundary`() {
+        val history = workoutHistory(isDone = false)
+        val record = workoutRecord(history.id, SessionOwnerDevice.WEAR, now.minusSeconds(90))
+
+        assertTrue(isWorkoutRecordFresh(record, now = now))
+        assertEquals(
+            WorkoutSessionStatus.IN_PROGRESS_ON_WEAR,
+            resolveWorkoutSessionStatus(history, record, now = now)
+        )
+    }
+
+    @Test
+    fun `wear record is stale after stale timeout boundary`() {
+        val history = workoutHistory(isDone = false)
+        val record = workoutRecord(history.id, SessionOwnerDevice.WEAR, now.minusSeconds(91))
+
+        assertFalse(isWorkoutRecordFresh(record, now = now))
+        assertEquals(
+            WorkoutSessionStatus.STALE_ON_WEAR,
+            resolveWorkoutSessionStatus(history, record, now = now)
+        )
+    }
+
+    @Test
+    fun `stale compact label says watch disconnected`() {
+        assertEquals(
+            "Watch disconnected",
+            workoutSessionDisplayLabel(WorkoutSessionStatus.STALE_ON_WEAR)
         )
     }
 

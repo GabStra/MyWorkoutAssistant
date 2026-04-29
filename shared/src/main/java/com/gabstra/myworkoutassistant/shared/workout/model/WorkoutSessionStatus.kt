@@ -75,7 +75,7 @@ object WorkoutSessionDisplayLabels {
     const val IN_PROGRESS = "In progress"
     const val STOPPED_ON_WATCH = "Stopped"
     /** Watch-owned session with no recent sync (e.g. lost connection or watch idle). */
-    const val STALE_ON_WATCH = "Stale"
+    const val STALE_ON_WATCH = "Watch disconnected"
 }
 
 /**

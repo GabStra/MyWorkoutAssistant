@@ -63,6 +63,7 @@ internal class WearDataLayerReceiver(
         val refreshedWorkoutStore = workoutStoreRepository.getWorkoutStore()
         CoroutineScope(Dispatchers.IO).launch {
             appViewModel.applyExternalSyncWorkoutStore(refreshedWorkoutStore)
+            appViewModel.refreshSelectedWorkoutRecord()
         }
 /*        if (workoutStoreJson != null) {
             Toast.makeText(activity, "Workouts updated on your watch.", Toast.LENGTH_SHORT).show()

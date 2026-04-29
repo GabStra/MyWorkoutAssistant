@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
@@ -30,6 +31,10 @@ import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
+import com.gabstra.myworkoutassistant.shared.datalayer.decideWorkoutSessionHeartbeatApply
+import com.gabstra.myworkoutassistant.shared.datalayer.sentAtLocalDateTime
 import com.gabstra.myworkoutassistant.shared.decompressToString
 import com.gabstra.myworkoutassistant.shared.findWorkoutForHistory
 import com.gabstra.myworkoutassistant.llm.PhoneLlmOperationExecutor
@@ -79,6 +84,9 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
+    private val nodeClient by lazy { Wearable.getNodeClient(this) }
+    @Volatile
+    private var localNodeId: String? = null
 
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
     private val phoneLlmOperationExecutor by lazy { PhoneLlmOperationExecutor(this) }
@@ -332,6 +340,21 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
+    private fun resolveLocalNodeId(): String? {
+        localNodeId?.let { return it }
+        return runCatching {
+            Tasks.await(nodeClient.localNode).id
+        }.getOrNull()?.also { resolved ->
+            localNodeId = resolved
+        }
+    }
+
+    private fun isSelfOriginatedEvent(uri: Uri): Boolean {
+        val sourceNodeId = uri.host ?: return false
+        val ownNodeId = resolveLocalNodeId() ?: return false
+        return sourceNodeId == ownNodeId
+    }
+
     override fun onCreate() {
         super.onCreate()
         val db = AppDatabase.getDatabase(this)
@@ -342,6 +365,9 @@ class DataLayerListenerService : WearableListenerService() {
         workoutRecordDao = db.workoutRecordDao()
         exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
         errorLogDao = db.errorLogDao()
+        scope.launch {
+            localNodeId = resolveLocalNodeId()
+        }
         
         // Detect service restart and handle incomplete syncs
         detectAndHandleServiceRestart()
@@ -503,6 +529,96 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
+    private fun parseWorkoutSessionHeartbeat(
+        dataMap: com.google.android.gms.wearable.DataMap
+    ): WorkoutSessionHeartbeat? {
+        val workoutId = dataMap.getString(WorkoutSessionHeartbeatKeys.WORKOUT_ID)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val workoutHistoryId = dataMap.getString(WorkoutSessionHeartbeatKeys.WORKOUT_HISTORY_ID)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val exerciseId = dataMap.getString(WorkoutSessionHeartbeatKeys.EXERCISE_ID)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val sessionState = dataMap.getString(WorkoutSessionHeartbeatKeys.SESSION_STATE)
+        val setIndex = dataMap.getLong(WorkoutSessionHeartbeatKeys.SET_INDEX, -1L)
+        val activeSessionRevision = dataMap.getLong(
+            WorkoutSessionHeartbeatKeys.ACTIVE_SESSION_REVISION,
+            -1L
+        )
+        val sentAtEpochMs = dataMap.getLong(WorkoutSessionHeartbeatKeys.SENT_AT_EPOCH_MS, -1L)
+
+        if (
+            workoutId == null ||
+            workoutHistoryId == null ||
+            exerciseId == null ||
+            sessionState.isNullOrBlank() ||
+            setIndex < 0L ||
+            activeSessionRevision < 0L ||
+            sentAtEpochMs <= 0L
+        ) {
+            Log.w(
+                "WorkoutSessionHeartbeat",
+                "Ignoring malformed heartbeat workoutId=$workoutId workoutHistoryId=$workoutHistoryId " +
+                    "exerciseId=$exerciseId sessionState=$sessionState setIndex=$setIndex " +
+                    "revision=$activeSessionRevision sentAt=$sentAtEpochMs"
+            )
+            return null
+        }
+
+        return WorkoutSessionHeartbeat(
+            workoutId = workoutId,
+            workoutHistoryId = workoutHistoryId,
+            exerciseId = exerciseId,
+            setIndex = setIndex.toUInt(),
+            sessionState = sessionState,
+            activeSessionRevision = activeSessionRevision.toUInt(),
+            sentAtEpochMs = sentAtEpochMs
+        )
+    }
+
+    private suspend fun applyWorkoutSessionHeartbeat(
+        heartbeat: WorkoutSessionHeartbeat,
+        packageName: String
+    ) {
+        val existingRecord = workoutRecordDao.getWorkoutRecordByWorkoutId(heartbeat.workoutId)
+        val existingHistory = existingRecord
+            ?.workoutHistoryId
+            ?.let { workoutHistoryDao.getWorkoutHistoryById(it) }
+
+        val decision = decideWorkoutSessionHeartbeatApply(
+            heartbeat = heartbeat,
+            existingRecord = existingRecord,
+            existingHistory = existingHistory
+        )
+        if (!decision.shouldApply) {
+            Log.d(
+                "WorkoutSessionHeartbeat",
+                "Ignoring heartbeat reason=${decision.rejectReason} workoutId=${heartbeat.workoutId} " +
+                    "historyId=${heartbeat.workoutHistoryId} revision=${heartbeat.activeSessionRevision}"
+            )
+            return
+        }
+
+        val updatedRecord = existingRecord!!.copy(
+            exerciseId = heartbeat.exerciseId,
+            setIndex = heartbeat.setIndex,
+            lastActiveSyncAt = heartbeat.sentAtLocalDateTime(),
+            activeSessionRevision = heartbeat.activeSessionRevision,
+            lastKnownSessionState = heartbeat.sessionState
+        )
+        workoutRecordDao.insert(updatedRecord)
+
+        val intent = Intent(INTENT_ID).apply {
+            putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+        Log.d(
+            "WorkoutSessionHeartbeat",
+            "Applied heartbeat workoutId=${heartbeat.workoutId} historyId=${heartbeat.workoutHistoryId} " +
+                "revision=${heartbeat.activeSessionRevision} state=${heartbeat.sessionState}"
+        )
+    }
+
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         val packageName = this.packageName
         try {
@@ -517,6 +633,10 @@ class DataLayerListenerService : WearableListenerService() {
 
                 // Only process CHANGED events, ignore DELETED
                 if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
+                    return@forEach
+                }
+                if (isSelfOriginatedEvent(uri)) {
+                    Log.d("DataLayerSync", "Ignoring self-originated data event: ${uri.path}")
                     return@forEach
                 }
 
@@ -628,6 +748,10 @@ class DataLayerListenerService : WearableListenerService() {
                 if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
                     return@forEach
                 }
+                if (isSelfOriginatedEvent(uri)) {
+                    Log.d("DataLayerSync", "Ignoring self-originated data event: ${uri.path}")
+                    return@forEach
+                }
                 val path = uri.path ?: return@forEach
                 when {
                     DataLayerPaths.matchesPrefix(
@@ -636,6 +760,23 @@ class DataLayerListenerService : WearableListenerService() {
                     ) -> {
                         val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
                         handlePhoneLlmOperationRequest(path, dataMap)
+                    }
+
+                    path == DataLayerPaths.WORKOUT_SESSION_HEARTBEAT_PATH -> {
+                        val dataMap = DataMapItem.fromDataItem(dataEvent.dataItem).dataMap
+                        val heartbeat = parseWorkoutSessionHeartbeat(dataMap) ?: return@forEach
+                        scope.launch(Dispatchers.IO) {
+                            runCatching {
+                                applyWorkoutSessionHeartbeat(heartbeat, packageName)
+                            }.onFailure { exception ->
+                                Log.e(
+                                    "WorkoutSessionHeartbeat",
+                                    "Failed applying heartbeat workoutId=${heartbeat.workoutId} " +
+                                        "historyId=${heartbeat.workoutHistoryId}",
+                                    exception
+                                )
+                            }
+                        }
                     }
 
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {

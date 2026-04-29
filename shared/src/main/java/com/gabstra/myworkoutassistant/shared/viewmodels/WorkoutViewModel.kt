@@ -1056,6 +1056,18 @@ open class WorkoutViewModel(
     }
 
     /**
+     * Re-resolves the workout record for the currently selected workout.
+     * Useful after external sync applies DB changes while user stays on selection/detail flow.
+     */
+    fun refreshSelectedWorkoutRecord() {
+        val selectedWorkoutId = _selectedWorkoutId.value ?: return
+        val workout = resolveWorkoutTemplateForSession(selectedWorkoutId) ?: return
+        _hasExercises.value = workout.workoutComponents.filter { it.enabled }.isNotEmpty()
+        initializeExercisesMaps(workout)
+        getWorkoutRecord(workout)
+    }
+
+    /**
      * Prepares to resume an incomplete workout by setting the selected workout and history id.
      * Call [resumeWorkoutFromRecord] after navigation to start the workout at the correct state.
      */

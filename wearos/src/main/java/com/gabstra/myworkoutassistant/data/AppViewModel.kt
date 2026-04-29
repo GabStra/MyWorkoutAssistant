@@ -35,6 +35,10 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.datalayer.DataLayerPaths
+import com.gabstra.myworkoutassistant.shared.datalayer.DEFAULT_WORKOUT_SESSION_HEARTBEAT_INTERVAL_MS
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeat
+import com.gabstra.myworkoutassistant.shared.datalayer.WorkoutSessionHeartbeatKeys
+import com.gabstra.myworkoutassistant.shared.workout.model.WATCH_SESSION_STATE_RETURNED_HOME
 import com.gabstra.myworkoutassistant.sync.PendingWorkoutHistorySyncTracker
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.Node
@@ -94,6 +98,7 @@ open class AppViewModel : WorkoutViewModel() {
     private var pendingPostRecoveryTimerReanchor = false
     private var pendingRecoveryCheckpoint: WorkoutRecoveryCheckpoint? = null
     private var pendingRecoveryResumeOptions: RecoveryResumeOptions = RecoveryResumeOptions()
+    private var workoutSessionHeartbeatJob: Job? = null
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -308,17 +313,17 @@ open class AppViewModel : WorkoutViewModel() {
         }
 
         val workoutRecords = db.workoutRecordDao().getAll()
-        val prioritizedHistory = checkpoint?.workoutHistoryId?.let { workoutHistoryId ->
-            unfinishedHistories.firstOrNull { it.id == workoutHistoryId }
+        val prioritizedRecord = checkpoint?.workoutHistoryId?.let { workoutHistoryId ->
+            workoutRecords.firstOrNull { it.workoutHistoryId == workoutHistoryId }
         } ?: checkpoint?.workoutId?.let { workoutId ->
-            unfinishedHistories.firstOrNull { it.workoutId == workoutId }
+            workoutRecords.firstOrNull { it.workoutId == workoutId }
         } ?: workoutRecords
             .sortedByDescending { it.lastActiveSyncAt }
-            .firstNotNullOfOrNull { record ->
-                unfinishedHistories.firstOrNull { it.id == record.workoutHistoryId }
-            } ?: unfinishedHistories.firstOrNull()
+            .firstOrNull()
 
-        val workoutHistory = prioritizedHistory ?: return null
+        val workoutHistory = prioritizedRecord?.let { record ->
+            unfinishedHistories.firstOrNull { it.id == record.workoutHistoryId }
+        } ?: return null
         val workout = workoutStore.workouts.firstOrNull { candidate ->
             candidate.id == workoutHistory.workoutId || candidate.globalId == workoutHistory.globalId
         } ?: checkpoint?.workoutId?.let { workoutId ->
@@ -394,6 +399,7 @@ open class AppViewModel : WorkoutViewModel() {
      * locally, then notifies mobile to mirror the deletion.
      */
     fun discardIncompleteWorkout(incompleteWorkout: IncompleteWorkout) {
+        stopWorkoutSessionHeartbeat()
         launchIO {
             setHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
             restHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
@@ -569,7 +575,127 @@ open class AppViewModel : WorkoutViewModel() {
             _screenState.value = newState
         }
 
+        updateWorkoutSessionHeartbeat(newState)
         persistRecoveryCheckpointForCurrentState(newState)
+    }
+
+    private fun updateWorkoutSessionHeartbeat(screenState: WorkoutScreenState) {
+        val shouldRun = screenState.sessionPhase == com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase.ACTIVE &&
+            screenState.workoutState !is WorkoutState.Completed &&
+            dataClient != null
+
+        if (shouldRun) {
+            startWorkoutSessionHeartbeat()
+        } else {
+            stopWorkoutSessionHeartbeat()
+        }
+    }
+
+    private fun startWorkoutSessionHeartbeat() {
+        if (workoutSessionHeartbeatJob?.isActive == true) return
+        workoutSessionHeartbeatJob = launchIO {
+            while (true) {
+                val heartbeat = withContext(Dispatchers.Main) {
+                    buildWorkoutSessionHeartbeatSnapshot()
+                }
+                if (heartbeat == null) {
+                    stopWorkoutSessionHeartbeat()
+                    return@launchIO
+                }
+                sendWorkoutSessionHeartbeat(heartbeat)
+                delay(DEFAULT_WORKOUT_SESSION_HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    fun stopWorkoutSessionHeartbeat() {
+        workoutSessionHeartbeatJob?.cancel()
+        workoutSessionHeartbeatJob = null
+    }
+
+    private fun buildWorkoutSessionHeartbeatSnapshot(): WorkoutSessionHeartbeat? {
+        val record = _workoutRecord ?: return null
+        val history = currentWorkoutHistory ?: return null
+        if (history.isDone || record.ownerDevice != SessionOwnerDevice.WEAR.name) return null
+        if (record.lastKnownSessionState == WATCH_SESSION_STATE_RETURNED_HOME) return null
+
+        val currentState = workoutState.value
+        val (exerciseId, setIndex, sessionState) = when (currentState) {
+            is WorkoutState.Set -> Triple(
+                currentState.exerciseId,
+                currentState.setIndex,
+                currentState::class.simpleName ?: "Set"
+            )
+            is WorkoutState.CalibrationLoadSelection -> Triple(
+                currentState.exerciseId,
+                currentState.setIndex,
+                currentState::class.simpleName ?: "CalibrationLoadSelection"
+            )
+            is WorkoutState.CalibrationRIRSelection -> Triple(
+                currentState.exerciseId,
+                currentState.setIndex,
+                currentState::class.simpleName ?: "CalibrationRIRSelection"
+            )
+            is WorkoutState.AutoRegulationRIRSelection -> Triple(
+                currentState.exerciseId,
+                currentState.setIndex,
+                currentState::class.simpleName ?: "AutoRegulationRIRSelection"
+            )
+            is WorkoutState.Rest -> Triple(
+                currentState.exerciseId ?: record.exerciseId,
+                record.setIndex,
+                currentState::class.simpleName ?: "Rest"
+            )
+            else -> Triple(
+                record.exerciseId,
+                record.setIndex,
+                currentState::class.simpleName ?: "Active"
+            )
+        }
+
+        return WorkoutSessionHeartbeat(
+            workoutId = record.workoutId,
+            workoutHistoryId = history.id,
+            exerciseId = exerciseId,
+            setIndex = setIndex,
+            sessionState = sessionState,
+            activeSessionRevision = record.activeSessionRevision,
+            sentAtEpochMs = System.currentTimeMillis()
+        )
+    }
+
+    private suspend fun sendWorkoutSessionHeartbeat(heartbeat: WorkoutSessionHeartbeat) {
+        val client = dataClient ?: return
+        val request = PutDataMapRequest.create(DataLayerPaths.WORKOUT_SESSION_HEARTBEAT_PATH).apply {
+            dataMap.putString(WorkoutSessionHeartbeatKeys.WORKOUT_ID, heartbeat.workoutId.toString())
+            dataMap.putString(
+                WorkoutSessionHeartbeatKeys.WORKOUT_HISTORY_ID,
+                heartbeat.workoutHistoryId.toString()
+            )
+            dataMap.putString(WorkoutSessionHeartbeatKeys.EXERCISE_ID, heartbeat.exerciseId.toString())
+            dataMap.putLong(WorkoutSessionHeartbeatKeys.SET_INDEX, heartbeat.setIndex.toLong())
+            dataMap.putString(WorkoutSessionHeartbeatKeys.SESSION_STATE, heartbeat.sessionState)
+            dataMap.putLong(
+                WorkoutSessionHeartbeatKeys.ACTIVE_SESSION_REVISION,
+                heartbeat.activeSessionRevision.toLong()
+            )
+            dataMap.putLong(WorkoutSessionHeartbeatKeys.SENT_AT_EPOCH_MS, heartbeat.sentAtEpochMs)
+        }.asPutDataRequest().setUrgent()
+
+        runCatching {
+            Tasks.await(client.putDataItem(request))
+            Log.d(
+                "WorkoutSessionHeartbeat",
+                "Sent heartbeat workoutId=${heartbeat.workoutId} historyId=${heartbeat.workoutHistoryId} " +
+                    "revision=${heartbeat.activeSessionRevision} state=${heartbeat.sessionState}"
+            )
+        }.onFailure { exception ->
+            Log.w(
+                "WorkoutSessionHeartbeat",
+                "Failed to send heartbeat workoutId=${heartbeat.workoutId} historyId=${heartbeat.workoutHistoryId}",
+                exception
+            )
+        }
     }
 
     private fun persistRecoveryCheckpointForCurrentState(screenState: WorkoutScreenState) {

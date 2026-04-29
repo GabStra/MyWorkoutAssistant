@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -41,23 +42,25 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.room.withTransaction
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 class DataLayerListenerService : WearableListenerService() {
     private val dataClient by lazy { Wearable.getDataClient(this) }
+    private val nodeClient by lazy { Wearable.getNodeClient(this) }
+    @Volatile
+    private var localNodeId: String? = null
     private val workoutStoreRepository by lazy { WorkoutStoreRepository(this.filesDir) }
 
     private val appCeh get() = (application as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
@@ -230,6 +233,8 @@ class DataLayerListenerService : WearableListenerService() {
 
     private lateinit var workoutScheduleDao: WorkoutScheduleDao
 
+    private lateinit var appDatabase: AppDatabase
+
     private lateinit var context: WearableListenerService
 
     override fun onCreate() {
@@ -238,6 +243,7 @@ class DataLayerListenerService : WearableListenerService() {
         // SYNC_REQUEST / chunks are delivered (see WearableService "disconnected before delivering").
         DataLayerSyncForegroundHelper.startFromServiceCreated(this)
         val db = AppDatabase.getDatabase(this)
+        appDatabase = db
         context = this
         setHistoryDao = db.setHistoryDao()
         restHistoryDao = db.restHistoryDao()
@@ -246,6 +252,9 @@ class DataLayerListenerService : WearableListenerService() {
         workoutScheduleDao = db.workoutScheduleDao()
         workoutRecordDao = db.workoutRecordDao()
         exerciseSessionProgressionDao = db.exerciseSessionProgressionDao()
+        scope.launch {
+            localNodeId = resolveLocalNodeId()
+        }
         
         // Detect service restart and handle incomplete syncs
         detectAndHandleServiceRestart()
@@ -579,6 +588,21 @@ class DataLayerListenerService : WearableListenerService() {
         }
     }
 
+    private fun resolveLocalNodeId(): String? {
+        localNodeId?.let { return it }
+        return runCatching {
+            Tasks.await(nodeClient.localNode).id
+        }.getOrNull()?.also { resolved ->
+            localNodeId = resolved
+        }
+    }
+
+    private fun isSelfOriginatedEvent(uri: Uri): Boolean {
+        val sourceNodeId = uri.host ?: return false
+        val ownNodeId = resolveLocalNodeId() ?: return false
+        return sourceNodeId == ownNodeId
+    }
+
     private fun handlePhoneLlmOperationResult(
         path: String,
         dataMap: com.google.android.gms.wearable.DataMap,
@@ -636,6 +660,10 @@ class DataLayerListenerService : WearableListenerService() {
 
                 // Only process CHANGED events, ignore DELETED
                 if (eventType != com.google.android.gms.wearable.DataEvent.TYPE_CHANGED) {
+                    return@forEach
+                }
+                if (isSelfOriginatedEvent(uri)) {
+                    Log.d("DataLayerSync", "Ignoring self-originated data event: ${uri.path}")
                     return@forEach
                 }
 
@@ -766,6 +794,10 @@ class DataLayerListenerService : WearableListenerService() {
                 }
 
                 val uri = dataEvent.dataItem.uri
+                if (isSelfOriginatedEvent(uri)) {
+                    Log.d("DataLayerSync", "Ignoring self-originated data event: ${uri.path}")
+                    return@forEach
+                }
                 val path = uri.path ?: return@forEach
                 when {
                     DataLayerPaths.matchesPrefix(path, DataLayerPaths.SYNC_REQUEST_PREFIX) -> {
@@ -1288,87 +1320,67 @@ class DataLayerListenerService : WearableListenerService() {
                                                     scheduler.cancelSchedule(schedule)
                                                 }
 
-                                                // Wrap database operations in NonCancellable to ensure they complete even if service is destroyed
+                                                // Single DB transaction: parallel scope jobs could leave readers
+                                                // (e.g. deleteOrphanedRecords) not seeing workout_history rows yet, which
+                                                // wiped all workout_record rows and hid Resume on Wear.
                                                 withContext(NonCancellable) {
-                                                    workoutScheduleDao.deleteAll()
-                                                    exerciseSessionProgressionDao.deleteAll()
+                                                    appDatabase.withTransaction {
+                                                        workoutScheduleDao.deleteAll()
+                                                        exerciseSessionProgressionDao.deleteAll()
 
-                                                    val insertWorkoutHistoriesJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                workoutHistoryDao.insertAllWithVersionCheck(
-                                                                    *appBackup.WorkoutHistories.toTypedArray()
-                                                                )
+                                                        // Active workout histories referenced by incoming records
+                                                        // must be authoritative during phone->wear full backup sync.
+                                                        val activeHistoryIds = appBackup.WorkoutRecords
+                                                            .map { it.workoutHistoryId }
+                                                            .toSet()
+                                                        val (activeHistories, regularHistories) =
+                                                            appBackup.WorkoutHistories.partition { history ->
+                                                                history.id in activeHistoryIds
                                                             }
+
+                                                        if (activeHistories.isNotEmpty()) {
+                                                            workoutHistoryDao.insertAll(*activeHistories.toTypedArray())
+                                                        }
+                                                        if (regularHistories.isNotEmpty()) {
+                                                            workoutHistoryDao.insertAllWithVersionCheck(
+                                                                *regularHistories.toTypedArray()
+                                                            )
                                                         }
 
-                                                    val insertSetHistoriesJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                setHistoryDao.insertAllWithVersionCheck(
-                                                                    *appBackup.SetHistories.toTypedArray()
-                                                                )
-                                                            }
+                                                        setHistoryDao.insertAllWithVersionCheck(
+                                                            *appBackup.SetHistories.toTypedArray()
+                                                        )
+
+                                                        val rests = appBackup.RestHistories.orEmpty()
+                                                        if (rests.isNotEmpty()) {
+                                                            restHistoryDao.insertAllWithVersionCheck(
+                                                                *rests.toTypedArray()
+                                                            )
                                                         }
 
-                                                    val insertRestHistoriesJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                val rests = appBackup.RestHistories.orEmpty()
-                                                                if (rests.isNotEmpty()) {
-                                                                    restHistoryDao.insertAllWithVersionCheck(
-                                                                        *rests.toTypedArray()
-                                                                    )
-                                                                }
+                                                        exerciseInfoDao.insertAllWithVersionCheck(
+                                                            *appBackup.ExerciseInfos.toTypedArray()
+                                                        )
+
+                                                        workoutScheduleDao.deleteAll()
+                                                        workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
+
+                                                        val validExerciseSessionProgressions =
+                                                            appBackup.ExerciseSessionProgressions.filter { progression ->
+                                                                appBackup.WorkoutHistories.any { it.id == progression.workoutHistoryId }
                                                             }
-                                                        }
+                                                        exerciseSessionProgressionDao.insertAll(
+                                                            *validExerciseSessionProgressions.toTypedArray()
+                                                        )
 
-                                                    val insertExerciseInfosJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                exerciseInfoDao.insertAllWithVersionCheck(
-                                                                    *appBackup.ExerciseInfos.toTypedArray()
-                                                                )
-                                                            }
-                                                        }
-
-                                                    val insertWorkoutSchedulesJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                workoutScheduleDao.deleteAll()
-                                                                workoutScheduleDao.insertAll(*appBackup.WorkoutSchedules.toTypedArray())
-                                                            }
-                                                        }
-
-                                                    val insertExerciseSessionProgressionsJob =
-                                                        scope.launch(start = CoroutineStart.LAZY) {
-                                                            withContext(NonCancellable) {
-                                                                val validExerciseSessionProgressions =
-                                                                    appBackup.ExerciseSessionProgressions.filter { progression ->
-                                                                        appBackup.WorkoutHistories.any { it.id == progression.workoutHistoryId }
-                                                                    }
-                                                                exerciseSessionProgressionDao.insertAll(
-                                                                    *validExerciseSessionProgressions.toTypedArray()
-                                                                )
-                                                            }
-                                                        }
-
-                                                    joinAll(
-                                                        insertWorkoutHistoriesJob,
-                                                        insertSetHistoriesJob,
-                                                        insertRestHistoriesJob,
-                                                        insertExerciseInfosJob,
-                                                        insertWorkoutSchedulesJob,
-                                                        insertExerciseSessionProgressionsJob
-                                                    )
-
-                                                    // Clean up workout histories that are no longer needed
-                                                    cleanupUnusedWorkoutHistories(
-                                                        appBackup.WorkoutStore.workouts,
-                                                        appBackup.WorkoutHistories.map { it.id }.toSet()
-                                                    )
-                                                    mergeIncomingWorkoutRecords(appBackup)
-                                                    workoutRecordDao.deleteOrphanedRecords()
+                                                        cleanupUnusedWorkoutHistories(
+                                                            appBackup.WorkoutStore.workouts,
+                                                            appBackup.WorkoutHistories.map { it.id }.toSet()
+                                                        )
+                                                        mergeIncomingWorkoutRecords(appBackup)
+                                                        workoutRecordDao.deleteOrphanedRecords()
+                                                        reconcileActiveRecordsWithHistories()
+                                                    }
                                                 }
 
                                                 // Re-register alarms here so sync completes reliably when MainActivity
@@ -1738,6 +1750,15 @@ class DataLayerListenerService : WearableListenerService() {
         workoutRecordDao.deleteAll()
         if (mergedRecords.isNotEmpty()) {
             workoutRecordDao.insertAll(*mergedRecords.toTypedArray())
+        }
+    }
+
+    private suspend fun reconcileActiveRecordsWithHistories() {
+        workoutRecordDao.getAll().forEach { record ->
+            val history = workoutHistoryDao.getWorkoutHistoryById(record.workoutHistoryId) ?: return@forEach
+            if (history.isDone) {
+                workoutHistoryDao.updateIsDone(history.id, isDone = false)
+            }
         }
     }
 

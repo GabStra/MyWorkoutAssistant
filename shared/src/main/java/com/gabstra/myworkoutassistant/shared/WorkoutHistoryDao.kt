@@ -89,17 +89,14 @@ interface WorkoutHistoryDao {
         if (existingWorkoutHistory == null) {
             insert(workoutHistory)
         } else {
-            // If existing is complete, never overwrite with incomplete
-            if (existingWorkoutHistory.isDone && !workoutHistory.isDone) {
-                // Don't overwrite a complete workout with an incomplete one
-                return
-            }
             // If incoming is complete and existing is incomplete, always update
             if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
                 insert(workoutHistory)
                 return
             }
-            // For same completion status, use version check
+            // Otherwise, use version check regardless of completion status.
+            // This allows newer incoming phone state (including reopen/resume)
+            // to replace stale completed snapshots on peers.
             if (workoutHistory.version >= existingWorkoutHistory.version) {
                 insert(workoutHistory)
             }
@@ -113,17 +110,14 @@ interface WorkoutHistoryDao {
             if (existingWorkoutHistory == null) {
                 insert(workoutHistory)
             } else {
-                // If existing is complete, never overwrite with incomplete
-                if (existingWorkoutHistory.isDone && !workoutHistory.isDone) {
-                    // Don't overwrite a complete workout with an incomplete one
-                    return@forEach
-                }
                 // If incoming is complete and existing is incomplete, always update
                 if (!existingWorkoutHistory.isDone && workoutHistory.isDone) {
                     insert(workoutHistory)
                     return@forEach
                 }
-                // For same completion status, use version check
+                // Otherwise, use version check regardless of completion status.
+                // This allows newer incoming phone state (including reopen/resume)
+                // to replace stale completed snapshots on peers.
                 if (workoutHistory.version >= existingWorkoutHistory.version) {
                     insert(workoutHistory)
                 }

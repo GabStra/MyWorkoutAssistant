@@ -351,6 +351,7 @@ fun PageButtons(
                     onClick = {
                         hapticsViewModel.doGentleVibration()
                         onBeforeGoHome?.invoke()
+                        viewModel.stopWorkoutSessionHeartbeat()
                         // Save workout record (updatedState is already WorkoutState.Set)
                         viewModel.upsertWorkoutRecord(
                             updatedState.exerciseId,

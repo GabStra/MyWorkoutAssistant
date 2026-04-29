@@ -101,7 +101,18 @@ class MobileSyncToWatchWorker(
                     .map { it.id }
             }
 
-            val requiredWorkoutHistoryIds = workoutHistoriesByExerciseId.values.flatten().toSet()
+            // Plateau-style pruning above can drop an in-progress session from every exercise's
+            // "top 15" window (e.g. shared exercise id across many programs, or zero set rows yet).
+            // Workout records still reference that history; Wear merge drops records without a
+            // matching history in the payload, which hides Resume after sync.
+            val requiredFromActiveRecords = workoutRecords
+                .asSequence()
+                .filter { record -> allowedWorkouts.any { it.id == record.workoutId } }
+                .map { it.workoutHistoryId }
+                .toSet()
+
+            val requiredWorkoutHistoryIds =
+                workoutHistoriesByExerciseId.values.flatten().toSet() + requiredFromActiveRecords
             val validWorkoutHistories = filteredWorkoutHistories.filter { it.id in requiredWorkoutHistoryIds }
             val validWorkoutHistoryIds = validWorkoutHistories
                 .map { it.id }
