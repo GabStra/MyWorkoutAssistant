@@ -7,12 +7,15 @@ Param(
     [string]$MobileObserverTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutIntermediateSyncObservationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.WorkoutSyncVerificationTest",
     [string]$ExpectedWorkoutName = "Cross Device Sync Workout",
+    [string]$MobileBackupPath,
     [string]$AppPackage = "com.gabstra.myworkoutassistant.debug",
     [string]$WearEmulatorSerial,
     [string]$PhoneEmulatorSerial,
     [switch]$StartEmulatorIfNeeded = $true,
     [string]$WearAvdName,
     [string]$PhoneAvdName,
+    [switch]$CleanInstallApps = $false,
+    [switch]$SkipWearToPhonePhase = $false,
     [switch]$SkipWearRebuildAfterFirstRun = $true,
     [switch]$FastTimeoutProfile = $false,
     [string]$TimingOutputPath
@@ -206,6 +209,16 @@ function Install-WearDebugApp([string]$watchSerial) {
     }
 }
 
+function Uninstall-PackageIfPresent([string]$serial, [string]$packageName) {
+    & adb -s $serial uninstall $packageName | Out-Null
+}
+
+function Reset-AppInstallState([string]$serial, [string]$appPackage) {
+    Write-Host "Uninstalling $appPackage and $appPackage.test on $serial for a clean install..." -ForegroundColor Cyan
+    Uninstall-PackageIfPresent -serial $serial -packageName "$appPackage.test"
+    Uninstall-PackageIfPresent -serial $serial -packageName $appPackage
+}
+
 function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     Write-Host "Building and installing mobile debug + androidTest APKs on phone emulator..." -ForegroundColor Cyan
     & .\gradlew :mobile:assembleDebug :mobile:assembleDebugAndroidTest
@@ -230,6 +243,26 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to install mobile androidTest APK on $phoneSerial"
+    }
+}
+
+function Stage-MobileBackupFile([string]$phoneSerial, [string]$appPackage, [string]$backupPath) {
+    if ([string]::IsNullOrWhiteSpace($backupPath)) {
+        return
+    }
+    $resolvedBackupPath = (Resolve-Path -LiteralPath $backupPath -ErrorAction Stop).Path
+    $backupFileName = Split-Path -Leaf $resolvedBackupPath
+    $destinationDir = "/sdcard/Android/data/$appPackage/files"
+    $destinationPath = "$destinationDir/$backupFileName"
+
+    Write-Host "Staging mobile backup file for restore dialog: $resolvedBackupPath" -ForegroundColor Cyan
+    & adb -s $phoneSerial shell mkdir -p $destinationDir | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create app external files directory on phone emulator."
+    }
+    & adb -s $phoneSerial push $resolvedBackupPath $destinationPath | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to push backup file to phone emulator at $destinationPath."
     }
 }
 
@@ -442,17 +475,24 @@ $timings["timingOutputPath"] = $TimingOutputPath
 
 $previousAndroidSerial = $env:ANDROID_SERIAL
 try {
+    if ($CleanInstallApps) {
+        Reset-AppInstallState -serial $watchSerial -appPackage $AppPackage
+    }
     $wearInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Install-WearDebugApp -watchSerial $watchSerial
     $wearInstallPhase.Stop()
     $timings["wearBuildInstallSeconds"] = [math]::Round($wearInstallPhase.Elapsed.TotalSeconds, 3)
 
     Ensure-PhonePackageState -phoneSerial $phoneSerial
+    if ($CleanInstallApps) {
+        Reset-AppInstallState -serial $phoneSerial -appPackage $AppPackage
+    }
 
     $mobileInstallPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Install-MobileDebugAndTestApks -phoneSerial $phoneSerial
     $mobileInstallPhase.Stop()
     $timings["mobileBuildInstallSeconds"] = [math]::Round($mobileInstallPhase.Elapsed.TotalSeconds, 3)
+    Stage-MobileBackupFile -phoneSerial $phoneSerial -appPackage $AppPackage -backupPath $MobileBackupPath
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
     Reset-WearAppState -watchSerial $watchSerial -appPackage $AppPackage
@@ -492,6 +532,13 @@ try {
     $wearClassTimings["vsLastSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    if ($SkipWearToPhonePhase) {
+        Write-Host "Skipping Wear producer and mobile verification phase." -ForegroundColor Yellow
+        $timings["wearClassTimings"] = $wearClassTimings
+        Write-Host "Cross-device sync E2E completed successfully." -ForegroundColor Green
+        return
+    }
 
     $mobileResetPhase = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "Resetting phone workout history state before Wear producer run..." -ForegroundColor Cyan
