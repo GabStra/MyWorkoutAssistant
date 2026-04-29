@@ -861,6 +861,9 @@ fun MyWorkoutAssistantNavHost(
                         // Show the success toast after all operations are complete
                         Toast.makeText(context, successToastMessage, Toast.LENGTH_SHORT).show()
                     }
+                    // Ensure any pending save is persisted, then force the same manual
+                    // "Sync with watch" path (AppBackup worker), not passive debounce flow.
+                    appViewModel.flushWorkoutSave(context)
                     PhoneToWatchSyncCoordinator.requestManualSyncToWatch(context)
                     true
                 } catch (e: Exception) {
@@ -915,6 +918,7 @@ fun MyWorkoutAssistantNavHost(
     }
 
     var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
+    var isRestoringBackup by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
@@ -967,88 +971,95 @@ fun MyWorkoutAssistantNavHost(
 
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-            uri?.let {
-                try {
-                    context.contentResolver.openInputStream(it)?.use { inputStream ->
-                        val reader = inputStream.bufferedReader()
-                        val content = reader.readText()
+            val selectedUri = uri ?: return@rememberLauncherForActivityResult
+            if (isRestoringBackup) return@rememberLauncherForActivityResult
 
-                        // Validate file type before attempting to parse
-                        val fileType = detectBackupFileType(content)
-                        when (fileType) {
-                            BackupFileType.WORKOUT_PLAN_PACKAGE -> {
+            // Use restoreScope so restore completes even if activity is destroyed/recreated (e.g. rotation).
+            val restoreScope = (context as? MainActivity)?.restoreScope ?: lifecycleOwner.lifecycleScope
+            restoreScope.launch {
+                isRestoringBackup = true
+                try {
+                    val content = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(selectedUri)?.use { inputStream ->
+                            inputStream.bufferedReader().readText()
+                        }
+                    } ?: throw IllegalStateException("Couldn't open the selected file.")
+
+                    // Validate file type before attempting to parse.
+                    val fileType = detectBackupFileType(content)
+                    when (fileType) {
+                        BackupFileType.WORKOUT_PLAN_PACKAGE -> {
+                            withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
                                     "That file is a workout plan package. Use Import Workout Plan instead.",
                                     Toast.LENGTH_LONG
                                 ).show()
-                                return@let
                             }
+                            return@launch
+                        }
 
-                            BackupFileType.WORKOUT_STORE -> {
+                        BackupFileType.WORKOUT_STORE -> {
+                            withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
                                     "That file is a workout export, not a backup.",
                                     Toast.LENGTH_LONG
                                 ).show()
-                                return@let
                             }
+                            return@launch
+                        }
 
-                            BackupFileType.UNKNOWN -> {
+                        BackupFileType.UNKNOWN -> {
+                            withContext(Dispatchers.Main) {
                                 Toast.makeText(
                                     context,
                                     "That file isn't a valid backup.",
                                     Toast.LENGTH_LONG
                                 ).show()
-                                return@let
                             }
-
-                            BackupFileType.APP_BACKUP,
-                            BackupFileType.INCREMENTAL_APP_BACKUP -> {
-                                // File type is valid, proceed with restore
-                            }
+                            return@launch
                         }
 
-                        setAutomaticRestoreDocumentUri(context, it)
-
-                        val appBackup = try {
-                            fromBackupJsonToAppBackup(content)
-                        } catch (e: Exception) {
-                            throw e
-                        }
-
-                        // Use restoreScope so restore completes even if activity is destroyed/recreated (e.g. rotation)
-                        val scope = (context as? MainActivity)?.restoreScope ?: lifecycleOwner.lifecycleScope
-                        scope.launch {
-                            restoreFromAppBackup(
-                                appBackup = appBackup,
-                                context = context,
-                                appViewModel = appViewModel,
-                                workoutViewModel = workoutViewModel,
-                                workoutStoreRepository = workoutStoreRepository,
-                                db = db,
-                                workoutHistoryDao = workoutHistoryDao,
-                                setHistoryDao = setHistoryDao,
-                                restHistoryDao = restHistoryDao,
-                                exerciseInfoDao = exerciseInfoDao,
-                                workoutScheduleDao = workoutScheduleDao,
-                                workoutRecordDao = workoutRecordDao,
-                                healthConnectClient = healthConnectClient
-                            )
+                        BackupFileType.APP_BACKUP,
+                        BackupFileType.INCREMENTAL_APP_BACKUP -> {
+                            // File type is valid, proceed with restore.
                         }
                     }
+
+                    setAutomaticRestoreDocumentUri(context, selectedUri)
+                    val appBackup = fromBackupJsonToAppBackup(content)
+
+                    restoreFromAppBackup(
+                        appBackup = appBackup,
+                        context = context,
+                        appViewModel = appViewModel,
+                        workoutViewModel = workoutViewModel,
+                        workoutStoreRepository = workoutStoreRepository,
+                        db = db,
+                        workoutHistoryDao = workoutHistoryDao,
+                        setHistoryDao = setHistoryDao,
+                        restHistoryDao = restHistoryDao,
+                        exerciseInfoDao = exerciseInfoDao,
+                        workoutScheduleDao = workoutScheduleDao,
+                        workoutRecordDao = workoutRecordDao,
+                        healthConnectClient = healthConnectClient
+                    )
                 } catch (e: CancellationException) {
-                    // Job was cancelled (e.g., activity destroyed) - this is expected
+                    // Job was cancelled (e.g., activity destroyed) - this is expected.
                 } catch (e: Exception) {
-                    e.printStackTrace()
-                    Toast.makeText(
-                        context,
-                        e.toMainActivityToastMessage(
-                            intro = "Couldn't restore that backup.",
-                            fallbackDetail = "Please choose a valid backup file."
-                        ),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            e.toMainActivityToastMessage(
+                                intro = "Couldn't restore that backup.",
+                                fallbackDetail = "Please choose a valid backup file."
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } finally {
+                    isRestoringBackup = false
                 }
             }
         }
@@ -1122,8 +1133,6 @@ fun MyWorkoutAssistantNavHost(
     val backupSaveLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
             uri?.let {
-                setAutomaticBackupDocumentUri(context, it)
-                setAutomaticRestoreDocumentUri(context, it)
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
@@ -1144,11 +1153,7 @@ fun MyWorkoutAssistantNavHost(
                                 outputStream.write(jsonString.toByteArray())
                             }
                         }
-                        Toast.makeText(
-                            context,
-                            "Backup saved. Future automatic backups will update this file.",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(context, "Backup saved.", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         e.printStackTrace()
                         Toast.makeText(
@@ -1206,7 +1211,7 @@ fun MyWorkoutAssistantNavHost(
     val saveableStateHolder = rememberSaveableStateHolder()
     val isInitialDataLoaded by appViewModel.isInitialDataLoaded.collectAsState()
 
-    if (!isInitialDataLoaded) {
+    if (!isInitialDataLoaded || isRestoringBackup) {
         LoadingScreen()
     } else {
         AnimatedContent(

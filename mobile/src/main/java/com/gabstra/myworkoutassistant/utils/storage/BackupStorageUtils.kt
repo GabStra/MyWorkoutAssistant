@@ -143,7 +143,6 @@ import kotlin.math.roundToInt
 import java.security.MessageDigest
 private val backupFileWriteMutex = Mutex()
 private const val BACKUP_STORAGE_PREFS = "backup_storage_prefs"
-private const val AUTO_BACKUP_DOCUMENT_URI_KEY = "auto_backup_document_uri"
 private const val AUTO_RESTORE_DOCUMENT_URI_KEY = "auto_restore_document_uri"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME = "workout_store_backup"
 private const val AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME = "$AUTOMATIC_DOWNLOADS_BACKUP_FILE_BASENAME.json"
@@ -176,14 +175,6 @@ private fun persistUriPermission(
         // Some providers do not expose persistable grants. Keeping the URI still enables
         // same-session access, and startup restore will safely skip invalid grants later.
     }
-}
-
-fun setAutomaticBackupDocumentUri(context: Context, uri: Uri) {
-    persistUriPermission(context, uri, readOnly = false)
-    backupStoragePrefs(context)
-        .edit()
-        .putString(AUTO_BACKUP_DOCUMENT_URI_KEY, uri.toString())
-        .apply()
 }
 
 fun setAutomaticRestoreDocumentUri(context: Context, uri: Uri) {
@@ -358,10 +349,6 @@ private suspend fun loadAppBackupFromConfiguredUri(
         Log.w("Utils", "Couldn't load backup from configured URI for key=$key", e)
         null
     }
-}
-
-fun hasAutomaticBackupDocument(context: Context): Boolean {
-    return readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY) != null
 }
 
 fun formatSecondsToMinutesSeconds(seconds: Int): String {
@@ -1303,51 +1290,23 @@ suspend fun saveWorkoutStoreToExternalStorage(
                     return@withContext
                 }
 
-                val backupUri = readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
-                var wroteBackup = false
-
-                if (backupUri != null) {
-                    try {
-                        val existingContent = readTextFromUri(context, backupUri)
-                        val archiveContent = buildAutomaticBackupArchiveContent(existingContent, appBackup)
-                        if (existingContent == archiveContent) {
-                            Log.d("Utils", "Automatic backup content unchanged, skipping SAF save")
-                            wroteBackup = true
-                        } else {
-                            wroteBackup = writeTextToUri(context, backupUri, archiveContent)
-                            if (wroteBackup) {
-                                Log.d("Utils", "Incremental automatic backup saved to persisted SAF document")
-                            } else {
-                                Log.e("Utils", "Failed to open output stream for automatic backup document")
-                            }
-                        }
-                    } catch (e: SecurityException) {
-                        Log.w("Utils", "Lost persisted access to automatic backup document, falling back to Downloads", e)
-                        clearConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)
-                    } catch (e: Exception) {
-                        Log.w("Utils", "Failed writing automatic backup to SAF document, falling back to Downloads", e)
-                    }
+                val existingDownloadsContent = findFileInDownloadsFolder(
+                    context,
+                    AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME
+                )?.let { uri ->
+                    readTextFromUri(context, uri)
+                } ?: findAllBackupFilesInDownloadsFolder(
+                    context,
+                    AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
+                ).maxByOrNull { it.dateModified }?.let { backupFile ->
+                    readTextFromUri(context, backupFile.uri)
                 }
-
-                if (!wroteBackup) {
-                    val existingDownloadsContent = findFileInDownloadsFolder(
-                        context,
-                        AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME
-                    )?.let { uri ->
-                        readTextFromUri(context, uri)
-                    } ?: findAllBackupFilesInDownloadsFolder(
-                        context,
-                        AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
-                    ).maxByOrNull { it.dateModified }?.let { backupFile ->
-                        readTextFromUri(context, backupFile.uri)
-                    }
-                    val archiveContent = buildAutomaticBackupArchiveContent(existingDownloadsContent, appBackup)
-                    upsertDownloadsBackupFile(
-                        context = context,
-                        fileName = AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME,
-                        content = archiveContent
-                    )
-                }
+                val archiveContent = buildAutomaticBackupArchiveContent(existingDownloadsContent, appBackup)
+                upsertDownloadsBackupFile(
+                    context = context,
+                    fileName = AUTOMATIC_DOWNLOADS_BACKUP_ARCHIVE_FILE_NAME,
+                    content = archiveContent
+                )
             } catch (e: Exception) {
                 when (e) {
                     is CancellationException -> {
@@ -1369,13 +1328,10 @@ suspend fun saveWorkoutStoreToExternalStorage(
 }
 
 /**
- * Checks if an external backup is available from a configured SAF document or the legacy file path.
+ * Checks if an external backup is available from a configured restore document or the legacy file path.
  */
 fun hasExternalBackup(context: Context): Boolean {
     if (readConfiguredBackupUri(context, AUTO_RESTORE_DOCUMENT_URI_KEY) != null) {
-        return true
-    }
-    if (readConfiguredBackupUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY) != null) {
         return true
     }
     // Check old location (external files dir) synchronously
@@ -1392,7 +1348,7 @@ fun hasExternalBackup(context: Context): Boolean {
 
 /**
  * Loads the external backup file and parses it as AppBackup.
- * Prefers persisted SAF document access, then scans Downloads, then falls back to the legacy external files dir.
+ * Prefers the configured restore document, then scans Downloads, then falls back to the legacy external files dir.
  */
 suspend fun loadExternalBackup(context: Context): AppBackup? {
     return withContext(Dispatchers.IO) {
@@ -1401,18 +1357,13 @@ suspend fun loadExternalBackup(context: Context): AppBackup? {
                 Log.d("Utils", "Backup loaded successfully from configured restore document")
                 return@withContext it
             }
-            loadAppBackupFromConfiguredUri(context, AUTO_BACKUP_DOCUMENT_URI_KEY)?.let {
-                Log.d("Utils", "Backup loaded successfully from configured backup document")
-                return@withContext it
-            }
-
             loadLatestBackupFromDownloadsFolder(context)?.let {
                 return@withContext it
             }
 
             val externalDir = context.getExternalFilesDir(null)
             if (externalDir == null) {
-                Log.d("Utils", "No configured backup document and external storage is unavailable")
+                Log.d("Utils", "No configured restore document and external storage is unavailable")
                 return@withContext null
             }
             val backupFileName = AUTOMATIC_DOWNLOADS_BACKUP_FILE_NAME
