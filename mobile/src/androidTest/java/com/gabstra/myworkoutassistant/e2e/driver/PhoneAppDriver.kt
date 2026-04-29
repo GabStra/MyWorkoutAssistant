@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
@@ -112,6 +113,50 @@ class PhoneAppDriver(
         }
     }
 
+    fun restoreBackupThroughFilePicker(
+        backupFileName: String,
+        backupFileNamePrefix: String,
+        appPackageForBackupPath: String = context.packageName
+    ) {
+        val chooseFile = device.wait(Until.findObject(By.text("Choose file")), 10_000)
+            ?: device.wait(Until.findObject(By.textContains("Choose file")), 5_000)
+            ?: error("Restore backup dialog with 'Choose file' action did not appear.")
+        chooseFile.click()
+        device.waitForIdle(1_000)
+
+        clickIfPresent("Allow", "ALLOW", "While using the app")
+        clickIfPresent("Allow access", "Continue")
+
+        openPickerRootsIfAvailable()
+        // Deterministic fallback for this emulator image: Downloads row in roots drawer.
+        // Row bounds observed from picker XML: [0,357][735,504].
+        device.click(367, 430)
+        device.waitForIdle(500)
+        openPickerLocationIfPresent("sdk_gphone64_x86_64")
+        openPickerLocationIfPresent("SDCARD")
+        openPickerLocationIfPresent("Recent")
+        openPickerLocationIfPresent("Downloads")
+        openPickerLocationIfPresent("Internal storage")
+        openPickerLocationIfPresent("Download")
+        openPickerPathIfPresent("Android", "data", appPackageForBackupPath, "files")
+        device.waitForIdle(700)
+
+        val backupFile = findBackupFileInPicker(
+            backupFileName = backupFileName,
+            backupFileNamePrefix = backupFileNamePrefix,
+            timeoutMs = 20_000
+        ) ?: searchBackupFileInPicker(
+            backupFileName = backupFileName,
+            backupFileNamePrefix = backupFileNamePrefix
+        ) ?: error("Could not locate '$backupFileName' in restore file picker.")
+        backupFile.click()
+        device.waitForIdle(1_500)
+
+        device.findObject(By.text("Open"))?.click()
+        device.findObject(By.text("Allow"))?.click()
+        device.waitForIdle(1_000)
+    }
+
     private fun clickIfPresent(vararg texts: String): Boolean {
         texts.forEach { text ->
             val obj = device.wait(Until.findObject(By.text(text)), 400)
@@ -135,6 +180,104 @@ class PhoneAppDriver(
             }
         }
         return false
+    }
+
+    private fun openPickerRootsIfAvailable() {
+        device.findObject(By.descContains("Show roots"))?.click()
+        device.findObject(By.descContains("Navigation"))?.click()
+        device.waitForIdle(400)
+    }
+
+    private fun openPickerLocationIfPresent(label: String) {
+        val entry = device.findObject(By.text(label))
+            ?: device.findObject(By.textContains(label))
+            ?: return
+        clickObjectOrAncestor(entry)
+        device.waitForIdle(400)
+    }
+
+    private fun openPickerPathIfPresent(vararg segments: String) {
+        segments.forEach { segment ->
+            val node = findNodeWithScroll(label = segment, timeoutMs = 2_500) ?: return
+            clickObjectOrAncestor(node)
+            device.waitForIdle(350)
+        }
+    }
+
+    private fun findNodeWithScroll(label: String, timeoutMs: Long): UiObject2? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val node = device.findObject(By.text(label))
+                ?: device.findObject(By.textContains(label))
+            if (node != null) return node
+
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                runCatching { scrollable.scroll(androidx.test.uiautomator.Direction.DOWN, 0.8f) }
+            } else {
+                val x = device.displayWidth / 2
+                val startY = (device.displayHeight * 0.75).toInt()
+                val endY = (device.displayHeight * 0.25).toInt()
+                device.swipe(x, startY, x, endY, 10)
+            }
+            device.waitForIdle(250)
+        }
+        return null
+    }
+
+    private fun findBackupFileInPicker(
+        backupFileName: String,
+        backupFileNamePrefix: String,
+        timeoutMs: Long
+    ): UiObject2? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val file = device.findObject(By.text(backupFileName))
+                ?: device.findObject(By.textContains(backupFileNamePrefix))
+            if (file != null) return file
+
+            val scrollable = device.findObject(By.scrollable(true))
+            if (scrollable != null) {
+                runCatching { scrollable.scroll(androidx.test.uiautomator.Direction.DOWN, 0.8f) }
+            } else {
+                val x = device.displayWidth / 2
+                val startY = (device.displayHeight * 0.75).toInt()
+                val endY = (device.displayHeight * 0.25).toInt()
+                device.swipe(x, startY, x, endY, 12)
+            }
+            device.waitForIdle(300)
+        }
+        return null
+    }
+
+    private fun searchBackupFileInPicker(
+        backupFileName: String,
+        backupFileNamePrefix: String
+    ): UiObject2? {
+        val searchButton = device.findObject(By.descContains("Search"))
+            ?: device.findObject(By.text("Search"))
+            ?: device.findObject(By.textContains("Search"))
+            ?: return null
+        searchButton.click()
+        device.waitForIdle(500)
+
+        val searchField = device.findObject(By.clazz("android.widget.EditText"))
+            ?: device.findObject(By.textContains("Search"))
+            ?: return null
+        searchField.click()
+        searchField.text = backupFileName
+        device.waitForIdle(1_000)
+
+        return device.wait(Until.findObject(By.text(backupFileName)), 6_000)
+            ?: device.wait(Until.findObject(By.textContains(backupFileNamePrefix)), 6_000)
+    }
+
+    private fun clickObjectOrAncestor(obj: UiObject2) {
+        var current: UiObject2? = obj
+        while (current != null && !current.isClickable) {
+            current = current.parent
+        }
+        (current ?: obj).click()
     }
 
     private fun clickWithRetry(maxAttempts: Int = 3, action: () -> Unit) {
