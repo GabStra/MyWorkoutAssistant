@@ -43,7 +43,6 @@ import androidx.wear.tooling.preview.devices.WearDevices
 import com.gabstra.myworkoutassistant.MyApplication
 import com.gabstra.myworkoutassistant.composables.CustomBackHandler
 import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
-import com.gabstra.myworkoutassistant.composables.ExternalHeartRateDisconnectDialog
 import com.gabstra.myworkoutassistant.composables.HeartRateExternal
 import com.gabstra.myworkoutassistant.composables.HeartRateStandard
 import com.gabstra.myworkoutassistant.composables.HeartRateStatus
@@ -59,7 +58,6 @@ import com.gabstra.myworkoutassistant.composables.WorkoutStateHeader
 import com.gabstra.myworkoutassistant.composables.rememberTopOverlayController
 import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import com.gabstra.myworkoutassistant.data.AppViewModel
-import com.gabstra.myworkoutassistant.data.ExternalHeartRateConnectionState
 import com.gabstra.myworkoutassistant.data.ExternalHeartRateDeviceController
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -129,31 +127,12 @@ fun WorkoutScreen(
         activeExternalHeartRateController?.hasBeenInitialized?.collectAsState()
             ?: remember { mutableStateOf(false) }
         )
-    val externalConnectionState by (
-        activeExternalHeartRateController?.connectionState?.collectAsState()
-            ?: remember {
-                mutableStateOf<ExternalHeartRateConnectionState>(
-                    ExternalHeartRateConnectionState.Idle
-                )
-            }
-        )
     val externalSkipped by (
         activeExternalHeartRateController?.isSkippedForSession?.collectAsState()
             ?: remember { mutableStateOf(false) }
         )
-    val externalHasEverConnected by (
-        activeExternalHeartRateController?.hasEverConnectedThisSession?.collectAsState()
-            ?: remember { mutableStateOf(false) }
-        )
     val isResuming = screenState.isResuming
     val isRefreshing = screenState.isRefreshing
-    var showExternalDisconnectDialog by remember { mutableStateOf(false) }
-    val shouldShowExternalDisconnectPrompt = selectedWorkout.usesExternalHeartRateDevice &&
-        externalHasEverConnected &&
-        !externalSkipped &&
-        workoutState !is WorkoutState.Preparing &&
-        workoutState !is WorkoutState.Completed &&
-        externalConnectionState is ExternalHeartRateConnectionState.Error
     val onBeforeGoHome = remember(selectedWorkout) {
         {
             // Ensure no timer background loop remains active after leaving workout flow.
@@ -273,58 +252,6 @@ fun WorkoutScreen(
         handleOnAutomaticClose = {
             showWorkoutInProgressDialog = false
             viewModel.resumeWorkout()
-        },
-        onVisibilityChange = { isVisible ->
-            if (isVisible) {
-                viewModel.setDimming(false)
-            } else {
-                viewModel.reEvaluateDimmingForCurrentState()
-            }
-        }
-    )
-
-    LaunchedEffect(shouldShowExternalDisconnectPrompt, externalConnectionState) {
-        if (shouldShowExternalDisconnectPrompt && !showExternalDisconnectDialog) {
-            showExternalDisconnectDialog = true
-            viewModel.pauseWorkout()
-            viewModel.lightScreenUp()
-        } else if (
-            showExternalDisconnectDialog &&
-            (externalConnectionState.isReady || externalSkipped)
-        ) {
-            showExternalDisconnectDialog = false
-            viewModel.resumeWorkout()
-        }
-    }
-
-    ExternalHeartRateDisconnectDialog(
-        show = showExternalDisconnectDialog,
-        title = "${selectedWorkout.heartRateSource.displayName()} disconnected",
-        message = when (externalConnectionState) {
-            is ExternalHeartRateConnectionState.Error ->
-                (externalConnectionState as ExternalHeartRateConnectionState.Error).message
-            else -> "Your external heart-rate source is unavailable."
-        },
-        onRetry = {
-            hapticsViewModel.doGentleVibration()
-            activeExternalHeartRateController?.retryConnection()
-        },
-        onContinueWithoutSensor = {
-            hapticsViewModel.doGentleVibration()
-            activeExternalHeartRateController?.skipConnectionForSession()
-            showExternalDisconnectDialog = false
-            viewModel.resumeWorkout()
-        },
-        onEndWorkout = {
-            hapticsViewModel.doGentleVibration()
-            activeExternalHeartRateController?.disconnectFromDevice()
-            cancelWorkoutInProgressNotification(context)
-            scope.launch {
-                viewModel.flushWorkoutSync()
-            }
-            navController.navigate(Screen.WorkoutSelection.route) {
-                popUpTo(0) { inclusive = true }
-            }
         },
         onVisibilityChange = { isVisible ->
             if (isVisible) {

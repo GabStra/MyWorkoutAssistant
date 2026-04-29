@@ -30,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -61,6 +63,7 @@ fun <T> StandardFilterDropdown(
     val density = LocalDensity.current
     val fieldTextStyle = MaterialTheme.typography.bodyLarge
     val maxPopupWidth = (configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val accessibilityLabel = "$label $selectedText"
     val popupPositionProvider = remember(density) {
         FilterMenuPositionProvider(
             verticalMarginPx = with(density) { 4.dp.roundToPx() }
@@ -104,6 +107,7 @@ fun <T> StandardFilterDropdown(
             Box(
                 modifier = Modifier
                     .matchParentSize()
+                    .semantics { contentDescription = accessibilityLabel }
                     .clickable(enabled = enabled) { expanded = true }
             )
 

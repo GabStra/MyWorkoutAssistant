@@ -125,8 +125,8 @@ fun PreparingExternalHeartRateScreen(
             (connectionState as ExternalHeartRateConnectionState.Error).message
         is ExternalHeartRateConnectionState.Skipped ->
             (connectionState as ExternalHeartRateConnectionState.Skipped).message
-        ExternalHeartRateConnectionState.Idle -> "Preparing ${source.displayName()}..."
-    }
+        ExternalHeartRateConnectionState.Idle -> "Preparing ${source.displayName()}"
+    }.trimEnd('.')
 
     val transformingLazyColumnState = rememberTransformingLazyColumnState()
     val spec = rememberTransformationSpec(
@@ -189,6 +189,7 @@ fun PreparingExternalHeartRateScreen(
                             modifier = Modifier.fillMaxWidth(),
                             text = statusMessage,
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
                     }
@@ -201,6 +202,7 @@ fun PreparingExternalHeartRateScreen(
                             .transformedHeight(this, spec),
                         text = statusMessage,
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
                 }
