@@ -369,3 +369,27 @@ def test_server_registers_resources_and_tools_without_auth(monkeypatch, tmp_path
     assert "workout-history://full" not in resource_uris
     assert getattr(mcp, "_token_verifier", None) is None
     assert mcp.settings.transport_security.enable_dns_rebinding_protection is False
+
+
+def test_server_str_wrapper_returns_markdown_for_unknown_exercise(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MYWORKOUT_BACKUP_PATH", str(write_fixture(tmp_path)))
+    from workout_history_mcp import server as server_mod
+    from workout_history_mcp.exporters import exercise_history_markdown
+
+    out = server_mod._with_store_str(
+        lambda store: exercise_history_markdown(store, "00000000-0000-0000-0000-000000000099"),
+        label="get_exercise_history_markdown",
+    )
+    assert "# Tool error" in out
+    assert "Exercise not found" in out
+    assert "workout_history_id" in out
+
+
+def test_server_dict_wrapper_returns_error_for_missing_backup(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MYWORKOUT_BACKUP_PATH", str(tmp_path / "missing_backup.json"))
+    from workout_history_mcp import server as server_mod
+
+    out = server_mod._with_store_dict(lambda store: store.athlete_profile(), label="get_athlete_profile")
+    assert out["ok"] is False
+    assert "error" in out
+    assert "hint" in out
