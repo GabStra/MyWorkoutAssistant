@@ -22,7 +22,18 @@ internal class WorkoutRecordService(
     )
 
     suspend fun resolveWorkoutRecord(workoutId: UUID): WorkoutRecordState {
-        var workoutRecord = workoutRecordDao().getWorkoutRecordByWorkoutId(workoutId)
+        val records = workoutRecordDao().getWorkoutRecordsByWorkoutId(workoutId)
+        require(records.size <= 1) {
+            buildString {
+                append("Expected at most one workout_record row for workoutId=")
+                append(workoutId)
+                append(", found ")
+                append(records.size)
+                append(": ")
+                append(records.joinToString { "${it.id}:${it.workoutHistoryId}" })
+            }
+        }
+        var workoutRecord = records.singleOrNull()
         var workoutHistory: WorkoutHistory? = null
         if (workoutRecord != null) {
             workoutHistory = workoutHistoryDao().getWorkoutHistoryById(workoutRecord.workoutHistoryId)
@@ -81,6 +92,7 @@ internal class WorkoutRecordService(
         }
 
         if (updatedRecord != null) {
+            workoutRecordDao().deleteByWorkoutId(workoutId)
             workoutRecordDao().insert(updatedRecord)
         }
         return updatedRecord
@@ -98,6 +110,7 @@ internal class WorkoutRecordService(
             activeSessionRevision = existingRecord.activeSessionRevision.inc(),
             lastKnownSessionState = lastKnownSessionState,
         )
+        workoutRecordDao().deleteByWorkoutId(existingRecord.workoutId)
         workoutRecordDao().insert(updatedRecord)
         return updatedRecord
     }
@@ -107,4 +120,3 @@ internal class WorkoutRecordService(
     }
 
 }
-

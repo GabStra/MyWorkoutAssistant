@@ -132,6 +132,7 @@ import java.util.Calendar
 import java.util.LinkedList
 import java.util.UUID
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicReference
 
 private class ResettableLazy<T>(private val initializer: () -> T) {
     private var _value: T? = null
@@ -168,6 +169,12 @@ open class WorkoutViewModel(
     private val executedSetStore: ExecutedSetStore = DefaultExecutedSetStore(),
     private val executedRestStore: ExecutedRestStore = DefaultExecutedRestStore()
 ) : ViewModel() {
+
+    protected enum class SessionHydrationTrigger {
+        START,
+        EXPLICIT_RESUME,
+        SYNC_REHYDRATE
+    }
     companion object {
         private const val TAG = "WorkoutViewModel"
     }
@@ -195,6 +202,7 @@ open class WorkoutViewModel(
 
     private var storeSetDataJob: Job? = null
     private val workoutRecordMutex = Mutex()
+    private val activeSessionHydrationTrigger = AtomicReference<SessionHydrationTrigger?>(null)
     private val workoutPersistenceCoordinator by lazy {
         WorkoutPersistenceCoordinator(
             executedSetStore = executedSetStore,
@@ -469,6 +477,25 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    private fun shouldRehydrateSessionAfterExternalSync(
+        recordState: WorkoutRecordService.WorkoutRecordState,
+        hadActiveSession: Boolean
+    ): Boolean {
+        return recordState.hasWorkoutRecord &&
+            stateMachine == null &&
+            hadActiveSession &&
+            !isSessionHydrationInFlight() &&
+            recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
+    }
+
+    protected open fun requestSessionRehydrationAfterExternalSync() {
+        launchSessionHydration(SessionHydrationTrigger.SYNC_REHYDRATE) {
+            resumeWorkoutFromRecordInternal {
+                resumeLastState()
+            }
+        }
+    }
+
     suspend fun applyExternalSyncWorkoutStore(newWorkoutStore: WorkoutStore) {
         val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
         val selectedWorkoutSnapshot = _selectedWorkout.value
@@ -512,16 +539,8 @@ open class WorkoutViewModel(
             )
         }
 
-        val shouldAutoResumeRecord =
-            recordState.hasWorkoutRecord &&
-                stateMachine == null &&
-                hadActiveSession &&
-                recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()
-
-        if (shouldAutoResumeRecord) {
-            resumeWorkoutFromRecord {
-                resumeLastState()
-            }
+        if (shouldRehydrateSessionAfterExternalSync(recordState, hadActiveSession)) {
+            requestSessionRehydrationAfterExternalSync()
             return
         }
 
@@ -857,6 +876,30 @@ open class WorkoutViewModel(
     protected fun markSessionReady() {
         _sessionPhase.value = WorkoutSessionPhase.READY
         _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+    }
+
+    protected fun isSessionHydrationInFlight(): Boolean =
+        activeSessionHydrationTrigger.get() != null
+
+    protected fun launchSessionHydration(
+        trigger: SessionHydrationTrigger,
+        block: suspend () -> Unit
+    ) {
+        if (!activeSessionHydrationTrigger.compareAndSet(null, trigger)) {
+            Log.d(
+                TAG,
+                "Skipping session hydration trigger=$trigger because ${activeSessionHydrationTrigger.get()} is already active"
+            )
+            return
+        }
+
+        launchMain {
+            try {
+                block()
+            } finally {
+                activeSessionHydrationTrigger.compareAndSet(trigger, null)
+            }
+        }
     }
 
     /**
@@ -1246,140 +1289,143 @@ open class WorkoutViewModel(
      * Platforms may override to add process-death recovery (checkpoint/snapshot) before calling [onEnd].
      */
     open fun resumeWorkoutFromRecord(onEnd: suspend () -> Unit = {}) {
-        launchMain {
-            withContext(dispatchers.io) {
-                _enableWorkoutNotificationFlow.value = null
-                _currentScreenDimmingState.value = false
+        launchSessionHydration(SessionHydrationTrigger.EXPLICIT_RESUME) {
+            resumeWorkoutFromRecordInternal(onEnd)
+        }
+    }
 
-                enterPreparingPhase()
-                stateMachine = null
-                setStates.clear()
-                weightsByEquipment.clear()
-                _isPaused.value = false
-                val resumeSelectedWorkout =
-                    resolveWorkoutTemplateForSession(_selectedWorkoutId.value)
-                        ?: run {
-                            Log.w(
-                                TAG,
-                                "resumeWorkoutFromRecord: no template for id=${_selectedWorkoutId.value} " +
-                                    "(disabled/inactive workouts are omitted from the picker list)"
-                            )
-                            return@withContext
-                        }
-                _selectedWorkout.value = resumeSelectedWorkout
-                initializeExercisesMaps(resumeSelectedWorkout)
-                if (_workoutRecord == null) {
-                    val recordState = workoutRecordService.resolveWorkoutRecord(resumeSelectedWorkout.id)
-                    _workoutRecord = recordState.workoutRecord
-                    _workoutResumeInfo.value = recordState.workoutRecord?.let { record ->
-                        resolveWorkoutResumeInfo(workout = resumeSelectedWorkout, workoutRecord = record)
+    protected open suspend fun resumeWorkoutFromRecordInternal(onEnd: suspend () -> Unit = {}) {
+        withContext(dispatchers.io) {
+            _enableWorkoutNotificationFlow.value = null
+            _currentScreenDimmingState.value = false
+
+            enterPreparingPhase()
+            stateMachine = null
+            setStates.clear()
+            weightsByEquipment.clear()
+            _isPaused.value = false
+            val resumeSelectedWorkout =
+                resolveWorkoutTemplateForSession(_selectedWorkoutId.value)
+                    ?: run {
+                        Log.w(
+                            TAG,
+                            "resumeWorkoutFromRecord: no template for id=${_selectedWorkoutId.value} " +
+                                "(disabled/inactive workouts are omitted from the picker list)"
+                        )
+                        return@withContext
                     }
+            _selectedWorkout.value = resumeSelectedWorkout
+            initializeExercisesMaps(resumeSelectedWorkout)
+            if (_workoutRecord == null) {
+                val recordState = workoutRecordService.resolveWorkoutRecord(resumeSelectedWorkout.id)
+                _workoutRecord = recordState.workoutRecord
+                _workoutResumeInfo.value = recordState.workoutRecord?.let { record ->
+                    resolveWorkoutResumeInfo(workout = resumeSelectedWorkout, workoutRecord = record)
                 }
-                rebuildScreenState()
-
-                val resumeHistoryId = workoutSessionOrchestrator.resolveResumeHistoryId(
-                    pendingResumeWorkoutHistoryId = pendingResumeWorkoutHistoryId,
-                    workoutRecord = _workoutRecord
+            } else {
+                _workoutResumeInfo.value = resolveWorkoutResumeInfo(
+                    workout = resumeSelectedWorkout,
+                    workoutRecord = _workoutRecord!!
                 )
-                if (resumeHistoryId == null) {
-                    Log.w(
-                        TAG,
-                        "resumeWorkoutFromRecord: no history id (pendingResumeWorkoutHistoryId was null " +
-                            "and no workout record)"
-                    )
-                    pendingResumeWorkoutHistoryId = null
-                    withContext(dispatchers.main) {
-                        _hasWorkoutRecord.value = false
-                        _workoutResumeInfo.value = null
-                        rebuildScreenState()
-                    }
-                    return@withContext
-                }
+            }
+            rebuildScreenState()
 
-                _workoutRecord?.let { existingRecord ->
+            val resumeHistoryId = workoutSessionOrchestrator.resolveResumeHistoryId(
+                pendingResumeWorkoutHistoryId = pendingResumeWorkoutHistoryId,
+                workoutRecord = _workoutRecord
+            )
+            if (resumeHistoryId == null) {
+                Log.w(
+                    TAG,
+                    "resumeWorkoutFromRecord: no history id (pendingResumeWorkoutHistoryId was null " +
+                        "and no workout record)"
+                )
+                pendingResumeWorkoutHistoryId = null
+                withContext(dispatchers.main) {
+                    _hasWorkoutRecord.value = false
+                    _workoutResumeInfo.value = null
+                    rebuildScreenState()
+                }
+                return@withContext
+            }
+
+            _workoutRecord?.let { existingRecord ->
+                workoutRecordMutex.withLock {
+                    _workoutRecord = workoutRecordService.adoptWorkoutRecord(
+                        existingRecord = existingRecord,
+                        ownerDevice = activeSessionOwnerDevice(),
+                        lastActiveSyncAt = LocalDateTime.now(),
+                        lastKnownSessionState = "RESUMED"
+                    )
+                }
+            }
+
+            val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)
+            if (resumeWorkoutHistory == null) {
+                Log.e(TAG, "Workout history $resumeHistoryId not found when resuming")
+                pendingResumeWorkoutHistoryId = null
+                _workoutRecord = null
+                withContext(dispatchers.main) {
+                    _hasWorkoutRecord.value = false
+                    _workoutResumeInfo.value = null
+                    rebuildScreenState()
+                }
+                return@withContext
+            }
+
+            currentWorkoutHistory = resumeWorkoutHistory
+            pendingResumeWorkoutHistoryId = null
+            _hasWorkoutRecord.value = true
+
+            heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
+            val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
+            startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
+
+            restoreExecutedSets()
+            loadWorkoutHistory()
+
+            preProcessExercises()
+            generateProgressions()
+            applyProgressions()
+            val workoutSequence = generateWorkoutStates()
+
+            val executedSetsHistorySnapshot = executedSetStore.executedSets.value
+            val updatedSequence = applyExecutedSetDataToSequence(workoutSequence, executedSetsHistorySnapshot)
+
+            val resumptionComputation = workoutSessionOrchestrator.computeResumptionIndex(
+                updatedSequence = updatedSequence,
+                executedSetsHistorySnapshot = executedSetsHistorySnapshot,
+                resolveIndex = ::findResumptionIndex
+            )
+            val resumptionResult = resumptionComputation.indexResult
+            if (!resumptionResult.workoutRecordMatchedTemplate) {
+                val coords = workoutResumptionService.exerciseIdAndOrderAtResumptionIndex(
+                    resumptionComputation.filteredStates,
+                    resumptionResult.index
+                )
+                if (coords != null) {
                     workoutRecordMutex.withLock {
-                        _workoutRecord = workoutRecordService.adoptWorkoutRecord(
-                            existingRecord = existingRecord,
+                        _workoutRecord = workoutRecordService.upsertWorkoutRecord(
+                            existingRecord = _workoutRecord,
+                            workoutId = resumeSelectedWorkout.id,
+                            workoutHistoryId = currentWorkoutHistory!!.id,
+                            exerciseId = coords.first,
+                            setIndex = coords.second,
                             ownerDevice = activeSessionOwnerDevice(),
                             lastActiveSyncAt = LocalDateTime.now(),
-                            lastKnownSessionState = "RESUMED"
+                            lastKnownSessionState = "RESUMED_RECONCILED"
                         )
                     }
                 }
-
-                val resumeWorkoutHistory = workoutHistoryDao.getWorkoutHistoryById(resumeHistoryId)
-                if (resumeWorkoutHistory == null) {
-                    Log.e(TAG, "Workout history $resumeHistoryId not found when resuming")
-                    pendingResumeWorkoutHistoryId = null
-                    _workoutRecord = null
-                    withContext(dispatchers.main) {
-                        _hasWorkoutRecord.value = false
-                        _workoutResumeInfo.value = null
-                        rebuildScreenState()
-                    }
-                    return@withContext
-                }
-
-                currentWorkoutHistory = resumeWorkoutHistory
-                pendingResumeWorkoutHistoryId = null
-                _hasWorkoutRecord.value = true
-
-                heartBeatHistory.addAll(currentWorkoutHistory!!.heartBeatRecords)
-                val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryId(currentWorkoutHistory!!.id)
-                startWorkoutTime = workoutSessionOrchestrator.deriveStartWorkoutTimeFromCompletedSetHistories(setHistories)
-
-                restoreExecutedSets()
-                loadWorkoutHistory()
-
-                preProcessExercises()
-                generateProgressions()
-                applyProgressions()
-                val workoutSequence = generateWorkoutStates()
-
-                // Take a snapshot of executedSetsHistory (immutable from StateFlow)
-                val executedSetsHistorySnapshot = executedSetStore.executedSets.value
-
-                // Apply executed set data to states in containers
-                val updatedSequence = applyExecutedSetDataToSequence(workoutSequence, executedSetsHistorySnapshot)
-
-                val resumptionComputation = workoutSessionOrchestrator.computeResumptionIndex(
-                    updatedSequence = updatedSequence,
-                    executedSetsHistorySnapshot = executedSetsHistorySnapshot,
-                    resolveIndex = ::findResumptionIndex
-                )
-                val resumptionResult = resumptionComputation.indexResult
-                if (!resumptionResult.workoutRecordMatchedTemplate) {
-                    val coords = workoutResumptionService.exerciseIdAndOrderAtResumptionIndex(
-                        resumptionComputation.filteredStates,
-                        resumptionResult.index
-                    )
-                    if (coords != null) {
-                        workoutRecordMutex.withLock {
-                            _workoutRecord = workoutRecordService.upsertWorkoutRecord(
-                                existingRecord = _workoutRecord,
-                                workoutId = resumeSelectedWorkout.id,
-                                workoutHistoryId = currentWorkoutHistory!!.id,
-                                exerciseId = coords.first,
-                                setIndex = coords.second,
-                                ownerDevice = activeSessionOwnerDevice(),
-                                lastActiveSyncAt = LocalDateTime.now(),
-                                lastKnownSessionState = "RESUMED_RECONCILED"
-                            )
-                        }
-                    }
-                }
-
-                // Initialize state machine with sequence at the correct resumption index
-                val machine = initializeStateMachine(updatedSequence, resumptionResult.index)
-                // Populate nextState for Rest states
-                populateNextStateForRest(machine)
-                stateMachine = machine
-                // Populate setStates from allWorkoutStates
-                populateNextStateSets()
-                markSessionReady()
-                triggerWorkoutNotification()
-                onEnd()
             }
+
+            val machine = initializeStateMachine(updatedSequence, resumptionResult.index)
+            populateNextStateForRest(machine)
+            stateMachine = machine
+            populateNextStateSets()
+            markSessionReady()
+            triggerWorkoutNotification()
+            onEnd()
         }
     }
 
@@ -1866,7 +1912,7 @@ open class WorkoutViewModel(
     open fun startWorkout() {
         val selectedWorkoutIdSnapshot = _selectedWorkoutId.value
         val workoutsSnapshot = _workouts.value
-        launchMain {
+        launchSessionHydration(SessionHydrationTrigger.START) {
             withContext(dispatchers.io) {
                 try {
                     clearCompletionPushCompleted()

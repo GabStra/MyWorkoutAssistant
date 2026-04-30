@@ -13,10 +13,28 @@ interface WorkoutRecordDao {
     suspend fun getAll(): List<WorkoutRecord>
 
     @Query("SELECT * FROM workout_record WHERE workoutId = :workoutId")
-    suspend fun getWorkoutRecordByWorkoutId(workoutId: UUID): WorkoutRecord?
+    suspend fun getWorkoutRecordsByWorkoutId(workoutId: UUID): List<WorkoutRecord>
+
+    suspend fun getWorkoutRecordByWorkoutId(workoutId: UUID): WorkoutRecord? {
+        val records = getWorkoutRecordsByWorkoutId(workoutId)
+        require(records.size <= 1) {
+            buildString {
+                append("Expected at most one workout_record row for workoutId=")
+                append(workoutId)
+                append(", found ")
+                append(records.size)
+                append(": ")
+                append(records.joinToString { "${it.id}:${it.workoutHistoryId}" })
+            }
+        }
+        return records.singleOrNull()
+    }
 
     @Query("SELECT * FROM workout_record WHERE workoutHistoryId = :workoutHistoryId LIMIT 1")
     suspend fun getWorkoutRecordByWorkoutHistoryId(workoutHistoryId: UUID): WorkoutRecord?
+
+    @Query("SELECT workoutId FROM workout_record GROUP BY workoutId HAVING COUNT(*) > 1")
+    suspend fun getDuplicateWorkoutIds(): List<UUID>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(workoutRecord: WorkoutRecord)

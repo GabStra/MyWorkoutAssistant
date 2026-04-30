@@ -87,6 +87,33 @@ abstract class AppDatabase : RoomDatabase() {
                                     "DELETE FROM workout_record WHERE workoutHistoryId NOT IN " +
                                         "(SELECT id FROM workout_history)"
                                 )
+                                db.execSQL(
+                                    """
+                                    DELETE FROM workout_record
+                                    WHERE id IN (
+                                        SELECT victim.id
+                                        FROM workout_record AS victim
+                                        JOIN workout_record AS keeper
+                                            ON victim.workoutId = keeper.workoutId
+                                            AND (
+                                                COALESCE(victim.lastActiveSyncAt, '') < COALESCE(keeper.lastActiveSyncAt, '')
+                                                OR (
+                                                    COALESCE(victim.lastActiveSyncAt, '') = COALESCE(keeper.lastActiveSyncAt, '')
+                                                    AND victim.activeSessionRevision < keeper.activeSessionRevision
+                                                )
+                                                OR (
+                                                    COALESCE(victim.lastActiveSyncAt, '') = COALESCE(keeper.lastActiveSyncAt, '')
+                                                    AND victim.activeSessionRevision = keeper.activeSessionRevision
+                                                    AND victim.id < keeper.id
+                                                )
+                                            )
+                                    )
+                                    """.trimIndent()
+                                )
+                                db.execSQL(
+                                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                                        "index_workout_record_workoutId_unique ON workout_record(workoutId)"
+                                )
                             }
                         })
                         .build()

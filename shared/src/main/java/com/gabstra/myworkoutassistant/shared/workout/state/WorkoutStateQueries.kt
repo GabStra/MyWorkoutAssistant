@@ -180,4 +180,3 @@ internal object WorkoutStateQueries {
         return ids
     }
 }
-
