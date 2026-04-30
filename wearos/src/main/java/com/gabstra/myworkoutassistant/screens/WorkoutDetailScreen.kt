@@ -131,12 +131,22 @@ fun WorkoutDetailScreen(
             prefs.edit { putBoolean("isWorkoutInProgress", true) }
 
             navController.navigate(Screen.Workout.route)
+            viewModel.consumeStartWorkout()
         }
     }
 
-    LaunchedEffect(viewModel.executeStartWorkout) {
-        if(viewModel.executeStartWorkout.value!=null) {
-            permissionLauncherStart.launch(basePermissions.toTypedArray())
+    LaunchedEffect(
+        viewModel.executeStartWorkout.value,
+        showLoading,
+        isCheckingWorkoutRecord,
+        hasWorkoutRecord
+    ) {
+        if (viewModel.executeStartWorkout.value != null && !showLoading && !isCheckingWorkoutRecord) {
+            if (hasWorkoutRecord) {
+                permissionLauncherResume.launch(basePermissions.toTypedArray())
+            } else {
+                permissionLauncherStart.launch(basePermissions.toTypedArray())
+            }
         }
     }
 

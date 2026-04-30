@@ -444,7 +444,7 @@ private fun HeartRateDisplay(
                 Text(
                     modifier = Modifier.alignByBaseline().widthIn(min = textWidth),
                     text = textToDisplay,
-                    textAlign = TextAlign.End,
+                    textAlign = if (displayMode != 0) TextAlign.Center else TextAlign.End,
                     style = MaterialTheme.typography.labelMedium,
                     color = if (bpm == 0) MediumDarkGray else MaterialTheme.colorScheme.onBackground
                 )
@@ -476,7 +476,7 @@ private fun HeartRateDisplay(
                             .padding(2.5.dp),
                         text = zoneText,
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelSmall
+                        style = MaterialTheme.typography.bodySmall
                             .copy(platformStyle = PlatformTextStyle(
                                 includeFontPadding = false
                             )
@@ -1053,7 +1053,7 @@ private fun createPreviewHapticsViewModel(context: Context): HapticsViewModel {
 @Preview(device = WearDevices.LARGE_ROUND, showBackground = true)
 @Composable
 private fun HeartRateCircularChartPreview() {
-    //previewAppViewModel.switchHrDisplayMode()
+    previewAppViewModel.switchHrDisplayMode()
     val context = LocalContext.current
     val hapticsViewModel = remember(context) { createPreviewHapticsViewModel(context) }
     MaterialTheme(

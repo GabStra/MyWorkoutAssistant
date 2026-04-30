@@ -47,7 +47,7 @@ fun ExerciseMetadataStrip(
     ) {
         FlowRow(
             modifier = clickableModifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)
         ) {
             exerciseLabel?.let {
                 Text(
@@ -105,13 +105,13 @@ fun ExerciseMetadataStrip(
                 val side2Color = if (currentSideIndex == 2u) primaryColor else surfaceContainerHigh
                 Text(
                     text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = side1Color, fontWeight = FontWeight.Bold)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = side1Color, fontWeight = FontWeight.Bold)) {
                             append("L")
                         }
                         withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, baselineShift = BaselineShift(0.25f))) {
                             append("↔")
                         }
-                        withStyle(SpanStyle(color = side2Color, fontWeight = FontWeight.Bold)) {
+                        withStyle(baseStyle.toSpanStyle().copy(color = side2Color, fontWeight = FontWeight.Bold)) {
                             append("R")
                         }
                     },

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -113,7 +114,26 @@ fun BodyWeightSetScreen(
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
     val shouldShowHistoricalDeltaBadge = remember(state.set.id) {
-        (state.set as? BodyWeightSet)?.subCategory == SetSubCategory.WorkSet
+        val setSubCategory = (state.set as? BodyWeightSet)?.subCategory
+        setSubCategory == SetSubCategory.WorkSet || setSubCategory == SetSubCategory.WarmupSet
+    }
+    val historicalSetDifference by remember(
+        shouldShowHistoricalDeltaBadge,
+        comparisonSetData,
+        currentSetData,
+        equipment,
+    ) {
+        derivedStateOf {
+            if (!shouldShowHistoricalDeltaBadge) {
+                SetDifference()
+            } else {
+                calculateSetDifference(
+                    beforeSetData = historicalSetData,
+                    afterSetData = currentSetData,
+                    equipment = equipment,
+                )
+            }
+        }
     }
     LaunchedEffect(
         state.exerciseId,
@@ -292,6 +312,7 @@ fun BodyWeightSetScreen(
     @Composable
     fun RepsRow(modifier: Modifier = Modifier, style: TextStyle) {
         val repsText = "${currentSetData.actualReps}"
+        val repsDeltaText = historicalSetDifference.repsText
         fun toggleRepsEditMode() {
             if (forceStopEditMode) return
             if (shouldLockCalibrationEdits) return
@@ -301,9 +322,14 @@ fun BodyWeightSetScreen(
 
             hapticsViewModel.doGentleVibration()
         }
-        Row(
+        val textColor  = when {
+            currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
+            currentSetData.actualReps < comparisonSetData.actualReps  -> Red
+            else -> Green
+        }
+
+        Column(
             modifier = modifier
-                .height(40.dp)
                 .combinedClickable(
                     onClick = {
                         updateInteractionTime()
@@ -328,7 +354,12 @@ fun BodyWeightSetScreen(
                     }
                 )
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "${SetValueSemantics.RepsValueDescription}: $repsText"
+                    contentDescription = buildString {
+                        append("${SetValueSemantics.RepsValueDescription}: $repsText")
+                        if (repsDeltaText != null) {
+                            append(", delta $repsDeltaText")
+                        }
+                    }
                     role = Role.Button
                     onClick(
                         label = "Focus reps"
@@ -343,19 +374,23 @@ fun BodyWeightSetScreen(
                         true
                     }
                 },
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val textColor  = when {
-                currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-                currentSetData.actualReps < comparisonSetData.actualReps  -> Red
-                else -> Green
-            }
-
             ScalableText(
+                modifier = Modifier.height(40.dp),
                 text = repsText,
                 style = style,
                 color = textColor,
+                textAlign = TextAlign.Center,
             )
+            if (repsDeltaText != null && !isRepsInEditMode) {
+                ScalableText(
+                    text = repsDeltaText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 
@@ -366,6 +401,7 @@ fun BodyWeightSetScreen(
         } else {
             "BW"
         }
+        val weightDeltaText = historicalSetDifference.weightText
         fun toggleWeightEditMode() {
             if (forceStopEditMode) return
             if (shouldLockCalibrationEdits) return
@@ -375,9 +411,14 @@ fun BodyWeightSetScreen(
 
             hapticsViewModel.doGentleVibration()
         }
-        Row(
+        val textColor = when {
+            currentSetData.additionalWeight == comparisonSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
+            currentSetData.additionalWeight < comparisonSetData.additionalWeight  -> Red
+            else -> Green
+        }
+
+        Column(
             modifier = modifier
-                .height(40.dp)
                 .combinedClickable(
                     onClick = {
                         updateInteractionTime()
@@ -402,7 +443,12 @@ fun BodyWeightSetScreen(
                     }
                 )
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "${SetValueSemantics.WeightValueDescription}: $weightText"
+                    contentDescription = buildString {
+                        append("${SetValueSemantics.WeightValueDescription}: $weightText")
+                        if (weightDeltaText != null) {
+                            append(", delta $weightDeltaText")
+                        }
+                    }
                     role = Role.Button
                     onClick(
                         label = "Focus weight"
@@ -417,19 +463,23 @@ fun BodyWeightSetScreen(
                         true
                     }
                 },
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val textColor = when {
-                currentSetData.additionalWeight == comparisonSetData.additionalWeight -> MaterialTheme.colorScheme.onBackground
-                currentSetData.additionalWeight < comparisonSetData.additionalWeight  -> Red
-                else -> Green
-            }
-
             ScalableText(
+                modifier = Modifier.height(40.dp),
                 text = weightText,
                 style = style,
-                color =  textColor,
+                color = textColor,
+                textAlign = TextAlign.Center,
             )
+            if (weightDeltaText != null && !isWeightInEditMode) {
+                ScalableText(
+                    text = weightDeltaText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 
@@ -447,8 +497,8 @@ fun BodyWeightSetScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(20.dp,Alignment.CenterHorizontally)
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(15.dp,Alignment.CenterHorizontally)
                 ) {
                     if(shouldShowWeights) {
                         Column(
@@ -506,14 +556,6 @@ fun BodyWeightSetScreen(
                     if (extraInfo != null) {
                         //HorizontalDivider(modifier = Modifier.fillMaxWidth(), thickness = 1.dp)
                         extraInfo(state)
-                    }
-                    if (shouldShowHistoricalDeltaBadge) {
-                        HistoricalSetDeltaBadge(
-                            modifier = Modifier.fillMaxWidth(),
-                            previousSetData = historicalSetData,
-                            currentSetData = currentSetData,
-                            equipment = equipment
-                        )
                     }
                     if (isPlateauDetected) {
                         Row(

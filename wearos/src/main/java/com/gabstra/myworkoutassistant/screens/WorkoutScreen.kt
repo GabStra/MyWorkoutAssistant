@@ -65,7 +65,6 @@ import com.gabstra.myworkoutassistant.data.Screen
 import com.gabstra.myworkoutassistant.data.SensorDataViewModel
 import com.gabstra.myworkoutassistant.data.WhoopHeartRateViewModel
 import com.gabstra.myworkoutassistant.data.cancelWorkoutInProgressNotification
-import com.gabstra.myworkoutassistant.data.isReady
 import com.gabstra.myworkoutassistant.data.showTimerCompletedNotification
 import com.gabstra.myworkoutassistant.data.showWorkoutInProgressNotification
 import com.gabstra.myworkoutassistant.notifications.WorkoutNotificationHelper
@@ -429,7 +428,7 @@ fun WorkoutScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         WorkoutStateHeader(
-                            modifier = Modifier.padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding),
+                            modifier = Modifier.padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding - 2.5.dp),
                             workoutState = workoutState,
                             viewModel = viewModel,
                             hapticsViewModel = hapticsViewModel
@@ -621,6 +620,7 @@ fun WorkoutScreen(
                                             if (!MyApplication.isAppInForeground()) {
                                                 showTimerCompletedNotification(
                                                     context = context,
+                                                    workoutGlobalId = selectedWorkout.globalId,
                                                     title = "Rest finished",
                                                     message = "Time for your next set"
                                                 )

@@ -15,19 +15,29 @@ import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.R
 import java.util.UUID
 
+internal const val OPEN_ACTIVE_WORKOUT_ACTION =
+    "com.gabstra.myworkoutassistant.OPEN_ACTIVE_WORKOUT"
+
+internal fun Intent.configureOpenActiveWorkoutIntent(workoutGlobalId: UUID? = null): Intent = apply {
+    action = OPEN_ACTIVE_WORKOUT_ACTION
+    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+        Intent.FLAG_ACTIVITY_SINGLE_TOP
+    if (workoutGlobalId != null) {
+        putExtra("WORKOUT_ID", workoutGlobalId.toString())
+    } else {
+        removeExtra("WORKOUT_ID")
+    }
+}
+
 @SuppressLint("MissingPermission")
 fun showWorkoutInProgressNotification(context: Context, workoutGlobalId: UUID? = null) {
     val channelId = "workout_progress_channel"
     val notificationId = 1
 
     // Create an intent that will return the user to the active workout when the notification is tapped.
-    val intent = Intent(context, MainActivity::class.java).apply {
-        action = "com.gabstra.myworkoutassistant.OPEN_ACTIVE_WORKOUT"
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-            Intent.FLAG_ACTIVITY_SINGLE_TOP
-        workoutGlobalId?.let { putExtra("WORKOUT_ID", it.toString()) }
-    }
+    val intent = Intent(context, MainActivity::class.java)
+        .configureOpenActiveWorkoutIntent(workoutGlobalId)
     val pendingIntent = PendingIntent.getActivity(
         context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
@@ -95,15 +105,15 @@ fun cancelWorkoutInProgressNotification(context: Context) {
 @SuppressLint("MissingPermission")
 fun showTimerCompletedNotification(
     context: Context,
+    workoutGlobalId: UUID? = null,
     title: String = "Timer completed",
     message: String = "Tap to continue workout"
 ) {
     val channelId = "timer_completion_channel"
     val notificationId = 3
 
-    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-    }
+    val intent = Intent(context, MainActivity::class.java)
+        .configureOpenActiveWorkoutIntent(workoutGlobalId)
     val pendingIntent = PendingIntent.getActivity(
         context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )

@@ -187,13 +187,13 @@ private fun weightAndRepsDifference(
 
     val weightText = if (weightDiff != 0.0 && equipment is WeightLoadedEquipment) {
         val sign = if (weightDiff > 0) "+" else ""
-        "$sign${equipment.formatWeight(weightDiff)} kg"
+        "$sign${equipment.formatWeight(weightDiff)}"
     } else {
         null
     }
     val repsText = if (repsDiff != 0) {
         val sign = if (repsDiff > 0) "+" else ""
-        "$sign$repsDiff reps"
+        "$sign$repsDiff"
     } else {
         null
     }

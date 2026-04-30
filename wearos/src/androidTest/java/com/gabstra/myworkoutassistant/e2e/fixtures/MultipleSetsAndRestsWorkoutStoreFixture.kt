@@ -16,6 +16,7 @@ import java.util.UUID
  */
 object MultipleSetsAndRestsWorkoutStoreFixture {
     private const val WORKOUT_NAME = "Test Workout"
+    private var workoutGlobalId: UUID? = null
 
     fun setupWorkoutStore(context: Context) {
         val equipment = TestBarbellFactory.createTestBarbell()
@@ -69,6 +70,7 @@ object MultipleSetsAndRestsWorkoutStoreFixture {
             globalId = UUID.randomUUID(),
             type = 0
         )
+        workoutGlobalId = workout.globalId
 
         val workoutStore = WorkoutStore(
             workouts = listOf(workout),
@@ -82,6 +84,9 @@ object MultipleSetsAndRestsWorkoutStoreFixture {
     }
 
     fun getWorkoutName(): String = WORKOUT_NAME
+
+    fun getWorkoutGlobalId(): UUID =
+        workoutGlobalId ?: error("Workout fixture has not been seeded yet.")
 }
 
 

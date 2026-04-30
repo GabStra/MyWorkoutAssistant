@@ -652,6 +652,95 @@ object SyncHandshakeManager {
     }
 }
 
+private object WorkoutHistorySyncFaultInjection {
+    private const val PREFS_NAME = "e2e_workout_history_sync_faults"
+    private const val TARGET_CHUNK_INDEX_KEY = "target_chunk_index"
+    private const val SKIP_INITIAL_CHUNK_ONCE_KEY = "skip_initial_chunk_once"
+    private const val SKIP_INITIAL_CHUNK_CONSUMED_KEY = "skip_initial_chunk_consumed"
+    private const val SEND_STALE_RETRY_AFTER_COMPLETION_ONCE_KEY =
+        "send_stale_retry_after_completion_once"
+    private const val SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY =
+        "send_stale_retry_after_completion_consumed"
+
+    fun shouldSkipInitialChunkOnce(
+        context: android.content.Context?,
+        chunkIndex: Int,
+        chunksCount: Int
+    ): Boolean {
+        if (context == null || chunksCount <= 1) return false
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(SKIP_INITIAL_CHUNK_ONCE_KEY, false)) return false
+        if (prefs.getBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, false)) return false
+        val configuredIndex = prefs.getInt(TARGET_CHUNK_INDEX_KEY, -1)
+        val fallbackIndex = when {
+            chunksCount >= 3 -> 1
+            else -> 0
+        }
+        val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount - 1 } ?: fallbackIndex
+        if (chunkIndex != targetIndex) return false
+        prefs.edit().putBoolean(SKIP_INITIAL_CHUNK_CONSUMED_KEY, true).apply()
+        Log.w(
+            "WorkoutSync",
+            "E2E fault injection: skipping initial workout history chunk index=$chunkIndex once"
+        )
+        return true
+    }
+
+    fun consumeLateStaleRetryAfterCompletionSpec(
+        context: android.content.Context?,
+        chunksCount: Int
+    ): Int? {
+        if (context == null || chunksCount == 0) return null
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_ONCE_KEY, false)) return null
+        if (prefs.getBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, false)) return null
+        val configuredIndex = prefs.getInt(TARGET_CHUNK_INDEX_KEY, -1)
+        val fallbackIndex = when {
+            chunksCount >= 2 -> 1
+            else -> 0
+        }
+        val targetIndex = configuredIndex.takeIf { it in 0 until chunksCount } ?: fallbackIndex
+        prefs.edit().putBoolean(SEND_STALE_RETRY_AFTER_COMPLETION_CONSUMED_KEY, true).apply()
+        return targetIndex
+    }
+}
+
+internal data class MissingChunksSyncError(
+    val missingIndices: List<Int>,
+    val retryGeneration: Int,
+)
+
+internal object WorkoutHistoryRetryProtocol {
+    fun parseMissingChunksError(errorMessage: String): MissingChunksSyncError? {
+        return try {
+            val indicesPattern = Regex("Missing indices: \\[(\\d+(?:, \\d+)*)\\]")
+            val retryGenerationPattern = Regex("Retry generation: (\\d+)")
+            val missingIndices = indicesPattern.find(errorMessage)
+                ?.groupValues
+                ?.get(1)
+                ?.split(", ")
+                ?.mapNotNull { it.toIntOrNull() }
+                ?: emptyList()
+            if (missingIndices.isEmpty()) {
+                return null
+            }
+            val retryGeneration = retryGenerationPattern.find(errorMessage)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull()
+                ?.coerceAtLeast(1)
+                ?: 1
+            MissingChunksSyncError(
+                missingIndices = missingIndices,
+                retryGeneration = retryGeneration
+            )
+        } catch (e: Exception) {
+            Log.e("DataLayerSync", "Failed to parse missing chunks from error message: $errorMessage", e)
+            null
+        }
+    }
+}
+
 /**
  * Checks if at least one connected node exists before attempting sync.
  * Retries up to 3 times with exponential backoff.
@@ -710,7 +799,7 @@ suspend fun sendSyncRequest(dataClient: DataClient, transactionId: String, conte
             }.asPutDataRequest().setUrgent()
             
             Log.d("DataLayerSync", "Sending sync request for transaction: $transactionId")
-            dataClient.putDataItem(request)
+            Tasks.await(dataClient.putDataItem(request))
             
             // Small delay to allow message delivery
             delay(100)
@@ -959,13 +1048,18 @@ private suspend fun sendWorkoutHistoryStoreInternal(
             dataMap.putString("transactionId", usedTransactionId)
         }.asPutDataRequest().setUrgent()
 
-        dataClient.putDataItem(startRequest)
+        Tasks.await(dataClient.putDataItem(startRequest))
 
         delay(500)
 
         // Send chunks with indices
         chunks.forEachIndexed { index, chunk ->
             val isLastChunk = index == chunks.size - 1
+            val shouldSkipForE2e = WorkoutHistorySyncFaultInjection.shouldSkipInitialChunkOnce(
+                context = context,
+                chunkIndex = index,
+                chunksCount = chunks.size
+            )
             val chunkPath = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX, usedTransactionId, index)
 
             val request = PutDataMapRequest.create(chunkPath).apply {
@@ -982,7 +1076,9 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                 "WorkoutSync",
                 "SYNC_TRACE event=chunk side=wear direction=send tx=$usedTransactionId index=$index isLast=$isLastChunk isRetry=false"
             )
-            dataClient.putDataItem(request)
+            if (!shouldSkipForE2e) {
+                Tasks.await(dataClient.putDataItem(request))
+            }
 
             if (!isLastChunk) {
                 delay(500)
@@ -1052,8 +1148,12 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                         "WorkoutSync",
                         "SYNC_TRACE event=complete side=wear direction=recv tx=$usedTransactionId result=success"
                     )
-                    SyncHandshakeManager.cleanup(usedTransactionId)
-                    return Pair(true, usedTransactionId)
+                    return finishSuccessfulWorkoutHistorySend(
+                        dataClient = dataClient,
+                        context = context,
+                        transactionId = usedTransactionId,
+                        chunks = chunks
+                    )
                 }
                 else -> {
                     // Error received
@@ -1066,19 +1166,30 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                     
                     // Check if it's a missing chunks error and we can retry
                     if (errorMessage.startsWith("MISSING_CHUNKS:") && retryAttempt < maxRetries) {
-                        val missingIndices = parseMissingChunks(errorMessage)
-                        if (missingIndices.isNotEmpty()) {
+                        val missingChunksError = WorkoutHistoryRetryProtocol.parseMissingChunksError(errorMessage)
+                        if (missingChunksError != null && missingChunksError.missingIndices.isNotEmpty()) {
+                            val missingIndices = missingChunksError.missingIndices
+                            val retryGeneration = missingChunksError.retryGeneration
                             // Check if completion was already received before starting retry
                             if (SyncHandshakeManager.hasCompletion(usedTransactionId)) {
                                 Log.d("DataLayerSync", "Completion already received before retry for transaction: $usedTransactionId")
-                                SyncHandshakeManager.cleanup(usedTransactionId)
-                                return Pair(true, usedTransactionId)
+                                return finishSuccessfulWorkoutHistorySend(
+                                    dataClient = dataClient,
+                                    context = context,
+                                    transactionId = usedTransactionId,
+                                    chunks = chunks
+                                )
                             }
                             
-                            Log.d("DataLayerSync", "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices")
+                            Log.d(
+                                "DataLayerSync",
+                                "Attempting retry ${retryAttempt + 1} for missing chunks: $missingIndices " +
+                                    "(retryGeneration=$retryGeneration)"
+                            )
                             Log.d(
                                 "WorkoutSync",
-                                "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$usedTransactionId missing=$missingIndices"
+                                "SYNC_TRACE event=missing_chunks side=wear direction=retry " +
+                                    "tx=$usedTransactionId missing=$missingIndices retryGeneration=$retryGeneration"
                             )
                             try {
                                 // Register new waiters for the retry attempt
@@ -1090,11 +1201,21 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                                 // This handles the case where completion arrives between error and retry registration
                                 if (currentCompletionWaiter.isCompleted) {
                                     Log.d("DataLayerSync", "Completion already received when registering retry waiter for transaction: $usedTransactionId")
-                                    SyncHandshakeManager.cleanup(usedTransactionId)
-                                    return Pair(true, usedTransactionId)
+                                    return finishSuccessfulWorkoutHistorySend(
+                                        dataClient = dataClient,
+                                        context = context,
+                                        transactionId = usedTransactionId,
+                                        chunks = chunks
+                                    )
                                 }
                                 
-                                retryMissingChunks(dataClient, usedTransactionId, missingIndices, chunks)
+                                retryMissingChunks(
+                                    dataClient = dataClient,
+                                    transactionId = usedTransactionId,
+                                    missingIndices = missingIndices,
+                                    chunks = chunks,
+                                    retryGeneration = retryGeneration
+                                )
                                 retryAttempt++
                                 // Exponential backoff with jitter: 500ms, 1000ms, 2000ms, 4000ms, 8000ms
                                 val baseDelay = 500L * (1 shl (retryAttempt - 1))
@@ -1105,8 +1226,12 @@ private suspend fun sendWorkoutHistoryStoreInternal(
                                 // Check again before continuing loop (completion might have arrived during retry)
                                 if (currentCompletionWaiter.isCompleted) {
                                     Log.d("DataLayerSync", "Completion received during retry for transaction: $usedTransactionId")
-                                    SyncHandshakeManager.cleanup(usedTransactionId)
-                                    return Pair(true, usedTransactionId)
+                                    return finishSuccessfulWorkoutHistorySend(
+                                        dataClient = dataClient,
+                                        context = context,
+                                        transactionId = usedTransactionId,
+                                        chunks = chunks
+                                    )
                                 }
                                 
                                 continue
@@ -1322,38 +1447,29 @@ fun combineChunks(chunks: List<ByteArray>): ByteArray {
 }
 
 /**
- * Parses missing chunk indices from error message
- * Expected format: "MISSING_CHUNKS: Expected 10 chunks, received 7. Missing indices: [2, 5, 7]"
- */
-private fun parseMissingChunks(errorMessage: String): List<Int> {
-    return try {
-        val indicesPattern = Regex("Missing indices: \\[(\\d+(?:, \\d+)*)\\]")
-        val match = indicesPattern.find(errorMessage)
-        match?.groupValues?.get(1)?.split(", ")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
-    } catch (e: Exception) {
-        Log.e("DataLayerSync", "Failed to parse missing chunks from error message: $errorMessage", e)
-        emptyList()
-    }
-}
-
-/**
  * Retries sending specific missing chunks
  */
 private suspend fun retryMissingChunks(
     dataClient: DataClient,
     transactionId: String,
     missingIndices: List<Int>,
-    chunks: List<ByteArray>
+    chunks: List<ByteArray>,
+    retryGeneration: Int
 ) {
     if (missingIndices.isEmpty()) {
         Log.w("DataLayerSync", "retryMissingChunks called with empty missing indices list")
         return
     }
 
-    Log.d("DataLayerSync", "Retrying ${missingIndices.size} missing chunks for transaction: $transactionId, indices: $missingIndices")
+    Log.d(
+        "DataLayerSync",
+        "Retrying ${missingIndices.size} missing chunks for transaction: $transactionId, " +
+            "indices: $missingIndices, retryGeneration=$retryGeneration"
+    )
     Log.d(
         "WorkoutSync",
-        "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$transactionId missing=$missingIndices"
+        "SYNC_TRACE event=missing_chunks side=wear direction=retry tx=$transactionId " +
+            "missing=$missingIndices retryGeneration=$retryGeneration"
     )
 
     // Send missing chunks one by one
@@ -1375,6 +1491,7 @@ private suspend fun retryMissingChunks(
             dataMap.putByteArray("chunk", chunk)
             dataMap.putInt("chunkIndex", chunkIndex)
             dataMap.putBoolean("isRetry", true)
+            dataMap.putInt("retryGeneration", retryGeneration)
             if (isLastRetryChunk) {
                 dataMap.putBoolean("isLastRetryChunk", true)
             }
@@ -1384,9 +1501,10 @@ private suspend fun retryMissingChunks(
 
         Log.d(
             "WorkoutSync",
-            "SYNC_TRACE event=chunk side=wear direction=send tx=$transactionId index=$chunkIndex isLast=$isLastRetryChunk isRetry=true"
+            "SYNC_TRACE event=chunk side=wear direction=send tx=$transactionId index=$chunkIndex " +
+                "isLast=$isLastRetryChunk isRetry=true retryGeneration=$retryGeneration"
         )
-        dataClient.putDataItem(request)
+        Tasks.await(dataClient.putDataItem(request))
 
         if (!isLastRetryChunk) {
             delay(500)
@@ -1396,6 +1514,60 @@ private suspend fun retryMissingChunks(
     // Small delay after last retry chunk
     delay(100)
     Log.d("DataLayerSync", "Finished sending retry chunks for transaction: $transactionId")
+}
+
+private suspend fun finishSuccessfulWorkoutHistorySend(
+    dataClient: DataClient,
+    context: android.content.Context?,
+    transactionId: String,
+    chunks: List<ByteArray>
+): Pair<Boolean, String> {
+    sendLateStaleRetryAfterCompletionIfConfigured(
+        dataClient = dataClient,
+        context = context,
+        transactionId = transactionId,
+        chunks = chunks
+    )
+    SyncHandshakeManager.cleanup(transactionId)
+    return Pair(true, transactionId)
+}
+
+private suspend fun sendLateStaleRetryAfterCompletionIfConfigured(
+    dataClient: DataClient,
+    context: android.content.Context?,
+    transactionId: String,
+    chunks: List<ByteArray>
+) {
+    val targetChunkIndex = WorkoutHistorySyncFaultInjection.consumeLateStaleRetryAfterCompletionSpec(
+        context = context,
+        chunksCount = chunks.size
+    ) ?: return
+    val chunk = chunks.getOrNull(targetChunkIndex) ?: return
+    val retryGeneration = 1
+
+    delay(1_000)
+    val chunkPath = DataLayerPaths.buildPath(
+        DataLayerPaths.WORKOUT_HISTORY_CHUNK_PREFIX,
+        transactionId,
+        targetChunkIndex
+    )
+    val request = PutDataMapRequest.create(chunkPath).apply {
+        dataMap.putByteArray("chunk", chunk)
+        dataMap.putInt("chunkIndex", targetChunkIndex)
+        dataMap.putBoolean("isRetry", true)
+        dataMap.putBoolean("isLastRetryChunk", true)
+        dataMap.putInt("retryGeneration", retryGeneration)
+        dataMap.putString("timestamp", System.currentTimeMillis().toString())
+        dataMap.putString("transactionId", transactionId)
+    }.asPutDataRequest().setUrgent()
+
+    Log.w(
+        "WorkoutSync",
+        "E2E fault injection: sending late stale retry chunk after completion " +
+            "tx=$transactionId index=$targetChunkIndex retryGeneration=$retryGeneration"
+    )
+    Tasks.await(dataClient.putDataItem(request))
+    delay(500)
 }
 
 fun calculateIntensity(weight: Float, oneRepMax: Float): Float {

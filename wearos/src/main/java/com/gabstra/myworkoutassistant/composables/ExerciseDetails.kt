@@ -86,6 +86,7 @@ fun ExerciseDetail(
                     if (!MyApplication.isAppInForeground()) {
                         showTimerCompletedNotification(
                             context = context,
+                            workoutGlobalId = viewModel.selectedWorkout.value.globalId,
                             title = "Set timer finished",
                             message = "Time for your next set"
                         )
@@ -113,6 +114,7 @@ fun ExerciseDetail(
                 if (!MyApplication.isAppInForeground()) {
                     showTimerCompletedNotification(
                         context = context,
+                        workoutGlobalId = viewModel.selectedWorkout.value.globalId,
                         title = "Set timer finished",
                         message = "Time for your next set"
                     )

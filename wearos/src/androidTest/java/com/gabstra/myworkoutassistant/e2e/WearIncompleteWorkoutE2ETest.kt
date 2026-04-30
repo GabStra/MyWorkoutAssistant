@@ -66,7 +66,6 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
-        forceActiveWorkoutIntoIncompleteState(db)
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -122,7 +121,6 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
         dismissTutorialIfPresent(TutorialContext.REST_SCREEN, 2_000)
         device.pressHome()
         device.waitForIdle(1_000)
-        forceActiveWorkoutIntoIncompleteState(AppDatabase.getDatabase(context))
         launchAppFromHome()
 
         val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
@@ -367,13 +365,5 @@ class WearIncompleteWorkoutE2ETest : WearBaseE2ETest() {
             .distinct()
             .take(12)
         return "texts=$labels descs=$descriptions"
-    }
-
-    private fun forceActiveWorkoutIntoIncompleteState(db: AppDatabase) = runBlocking {
-        val workoutRecords = db.workoutRecordDao().getAll()
-        require(workoutRecords.isNotEmpty()) { "Expected an active workout record before forcing incomplete state" }
-        workoutRecords.forEach { workoutRecord ->
-            db.workoutRecordDao().deleteById(workoutRecord.id)
-        }
     }
 }

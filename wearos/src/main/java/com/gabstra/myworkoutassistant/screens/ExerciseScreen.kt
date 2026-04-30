@@ -712,6 +712,12 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
                 }
             }
         ),
+        historicalSetData = when (scenario.setType) {
+            ExercisePreviewSetType.WEIGHT -> WeightSetData(8, 75.0, 600.0)
+            ExercisePreviewSetType.BODY_WEIGHT -> BodyWeightSetData(10, 15.0, 75.0, 900.0)
+            ExercisePreviewSetType.TIMED_DURATION -> TimedDurationSetData(60_000, 60_000, autoStart = false, autoStop = true)
+            ExercisePreviewSetType.ENDURANCE -> EnduranceSetData(45_000, 10_000, autoStart = false, autoStop = !scenario.enduranceOverLimit)
+        },
         hasNoHistory = false,
         startTime = when {
             scenario.timedIsRunning -> now.minusSeconds(20)
@@ -736,6 +742,7 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         setIndex = 0u,
         previousSetData = WeightSetData(10, 50.0, 500.0),
         currentSetDataState = mutableStateOf(WeightSetData(10, 50.0, 500.0)),
+        historicalSetData = WeightSetData(10, 50.0, 500.0),
         hasNoHistory = false,
         startTime = null,
         skipped = false,
@@ -856,17 +863,17 @@ internal fun ExerciseScreenPreviewScenario(scenario: ExercisePreviewScenario) {
 }
 
 @Preview(
-    name = "Weight Work Set Badge",
-    group = "ExerciseScreen/States",
+    name = "Weight Work Set Inline Delta",
+    group = "ExerciseScreen/Deltas",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun ExerciseScreenPreviewWeightWorkSetBadge() {
+private fun ExerciseScreenPreviewWeightInlineDelta() {
     ExerciseScreenPreviewScenario(
         ExercisePreviewScenario(
-            name = "weight_work_badge",
-            setType = ExercisePreviewSetType.WEIGHT
+            name = "weight_inline_delta",
+            setType = ExercisePreviewSetType.WEIGHT,
         )
     )
 }
@@ -960,17 +967,17 @@ private fun ExerciseScreenPreviewUnilateralDialog() {
 }
 
 @Preview(
-    name = "Body Weight Set",
-    group = "ExerciseScreen/States",
+    name = "Body Weight Work Set Inline Delta",
+    group = "ExerciseScreen/Deltas",
     device = WearDevices.LARGE_ROUND,
     showBackground = true
 )
 @Composable
-private fun ExerciseScreenPreviewBodyWeight() {
+private fun ExerciseScreenPreviewBodyWeightInlineDelta() {
     ExerciseScreenPreviewScenario(
         ExercisePreviewScenario(
-            name = "body_weight",
-            setType = ExercisePreviewSetType.BODY_WEIGHT
+            name = "body_weight_inline_delta",
+            setType = ExercisePreviewSetType.BODY_WEIGHT,
         )
     )
 }
@@ -1128,7 +1135,6 @@ private fun ExerciseDetailContent(
                         else -> null
                     }
                 }
-
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

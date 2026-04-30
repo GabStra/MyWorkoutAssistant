@@ -277,11 +277,6 @@ open class AppViewModel : WorkoutViewModel() {
     internal fun maybeShowRecoveryPromptOnLaunch() {
         val context = applicationContext ?: return
         launchIO {
-            val prefs = context.getSharedPreferences("workout_state", Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("isWorkoutInProgress", false)) {
-                return@launchIO
-            }
-
             val checkpoint = getSavedRecoveryCheckpoint()
             val incompleteWorkout = resolveIncompleteWorkoutForRecovery(
                 context = context,
@@ -304,37 +299,46 @@ open class AppViewModel : WorkoutViewModel() {
         checkpoint: WorkoutRecoveryCheckpoint?
     ): IncompleteWorkout? {
         val db = AppDatabase.getDatabase(context)
-        val unfinishedHistories = db.workoutHistoryDao()
-            .getAllWorkoutHistories()
-            .filterNot { it.isDone }
-            .sortedByDescending { it.startTime }
-        if (unfinishedHistories.isEmpty()) {
+        val workoutRecords = db.workoutRecordDao().getAll()
+        if (workoutRecords.isEmpty()) {
             return null
         }
+        val prioritizedRecords = buildList {
+            checkpoint?.workoutHistoryId?.let { workoutHistoryId ->
+                workoutRecords.firstOrNull { it.workoutHistoryId == workoutHistoryId }?.let(::add)
+            }
+            checkpoint?.workoutId?.let { workoutId ->
+                workoutRecords.firstOrNull { it.workoutId == workoutId }?.let(::add)
+            }
+            addAll(
+                workoutRecords
+                    .sortedWith(
+                        compareByDescending<com.gabstra.myworkoutassistant.shared.WorkoutRecord> {
+                            it.lastActiveSyncAt
+                        }.thenByDescending { it.activeSessionRevision }
+                    )
+            )
+        }.distinctBy { it.id }
 
-        val workoutRecords = db.workoutRecordDao().getAll()
-        val prioritizedRecord = checkpoint?.workoutHistoryId?.let { workoutHistoryId ->
-            workoutRecords.firstOrNull { it.workoutHistoryId == workoutHistoryId }
-        } ?: checkpoint?.workoutId?.let { workoutId ->
-            workoutRecords.firstOrNull { it.workoutId == workoutId }
-        } ?: workoutRecords
-            .sortedByDescending { it.lastActiveSyncAt }
-            .firstOrNull()
+        prioritizedRecords.forEach { record ->
+            val workoutHistory = db.workoutHistoryDao().getWorkoutHistoryById(record.workoutHistoryId)
+            if (workoutHistory == null || workoutHistory.isDone) {
+                db.workoutRecordDao().deleteById(record.id)
+                return@forEach
+            }
 
-        val workoutHistory = prioritizedRecord?.let { record ->
-            unfinishedHistories.firstOrNull { it.id == record.workoutHistoryId }
-        } ?: return null
-        val workout = workoutStore.workouts.firstOrNull { candidate ->
-            candidate.id == workoutHistory.workoutId || candidate.globalId == workoutHistory.globalId
-        } ?: checkpoint?.workoutId?.let { workoutId ->
-            workoutStore.workouts.firstOrNull { it.id == workoutId }
-        } ?: return null
+            val workout = workoutStore.workouts.firstOrNull { candidate ->
+                candidate.id == record.workoutId
+            } ?: return@forEach
 
-        return IncompleteWorkout(
-            workoutHistory = workoutHistory,
-            workoutName = workout.name,
-            workoutId = workout.id
-        )
+            return IncompleteWorkout(
+                workoutHistory = workoutHistory,
+                workoutName = workout.name,
+                workoutId = workout.id
+            )
+        }
+
+        return null
     }
 
     private fun shouldShowTimerOptions(
@@ -605,6 +609,15 @@ open class AppViewModel : WorkoutViewModel() {
                 sendWorkoutSessionHeartbeat(heartbeat)
                 delay(DEFAULT_WORKOUT_SESSION_HEARTBEAT_INTERVAL_MS)
             }
+        }
+    }
+
+    private fun sendImmediateWorkoutSessionHeartbeatIfPossible() {
+        launchIO {
+            val heartbeat = withContext(Dispatchers.Main) {
+                buildWorkoutSessionHeartbeatSnapshot()
+            } ?: return@launchIO
+            sendWorkoutSessionHeartbeat(heartbeat)
         }
     }
 
@@ -1215,13 +1228,15 @@ open class AppViewModel : WorkoutViewModel() {
             ?.let { WorkoutRecoverySnapshotCodec.decode(it) }
         val recoveryOptions = pendingRecoveryResumeOptions
 
-        super.resumeWorkoutFromRecord {
-            applyRecoveryFromCheckpoint(
-                checkpoint = checkpoint,
-                runtimeSnapshot = runtimeSnapshot,
-                recoveryOptions = recoveryOptions,
-                onEnd = onEnd
-            )
+        launchSessionHydration(SessionHydrationTrigger.EXPLICIT_RESUME) {
+            resumeWorkoutFromRecordInternal {
+                applyRecoveryFromCheckpoint(
+                    checkpoint = checkpoint,
+                    runtimeSnapshot = runtimeSnapshot,
+                    recoveryOptions = recoveryOptions,
+                    onEnd = onEnd
+                )
+            }
         }
     }
 
@@ -1307,6 +1322,7 @@ open class AppViewModel : WorkoutViewModel() {
 
         pendingRecoveryCheckpoint = null
         pendingRecoveryResumeOptions = RecoveryResumeOptions()
+        sendImmediateWorkoutSessionHeartbeatIfPossible()
         lightScreenUp()
         onEnd()
     }

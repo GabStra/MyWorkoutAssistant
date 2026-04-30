@@ -375,6 +375,7 @@ private fun shouldUseWeightHeader(
 private fun ExercisePageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem,
+    stepLabel: String?,
     displayCounter: String?,
     useWeightHeader: Boolean,
 ) {
@@ -385,21 +386,20 @@ private fun ExercisePageFixedHeader(
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        WorkoutStepIndicatorText(stepLabel = stepLabel)
         Box(modifier = Modifier.fillMaxWidth()) {
             when (pageItem) {
                 is PageExercisesItem.SupersetPage -> ExerciseNameText(
                     text = buildSupersetDisplayName(pageItem.exercises),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(25.dp),
+                        .fillMaxWidth(),
                     style = titleStyle,
                     textAlign = TextAlign.Center
                 )
                 is PageExercisesItem.ExercisePage -> ExerciseNameText(
                     text = AnnotatedString(pageItem.exercise.name),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(25.dp),
+                        .fillMaxWidth(),
                     style = titleStyle,
                     textAlign = TextAlign.Center
                 )
@@ -407,7 +407,7 @@ private fun ExercisePageFixedHeader(
             }
         }
 
-        Box(
+/*        Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
@@ -426,53 +426,48 @@ private fun ExercisePageFixedHeader(
                 }
                 is PageExercisesItem.RestPage -> error("Rest pages use RestPageFixedHeader")
             }
-        }
+        }*/
 
-        ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
+/*        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
+        }*/
     }
+
+
 }
 
 @Composable
 private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem.RestPage,
+    stepLabel: String?,
 ) {
-    val previousPlain = pageItem.previousDisplayName.text
-    val nextPlain = pageItem.nextDisplayName.text
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        ExerciseNameText(
-            text = pageItem.previousDisplayName,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(25.dp)
-                .semantics {
-                    contentDescription = PageExercisesRestSemantics.previousExerciseDescription(previousPlain)
-                },
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = "\u2193",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.semantics {
-                contentDescription = PageExercisesRestSemantics.BetweenExercisesTransitionDescription
-            }
-        )
-        ExerciseNameText(
-            text = pageItem.nextDisplayName,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(25.dp)
-                .semantics {
-                    contentDescription = PageExercisesRestSemantics.nextExerciseDescription(nextPlain)
-                },
-            textAlign = TextAlign.Center
-        )
+        WorkoutStepIndicatorText(stepLabel = stepLabel)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+        ) {
+            Text(
+                text = "UP NEXT",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+
+            ExerciseNameText(
+                text = pageItem.nextDisplayName,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -585,6 +580,13 @@ fun PageExercises(
             selectedPageIndex = selectedPageIndex.value
         )
     }
+    val selectedStepLabel = remember(pageItems, selectedPageIndex.value) {
+        if (pageItems.isEmpty() || selectedPageIndex.value !in pageItems.indices) {
+            null
+        } else {
+            "Step: ${selectedPageIndex.value + 1}/${pageItems.size}"
+        }
+    }
     // Item 0 is the spacer used to reserve room for the fixed header overlay.
     val firstSetListItemIndex = 1
     val selectedProgressState = when {
@@ -672,7 +674,7 @@ fun PageExercises(
             null -> false
         }
     }
-    val headerOverlayHeightDp = 62.5.dp
+    val headerOverlayHeightDp = 60.dp
     val density = LocalDensity.current
 
     BoxWithConstraints(
@@ -802,7 +804,8 @@ fun PageExercises(
                             .padding(top = WorkoutPagerPageSafeAreaPadding.calculateTopPadding())
                             .height(headerOverlayHeightDp)
                             .padding(bottom = 2.5.dp),
-                        pageItem = selectedPageItem
+                        pageItem = selectedPageItem,
+                        stepLabel = selectedStepLabel
                     )
                     else -> ExercisePageFixedHeader(
                         modifier = Modifier
@@ -810,6 +813,7 @@ fun PageExercises(
                             .height(headerOverlayHeightDp)
                             .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
+                        stepLabel = selectedStepLabel,
                         displayCounter = displayCounter,
                         useWeightHeader = useWeightHeader
                     )

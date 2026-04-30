@@ -47,7 +47,6 @@ import com.gabstra.myworkoutassistant.composables.CustomDialogYesOnLongPress
 import com.gabstra.myworkoutassistant.composables.CustomHorizontalPager
 import com.gabstra.myworkoutassistant.composables.ExerciseIndicator
 import com.gabstra.myworkoutassistant.composables.ExerciseNameText
-import com.gabstra.myworkoutassistant.composables.ExerciseSetsTableHeader
 import com.gabstra.myworkoutassistant.composables.HeartRateCircularChart
 import com.gabstra.myworkoutassistant.composables.PageButtons
 import com.gabstra.myworkoutassistant.composables.PageExercises
@@ -310,7 +309,7 @@ private fun RestTimerBlock(
                 )
                 Spacer(modifier = Modifier.height(2.5.dp))
                 textComposable(seconds = currentSeconds)
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(15.dp))
                 Text(
                     text = "UP NEXT",
                     style = timerHeaderStyle,
@@ -363,7 +362,7 @@ private fun UpcomingSetPreview(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 25.dp),
         verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
-        ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
+        //ExerciseSetsTableHeader(useWeightHeader = useWeightHeader)
         val rowModifier = Modifier
             .height(25.dp)
             .border(BorderStroke(1.dp, borderColor), rowShape)

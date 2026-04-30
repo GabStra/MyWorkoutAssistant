@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,8 +41,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
@@ -70,8 +69,8 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.delay
-import kotlin.math.sqrt
 import java.util.UUID
+import kotlin.math.sqrt
 
 private fun Double.compact(): String {
     val s = String.format("%.2f", this).replace(',', '.')
@@ -216,7 +215,7 @@ private fun PagePlatesContent(
                 .fillMaxWidth()
                 .padding(horizontal = 30.dp),
             text = "Barbell guide",
-            style =  MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            style =  MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
             textAlign = TextAlign.Center
         )
 
