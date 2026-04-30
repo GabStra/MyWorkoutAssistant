@@ -67,6 +67,8 @@ import com.gabstra.myworkoutassistant.round
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.OneRM.calculateOneRepMax
+import com.gabstra.myworkoutassistant.shared.RestHistory
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
@@ -95,6 +97,7 @@ import java.util.UUID
 private data class ExerciseHistoryDisplayData(
     val selectedExerciseSetHistories: List<SetHistory>,
     val renderSetHistories: List<SetHistory>,
+    val renderRestHistories: List<RestHistory>,
     val isSupersetSession: Boolean
 )
 
@@ -106,6 +109,7 @@ fun ExerciseHistoryScreen(
     workout: Workout,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
     exercise: Exercise,
     workoutHistoryId: UUID? = null,
     selectedHistoryMode: Int = 0,
@@ -218,6 +222,9 @@ fun ExerciseHistoryScreen(
             .filterIsInstance<Superset>()
             .flatMap { superset -> superset.exercises.map { it.id to superset.id } }
             .toMap()
+        val supersetExerciseIdsBySupersetId = workout.workoutComponents
+            .filterIsInstance<Superset>()
+            .associate { superset -> superset.id to superset.exercises.map { it.id }.toSet() }
 
         for (workoutHistory in workoutHistories) {
             val setHistories = setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndExerciseIdOrdered(
@@ -249,6 +256,8 @@ fun ExerciseHistoryScreen(
 
             val selectedSupersetId = setHistories.firstNotNullOfOrNull { it.supersetId }
                 ?: supersetByExerciseId[exercise.id]
+            val allRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(workoutHistory.id)
+            val exerciseRestHistories = allRestHistories.filter { it.exerciseId == exercise.id }
             val supersetSetHistories = if (selectedSupersetId != null) {
                 setHistoryDao.getSetHistoriesByWorkoutHistoryIdAndSupersetIdOrdered(
                     workoutHistory.id,
@@ -257,9 +266,16 @@ fun ExerciseHistoryScreen(
             } else {
                 emptyList()
             }
+            val supersetRestHistories = if (selectedSupersetId != null) {
+                val supersetExerciseIds = supersetExerciseIdsBySupersetId[selectedSupersetId].orEmpty()
+                allRestHistories.filter { it.exerciseId != null && it.exerciseId in supersetExerciseIds }
+            } else {
+                emptyList()
+            }
             mutableMap[workoutHistory.id] = ExerciseHistoryDisplayData(
                 selectedExerciseSetHistories = setHistories,
                 renderSetHistories = if (supersetSetHistories.isNotEmpty()) supersetSetHistories else setHistories,
+                renderRestHistories = if (supersetSetHistories.isNotEmpty()) supersetRestHistories else exerciseRestHistories,
                 isSupersetSession = supersetSetHistories.isNotEmpty()
             )
             pointsWorkoutHistories.add(workoutHistory)
@@ -749,12 +765,14 @@ fun ExerciseHistoryScreen(
                                         if (setHistories.isSupersetSession) {
                                             SupersetSetHistoriesRenderer(
                                                 setHistories = setHistories.renderSetHistories,
+                                                restHistories = setHistories.renderRestHistories,
                                                 workout = workout,
                                                 getEquipmentById = { appViewModel.getEquipmentById(it) }
                                             )
                                         } else {
                                             SetHistoriesRenderer(
                                                 setHistories = setHistories.renderSetHistories,
+                                                restHistories = setHistories.renderRestHistories,
                                                 appViewModel = appViewModel,
                                                 workout = workout,
                                                 showMetadata = false,

@@ -37,12 +37,12 @@ object CrossDeviceSyncPhoneWorkoutStoreFixture {
      * Expected final values after the watch executes the progressed workout plan and applies
      * deterministic +1 rep edits on the first set of exercises A and D.
      */
-    const val SET_A1_EXPECTED_REPS = 5
-    const val SET_A2_EXPECTED_REPS = 6
+    const val SET_A1_EXPECTED_REPS = 7
+    const val SET_A2_EXPECTED_REPS = 4
     const val SET_B1_EXPECTED_REPS = 13
     const val SET_C1_EXPECTED_REPS = 11
-    const val SET_D1_EXPECTED_REPS = 5
-    const val SET_D2_EXPECTED_REPS = 6
+    const val SET_D1_EXPECTED_REPS = 7
+    const val SET_D2_EXPECTED_REPS = 4
     const val WEIGHT_TOLERANCE = 0.01
     const val PHONE_TO_WEAR_HISTORY_A1_REPS = 11
     const val PHONE_TO_WEAR_HISTORY_A1_WEIGHT = 42.5

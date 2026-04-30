@@ -20,9 +20,11 @@ import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
+import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
+import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
 import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
@@ -32,7 +34,11 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.CalibrationHelper
 import com.gabstra.myworkoutassistant.shared.workout.calibration.CalibrationUiLabels
+import com.gabstra.myworkoutassistant.shared.workout.display.buildUnilateralSideLabel
+import com.gabstra.myworkoutassistant.shared.workout.history.SessionTimelineItem
+import com.gabstra.myworkoutassistant.shared.workout.history.mergeSessionTimeline
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import java.util.UUID
 
 @Composable
 fun historyExerciseNameTextStyle(): TextStyle =
@@ -64,10 +70,15 @@ fun buildExerciseTemplateRows(
                 } else {
                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                 }
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(subCategory),
-                    primaryValue = weightText,
-                    secondaryValue = "${set.reps}",
+                appendTemplateDataRows(
+                    rows = rows,
+                    exercise = exercise,
+                    set = set,
+                    row = SetTableRowUiModel.Data(
+                        identifier = identifierCounter.nextIdentifier(subCategory),
+                        primaryValue = weightText,
+                        secondaryValue = "${set.reps}",
+                    ),
                 )
             }
 
@@ -83,10 +94,15 @@ fun buildExerciseTemplateRows(
                         ?: "${set.additionalWeight} kg"
                     else -> "BW"
                 }
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(subCategory),
-                    primaryValue = weightText,
-                    secondaryValue = "${set.reps}",
+                appendTemplateDataRows(
+                    rows = rows,
+                    exercise = exercise,
+                    set = set,
+                    row = SetTableRowUiModel.Data(
+                        identifier = identifierCounter.nextIdentifier(subCategory),
+                        primaryValue = weightText,
+                        secondaryValue = "${set.reps}",
+                    ),
                 )
             }
 
@@ -110,122 +126,225 @@ fun buildExerciseTemplateRows(
     return rows
 }
 
-private fun buildExerciseHistoryRows(
-    sets: List<Set>,
+private fun appendTemplateDataRows(
+    rows: MutableList<SetTableRowUiModel>,
+    exercise: Exercise,
+    set: Set,
+    row: SetTableRowUiModel.Data,
+) {
+    if (!shouldDuplicateUnilateralTemplateRow(exercise, set)) {
+        rows += row
+        return
+    }
+
+    val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: 0
+    val leftBadge = buildUnilateralSideLabel(sideIndex = 1u, intraSetTotal = 2u).orEmpty()
+    val rightBadge = buildUnilateralSideLabel(sideIndex = 2u, intraSetTotal = 2u).orEmpty()
+
+    rows += row.copy(identifier = row.identifier + leftBadge)
+    if (intraSetRestSeconds > 0) {
+        rows += SetTableRowUiModel.Rest("REST ${formatTime(intraSetRestSeconds)}")
+    }
+    rows += row.copy(identifier = row.identifier + rightBadge)
+}
+
+internal fun buildExerciseHistoryRows(
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
     setHistories: List<SetHistory>,
     intraExerciseRestHistories: List<RestHistory>,
+    showRest: Boolean,
 ): List<SetTableRowUiModel> {
     val rows = mutableListOf<SetTableRowUiModel>()
-    val identifierCounter = SetRowIdentifierCounter()
-    sets.forEach { set ->
-        when (set) {
-            is RestSet -> {
-                val restText = intraExerciseRestHistories
-                    .firstOrNull { it.restSetId == set.id }
-                    ?.let { formatRestHistoryDisplayLine(it) }
-                    ?: setHistories
-                        .firstOrNull { it.setId == set.id && it.setData is RestSetData }
-                        ?.let { formatHistoricalRestValue(it) }
-                    ?: "REST ${formatTime(set.timeInSeconds)}"
-                rows += SetTableRowUiModel.Rest(text = restText)
+    val mergedTimeline = mergeSessionTimeline(setHistories, intraExerciseRestHistories)
+    val identifierResolver = HistoricalSetDisplayIdentifierResolver(
+        setHistories = mergedTimeline.mapNotNull { item ->
+            val setStep = item as? SessionTimelineItem.SetStep ?: return@mapNotNull null
+            setStep.history.takeUnless { it.setData is RestSetData }
+        }
+    )
+    var index = 0
+    while (index < mergedTimeline.size) {
+        val item = mergedTimeline[index]
+        when (item) {
+            is SessionTimelineItem.RestStep -> {
+                if (showRest) {
+                    rows += SetTableRowUiModel.Rest(
+                        text = formatRestHistoryDisplayLine(item.history)
+                    )
+                }
+                index += 1
             }
 
-            is WeightSet -> {
-                val subCategory = resolveSetSubCategory(set)
-                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
-                val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                    exercise = exercise,
-                    set = set
-                )
-                val weightText = if (isCalibrationManagedWorkSet) {
-                    CalibrationUiLabels.Tbd
-                } else {
-                    equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
-                }
-                val rirFromHistory = if (isCalibrationSet) {
-                    when (val d = setHistories.firstOrNull { it.setId == set.id }?.setData) {
-                        is WeightSetData -> d.calibrationRIR
-                        else -> null
+            is SessionTimelineItem.SetStep -> {
+                val history = item.history
+                val setData = history.setData
+                if (setData is RestSetData) {
+                    if (showRest) {
+                        rows += SetTableRowUiModel.Rest(
+                            text = formatHistoricalRestValue(history)
+                        )
                     }
-                } else {
-                    null
+                    index += 1
+                    continue
                 }
-                val secondaryReps = if (rirFromHistory != null) {
-                    "${set.reps} (RIR $rirFromHistory)"
-                } else {
-                    "${set.reps}"
-                }
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(subCategory),
-                    primaryValue = weightText,
-                    secondaryValue = secondaryReps,
-                )
-            }
 
-            is BodyWeightSet -> {
-                val subCategory = resolveSetSubCategory(set)
-                val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(set)
-                val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
-                    exercise = exercise,
-                    set = set
-                )
-                val weightText = when {
-                    isCalibrationManagedWorkSet -> CalibrationUiLabels.Tbd
-                    else -> {
-                        val historyData = setHistories
-                            .firstOrNull { it.setId == set.id }
-                            ?.setData as? BodyWeightSetData
-                        if (historyData != null) {
+                val followingRestText = mergedTimeline.getOrNull(index + 1)
+                    ?.let { nextItem ->
+                        val restStep = nextItem as? SessionTimelineItem.RestStep ?: return@let null
+                        if (!showRest) return@let null
+                        formatRestHistoryDisplayLine(restStep.history)
+                    }
+
+                val identifier = identifierResolver.resolve(history)
+                val set = getNewSetFromSetHistory(history)
+                when (setData) {
+                    is WeightSetData -> {
+                        val weightSet = set as WeightSet
+                        val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(weightSet)
+                        val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
+                            exercise = exercise,
+                            set = weightSet
+                        )
+                        val weightText = if (isCalibrationManagedWorkSet) {
+                            CalibrationUiLabels.Tbd
+                        } else {
+                            equipment?.formatWeight(setData.actualWeight) ?: "${setData.actualWeight} kg"
+                        }
+                        val secondaryReps = if (isCalibrationSet && setData.calibrationRIR != null) {
+                            "${setData.actualReps} (RIR ${setData.calibrationRIR})"
+                        } else {
+                            "${setData.actualReps}"
+                        }
+                        appendHistoricalDataRows(
+                            rows = rows,
+                            exercise = exercise,
+                            setData = setData,
+                            followingRestText = followingRestText,
+                            row = SetTableRowUiModel.Data(
+                                identifier = identifier,
+                                primaryValue = weightText,
+                                secondaryValue = secondaryReps,
+                            ),
+                        )
+                    }
+
+                    is BodyWeightSetData -> {
+                        val bodyWeightSet = set as BodyWeightSet
+                        val isCalibrationSet = CalibrationHelper.isCalibrationSetBySubCategory(bodyWeightSet)
+                        val isCalibrationManagedWorkSet = CalibrationHelper.isCalibrationManagedWorkSet(
+                            exercise = exercise,
+                            set = bodyWeightSet
+                        )
+                        val weightText = if (isCalibrationManagedWorkSet) {
+                            CalibrationUiLabels.Tbd
+                        } else {
                             formatHistoricalBodyWeightSetValue(
-                                setData = historyData,
+                                setData = setData,
                                 equipment = equipment
                             )
-                        } else {
-                            if (set.additionalWeight > 0) equipment?.formatWeight(set.additionalWeight)
-                                ?: "${set.additionalWeight} kg" else "-"
                         }
+                        val secondaryReps = if (isCalibrationSet && setData.calibrationRIR != null) {
+                            "${setData.actualReps} (RIR ${setData.calibrationRIR})"
+                        } else {
+                            "${setData.actualReps}"
+                        }
+                        appendHistoricalDataRows(
+                            rows = rows,
+                            exercise = exercise,
+                            setData = setData,
+                            followingRestText = followingRestText,
+                            row = SetTableRowUiModel.Data(
+                                identifier = identifier,
+                                primaryValue = weightText,
+                                secondaryValue = secondaryReps,
+                            ),
+                        )
+                    }
+
+                    is com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData -> {
+                        appendHistoricalDataRows(
+                            rows = rows,
+                            exercise = exercise,
+                            setData = null,
+                            followingRestText = followingRestText,
+                            row = SetTableRowUiModel.Data(
+                                identifier = identifier,
+                                primaryValue = formatTime(setData.startTimer / 1000),
+                                secondaryValue = null,
+                            ),
+                        )
+                    }
+
+                    is com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData -> {
+                        appendHistoricalDataRows(
+                            rows = rows,
+                            exercise = exercise,
+                            setData = null,
+                            followingRestText = followingRestText,
+                            row = SetTableRowUiModel.Data(
+                                identifier = identifier,
+                                primaryValue = formatTime(setData.startTimer / 1000),
+                                secondaryValue = null,
+                            ),
+                        )
                     }
                 }
-                val rirFromHistory = if (isCalibrationSet) {
-                    when (val d = setHistories.firstOrNull { it.setId == set.id }?.setData) {
-                        is BodyWeightSetData -> d.calibrationRIR
-                        else -> null
-                    }
-                } else {
-                    null
-                }
-                val secondaryReps = if (rirFromHistory != null) {
-                    "${set.reps} (RIR $rirFromHistory)"
-                } else {
-                    "${set.reps}"
-                }
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(subCategory),
-                    primaryValue = weightText,
-                    secondaryValue = secondaryReps,
-                )
-            }
-
-            is TimedDurationSet -> {
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(null),
-                    primaryValue = formatTime(set.timeInMillis / 1000),
-                    secondaryValue = null,
-                )
-            }
-
-            is EnduranceSet -> {
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(null),
-                    primaryValue = formatTime(set.timeInMillis / 1000),
-                    secondaryValue = null,
-                )
+                index += if (shouldDuplicateUnilateralHistoryRow(exercise, setData) && followingRestText != null) 2 else 1
             }
         }
     }
     return rows
+}
+
+internal fun appendHistoricalDataRows(
+    rows: MutableList<SetTableRowUiModel>,
+    exercise: Exercise,
+    setData: Any?,
+    followingRestText: String?,
+    row: SetTableRowUiModel.Data,
+) {
+    if (!shouldDuplicateUnilateralHistoryRow(exercise, setData)) {
+        rows += row
+        return
+    }
+
+    val leftBadge = buildUnilateralSideLabel(sideIndex = 1u, intraSetTotal = 2u).orEmpty()
+    val rightBadge = buildUnilateralSideLabel(sideIndex = 2u, intraSetTotal = 2u).orEmpty()
+
+    rows += row.copy(identifier = row.identifier + leftBadge)
+    if (followingRestText != null) {
+        rows += SetTableRowUiModel.Rest(followingRestText)
+    }
+    rows += row.copy(identifier = row.identifier + rightBadge)
+}
+
+internal fun shouldDuplicateUnilateralHistoryRow(
+    exercise: Exercise,
+    setData: Any?,
+): Boolean {
+    val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
+    if (intraSetRestSeconds <= 0) return false
+    val subCategory = when (setData) {
+        is WeightSetData -> setData.subCategory
+        is BodyWeightSetData -> setData.subCategory
+        else -> null
+    }
+    return subCategory != SetSubCategory.WarmupSet
+}
+
+private fun shouldDuplicateUnilateralTemplateRow(
+    exercise: Exercise,
+    set: Set,
+): Boolean {
+    val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
+    if (intraSetRestSeconds <= 0) return false
+    val subCategory = when (set) {
+        is WeightSet -> set.subCategory
+        is BodyWeightSet -> set.subCategory
+        else -> null
+    }
+    return subCategory != SetSubCategory.WarmupSet
 }
 
 @Composable
@@ -359,36 +478,29 @@ fun ExerciseHistoryRenderer(
     intraExerciseRestHistories: List<RestHistory> = emptyList(),
     customTitle: (@Composable (Modifier) -> Unit)? = null,
 ) {
-    var sets = exercise.sets
-    if (!showRest) {
-        sets = sets.filter { it !is RestSet }
+    val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
+    val rows = remember(
+        exercise.id,
+        showRest,
+        equipment?.id,
+        setHistories,
+        intraExerciseRestHistories,
+    ) {
+        buildExerciseHistoryRows(
+            exercise = exercise,
+            equipment = equipment,
+            setHistories = setHistories,
+            intraExerciseRestHistories = intraExerciseRestHistories,
+            showRest = showRest,
+        )
     }
-
-    if (sets.isEmpty()) {
+    if (rows.isEmpty()) {
         ExerciseTitleOnlyRow(
             exercise = exercise,
             modifier = modifier,
             titleModifier = titleModifier,
         )
         return
-    }
-
-    val equipment = exercise.equipmentId?.let { appViewModel.getEquipmentById(it) }
-    val rows = remember(
-        exercise.id,
-        showRest,
-        sets,
-        equipment?.id,
-        setHistories,
-        intraExerciseRestHistories,
-    ) {
-        buildExerciseHistoryRows(
-            sets = sets,
-            exercise = exercise,
-            equipment = equipment,
-            setHistories = setHistories,
-            intraExerciseRestHistories = intraExerciseRestHistories,
-        )
     }
 
     ExerciseExpandableSetTableBody(

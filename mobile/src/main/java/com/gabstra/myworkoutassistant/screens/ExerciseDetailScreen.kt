@@ -85,6 +85,7 @@ import com.gabstra.myworkoutassistant.insights.buildExerciseInsightsPrompt
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.Red
+import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
@@ -153,6 +154,7 @@ fun ExerciseDetailScreen(
     workout: Workout,
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
     exercise: Exercise,
     initialSelectedTabIndex: Int = 0,
     initialWorkoutHistoryId: UUID? = null,
@@ -750,6 +752,7 @@ fun ExerciseDetailScreen(
                             workout = workout,
                             workoutHistoryDao = workoutHistoryDao,
                             setHistoryDao = setHistoryDao,
+                            restHistoryDao = restHistoryDao,
                             exercise = exercise,
                             workoutHistoryId = displayedWorkoutHistoryId,
                             selectedHistoryMode = pageIndex - 1,
