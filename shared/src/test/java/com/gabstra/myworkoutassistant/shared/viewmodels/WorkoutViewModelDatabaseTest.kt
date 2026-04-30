@@ -474,7 +474,8 @@ class WorkoutViewModelDatabaseTest {
             viewModel.upsertWorkoutRecord(workoutState.exerciseId, workoutState.setIndex)
             advanceUntilIdle()
             joinViewModelJobs()
-            val workoutRecord = database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
+            val workoutRecord =
+                database.workoutRecordDao().getWorkoutRecordsByWorkoutId(testWorkoutId).singleOrNull()
             assertNull("No WorkoutRecord when both _workoutRecord and currentWorkoutHistory are null", workoutRecord)
         }
         
@@ -505,7 +506,7 @@ class WorkoutViewModelDatabaseTest {
         assertEquals("WorkoutHistory should be done", true, workoutHistory?.isDone)
         assertNull(
             "WorkoutRecord should be cleared after completed pushWorkoutData",
-            database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
+            database.workoutRecordDao().getWorkoutRecordsByWorkoutId(testWorkoutId).singleOrNull()
         )
         assertEquals("WorkoutHistory globalId should match", testWorkoutGlobalId, workoutHistory?.globalId)
         assertTrue("WorkoutHistory should have heartbeat records", workoutHistory?.heartBeatRecords?.isNotEmpty() == true)
@@ -714,7 +715,7 @@ class WorkoutViewModelDatabaseTest {
         advanceUntilIdle()
         joinViewModelJobs()
 
-        val record = database.workoutRecordDao().getWorkoutRecordByWorkoutId(testWorkoutId)
+        val record = database.workoutRecordDao().getWorkoutRecordsByWorkoutId(testWorkoutId).singleOrNull()
         assertNull("No WorkoutRecord should be inserted when both _workoutRecord and currentWorkoutHistory are null", record)
     }
 

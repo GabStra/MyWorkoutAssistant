@@ -15,6 +15,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
+import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.coroutines.TestDispatcherProvider
@@ -2293,5 +2294,83 @@ class WorkoutViewModelSessionTest {
         assertEquals(preSyncSetData?.actualReps, currentSetData?.actualReps)
         assertEquals(preSyncPreviousSetData?.actualWeight ?: 0.0, previousSetData?.actualWeight ?: 0.0, 0.01)
         assertEquals(preSyncPreviousSetData?.actualReps, previousSetData?.actualReps)
+    }
+
+    @Test
+    fun applyExternalSyncWorkoutStore_doesNotReenterResumeWhileSessionIsPreparing() = runTest(testDispatcher) {
+        val setId = UUID.randomUUID()
+        val exercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(setId, 8, 80.0))
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+        val unfinishedHistoryId = UUID.randomUUID()
+        val startTime = LocalDateTime.now().minusMinutes(5)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        database.workoutHistoryDao().insert(
+            WorkoutHistory(
+                id = unfinishedHistoryId,
+                workoutId = testWorkoutId,
+                date = startTime.toLocalDate(),
+                time = startTime.toLocalTime(),
+                startTime = startTime,
+                duration = 120,
+                heartBeatRecords = emptyList(),
+                isDone = false,
+                hasBeenSentToHealth = false,
+                globalId = testWorkoutGlobalId,
+                version = 1u
+            )
+        )
+        database.workoutRecordDao().insert(
+            WorkoutRecord(
+                id = UUID.randomUUID(),
+                workoutId = testWorkoutId,
+                workoutHistoryId = unfinishedHistoryId,
+                setIndex = 0u,
+                exerciseId = testExerciseId
+            )
+        )
+
+        val hasWorkoutRecordField = WorkoutViewModel::class.java.getDeclaredField("_hasWorkoutRecord")
+        hasWorkoutRecordField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (hasWorkoutRecordField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>).value = true
+
+        val activeSessionHydrationTriggerField =
+            WorkoutViewModel::class.java.getDeclaredField("activeSessionHydrationTrigger")
+        activeSessionHydrationTriggerField.isAccessible = true
+        val hydrationTriggerClass =
+            Class.forName("com.gabstra.myworkoutassistant.shared.viewmodels.WorkoutViewModel\$SessionHydrationTrigger")
+        val explicitResumeTrigger =
+            hydrationTriggerClass.enumConstants!!.first { it.toString() == "EXPLICIT_RESUME" }
+        @Suppress("UNCHECKED_CAST")
+        (activeSessionHydrationTriggerField.get(viewModel) as java.util.concurrent.atomic.AtomicReference<Any?>)
+            .set(explicitResumeTrigger)
+
+        @Suppress("UNCHECKED_CAST")
+        (workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>).value =
+            WorkoutState.Preparing(dataLoaded = true)
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertTrue(
+            "External sync should not kick off a second resume while the current resume is already preparing.",
+            viewModel.workoutState.value is WorkoutState.Preparing
+        )
+        assertEquals(
+            "A duplicate auto-resume should not build a second state machine during preparing.",
+            null,
+            stateMachineField.get(viewModel)
+        )
     }
 }
