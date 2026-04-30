@@ -134,7 +134,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.7")
+    implementation("androidx.navigation:navigation-compose:2.9.8")
 
     // AndroidX core
     implementation("androidx.core:core-ktx:1.18.0")
@@ -148,7 +148,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
 
     // Google / Wear
-    implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
     implementation("com.google.android.horologist:horologist-datalayer:0.7.15")
     implementation("com.google.android.horologist:horologist-datalayer-phone:0.7.15")
 

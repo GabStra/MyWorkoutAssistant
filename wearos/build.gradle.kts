@@ -110,9 +110,9 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation("androidx.wear.compose:compose-material-core:1.6.1")
-    implementation("androidx.navigation:navigation-compose:2.9.7")
-    implementation("androidx.compose.ui:ui-graphics:1.10.6")
-    implementation("androidx.compose.ui:ui-graphics:1.10.6")
+    implementation("androidx.navigation:navigation-compose:2.9.8")
+    implementation("androidx.compose.ui:ui-graphics:1.11.0")
+    implementation("androidx.compose.ui:ui-graphics:1.11.0")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -145,7 +145,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("androidx.wear:wear-ongoing:1.1.0")
-    implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
 
     //Horologist
     implementation("com.google.android.horologist:horologist-datalayer:0.8.2-alpha")
@@ -156,7 +156,7 @@ dependencies {
     // Data / utils
     implementation("androidx.room:room-ktx:2.8.4")
     implementation("com.google.guava:guava:33.6.0-android")
-    implementation("com.google.code.gson:gson:2.13.2")
+    implementation("com.google.code.gson:gson:2.14.0")
 
     // Polar SDK + Rx
     implementation("com.github.polarofficial:polar-ble-sdk:6.8.0")

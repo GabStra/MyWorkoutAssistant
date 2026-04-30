@@ -57,11 +57,11 @@ android {
 
 
 dependencies {
-    implementation("androidx.compose.ui:ui-graphics:1.10.6")
+    implementation("androidx.compose.ui:ui-graphics:1.11.0")
     implementation("androidx.core:core-ktx:1.18.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
-    implementation("com.google.code.gson:gson:2.13.2")
+    implementation("com.google.code.gson:gson:2.14.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
     implementation("androidx.test.ext:junit-ktx:1.3.0")
