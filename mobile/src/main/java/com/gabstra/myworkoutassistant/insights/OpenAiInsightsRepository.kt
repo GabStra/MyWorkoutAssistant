@@ -6,6 +6,7 @@ import android.util.Log
 import com.openai.client.okhttp.OpenAIOkHttpClient
 import com.openai.core.http.StreamResponse
 import com.openai.models.chat.completions.ChatCompletionChunk
+import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam
 import com.openai.models.chat.completions.ChatCompletionContentPart
 import com.openai.models.chat.completions.ChatCompletionContentPartImage
 import com.openai.models.chat.completions.ChatCompletionContentPartText
@@ -15,6 +16,7 @@ import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall
 import com.openai.models.chat.completions.ChatCompletionMessageParam
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam
+import com.openai.models.chat.completions.ChatCompletionUserMessageParam
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -70,7 +72,8 @@ class OpenAiInsightsRepository(
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             transportRequest.responseLogLabel,
-            finalText
+            finalText,
+            transportRequest.debugRecorder,
         )
         return finalText
     }
@@ -114,15 +117,25 @@ class OpenAiInsightsRepository(
             "${transportRequest.requestLogLabel}" +
                 "_start mode=${if (transportRequest.imagePngBytes != null) "image_text" else "text_only"} endpoint=${config.baseUrl.trim()} prompt_chars=${transportRequest.prompt.length} image_bytes=${transportRequest.imagePngBytes?.size ?: 0}"
         )
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "base_url" to config.baseUrl.trim(),
+                "model" to config.model.trim(),
+                "mode" to if (transportRequest.imagePngBytes != null) "image_text" else "text_only",
+            ),
+        )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
-            transportRequest.systemPrompt
+            transportRequest.systemPrompt,
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_user_prompt",
-            transportRequest.prompt
+            transportRequest.prompt,
+            transportRequest.debugRecorder,
         )
 
         val params = buildChatCompletionParams(
@@ -179,20 +192,31 @@ class OpenAiInsightsRepository(
         )
 
         onProgress(WorkoutInsightsPhase.CHART_ANALYSIS, "Analyzing heart-rate chart (timeline tools)...")
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "base_url" to config.baseUrl.trim(),
+                "model" to config.model.trim(),
+                "mode" to "image_text_tool_loop",
+            ),
+        )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
-            transportRequest.systemPrompt
+            transportRequest.systemPrompt,
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_tool_definitions",
-            toolExecutor.describeToolsForLog()
+            toolExecutor.describeToolsForLog(),
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_turn_1_user_message",
-            transportRequest.prompt
+            transportRequest.prompt,
+            transportRequest.debugRecorder,
         )
 
         for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
@@ -219,6 +243,7 @@ class OpenAiInsightsRepository(
                 turnNumber = round + 1,
                 assistantContent = assistantContent,
                 toolCalls = toolCalls,
+                debugRecorder = transportRequest.debugRecorder,
             )
 
             if (toolCalls.isEmpty()) {
@@ -245,7 +270,8 @@ class OpenAiInsightsRepository(
                 logWorkoutInsightsBlock(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${functionCall.function().name()}_arguments",
-                    renderForInsightLog(arguments)
+                    renderForInsightLog(arguments),
+                    transportRequest.debugRecorder,
                 )
                 val result = toolExecutor.executeToJsonString(
                     name = functionCall.function().name(),
@@ -254,7 +280,8 @@ class OpenAiInsightsRepository(
                 logWorkoutInsightsBlock(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${functionCall.function().name()}_result",
-                    result
+                    result,
+                    transportRequest.debugRecorder,
                 )
                 messages.add(
                     ChatCompletionMessageParam.ofTool(
@@ -295,20 +322,31 @@ class OpenAiInsightsRepository(
         )
 
         onProgress(WorkoutInsightsPhase.PREPARING_TOOLS, "Preparing insight tools...")
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "base_url" to config.baseUrl.trim(),
+                "model" to config.model.trim(),
+                "mode" to "text_tool_loop",
+            ),
+        )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
-            transportRequest.systemPrompt
+            transportRequest.systemPrompt,
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_tool_definitions",
-            toolExecutor.describeToolsForLog()
+            toolExecutor.describeToolsForLog(),
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_turn_1_user_message",
-            transportRequest.prompt
+            transportRequest.prompt,
+            transportRequest.debugRecorder,
         )
         for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
             coroutineContext.ensureActive()
@@ -334,6 +372,7 @@ class OpenAiInsightsRepository(
                 turnNumber = round + 1,
                 assistantContent = assistantContent,
                 toolCalls = toolCalls,
+                debugRecorder = transportRequest.debugRecorder,
             )
 
             if (toolCalls.isEmpty()) {
@@ -360,7 +399,8 @@ class OpenAiInsightsRepository(
                 logWorkoutInsightsBlock(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${functionCall.function().name()}_arguments",
-                    renderForInsightLog(arguments)
+                    renderForInsightLog(arguments),
+                    transportRequest.debugRecorder,
                 )
                 val result = toolExecutor.executeToJsonString(
                     name = functionCall.function().name(),
@@ -369,7 +409,8 @@ class OpenAiInsightsRepository(
                 logWorkoutInsightsBlock(
                     LiteRtLmInsightsRepository.LOG_TAG,
                     "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${functionCall.function().name()}_result",
-                    result
+                    result,
+                    transportRequest.debugRecorder,
                 )
                 messages.add(
                     ChatCompletionMessageParam.ofTool(
@@ -395,10 +436,41 @@ class OpenAiInsightsRepository(
     ): ChatCompletionCreateParams {
         val builder = applyMaxOutputTokensIfSet(
             ChatCompletionCreateParams.builder()
-                .model(config.model.trim())
-                .addSystemMessage(transportRequest.systemPrompt),
+                .model(config.model.trim()),
             transportRequest,
         )
+
+        if (transportRequest.conversationMessages.isNotEmpty()) {
+            val messages = mutableListOf<ChatCompletionMessageParam>()
+            messages.addAll(
+                ChatCompletionCreateParams.builder()
+                    .addSystemMessage(transportRequest.systemPrompt)
+                    .build()
+                    .messages()
+            )
+            messages.addAll(
+                transportRequest.conversationMessages.map { message ->
+                    when (message.role) {
+                        HistoryChatMessageRole.User ->
+                            ChatCompletionMessageParam.ofUser(
+                                ChatCompletionUserMessageParam.builder()
+                                    .content(message.content.trim())
+                                    .build()
+                            )
+                        HistoryChatMessageRole.Assistant ->
+                            ChatCompletionMessageParam.ofAssistant(
+                                ChatCompletionAssistantMessageParam.builder()
+                                    .content(message.content.trim())
+                                    .build()
+                            )
+                    }
+                }
+            )
+            builder.messages(messages)
+            return builder.build()
+        }
+
+        builder.addSystemMessage(transportRequest.systemPrompt)
 
         if (transportRequest.imagePngBytes != null) {
             val imageDataUrl = "data:image/png;base64," + Base64.encodeToString(transportRequest.imagePngBytes, Base64.NO_WRAP)
@@ -484,6 +556,7 @@ class OpenAiInsightsRepository(
         turnNumber: Int,
         assistantContent: String,
         toolCalls: List<ChatCompletionMessageToolCall>,
+        debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
     ) {
         val rendered = buildString {
             append("Text:\n")
@@ -506,7 +579,8 @@ class OpenAiInsightsRepository(
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${requestLogLabel}_turn_${turnNumber}_assistant_message",
-            rendered
+            rendered,
+            debugRecorder,
         )
     }
 }

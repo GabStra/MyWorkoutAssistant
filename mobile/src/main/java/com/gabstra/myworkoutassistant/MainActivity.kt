@@ -1087,6 +1087,9 @@ fun MyWorkoutAssistantNavHost(
     var configuredLiteRtModelName by remember {
         mutableStateOf(LiteRtLmModelStore.getConfiguredModelName(context))
     }
+    var mobileLlmEnabled by remember {
+        mutableStateOf(WorkoutInsightsSettingsStore.isEnabled(context))
+    }
     var workoutInsightsMode by remember {
         mutableStateOf(WorkoutInsightsSettingsStore.getMode(context))
     }
@@ -1425,6 +1428,7 @@ fun MyWorkoutAssistantNavHost(
                             },
                             workoutStore = appViewModel.workoutStore,
                             healthConnectClient = healthConnectClient,
+                            mobileLlmEnabled = mobileLlmEnabled,
                             workoutInsightsMode = workoutInsightsMode,
                             liteRtModelPath = configuredLiteRtModelPath,
                             liteRtModelName = configuredLiteRtModelName,
@@ -1434,11 +1438,13 @@ fun MyWorkoutAssistantNavHost(
                             onImportLiteRtModel = {
                                 liteRtModelPickerLauncher.launch(LiteRtLmModelStore.pickerMimeTypes)
                             },
-                            onSaveInsightsSettings = { mode, backendPreference, remoteConfig, customInstructions ->
+                            onSaveInsightsSettings = { enabled, mode, backendPreference, remoteConfig, customInstructions ->
+                                WorkoutInsightsSettingsStore.setEnabled(context, enabled)
                                 WorkoutInsightsSettingsStore.setMode(context, mode)
                                 LiteRtLmModelStore.setBackendPreference(context, backendPreference)
                                 WorkoutInsightsSettingsStore.setRemoteConfig(context, remoteConfig)
                                 WorkoutInsightsSettingsStore.setCustomInstructions(context, customInstructions)
+                                mobileLlmEnabled = enabled
                                 workoutInsightsMode = mode
                                 liteRtBackendPreference = backendPreference
                                 remoteInsightsConfig = remoteConfig
@@ -1816,7 +1822,7 @@ fun MyWorkoutAssistantNavHost(
                     }
 
                     is ScreenData.HistoryChatExercise -> {
-                        if (!MobileLlmFeatureFlags.ENABLED) {
+                        if (!MobileLlmFeatureFlags.isEnabled(context)) {
                             LaunchedEffect(currentScreen) {
                                 appViewModel.goBack()
                             }
@@ -1840,7 +1846,7 @@ fun MyWorkoutAssistantNavHost(
                     }
 
                     is ScreenData.HistoryChatWorkoutSession -> {
-                        if (!MobileLlmFeatureFlags.ENABLED) {
+                        if (!MobileLlmFeatureFlags.isEnabled(context)) {
                             LaunchedEffect(currentScreen) {
                                 appViewModel.goBack()
                             }

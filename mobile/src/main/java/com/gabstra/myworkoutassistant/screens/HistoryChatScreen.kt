@@ -49,15 +49,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
+import com.gabstra.myworkoutassistant.insights.HistoryChatLimits
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessage
 import com.gabstra.myworkoutassistant.insights.HistoryChatMessageRole
 import com.gabstra.myworkoutassistant.insights.WorkoutHistoryChatPrepareResult
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsToolContext
-import com.gabstra.myworkoutassistant.insights.buildHistoryChatUserPrompt
 import com.gabstra.myworkoutassistant.insights.prepareExerciseHistoryChatContext
 import com.gabstra.myworkoutassistant.insights.prepareWorkoutSessionHistoryChatContext
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightMarkdown
+import com.gabstra.myworkoutassistant.insights.selectConversationWindowMessages
 import com.gabstra.myworkoutassistant.insights.sanitizeInsightMarkdown
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
@@ -103,6 +104,7 @@ private object HistoryChatScreenLog {
             TAG,
             "llm_request id=$interactionId mode=$mode requestTitle=${request.title} " +
                 "systemChars=${request.systemPrompt.length} userChars=${request.prompt.length} " +
+                "conversationMessages=${request.conversationMessages.size} " +
                 "historyChatSystemIncludesData=${request.historyChatSystemIncludesData} " +
                 "useTransportToolCalling=${request.useTransportToolCalling} $toolSummary",
         )
@@ -175,6 +177,13 @@ private sealed class HistoryChatPrepareUi {
     data class Error(val message: String) : HistoryChatPrepareUi()
 }
 
+private fun buildHistoryChatIntroMessage(): HistoryChatMessage =
+    HistoryChatMessage(
+        role = HistoryChatMessageRole.Assistant,
+        content = "Ask about this exported workout history. I can answer questions about the recorded sessions, sets, reps, load, rest, timing, heart-rate context, labels, and progression data that are available in this chat's history export.",
+        isUiOnly = true,
+    )
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryChatScreen(
@@ -196,7 +205,7 @@ fun HistoryChatScreen(
     }
 
     var prepareUi by remember(mode) { mutableStateOf<HistoryChatPrepareUi>(HistoryChatPrepareUi.Loading) }
-    var messages by remember(mode) { mutableStateOf<List<HistoryChatMessage>>(emptyList()) }
+    var messages by remember(mode) { mutableStateOf(listOf(buildHistoryChatIntroMessage())) }
     var composerText by remember(mode) { mutableStateOf("") }
     var sendError by remember(mode) { mutableStateOf<String?>(null) }
     var isSending by remember(mode) { mutableStateOf(false) }
@@ -205,6 +214,7 @@ fun HistoryChatScreen(
     LaunchedEffect(mode) {
         generationJob?.cancel()
         generationJob = null
+        messages = listOf(buildHistoryChatIntroMessage())
     }
 
     DisposableEffect(Unit) {
@@ -279,12 +289,16 @@ fun HistoryChatScreen(
         isSending = true
         generationJob?.cancel()
         generationJob = scope.launch {
-            val prior = updatedThread.dropLast(1)
-            val prompt = buildHistoryChatUserPrompt(
-                priorMessages = prior,
-                currentUserContent = userMessage.content,
+            val conversationWindow = selectConversationWindowMessages(
+                messages = updatedThread,
+                maxTurns = HistoryChatLimits.MAX_PRIOR_TURNS + 1,
+                maxChars = HistoryChatLimits.MAX_CONVERSATION_HISTORY_CHARS,
+                includeAssistantMessages = true,
             )
-            val request = ready.requestBase.copy(prompt = prompt)
+            val request = ready.requestBase.copy(
+                prompt = userMessage.content,
+                conversationMessages = conversationWindow,
+            )
             val interactionId = UUID.randomUUID().toString().take(8)
             HistoryChatScreenLog.llmInteractionRequest(
                 appContext = context.applicationContext,

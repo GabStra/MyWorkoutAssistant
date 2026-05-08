@@ -2,7 +2,9 @@ package com.gabstra.myworkoutassistant.insights
 
 import android.content.Context
 import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 
 enum class WorkoutInsightsMode(
@@ -51,7 +53,7 @@ class ConfigurableWorkoutInsightsEngine(
     override fun generateInsights(
         request: WorkoutInsightsRequest,
     ): Flow<WorkoutInsightsChunk> {
-        if (!MobileLlmFeatureFlags.ENABLED) {
+        if (!MobileLlmFeatureFlags.isEnabled(context)) {
             return flowOf(
                 WorkoutInsightsChunk(
                     title = request.title,
@@ -61,10 +63,39 @@ class ConfigurableWorkoutInsightsEngine(
                 )
             )
         }
-        val preparedRequest = request.withConfiguredCustomInstructions()
-        return when (WorkoutInsightsSettingsStore.getMode(context)) {
-            WorkoutInsightsMode.LOCAL -> localEngine.generateInsights(preparedRequest)
-            WorkoutInsightsMode.REMOTE -> remoteEngine.generateInsights(preparedRequest)
+        val mode = WorkoutInsightsSettingsStore.getMode(context)
+        val baseRequest = request.withConfiguredCustomInstructions()
+        val debugRecorder = baseRequest.debugRecorder ?: createWorkoutInsightsDebugDumpRecorder(
+            context = context,
+            mode = mode,
+            request = baseRequest,
+        )
+        val preparedRequest = baseRequest.copy(debugRecorder = debugRecorder)
+        return flow {
+            var lastChunkText = ""
+            try {
+                val upstream = when (mode) {
+                    WorkoutInsightsMode.LOCAL -> localEngine.generateInsights(preparedRequest)
+                    WorkoutInsightsMode.REMOTE -> remoteEngine.generateInsights(preparedRequest)
+                }
+                upstream.collect { chunk ->
+                    lastChunkText = chunk.text
+                    if (chunk.statusText.isNotBlank()) {
+                        debugRecorder.recordStatus(chunk.phase, chunk.statusText)
+                    }
+                    emit(chunk)
+                }
+                debugRecorder.finishSuccess(lastChunkText)
+            } catch (cancellationException: CancellationException) {
+                debugRecorder.finishCancelled(lastChunkText)
+                throw cancellationException
+            } catch (exception: Exception) {
+                debugRecorder.finishFailure(
+                    errorMessage = exception.message ?: "Unable to generate insights.",
+                    lastDisplayedText = lastChunkText,
+                )
+                throw exception
+            }
         }
     }
 

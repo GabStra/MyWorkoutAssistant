@@ -61,6 +61,8 @@ Rules:
 - Do not invent data.
 - Do not provide medical advice or diagnose injuries.
 - If the data is sparse, trimmed, inconsistent, or the workout is incomplete, say so plainly.
+- Do not describe an incomplete or stopped session as completed, finished, or fully completed unless the evidence says that directly.
+- Preserve the direction of explicit evidence: if the data says zero, none, no previous, disabled, stopped, incomplete, missed, or below target, do not rewrite it as a positive or completed outcome.
 - If metrics conflict, prefer the most explicit numeric fields first:
   1. explicit numeric fields such as Exec, Prev, Best, volume, duration, executed sets, reps, load, pace, distance, time
   2. progression fields such as Progression state, Vs expected, Vs previous, Vs baseline, expected sets, auto RIR
@@ -94,6 +96,7 @@ Requirements:
 - Do not omit grounded, decision-useful details just to satisfy brevity, but merge related exercises when one concise bullet can cover them accurately.
 - Keep each bullet short, focused, and non-redundant.
 - Do not repeat the same fact in multiple sections; if a section would only repeat an earlier point, skip that bullet.
+- If session status is not completed normally, mention that status early in `## What stood out`.
 - start every bullet with "- "
 - no introduction or conclusion outside the required sections
 - include HR when it changes or supports the interpretation, but do not let HR override clearer lifting evidence
@@ -370,12 +373,14 @@ internal fun buildWorkoutSessionPrompt(
 
     normalizePromptLayout(
         listOfNotNull(
-            "Analyze this completed workout session and explain it in plain coaching language.",
+            "Analyze this recorded workout session and explain it in plain coaching language.",
             "Focus first on what mattered most in the latest session, then use plan, previous, best, and recent exercise context only where it changes the interpretation.",
             "Compare each exercise against plan, previous, and best-to-date performance.",
             "Include every grounded, decision-useful training detail instead of suppressing details for brevity.",
             "Stay concise by grouping exercises with the same takeaway and avoiding repeated facts across sections.",
             "For lifting-dominant sessions, interpret HR as supporting context and do not let it override clearer load, rep, set, and progression evidence.",
+            "If the session status says it stopped before completion or was incomplete, say that plainly and do not describe it as completed.",
+            "Preserve the direction of explicit evidence: if the data says zero, none, no previous, disabled, stopped, incomplete, missed, or below target, do not rewrite it as a positive or completed outcome.",
             "If current top load is higher than previous, mention it even when total volume is lower.",
             "If plan was met but performance still lagged previous or recent trend, say that clearly.",
             "If current volume is lower than previous, account for planned double-progression load jumps or auto-regulated load changes before calling it below previous.",
@@ -964,6 +969,10 @@ private fun compactWorkoutTopLevelBlock(blockMarkdown: String): String {
     val trimmed = blockMarkdown.trim()
     if (!trimmed.contains("#### ")) {
         return trimmed
+            .lines()
+            .map(::compactWorkoutHeaderLine)
+            .joinToString("\n")
+            .trim()
     }
 
     val lines = trimmed.lines()
@@ -973,6 +982,7 @@ private fun compactWorkoutTopLevelBlock(blockMarkdown: String): String {
     }
 
     val header = lines.take(firstSubsectionIndex)
+        .map(::compactWorkoutHeaderLine)
         .joinToString("\n")
         .trim()
     val subsectionsMarkdown = lines.drop(firstSubsectionIndex)
@@ -999,6 +1009,15 @@ private fun compactWorkoutTopLevelBlock(blockMarkdown: String): String {
             renderStructuredSubsection(subsection.title, subsection.lines)
         })
     }.trim()
+}
+
+private fun compactWorkoutHeaderLine(line: String): String {
+    val trimmed = line.trim()
+    return when {
+        trimmed.startsWith("Session status:", ignoreCase = true) ->
+            "STATUS ${trimmed.substringAfter(':').trim()}"
+        else -> trimmed
+    }
 }
 
 private fun compactWorkoutSectionData(sectionMarkdown: String): CompactWorkoutSectionData? {

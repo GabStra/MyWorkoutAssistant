@@ -290,4 +290,5 @@ class WorkoutInsightMarkdownTest {
         assertTrue(processed.contains("the recorded value"))
         assertTrue(processed.contains("the recorded set"))
     }
+
 }

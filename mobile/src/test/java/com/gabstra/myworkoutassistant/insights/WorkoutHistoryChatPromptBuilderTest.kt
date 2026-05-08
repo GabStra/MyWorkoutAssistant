@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.insights
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,6 +69,25 @@ class WorkoutHistoryChatPromptBuilderTest {
             maxChars = 200,
         )
         assertTrue(window.length <= 202)
+    }
+
+    @Test
+    fun selectConversationWindowMessages_keepsNewestWholeTurnsWithinBudget() {
+        val messages = listOf(
+            HistoryChatMessage(role = HistoryChatMessageRole.User, content = "old question"),
+            HistoryChatMessage(role = HistoryChatMessageRole.Assistant, content = "old answer"),
+            HistoryChatMessage(role = HistoryChatMessageRole.User, content = "new question"),
+            HistoryChatMessage(role = HistoryChatMessageRole.Assistant, content = "new answer"),
+            HistoryChatMessage(role = HistoryChatMessageRole.User, content = "latest follow up"),
+        )
+
+        val selected = selectConversationWindowMessages(
+            messages = messages,
+            maxTurns = 3,
+            maxChars = "new questionnew answerlatest follow up".length,
+        )
+
+        assertEquals(listOf("new question", "new answer", "latest follow up"), selected.map { it.content })
     }
 
     @Test

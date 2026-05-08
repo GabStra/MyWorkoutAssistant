@@ -39,11 +39,12 @@ internal fun buildHeartRateChartAnalysisSystemPrompt(
     }
 }
 
-internal data class WorkoutInsightsTransportRequest(
+data class WorkoutInsightsTransportRequest(
     val systemPrompt: String,
     val prompt: String,
     val imagePngBytes: ByteArray?,
     val toolContext: WorkoutInsightsToolContext?,
+    val conversationMessages: List<HistoryChatMessage> = emptyList(),
     val chartTimelineToolContext: WorkoutInsightsChartTimelineContext? = null,
     val requestLogLabel: String,
     val responseLogLabel: String,
@@ -52,6 +53,7 @@ internal data class WorkoutInsightsTransportRequest(
      * `max_completion_tokens`). Null leaves the backend default (full insight generations).
      */
     val maxOutputTokens: Int? = null,
+    val debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
 )
 
 private const val MAX_FINAL_SYNTHESIS_ATTEMPTS = 2
@@ -78,6 +80,10 @@ internal suspend fun runWorkoutInsightsGeneration(
     ) -> Unit,
     onAfterChartAnalysis: (suspend () -> Unit)? = null,
 ) {
+    request.debugRecorder?.recordStatus(
+        phase = WorkoutInsightsPhase.PREPARING_TOOLS,
+        statusText = PREPARING_TOOLS_PLACEHOLDER,
+    )
     if (request.useTransportToolCalling && request.toolContext != null) {
         emitChunk(
             WorkoutInsightsChunk(
@@ -91,8 +97,18 @@ internal suspend fun runWorkoutInsightsGeneration(
             systemPrompt = request.systemPrompt.trimIndent(),
             customInstructions = request.customInstructions
         )
-        logWorkoutInsightsBlock(logTag, "${transportLabel}_chat_system_prompt", chatSystemPrompt)
-        logWorkoutInsightsBlock(logTag, "${transportLabel}_chat_user_prompt", request.prompt)
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_chat_system_prompt",
+            chatSystemPrompt,
+            request.debugRecorder,
+        )
+        logWorkoutInsightsBlock(
+            logTag,
+            "${transportLabel}_chat_user_prompt",
+            request.prompt,
+            request.debugRecorder,
+        )
         val accumulated = StringBuilder()
         var finalAttempt = 1
         while (true) {
@@ -104,10 +120,12 @@ internal suspend fun runWorkoutInsightsGeneration(
                         prompt = request.prompt,
                         imagePngBytes = null,
                         toolContext = request.toolContext,
+                        conversationMessages = request.conversationMessages,
                         chartTimelineToolContext = null,
                         requestLogLabel = "${transportLabel}_chat_request".withAttemptLogSuffix(finalAttempt),
                         responseLogLabel = "${transportLabel}_chat_raw_response".withAttemptLogSuffix(finalAttempt),
                         maxOutputTokens = HistoryChatLimits.MAX_OUTPUT_TOKENS,
+                        debugRecorder = request.debugRecorder,
                     ),
                     { chunk ->
                         accumulated.append(chunk)
@@ -124,6 +142,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                         )
                     },
                     { phase, statusText ->
+                        request.debugRecorder?.recordStatus(phase, statusText)
                         emitChunk(
                             WorkoutInsightsChunk(
                                 title = request.title,
@@ -150,7 +169,8 @@ internal suspend fun runWorkoutInsightsGeneration(
                     buildRepeatedTextLog(
                         partialText = accumulated.toString(),
                         result = exception.result
-                    )
+                    ),
+                    request.debugRecorder,
                 )
                 if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
                     throw IllegalStateException(
@@ -173,7 +193,8 @@ internal suspend fun runWorkoutInsightsGeneration(
         logWorkoutInsightsBlock(
             logTag,
             "${transportLabel}_chat_final_raw_response",
-            rawReply.ifBlank { "No reply was generated." }
+            rawReply.ifBlank { "No reply was generated." },
+            request.debugRecorder,
         )
         val normalizedReply = postProcessInsightMarkdown(
             markdown = rawReply,
@@ -184,7 +205,8 @@ internal suspend fun runWorkoutInsightsGeneration(
             logWorkoutInsightsBlock(
                 logTag,
                 "${transportLabel}_chat_final_postprocessed_response",
-                normalizedReply.ifBlank { "No reply was generated." }
+                normalizedReply.ifBlank { "No reply was generated." },
+                request.debugRecorder,
             )
             accumulated.clear()
             accumulated.append(normalizedReply)
@@ -216,7 +238,7 @@ internal suspend fun runWorkoutInsightsGeneration(
     )
     val finalPrompt = finalSynthesisBasePrompt
 
-    logWorkoutInsightsBlock(logTag, "${transportLabel}_final_prompt", finalPrompt)
+    logWorkoutInsightsBlock(logTag, "${transportLabel}_final_prompt", finalPrompt, request.debugRecorder)
     val accumulated = StringBuilder()
     var finalAttempt = 1
     while (true) {
@@ -237,6 +259,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                     prompt = finalPrompt,
                     imagePngBytes = null,
                     toolContext = null,
+                    conversationMessages = request.conversationMessages,
                     requestLogLabel = "${transportLabel}_final_request".withAttemptLogSuffix(finalAttempt),
                     responseLogLabel = "${transportLabel}_final_raw_response".withAttemptLogSuffix(finalAttempt),
                     maxOutputTokens = if (request.historyChatSystemIncludesData) {
@@ -244,6 +267,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                     } else {
                         null
                     },
+                    debugRecorder = request.debugRecorder,
                 ),
                 { chunk ->
                     accumulated.append(chunk)
@@ -260,6 +284,7 @@ internal suspend fun runWorkoutInsightsGeneration(
                     )
                 },
                 { phase, statusText ->
+                    request.debugRecorder?.recordStatus(phase, statusText)
                     emitChunk(
                         WorkoutInsightsChunk(
                             title = request.title,
@@ -281,15 +306,16 @@ internal suspend fun runWorkoutInsightsGeneration(
             break
         } catch (exception: RepeatedInsightTextException) {
             logWorkoutInsightsBlock(
-                logTag,
-                "${transportLabel}_final_repeated_text_attempt_$finalAttempt",
-                buildRepeatedTextLog(
-                    partialText = accumulated.toString(),
-                    result = exception.result
+                    logTag,
+                    "${transportLabel}_final_repeated_text_attempt_$finalAttempt",
+                    buildRepeatedTextLog(
+                        partialText = accumulated.toString(),
+                        result = exception.result
+                    ),
+                    request.debugRecorder,
                 )
-            )
-            if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
-                throw IllegalStateException(
+                if (finalAttempt >= MAX_FINAL_SYNTHESIS_ATTEMPTS) {
+                    throw IllegalStateException(
                     "Insight generation repeated text after retry. Please try again."
                 )
             }
@@ -309,7 +335,8 @@ internal suspend fun runWorkoutInsightsGeneration(
     logWorkoutInsightsBlock(
         logTag,
         "${transportLabel}_final_raw_response",
-        rawInsight.ifBlank { "No insights were generated." }
+        rawInsight.ifBlank { "No insights were generated." },
+        request.debugRecorder,
     )
     val normalizedInsight = postProcessInsightMarkdown(
         markdown = rawInsight,
@@ -320,7 +347,8 @@ internal suspend fun runWorkoutInsightsGeneration(
         logWorkoutInsightsBlock(
             logTag,
             "${transportLabel}_final_postprocessed_response",
-            normalizedInsight.ifBlank { "No insights were generated." }
+            normalizedInsight.ifBlank { "No insights were generated." },
+            request.debugRecorder,
         )
         accumulated.clear()
         accumulated.append(normalizedInsight)

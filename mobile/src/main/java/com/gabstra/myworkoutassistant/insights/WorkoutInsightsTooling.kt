@@ -732,7 +732,9 @@ internal fun logWorkoutInsightsBlock(
     logTag: String,
     label: String,
     body: String,
+    debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
 ) {
+    debugRecorder?.recordBlock(label, body)
     if (Log.isLoggable(logTag, Log.VERBOSE)) {
         logWorkoutInsightsBlockChunks(Log.VERBOSE, logTag, label, body)
         return

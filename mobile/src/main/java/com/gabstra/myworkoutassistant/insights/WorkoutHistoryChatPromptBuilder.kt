@@ -56,10 +56,16 @@ internal fun buildHistoryChatUserPrompt(
     val trimmedUser = currentUserContent.trim()
     require(trimmedUser.isNotBlank()) { "User message must not be blank." }
 
-    val historyBlock = formatConversationWindow(
-        priorMessages = priorMessages,
+    val boundedMessages = selectConversationWindowMessages(
+        messages = priorMessages,
         maxTurns = maxPriorTurns,
         maxChars = maxConversationChars,
+        includeAssistantMessages = true,
+    )
+    val historyBlock = formatConversationWindow(
+        priorMessages = boundedMessages,
+        maxTurns = Int.MAX_VALUE,
+        maxChars = Int.MAX_VALUE,
         includeAssistantMessages = true,
     )
 

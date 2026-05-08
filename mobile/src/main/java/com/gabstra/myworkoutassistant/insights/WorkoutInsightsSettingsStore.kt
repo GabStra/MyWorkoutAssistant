@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 
 private const val INSIGHTS_PREFS = "litert_lm_insights"
+private const val ENABLED_KEY = "enabled"
 private const val MODE_KEY = "mode"
 private const val REMOTE_BASE_URL_KEY = "remote_base_url"
 private const val REMOTE_API_KEY_KEY = "remote_api_key"
@@ -11,6 +12,19 @@ private const val REMOTE_MODEL_KEY = "remote_model"
 private const val CUSTOM_INSTRUCTIONS_KEY = "custom_instructions"
 
 object WorkoutInsightsSettingsStore {
+    fun isEnabled(context: Context): Boolean =
+        context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(ENABLED_KEY, false)
+
+    fun setEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE).edit {
+            putBoolean(ENABLED_KEY, enabled)
+        }
+    }
+
     fun getMode(context: Context): WorkoutInsightsMode =
         WorkoutInsightsMode.fromStoredValue(
             context.getSharedPreferences(INSIGHTS_PREFS, Context.MODE_PRIVATE)

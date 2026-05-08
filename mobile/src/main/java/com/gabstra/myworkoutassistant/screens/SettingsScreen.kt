@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -75,6 +76,7 @@ fun SettingsScreen(
     onCancel: () -> Unit,
     workoutStore: WorkoutStore,
     healthConnectClient: HealthConnectClient,
+    mobileLlmEnabled: Boolean,
     workoutInsightsMode: WorkoutInsightsMode,
     liteRtModelPath: String?,
     liteRtModelName: String?,
@@ -83,6 +85,7 @@ fun SettingsScreen(
     workoutInsightsCustomInstructions: String,
     onImportLiteRtModel: () -> Unit,
     onSaveInsightsSettings: (
+        Boolean,
         WorkoutInsightsMode,
         LiteRtLmBackendPreference,
         RemoteOpenAiConfig,
@@ -108,6 +111,7 @@ fun SettingsScreen(
     val restingHeartRateState = remember {
         mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
     }
+    val mobileLlmEnabledState = remember { mutableStateOf(mobileLlmEnabled) }
     val workoutInsightsModeState = remember { mutableStateOf(workoutInsightsMode) }
     val liteRtBackendPreferenceState = remember { mutableStateOf(liteRtBackendPreference) }
     val remoteBaseUrlState = remember { mutableStateOf(remoteInsightsConfig.baseUrl) }
@@ -386,7 +390,36 @@ fun SettingsScreen(
                     )
                 }
             }
-            if (MobileLlmFeatureFlags.ENABLED) {
+            Spacer(modifier = Modifier.height(Spacing.sm))
+            FormSectionTitle("AI")
+            StyledCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Enable AI features",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        ContentSubtitle(
+                            text = "Controls workout insights and other mobile AI entry points globally."
+                        )
+                    }
+                    Switch(
+                        checked = mobileLlmEnabledState.value,
+                        onCheckedChange = { mobileLlmEnabledState.value = it },
+                        enabled = !isImportingLiteRtModel
+                    )
+                }
+            }
+            if (mobileLlmEnabledState.value) {
                 Spacer(modifier = Modifier.height(Spacing.sm))
                 FormSectionTitle("Workout Insights")
                 StyledCard(
@@ -620,18 +653,17 @@ fun SettingsScreen(
                             measuredMaxHeartRate = measuredMaxHeartRate,
                             restingHeartRate = restingHeartRate
                         )
-                        if (MobileLlmFeatureFlags.ENABLED) {
-                            onSaveInsightsSettings(
-                                workoutInsightsModeState.value,
-                                liteRtBackendPreferenceState.value,
-                                RemoteOpenAiConfig(
+                        onSaveInsightsSettings(
+                            mobileLlmEnabledState.value,
+                            workoutInsightsModeState.value,
+                            liteRtBackendPreferenceState.value,
+                            RemoteOpenAiConfig(
                                     baseUrl = remoteBaseUrlState.value,
                                     apiKey = remoteApiKeyState.value,
                                     model = remoteModelState.value,
                                 ),
                                 workoutInsightsCustomInstructionsState.value
-                            )
-                        }
+                        )
                         onSave(newWorkoutStore)
                     },
                     text = "Save",

@@ -1,5 +1,9 @@
 package com.gabstra.myworkoutassistant
 
+import android.content.Context
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
+
 internal object MobileLlmFeatureFlags {
-    const val ENABLED = false
+    fun isEnabled(context: Context): Boolean =
+        WorkoutInsightsSettingsStore.isEnabled(context.applicationContext)
 }

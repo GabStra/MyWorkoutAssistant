@@ -52,9 +52,14 @@ data class WorkoutInsightsRequest(
     val useTransportToolCalling: Boolean = false,
     /**
      * When true with non-null [toolContext], [systemPrompt] is expected to already include the compacted
-     * export once; [prompt] is only the conversation + question. Used for history chat.
+     * export once; history chat can then send real multi-turn messages instead of re-inlining the export.
      */
     val historyChatSystemIncludesData: Boolean = false,
+    /**
+     * Ordered chat messages for history chat requests. The last message should be the current user turn.
+     */
+    val conversationMessages: List<HistoryChatMessage> = emptyList(),
+    val debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
 )
 
 class LiteRtLmInsightsRepository(
@@ -233,7 +238,8 @@ private suspend fun LiteRtLmInsightsRepository.generateResponse(
     logWorkoutInsightsBlock(
         LiteRtLmInsightsRepository.LOG_TAG,
         transportRequest.responseLogLabel,
-        finalText
+        finalText,
+        transportRequest.debugRecorder,
     )
     return finalText
 }
@@ -276,6 +282,14 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
     )
 
     try {
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "backend" to engineHandle.backendName,
+                "mode" to if (transportRequest.imagePngBytes != null) "image_text" else "text_only",
+                "model_path" to modelPath,
+            ),
+        )
         Log.d(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}" +
@@ -284,20 +298,39 @@ private suspend fun LiteRtLmInsightsRepository.generateResponseStream(
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_system_prompt",
-            transportRequest.systemPrompt
+            transportRequest.systemPrompt,
+            transportRequest.debugRecorder,
         )
         logWorkoutInsightsBlock(
             LiteRtLmInsightsRepository.LOG_TAG,
             "${transportRequest.requestLogLabel}_user_prompt",
-            transportRequest.prompt
+            transportRequest.prompt,
+            transportRequest.debugRecorder,
         )
+        val initialMessages = transportRequest.conversationMessages
+            .dropLast(1)
+            .map { message ->
+                when (message.role) {
+                    HistoryChatMessageRole.User -> Message.Companion.user(message.content.trim())
+                    HistoryChatMessageRole.Assistant -> Message.Companion.model(message.content.trim())
+                }
+            }
         val conversationConfig = liteRtConversationConfig(
             systemPrompt = transportRequest.systemPrompt,
+            initialMessages = initialMessages,
             tools = null,
             automaticToolCalling = false,
         )
         engineHandle.engine.createConversation(conversationConfig).use { conversation ->
-            val responseFlow = if (transportRequest.imagePngBytes != null) {
+            val responseFlow = if (transportRequest.conversationMessages.isNotEmpty()) {
+                val currentMessage = transportRequest.conversationMessages.last()
+                require(currentMessage.role == HistoryChatMessageRole.User) {
+                    "History chat requests must end with a user message."
+                }
+                conversation.sendMessageAsync(
+                    Message.Companion.user(currentMessage.content.trim())
+                )
+            } else if (transportRequest.imagePngBytes != null) {
                 conversation.sendMessageAsync(
                     Contents.of(
                         Content.ImageBytes(transportRequest.imagePngBytes),
@@ -335,6 +368,14 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
     val toolExecutor = WorkoutInsightsChartTimelineToolExecutor(timeline)
 
     try {
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "backend" to engineHandle.backendName,
+                "mode" to "image_text_tool_loop",
+                "model_path" to modelPath,
+            ),
+        )
         val conversationConfig = liteRtConversationConfig(
             systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
@@ -346,17 +387,20 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_system_prompt",
-                transportRequest.systemPrompt
+                transportRequest.systemPrompt,
+                transportRequest.debugRecorder,
             )
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_definitions",
-                toolExecutor.describeToolsForLog()
+                toolExecutor.describeToolsForLog(),
+                transportRequest.debugRecorder,
             )
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_turn_1_user_message",
-                transportRequest.prompt
+                transportRequest.prompt,
+                transportRequest.debugRecorder,
             )
             var responseMessage = conversation.sendMessage(
                 Contents.of(
@@ -367,7 +411,8 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
             logLiteRtAssistantMessage(
                 requestLogLabel = transportRequest.requestLogLabel,
                 turnNumber = 1,
-                message = responseMessage
+                message = responseMessage,
+                debugRecorder = transportRequest.debugRecorder,
             )
             for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
                 coroutineContext.ensureActive()
@@ -397,7 +442,8 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                     logWorkoutInsightsBlock(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_arguments",
-                        renderForInsightLog(toolCall.arguments)
+                        renderForInsightLog(toolCall.arguments),
+                        transportRequest.debugRecorder,
                     )
                     val payload = toolExecutor.executeToJsonString(
                         name = toolCall.name,
@@ -406,7 +452,8 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                     logWorkoutInsightsBlock(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_result",
-                        payload
+                        payload,
+                        transportRequest.debugRecorder,
                     )
                     Content.ToolResponse(toolCall.name, payload)
                 }
@@ -415,7 +462,8 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                     "${transportRequest.requestLogLabel}_turn_${round + 2}_tool_message",
                     toolResponses.joinToString("\n\n") { toolResponse ->
                         "Tool: ${toolResponse.name}\nPayload:\n${toolResponse.response}"
-                    }
+                    },
+                    transportRequest.debugRecorder,
                 )
 
                 responseMessage = conversation.sendMessage(
@@ -424,7 +472,8 @@ private suspend fun LiteRtLmInsightsRepository.generateChartAnalysisWithTimeline
                 logLiteRtAssistantMessage(
                     requestLogLabel = transportRequest.requestLogLabel,
                     turnNumber = round + 2,
-                    message = responseMessage
+                    message = responseMessage,
+                    debugRecorder = transportRequest.debugRecorder,
                 )
             }
 
@@ -460,6 +509,14 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
     val toolExecutor = WorkoutInsightsToolExecutor(toolContext)
 
     try {
+        transportRequest.debugRecorder?.recordTransportRequest(
+            transportRequest = transportRequest,
+            backendMetadata = mapOf(
+                "backend" to engineHandle.backendName,
+                "mode" to "text_tool_loop",
+                "model_path" to modelPath,
+            ),
+        )
         val conversationConfig = liteRtConversationConfig(
             systemPrompt = transportRequest.systemPrompt,
             tools = toolExecutor.liteRtTools(),
@@ -471,23 +528,27 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_system_prompt",
-                transportRequest.systemPrompt
+                transportRequest.systemPrompt,
+                transportRequest.debugRecorder,
             )
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_tool_definitions",
-                toolExecutor.describeToolsForLog()
+                toolExecutor.describeToolsForLog(),
+                transportRequest.debugRecorder,
             )
             logWorkoutInsightsBlock(
                 LiteRtLmInsightsRepository.LOG_TAG,
                 "${transportRequest.requestLogLabel}_turn_1_user_message",
-                transportRequest.prompt
+                transportRequest.prompt,
+                transportRequest.debugRecorder,
             )
             var responseMessage = conversation.sendMessage(transportRequest.prompt)
             logLiteRtAssistantMessage(
                 requestLogLabel = transportRequest.requestLogLabel,
                 turnNumber = 1,
-                message = responseMessage
+                message = responseMessage,
+                debugRecorder = transportRequest.debugRecorder,
             )
             for (round in 0 until MAX_INSIGHTS_TOOL_ROUNDS) {
                 coroutineContext.ensureActive()
@@ -517,7 +578,8 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                     logWorkoutInsightsBlock(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_arguments",
-                        renderForInsightLog(toolCall.arguments)
+                        renderForInsightLog(toolCall.arguments),
+                        transportRequest.debugRecorder,
                     )
                     val payload = toolExecutor.executeToJsonString(
                         name = toolCall.name,
@@ -526,7 +588,8 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                     logWorkoutInsightsBlock(
                         LiteRtLmInsightsRepository.LOG_TAG,
                         "${transportRequest.requestLogLabel}_tool_round_${round + 1}_${toolCall.name}_result",
-                        payload
+                        payload,
+                        transportRequest.debugRecorder,
                     )
                     Content.ToolResponse(toolCall.name, payload)
                 }
@@ -535,7 +598,8 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                     "${transportRequest.requestLogLabel}_turn_${round + 2}_tool_message",
                     toolResponses.joinToString("\n\n") { toolResponse ->
                         "Tool: ${toolResponse.name}\nPayload:\n${toolResponse.response}"
-                    }
+                    },
+                    transportRequest.debugRecorder,
                 )
 
                 responseMessage = conversation.sendMessage(
@@ -544,7 +608,8 @@ private suspend fun LiteRtLmInsightsRepository.generateToolCallingResponse(
                 logLiteRtAssistantMessage(
                     requestLogLabel = transportRequest.requestLogLabel,
                     turnNumber = round + 2,
-                    message = responseMessage
+                    message = responseMessage,
+                    debugRecorder = transportRequest.debugRecorder,
                 )
             }
 
@@ -582,6 +647,7 @@ private fun capLiteRtAssistantText(
 
 private fun liteRtConversationConfig(
     systemPrompt: String,
+    initialMessages: List<Message> = emptyList(),
     tools: List<ToolProvider>?,
     automaticToolCalling: Boolean,
 ): ConversationConfig {
@@ -594,6 +660,7 @@ private fun liteRtConversationConfig(
     return if (tools != null) {
         ConversationConfig(
             systemInstruction = systemInstruction,
+            initialMessages = initialMessages,
             samplerConfig = samplerConfig,
             tools = tools,
             automaticToolCalling = automaticToolCalling,
@@ -601,6 +668,7 @@ private fun liteRtConversationConfig(
     } else {
         ConversationConfig(
             systemInstruction = systemInstruction,
+            initialMessages = initialMessages,
             samplerConfig = samplerConfig,
         )
     }
@@ -634,6 +702,7 @@ private fun logLiteRtAssistantMessage(
     requestLogLabel: String,
     turnNumber: Int,
     message: Message,
+    debugRecorder: WorkoutInsightsDebugDumpRecorder? = null,
 ) {
     val text = extractLiteRtText(message)
     val toolCalls = message.toolCalls
@@ -657,7 +726,8 @@ private fun logLiteRtAssistantMessage(
     logWorkoutInsightsBlock(
         LiteRtLmInsightsRepository.LOG_TAG,
         "${requestLogLabel}_turn_${turnNumber}_assistant_message",
-        rendered
+        rendered,
+        debugRecorder,
     )
 }
 

@@ -29,6 +29,8 @@ class WorkoutInsightsPromptBuilderTest {
     @Test
     fun workoutInsightsPrompts_include_conflict_and_formatting_guards() {
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If metrics conflict, prefer the most explicit numeric fields first:"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Do not describe an incomplete or stopped session as completed"))
+        assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Preserve the direction of explicit evidence"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If a status label conflicts with explicit numeric values, trust the numeric values"))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("Never describe a metric as improved if the numeric value is lower than the previous value."))
         assertTrue(WORKOUT_INSIGHTS_SYSTEM_PROMPT.contains("If one exercise improved and another regressed or lagged versus previous, say that explicitly."))
@@ -50,6 +52,9 @@ class WorkoutInsightsPromptBuilderTest {
         )
 
         assertTrue(prompt.contains("Compare each exercise against plan, previous, and best-to-date performance."))
+        assertTrue(prompt.contains("Analyze this recorded workout session and explain it in plain coaching language."))
+        assertTrue(prompt.contains("If the session status says it stopped before completion or was incomplete, say that plainly and do not describe it as completed."))
+        assertTrue(prompt.contains("Preserve the direction of explicit evidence: if the data says zero, none, no previous, disabled, stopped, incomplete, missed, or below target, do not rewrite it as a positive or completed outcome."))
         assertTrue(prompt.contains("Do not flatten mixed exercise results into overall progress when exercises diverge."))
         assertTrue(prompt.contains("account for planned double-progression load jumps or auto-regulated load changes before calling it below previous"))
         assertTrue(prompt.contains("If Exec, Prev, Best, or Expected numbers disagree with status labels, trust the numbers."))
@@ -189,6 +194,29 @@ class WorkoutInsightsPromptBuilderTest {
         assertTrue(prompt.contains("SIGNALS Vs prev: matched | Vs best: matched | Trend: stable"))
         assertFalse(prompt.contains("PREV Sets: Duration: 04:00 | Duration: 04:00"))
         assertFalse(prompt.contains("BEST Duration: 04:00"))
+    }
+
+    @Test
+    fun compactWorkoutSessionMarkdown_promotes_non_normal_status_into_structured_header_line() {
+        val markdown = """
+            # Cyclette - LISS
+            Session status: Stopped on wear device before completion
+            2026-05-08 09:17:40 | Dur: 01:11:22
+
+            ### Main Set
+
+            #### Context
+            - Type: COUNTDOWN
+            - Warm-up sets: disabled
+
+            #### Executed
+            - Set summary: Duration: 00:17 | Duration: 00:17
+        """.trimIndent()
+
+        val compacted = compactWorkoutSessionMarkdown(markdown)
+
+        assertTrue(compacted.contains("STATUS Stopped on wear device before completion"))
+        assertFalse(compacted.contains("Session status: Stopped on wear device before completion"))
     }
 
     @Test

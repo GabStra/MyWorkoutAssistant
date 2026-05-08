@@ -15,14 +15,15 @@ import kotlin.coroutines.cancellation.CancellationException
 class PhoneLlmOperationExecutor(
     context: Context,
 ) {
-    private val insightsEngine = ConfigurableWorkoutInsightsEngine(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val insightsEngine = ConfigurableWorkoutInsightsEngine(appContext)
 
     suspend fun execute(
         request: PhoneLlmOperationRequest,
     ): PhoneLlmOperationResult {
         val requestId = request.requestId.trim()
         val operation = request.operation.trim().ifBlank { DEFAULT_PHONE_LLM_OPERATION }
-        if (!MobileLlmFeatureFlags.ENABLED) {
+        if (!MobileLlmFeatureFlags.isEnabled(appContext)) {
             return PhoneLlmOperationResult.error(
                 requestId = requestId,
                 operation = operation,

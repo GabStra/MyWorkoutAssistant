@@ -31,6 +31,7 @@ import com.gabstra.myworkoutassistant.composables.StandardDialog
 
 sealed class WorkoutInsightsUiState {
     data object Idle : WorkoutInsightsUiState()
+    data object ImportingModel : WorkoutInsightsUiState()
     data object PreparingModel : WorkoutInsightsUiState()
     data class Generating(
         val partialText: String = "",
@@ -71,6 +72,12 @@ fun WorkoutInsightsDialog(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 when {
+                    state is WorkoutInsightsUiState.ImportingModel -> {
+                        CenteredInsightBodySurface {
+                            LoadingText("Importing local model...")
+                        }
+                    }
+
                     !configurationState.isConfigured -> {
                         SecondarySurface {
                             Text(
@@ -140,11 +147,14 @@ fun WorkoutInsightsDialog(
                 }
             }
         },
-        confirmText = if (configurationState.isConfigured) null else configurationState.configureActionLabel,
-        onConfirm = if (configurationState.isConfigured) null else onConfigure,
+        confirmText = if (configurationState.isConfigured || state is WorkoutInsightsUiState.ImportingModel) null else configurationState.configureActionLabel,
+        onConfirm = if (configurationState.isConfigured || state is WorkoutInsightsUiState.ImportingModel) null else onConfigure,
         dismissText = "Close",
         onDismissButton = onDismiss,
-        showConfirm = !configurationState.isConfigured && onConfigure != null && configurationState.configureActionLabel != null
+        showConfirm = !configurationState.isConfigured &&
+            state !is WorkoutInsightsUiState.ImportingModel &&
+            onConfigure != null &&
+            configurationState.configureActionLabel != null
     )
 }
 
@@ -155,6 +165,7 @@ private fun InsightStatusHeader(
 ) {
     val statusLabel = when {
         !isModelConfigured -> "Model required"
+        state is WorkoutInsightsUiState.ImportingModel -> "Importing"
         state is WorkoutInsightsUiState.PreparingModel -> "Preparing"
         state is WorkoutInsightsUiState.Generating -> "Generating"
         state is WorkoutInsightsUiState.Success -> "Ready"
@@ -162,6 +173,7 @@ private fun InsightStatusHeader(
         else -> "Local model"
     }
     val supportingText = when {
+        state is WorkoutInsightsUiState.ImportingModel -> "Copying the selected LiteRT-LM model before generating insights."
         !isModelConfigured -> "Import a LiteRT-LM file to enable on-device insights."
         state is WorkoutInsightsUiState.Success -> "Structured feedback from your recent workout data."
         state is WorkoutInsightsUiState.Error -> "The local model could not complete this insight request."
