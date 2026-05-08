@@ -9,6 +9,7 @@ object IncompleteWorkoutStrings {
     const val RESUME_DIALOG_DESCRIPTION =
         "You have workouts that weren't completed. Select one to resume:"
 
+    const val DISMISS_BUTTON = "Dismiss"
     const val DISCARD_BUTTON = "Discard"
 
     const val DELETE_BUTTON = "Delete"

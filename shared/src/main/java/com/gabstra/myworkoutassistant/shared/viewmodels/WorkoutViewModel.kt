@@ -1231,6 +1231,28 @@ open class WorkoutViewModel(
         }
     }
 
+    fun discardIncompleteWorkout() {
+        val recordSnapshot = _workoutRecord ?: return
+        launchIO {
+            workoutRecordMutex.withLock {
+                setHistoryDao.deleteByWorkoutHistoryId(recordSnapshot.workoutHistoryId)
+                restHistoryDao.deleteByWorkoutHistoryId(recordSnapshot.workoutHistoryId)
+                exerciseSessionProgressionDao.deleteByWorkoutHistoryId(recordSnapshot.workoutHistoryId)
+                workoutRecordDao.deleteByWorkoutId(recordSnapshot.workoutId)
+                workoutHistoryDao.deleteById(recordSnapshot.workoutHistoryId)
+            }
+
+            withContext(dispatchers.main) {
+                if (_workoutRecord?.id == recordSnapshot.id) {
+                    _workoutRecord = null
+                    _hasWorkoutRecord.value = false
+                    _workoutResumeInfo.value = null
+                    rebuildScreenState()
+                }
+            }
+        }
+    }
+
     private suspend fun resolveWorkoutResumeInfo(
         workout: Workout,
         workoutRecord: WorkoutRecord

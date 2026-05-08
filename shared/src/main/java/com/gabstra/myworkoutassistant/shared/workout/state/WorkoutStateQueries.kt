@@ -72,6 +72,19 @@ internal object WorkoutStateQueries {
             setHistory.exerciseId == exerciseId
     }
 
+    fun matchesSetHistoryExerciseAndOrder(
+        setHistory: SetHistory,
+        order: UInt,
+        exerciseId: UUID?
+    ): Boolean {
+        if (setHistory.order != order) {
+            return false
+        }
+        return setHistory.exerciseId == null ||
+            exerciseId == null ||
+            setHistory.exerciseId == exerciseId
+    }
+
     fun matchesRestHistory(
         restHistory: RestHistory,
         restSetId: UUID,

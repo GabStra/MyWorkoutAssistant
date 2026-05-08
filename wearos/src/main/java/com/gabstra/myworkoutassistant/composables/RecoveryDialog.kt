@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -303,22 +304,24 @@ internal fun RecoveryDialog(
                     }
 
                     item {
-                        RecoveryChoiceButton(
-                            modifier = Modifier.transformedHeight(this, spec),
-                            transformation = SurfaceTransformation(spec),
-                            contentDescription = "Recovery dismiss action",
-                            text = "Dismiss",
-                            onClick = onDismiss
-                        )
-                    }
-
-                    item {
-                        CancelRecoveryChoiceButton(
+                        OutlinedRecoveryChoiceButton(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = "Recovery discard action",
                             text = IncompleteWorkoutStrings.DISCARD_BUTTON,
+                            borderColor = MaterialTheme.colorScheme.error,
+                            textColor = MaterialTheme.colorScheme.error,
                             onClick = { onDiscard(workout) }
+                        )
+                    }
+
+                    item {
+                        RecoveryChoiceButton(
+                            modifier = Modifier.transformedHeight(this, spec),
+                            transformation = SurfaceTransformation(spec),
+                            contentDescription = "Recovery dismiss action",
+                            text = IncompleteWorkoutStrings.DISMISS_BUTTON,
+                            onClick = onDismiss
                         )
                     }
                 }
@@ -422,6 +425,8 @@ private fun OutlinedRecoveryChoiceButton(
     transformation: SurfaceTransformation? = null,
     contentDescription: String,
     text: String,
+    borderColor: Color? = null,
+    textColor: Color? = null,
     onClick: () -> Unit
 ) {
     OutlinedButtonWithText(
@@ -430,24 +435,8 @@ private fun OutlinedRecoveryChoiceButton(
             .fillMaxWidth(),
         transformation = transformation,
         text = text,
-        onClick = onClick
-    )
-}
-
-@Composable
-private fun CancelRecoveryChoiceButton(
-    modifier: Modifier = Modifier,
-    transformation: SurfaceTransformation? = null,
-    contentDescription: String,
-    text: String,
-    onClick: () -> Unit
-) {
-    CancelButtonWithText(
-        modifier = modifier
-            .semantics { this.contentDescription = contentDescription }
-            .fillMaxWidth(),
-        transformation = transformation,
-        text = text,
+        borderColor = borderColor,
+        textColor = textColor,
         onClick = onClick
     )
 }
