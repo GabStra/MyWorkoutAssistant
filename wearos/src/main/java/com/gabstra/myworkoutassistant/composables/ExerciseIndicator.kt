@@ -48,6 +48,7 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workout.display.buildExerciseSetDisplayRows
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
+import com.gabstra.myworkoutassistant.shared.workout.timer.WorkoutTimerService
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import java.util.LinkedList
 import java.util.UUID
@@ -64,6 +65,7 @@ fun ExerciseIndicator(
     selectedExerciseId: UUID? = null
 ) {
     val workoutStateValue by viewModel.workoutState.collectAsState()
+    val timerUiStates by viewModel.workoutTimerService.timerUiStates.collectAsState()
     val currentState = currentStateOverride ?: workoutStateValue
 
     fun workoutStateSetLikeId(state: WorkoutState): UUID? = when (state) {
@@ -157,17 +159,11 @@ fun ExerciseIndicator(
         }
     }
 
-    // Get current state's set (for type check) and currentSetDataState (for timer) when applicable
+    // Get current state's set (for type check and timer identity) when applicable
     val currentStateSet = when (currentState) {
         is WorkoutState.Set -> currentState.set
         is WorkoutState.CalibrationLoadSelection -> currentState.calibrationSet
         is WorkoutState.CalibrationRIRSelection -> currentState.calibrationSet
-        else -> null
-    }
-    val currentStateSetDataState = when (currentState) {
-        is WorkoutState.Set -> currentState.currentSetDataState
-        is WorkoutState.CalibrationLoadSelection -> currentState.currentSetDataState
-        is WorkoutState.CalibrationRIRSelection -> currentState.currentSetDataState
         else -> null
     }
 
@@ -177,9 +173,18 @@ fun ExerciseIndicator(
         else -> null
     }
 
+    fun timerProgressFromUiState(timerUiState: WorkoutTimerService.TimerUiState?): Float? {
+        if (timerUiState == null || timerUiState.startValue <= 0) return null
+        return when (timerUiState.timerType) {
+            WorkoutTimerService.TimerType.ENDURANCE_SET ->
+                (timerUiState.displayMillis / timerUiState.startValue.toFloat()).coerceIn(0f, 1f)
+            WorkoutTimerService.TimerType.TIMED_DURATION_SET,
+            WorkoutTimerService.TimerType.REST ->
+                (1 - (timerUiState.displayMillis / timerUiState.startValue.toFloat())).coerceIn(0f, 1f)
+        }
+    }
+
     fun safeCurrentSetData(setState: WorkoutState.Set): Any? = runCatching { setState.currentSetData }.getOrNull()
-    fun safeCurrentSetData(setDataState: androidx.compose.runtime.MutableState<com.gabstra.myworkoutassistant.shared.setdata.SetData>): Any? =
-        runCatching { setDataState.value }.getOrNull()
 
     data class IndicatorProgressLayer(
         val baseProgress: Float,
@@ -201,9 +206,8 @@ fun ExerciseIndicator(
         val currentExerciseTimerProgress: Float? = when {
             id == currentExerciseId &&
                 currentStateSet != null &&
-                (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) &&
-                currentStateSetDataState != null -> {
-                timerProgressFromSetData(safeCurrentSetData(currentStateSetDataState))
+                (currentStateSet is TimedDurationSet || currentStateSet is EnduranceSet) -> {
+                timerProgressFromUiState(timerUiStates[currentStateSet.id])
             }
             else -> null
         }
@@ -217,7 +221,9 @@ fun ExerciseIndicator(
                 )
             }
             timerSet != null -> {
-                val timerProgress = timerProgressFromSetData(safeCurrentSetData(timerSet)) ?: 0f
+                val timerProgress = timerProgressFromUiState(timerUiStates[timerSet.set.id])
+                    ?: timerProgressFromSetData(safeCurrentSetData(timerSet))
+                    ?: 0f
                 val baseProgress = (completed.toFloat() + timerProgress) / total.toFloat()
                 IndicatorProgressLayer(
                     baseProgress = baseProgress.coerceIn(0f, 1f)
