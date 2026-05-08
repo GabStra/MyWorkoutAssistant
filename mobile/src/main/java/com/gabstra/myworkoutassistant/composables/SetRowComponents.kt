@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
+import java.util.UUID
 
 sealed interface SetTableRowUiModel {
     data class Data(
@@ -30,6 +31,13 @@ sealed interface SetTableRowUiModel {
         val text: String,
     ) : SetTableRowUiModel
 }
+
+data class SetPreviewItemUiModel(
+    val setId: UUID = UUID(0L, 0L),
+    val rows: List<SetTableRowUiModel>,
+    val usesDashedContainer: Boolean = false,
+    val isGroupedUnilateral: Boolean = false,
+)
 
 data class SetTableHeaderUiModel(
     val setLabel: String = "SET",
@@ -232,6 +240,60 @@ private fun SetTableRestRow(
     )
 }
 
+@Composable
+private fun SetPreviewRowsContent(
+    rows: List<SetTableRowUiModel>,
+    enabled: Boolean,
+) {
+    val contentColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    }
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        rows.forEachIndexed { index, row ->
+            when (row) {
+                is SetTableRowUiModel.Data -> {
+                    val rowForDisplay = if (row.onClick != null) row.copy(onClick = null) else row
+                    SetTableDataRow(row = rowForDisplay, textColor = contentColor)
+                }
+
+                is SetTableRowUiModel.Rest -> SetTableRestRow(row = row, textColor = contentColor)
+            }
+
+            if (index < rows.lastIndex) {
+                HorizontalDivider(color = dividerColor)
+            }
+        }
+    }
+}
+
+@Composable
+fun SetPreviewItemCard(
+    item: SetPreviewItemUiModel,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val surfaceModifier = modifier.fillMaxWidth()
+    if (item.usesDashedContainer) {
+        DashedCard(
+            modifier = surfaceModifier,
+            enabled = enabled,
+        ) {
+            SetPreviewRowsContent(rows = item.rows, enabled = enabled)
+        }
+    } else {
+        StyledCard(
+            modifier = surfaceModifier,
+            enabled = enabled,
+        ) {
+            SetPreviewRowsContent(rows = item.rows, enabled = enabled)
+        }
+    }
+}
+
 /**
  * One row of the exercise set table (same layout as [SetTable]), for use in selectable lists
  * where each set is a separate item (e.g. exercise detail overview).
@@ -242,20 +304,13 @@ fun SetPreviewTableRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val contentColor = if (enabled) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-    }
-    Box(modifier = modifier.fillMaxWidth()) {
-        when (row) {
-            is SetTableRowUiModel.Data -> {
-                val rowForDisplay = if (row.onClick != null) row.copy(onClick = null) else row
-                SetTableDataRow(row = rowForDisplay, textColor = contentColor)
-            }
-            is SetTableRowUiModel.Rest -> SetTableRestRow(row = row, textColor = contentColor)
-        }
-    }
+    SetPreviewItemCard(
+        item = SetPreviewItemUiModel(
+            rows = listOf(row),
+        ),
+        modifier = modifier,
+        enabled = enabled,
+    )
 }
 
 data class SetMetricUiModel(

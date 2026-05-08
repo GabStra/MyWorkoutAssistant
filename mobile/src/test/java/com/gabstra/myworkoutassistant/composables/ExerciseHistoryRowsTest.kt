@@ -7,6 +7,8 @@ import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import org.junit.Assert.assertEquals
@@ -307,6 +309,199 @@ class ExerciseHistoryRowsTest {
             rows
         )
     }
+
+    @Test
+    fun `buildExerciseTemplatePreviewItems returns single data item for bodyweight set without intra set rest`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = null)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                BodyWeightSet(
+                    id = setId,
+                    reps = 12,
+                    additionalWeight = 0.0,
+                    subCategory = SetSubCategory.WorkSet,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = "1",
+                            primaryValue = "BW",
+                            secondaryValue = "12",
+                        )
+                    ),
+                )
+            ),
+            previewItems
+        )
+    }
+
+    @Test
+    fun `buildExerciseTemplatePreviewItems returns single rest item for rest set`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = 5)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                RestSet(
+                    id = setId,
+                    timeInSeconds = 30,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(SetTableRowUiModel.Rest("REST 00:30")),
+                )
+            ),
+            previewItems
+        )
+    }
+
+    @Test
+    fun `buildExerciseTemplatePreviewItems groups unilateral work set with rest row`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = 5)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                WeightSet(
+                    id = setId,
+                    reps = 10,
+                    weight = 12.0,
+                    subCategory = SetSubCategory.WorkSet,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = "1-L",
+                            primaryValue = "12.0 kg",
+                            secondaryValue = "10",
+                        ),
+                        SetTableRowUiModel.Rest("REST 00:05"),
+                        SetTableRowUiModel.Data(
+                            identifier = "1-R",
+                            primaryValue = "12.0 kg",
+                            secondaryValue = "10",
+                        ),
+                    ),
+                    usesDashedContainer = true,
+                    isGroupedUnilateral = true,
+                )
+            ),
+            previewItems
+        )
+    }
+
+    @Test
+    fun `buildExerciseTemplatePreviewItems keeps unilateral warmup as one row`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = 5)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                WeightSet(
+                    id = setId,
+                    reps = 8,
+                    weight = 10.0,
+                    subCategory = SetSubCategory.WarmupSet,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = "W1",
+                            primaryValue = "10.0 kg",
+                            secondaryValue = "8",
+                        )
+                    ),
+                )
+            ),
+            previewItems
+        )
+    }
+
+    @Test
+    fun `buildExerciseTemplatePreviewItems keeps unilateral work set flat without intra set rest`() {
+        val setId = UUID.randomUUID()
+        val exercise = buildTemplateExercise(intraSetRestInSeconds = null)
+
+        val previewItems = buildExerciseTemplatePreviewItems(
+            sets = listOf(
+                WeightSet(
+                    id = setId,
+                    reps = 10,
+                    weight = 12.0,
+                    subCategory = SetSubCategory.WorkSet,
+                )
+            ),
+            exercise = exercise,
+            equipment = null,
+        )
+
+        assertEquals(
+            listOf(
+                SetPreviewItemUiModel(
+                    setId = setId,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = "1",
+                            primaryValue = "12.0 kg",
+                            secondaryValue = "10",
+                        )
+                    ),
+                )
+            ),
+            previewItems
+        )
+    }
+
+    private fun buildTemplateExercise(intraSetRestInSeconds: Int?) = Exercise(
+        id = UUID.randomUUID(),
+        enabled = true,
+        name = "Single Arm Press",
+        notes = "",
+        sets = emptyList(),
+        exerciseType = ExerciseType.WEIGHT,
+        minLoadPercent = 0.0,
+        maxLoadPercent = 0.0,
+        minReps = 0,
+        maxReps = 0,
+        lowerBoundMaxHRPercent = null,
+        upperBoundMaxHRPercent = null,
+        equipmentId = null,
+        bodyWeightPercentage = null,
+        intraSetRestInSeconds = intraSetRestInSeconds,
+    )
 
     private fun buildWeightSetHistory(
         id: UUID,

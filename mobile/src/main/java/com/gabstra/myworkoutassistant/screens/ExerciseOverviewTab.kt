@@ -38,10 +38,9 @@ import com.gabstra.myworkoutassistant.composables.EquipmentAccessoryMetadata
 import com.gabstra.myworkoutassistant.composables.GenericButtonWithMenu
 import com.gabstra.myworkoutassistant.composables.GenericSelectableList
 import com.gabstra.myworkoutassistant.composables.MenuItem
-import com.gabstra.myworkoutassistant.composables.SetPreviewTableRow
+import com.gabstra.myworkoutassistant.composables.SetPreviewItemCard
 import com.gabstra.myworkoutassistant.composables.SetTableHeaderRow
-import com.gabstra.myworkoutassistant.composables.StyledCard
-import com.gabstra.myworkoutassistant.composables.buildExerciseTemplateRows
+import com.gabstra.myworkoutassistant.composables.buildExerciseTemplatePreviewItems
 import com.gabstra.myworkoutassistant.composables.inferSetTableHeader
 import com.gabstra.myworkoutassistant.ensureRestSeparatedBySets
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -152,10 +151,13 @@ fun ExerciseOverviewTab(
             }
 
             val displaySets = if (!showRest) sets.filter { it !is RestSet } else sets
-            val tableRows = remember(displaySets, exercise.id, selectedEquipment?.id) {
-                buildExerciseTemplateRows(displaySets, exercise, selectedEquipment)
+            val previewItems = remember(displaySets, exercise.id, selectedEquipment?.id) {
+                buildExerciseTemplatePreviewItems(displaySets, exercise, selectedEquipment)
             }
-            val tableHeader = remember(tableRows) { inferSetTableHeader(tableRows) }
+            val previewItemBySetId = remember(previewItems) { previewItems.associateBy { it.setId } }
+            val tableHeader = remember(previewItems) {
+                inferSetTableHeader(previewItems.flatMap { it.rows })
+            }
             val headerColor = MaterialTheme.colorScheme.onSurfaceVariant
 
             if (displaySets.isNotEmpty()) {
@@ -207,9 +209,9 @@ fun ExerciseOverviewTab(
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            val rowIndex = displaySets.indexOfFirst { it.id == set.id }
-                            val rowModel = tableRows[rowIndex]
-                            StyledCard(
+                            val previewItem = previewItemBySetId[set.id] ?: return@Column
+                            SetPreviewItemCard(
+                                item = previewItem,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .combinedClickable(
@@ -217,12 +219,7 @@ fun ExerciseOverviewTab(
                                         onLongClick = onItemLongClick
                                     ),
                                 enabled = exercise.enabled,
-                            ) {
-                                SetPreviewTableRow(
-                                    row = rowModel,
-                                    enabled = exercise.enabled,
-                                )
-                            }
+                            )
                             if (showRest && !isSelectionModeActive && set !is RestSet) {
                                 val currentIndex = sets.indexOfFirst { it.id == set.id }
                                 val isNotLast = currentIndex >= 0 && currentIndex < sets.size - 1

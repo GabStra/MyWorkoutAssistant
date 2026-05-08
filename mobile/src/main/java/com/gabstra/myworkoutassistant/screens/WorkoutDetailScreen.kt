@@ -88,6 +88,7 @@ import com.gabstra.myworkoutassistant.composables.ExerciseTemplateRenderer
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
 import com.gabstra.myworkoutassistant.composables.MoveExercisesToWorkoutDialog
 import com.gabstra.myworkoutassistant.composables.SetRestRowCard
+import com.gabstra.myworkoutassistant.composables.StableHeaderIconButton
 import com.gabstra.myworkoutassistant.composables.StyledCard
 import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
@@ -327,6 +328,9 @@ fun WorkoutDetailScreen(
     var displayedWorkoutHistoryId by remember(workout.id) {
         mutableStateOf(initialWorkoutHistoryId)
     }
+    var historyActionsLoading by remember(workout.id, initialSelectedTabIndex) {
+        mutableStateOf(initialSelectedTabIndex in 1..2)
+    }
     var historyFilterRange by remember(workout.id) { mutableStateOf(FilterRange.ALL) }
 
     // Helper function to start workout directly (bypasses permission launcher when permissions disabled)
@@ -370,6 +374,12 @@ fun WorkoutDetailScreen(
     LaunchedEffect(initialWorkoutHistoryId) {
         if (displayedWorkoutHistoryId != initialWorkoutHistoryId) {
             displayedWorkoutHistoryId = initialWorkoutHistoryId
+        }
+    }
+
+    LaunchedEffect(selectedTopTab) {
+        if (selectedTopTab !in 1..2) {
+            historyActionsLoading = false
         }
     }
 
@@ -430,6 +440,7 @@ fun WorkoutDetailScreen(
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             uri ?: return@rememberLauncherForActivityResult
             scope.launch {
+                insightsState = WorkoutInsightsUiState.ImportingModel
                 runCatching {
                     withContext(Dispatchers.IO) {
                         LiteRtLmModelStore.importModel(context, uri)
@@ -464,7 +475,7 @@ fun WorkoutDetailScreen(
     }
 
     fun generateWorkoutInsights() {
-        if (!MobileLlmFeatureFlags.ENABLED) return
+        if (!MobileLlmFeatureFlags.isEnabled(context)) return
         val historyId = displayedWorkoutHistoryId
         if (historyId == null) {
             insightsState = WorkoutInsightsUiState.Error(
@@ -1121,6 +1132,9 @@ fun WorkoutDetailScreen(
 
 
     Box(modifier = Modifier.fillMaxSize()) {
+        val showHistoryActions = MobileLlmFeatureFlags.isEnabled(context) && selectedTopTab in 1..2
+        val hasSelectedHistorySession = displayedWorkoutHistoryId != null
+        val enableHistoryActions = showHistoryActions && !historyActionsLoading && hasSelectedHistorySession
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -1151,35 +1165,37 @@ fun WorkoutDetailScreen(
                         }
                     },
                     actions = {
-                        if (MobileLlmFeatureFlags.ENABLED && displayedWorkoutHistoryId != null && selectedTopTab in 1..2) {
-                            IconButton(
-                                onClick = {
-                                    displayedWorkoutHistoryId?.let { historyId ->
-                                        appViewModel.setScreenData(
-                                            ScreenData.HistoryChatWorkoutSession(
-                                                workoutId = workout.id,
-                                                workoutHistoryId = historyId,
-                                            )
+                        StableHeaderIconButton(
+                            visible = showHistoryActions,
+                            enabled = enableHistoryActions,
+                            onClick = {
+                                displayedWorkoutHistoryId?.let { historyId ->
+                                    appViewModel.setScreenData(
+                                        ScreenData.HistoryChatWorkoutSession(
+                                            workoutId = workout.id,
+                                            workoutHistoryId = historyId,
                                         )
-                                    }
+                                    )
                                 }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.QuestionAnswer,
-                                    contentDescription = "Chat with session history"
-                                )
                             }
-                            IconButton(
-                                onClick = {
-                                    showInsightsDialog = true
-                                    insightsState = WorkoutInsightsUiState.Idle
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AutoAwesome,
-                                    contentDescription = "Insights"
-                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QuestionAnswer,
+                                contentDescription = "Chat with session history"
+                            )
+                        }
+                        StableHeaderIconButton(
+                            visible = showHistoryActions,
+                            enabled = enableHistoryActions,
+                            onClick = {
+                                showInsightsDialog = true
+                                insightsState = WorkoutInsightsUiState.Idle
                             }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Insights"
+                            )
                         }
                         Menu(
                             onEditWorkout = {
@@ -1237,6 +1253,7 @@ fun WorkoutDetailScreen(
                     selectedTabIndex = selectedTopTab,
                     onTabSelected = { index ->
                         selectedTopTab = index
+                        historyActionsLoading = index in 1..2
                         val persistedHistoryId =
                             if (index in 1..2) displayedWorkoutHistoryId ?: initialWorkoutHistoryId
                             else initialWorkoutHistoryId
@@ -1304,6 +1321,7 @@ fun WorkoutDetailScreen(
                             onSelectedWorkoutHistoryIdChanged = { id ->
                                 if (pageIndex == selectedTopTab) {
                                     displayedWorkoutHistoryId = id
+                                    historyActionsLoading = false
                                 }
                             },
                         )
@@ -1369,10 +1387,10 @@ fun WorkoutDetailScreen(
                 show = showDeleteDialog,
                 title = IncompleteWorkoutStrings.DELETE_TITLE,
                 message = IncompleteWorkoutStrings.DELETE_MESSAGE,
-                confirmText = "Delete",
+                confirmText = IncompleteWorkoutStrings.DISCARD_BUTTON,
                 isDestructive = true,
                 onConfirm = {
-                    workoutViewModel.deleteWorkoutRecord()
+                    workoutViewModel.discardIncompleteWorkout()
                     showDeleteDialog = false
                 },
                 onDismiss = {
@@ -1570,7 +1588,7 @@ fun WorkoutDetailScreen(
                 }
             )
             LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving changes...")
-            if (MobileLlmFeatureFlags.ENABLED) {
+            if (MobileLlmFeatureFlags.isEnabled(context)) {
                 WorkoutInsightsDialog(
                     show = showInsightsDialog,
                     title = "Workout insights",

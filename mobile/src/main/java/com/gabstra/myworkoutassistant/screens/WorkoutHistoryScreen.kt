@@ -426,7 +426,7 @@ fun WorkoutHistoryScreen(
         formatTimeHourMinutes(value.toInt())
     }
 
-    var isLoading by remember { mutableStateOf(true) }
+    var loadedSelectedWorkoutHistoryId by remember { mutableStateOf<UUID?>(null) }
 
     val workouts by appViewModel.workoutsFlow.collectAsState()
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
@@ -456,17 +456,6 @@ fun WorkoutHistoryScreen(
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
     val durations = remember { mutableListOf<Pair<Int, Float>>() }
     val workoutDurations = remember { mutableListOf<Pair<Int, Float>>() }
-
-    suspend fun ensureMinimumLoadingDuration(
-        startedAtMillis: Long,
-        minimumDurationMillis: Long = 1_000L,
-    ) {
-        val elapsed = System.currentTimeMillis() - startedAtMillis
-        val remaining = minimumDurationMillis - elapsed
-        if (remaining > 0) {
-            delay(remaining)
-        }
-    }
 
     suspend fun setCharts(workoutHistories: List<WorkoutHistory>) {
         volumes.clear()
@@ -546,8 +535,7 @@ fun WorkoutHistoryScreen(
     }
 
     LaunchedEffect(workout, updateMessage) {
-        isLoading = true
-        hasLoadedWorkoutHistories = false
+        val wasLoaded = hasLoadedWorkoutHistories
         withContext(Dispatchers.IO) {
             val recordsByHistoryId = workoutRecordDao.getAll()
                 .associateBy { workoutRecord -> workoutRecord.workoutHistoryId }
@@ -586,21 +574,27 @@ fun WorkoutHistoryScreen(
 
             if (workoutHistories.isEmpty()) {
                 selectedWorkoutHistory = null
-                delay(500)
+                loadedSelectedWorkoutHistoryId = null
+                if (!wasLoaded) {
+                    delay(500)
+                }
                 hasLoadedWorkoutHistories = true
-                isLoading = false
                 return@withContext
             }
 
-            selectedWorkoutHistory =
-                workoutHistoryId?.let { id -> workoutHistories.find { it.id == id } }
+            val preferredHistoryId = workoutHistoryId ?: selectedWorkoutHistory?.id
+            val resolvedWorkoutHistory =
+                preferredHistoryId?.let { id -> workoutHistories.find { it.id == id } }
                     ?: workoutHistories.lastOrNull()
 
-            delay(500)
-            hasLoadedWorkoutHistories = true
-            if (selectedWorkoutHistory == null) {
-                isLoading = false
+            if (selectedWorkoutHistory != resolvedWorkoutHistory) {
+                selectedWorkoutHistory = resolvedWorkoutHistory
             }
+
+            if (!wasLoaded) {
+                delay(500)
+            }
+            hasLoadedWorkoutHistories = true
         }
     }
 
@@ -608,16 +602,18 @@ fun WorkoutHistoryScreen(
         if (!hasLoadedWorkoutHistories || workoutHistories.isEmpty()) return@LaunchedEffect
         val resolved = workoutHistoryId?.let { id -> workoutHistories.find { it.id == id } }
             ?: workoutHistories.lastOrNull()
-        if (selectedWorkoutHistory?.id != resolved?.id) {
+        if (selectedWorkoutHistory != resolved) {
             selectedWorkoutHistory = resolved
         }
     }
 
     LaunchedEffect(selectedWorkoutHistory) {
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
-        if (selectedWorkoutHistory == null) return@LaunchedEffect
-
-        isLoading = true
+        val workoutHistory = selectedWorkoutHistory ?: run {
+            loadedSelectedWorkoutHistoryId = null
+            return@LaunchedEffect
+        }
+        val selectedWorkoutHistoryId = workoutHistory.id
 
         zoneCounter = null
         heartRateEntryModel = null
@@ -625,16 +621,16 @@ fun WorkoutHistoryScreen(
 
         withContext(Dispatchers.IO) {
 
-            if (selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty() && selectedWorkoutHistory!!.heartBeatRecords.any { it != 0 }) {
+            if (workoutHistory.heartBeatRecords.isNotEmpty() && workoutHistory.heartBeatRecords.any { it != 0 }) {
                 val validHeartBeatRecords =
-                    selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }
+                    workoutHistory.heartBeatRecords.filter { it != 0 }
                 val minHeartBeat = validHeartBeatRecords.minOrNull()
                 heartRateMinY = minHeartBeat?.toDouble()
 
                 validHeartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
                     // Create a pair of the index of the max heartbeat and the value itself
                     heartBeatMarkerTarget = Pair(
-                        selectedWorkoutHistory!!.heartBeatRecords.indexOf(maxHeartBeat),
+                        workoutHistory.heartBeatRecords.indexOf(maxHeartBeat),
                         maxHeartBeat
                     )
                 }
@@ -651,7 +647,7 @@ fun WorkoutHistoryScreen(
                     zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
                 }
 
-                val heartRateSeries = selectedWorkoutHistory!!.heartBeatRecords.map {
+                val heartRateSeries = workoutHistory.heartBeatRecords.map {
                     if (it == 0 && minHeartBeat != null) {
                         minHeartBeat.toDouble()
                     } else {
@@ -667,8 +663,8 @@ fun WorkoutHistoryScreen(
             }
 
             val setHistories =
-                setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistory!!.id)
-            sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(selectedWorkoutHistory!!.id)
+                setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
+            sessionRestHistories = restHistoryDao.getByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
             val sectionMap = linkedMapOf<UUID, List<SetHistory>>()
             val consumedHistoryIds = mutableSetOf<UUID>()
 
@@ -696,7 +692,7 @@ fun WorkoutHistoryScreen(
             setHistoriesByExerciseId = sectionMap
 
             val avgHeartRate =
-                selectedWorkoutHistory!!.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0
+                workoutHistory.heartBeatRecords.averageValidHeartRateOrNull() ?: 0.0
 
             val currentYear = Calendar.getInstance().get(Calendar.YEAR)
             val age = currentYear - appViewModel.workoutStore.birthDateYear
@@ -708,7 +704,7 @@ fun WorkoutHistoryScreen(
                     if (pct != null && pct > 0) bw.relativeBodyWeightInKg / (pct / 100) else null
                 }
                 ?: appViewModel.workoutStore.weightKg
-            val durationMinutes = selectedWorkoutHistory!!.duration.toDouble() / 60
+            val durationMinutes = workoutHistory.duration.toDouble() / 60
             kiloCaloriesBurned = calculateKiloCaloriesBurned(
                 age = age,
                 weightKg = weightForKcal,
@@ -717,8 +713,7 @@ fun WorkoutHistoryScreen(
                 isMale = true
             )
 
-            delay(500)
-            isLoading = false
+            loadedSelectedWorkoutHistoryId = selectedWorkoutHistoryId
         }
     }
 
@@ -726,8 +721,6 @@ fun WorkoutHistoryScreen(
         if (!hasLoadedWorkoutHistories) {
             return@LaunchedEffect
         }
-        val loadingStartedAt = System.currentTimeMillis()
-        isLoading = true
         if (historiesToShow.isEmpty()) {
             volumeEntryModel = null
             durationEntryModel = null
@@ -735,13 +728,9 @@ fun WorkoutHistoryScreen(
             volumeMarkerTarget = null
             durationMarkerTarget = null
             workoutDurationMarkerTarget = null
-            ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
-            isLoading = false
             return@LaunchedEffect
         }
         setCharts(historiesToShow)
-        ensureMinimumLoadingDuration(loadingStartedAt, minimumDurationMillis = 450L)
-        isLoading = false
     }
 
     LaunchedEffect(
@@ -852,24 +841,22 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier.size(25.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (canGoBack) {
-                        IconButton(
-                            modifier = Modifier.size(25.dp),
-                            onClick = {
-                                val index =
-                                    selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                                if (index > 0) { // Check to avoid IndexOutOfBoundsException
-                                    isLoading = true
-                                    selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                                }
-                            },
-                            colors = navIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Previous"
-                            )
-                        }
+                    IconButton(
+                        modifier = Modifier.size(25.dp),
+                        onClick = {
+                            val index =
+                                selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                            if (index > 0) {
+                                selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+                            }
+                        },
+                        enabled = canGoBack,
+                        colors = navIconColors
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous"
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
@@ -903,24 +890,22 @@ fun WorkoutHistoryScreen(
                     modifier = Modifier.size(25.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (canGoForward) {
-                        IconButton(
-                            modifier = Modifier.size(25.dp),
-                            onClick = {
-                                val index =
-                                    selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                                if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                                    isLoading = true
-                                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                                }
-                            },
-                            colors = navIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "Next"
-                            )
-                        }
+                    IconButton(
+                        modifier = Modifier.size(25.dp),
+                        onClick = {
+                            val index =
+                                selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                            if (index < selectableWorkoutHistories.size - 1) {
+                                selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                            }
+                        },
+                        enabled = canGoForward,
+                        colors = navIconColors
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Next"
+                        )
                     }
                 }
             }
@@ -1458,6 +1443,11 @@ fun WorkoutHistoryScreen(
         }
     }
 
+    val isSelectedWorkoutHistoryLoading =
+        hasLoadedWorkoutHistories &&
+                selectedWorkoutHistory != null &&
+                loadedSelectedWorkoutHistoryId != selectedWorkoutHistory?.id
+
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Top,
@@ -1494,7 +1484,7 @@ fun WorkoutHistoryScreen(
                     )
                 }
             }
-            isLoading -> {
+            isSelectedWorkoutHistoryLoading -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

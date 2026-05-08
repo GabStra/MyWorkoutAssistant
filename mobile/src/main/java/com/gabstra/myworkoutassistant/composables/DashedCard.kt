@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 
 /**
  * A custom Modifier extension to draw a dashed border around a Composable.
@@ -74,6 +75,7 @@ fun Modifier.dashedBorder(
 @Composable
 fun DashedCard(
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     // Define dash properties in Dp
@@ -81,12 +83,23 @@ fun DashedCard(
     val dashOffInterval = 4.dp
     val borderWidth = 1.dp
 
+    val borderColor = if (enabled) {
+        MaterialTheme.colorScheme.outlineVariant
+    } else {
+        DisabledContentGray
+    }
+    val backgroundColor = if (enabled) {
+        MaterialTheme.colorScheme.background
+    } else {
+        MaterialTheme.colorScheme.background.copy(alpha = 0.6f)
+    }
+
     Box(
         modifier = modifier
-            .background(MaterialTheme.colorScheme.background)
+            .background(backgroundColor)
             .dashedBorder(
                 strokeWidth = borderWidth,
-                color = MaterialTheme.colorScheme.outlineVariant,
+                color = borderColor,
                 onInterval = dashOnInterval,
                 offInterval = dashOffInterval
                 // You can also specify a shape, e.g., RoundedCornerShape(8.dp)

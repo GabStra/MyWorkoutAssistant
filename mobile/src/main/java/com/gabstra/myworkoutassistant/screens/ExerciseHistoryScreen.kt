@@ -474,22 +474,21 @@ fun ExerciseHistoryScreen(
                     modifier = Modifier.size(25.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (canGoBack) {
-                        IconButton(
-                            modifier = Modifier.size(25.dp),
-                            onClick = {
-                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                                if (index > 0) {
-                                    selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
-                                }
-                            },
-                            colors = navIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Previous"
-                            )
-                        }
+                    IconButton(
+                        modifier = Modifier.size(25.dp),
+                        onClick = {
+                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                            if (index > 0) {
+                                selectedWorkoutHistory = selectableWorkoutHistories[index - 1]
+                            }
+                        },
+                        enabled = canGoBack,
+                        colors = navIconColors
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous"
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
@@ -507,22 +506,21 @@ fun ExerciseHistoryScreen(
                     modifier = Modifier.size(25.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (canGoForward) {
-                        IconButton(
-                            modifier = Modifier.size(25.dp),
-                            onClick = {
-                                val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
-                                if (index < selectableWorkoutHistories.size - 1) { // Check to avoid IndexOutOfBoundsException
-                                    selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
-                                }
-                            },
-                            colors = navIconColors
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "Next"
-                            )
-                        }
+                    IconButton(
+                        modifier = Modifier.size(25.dp),
+                        onClick = {
+                            val index = selectableWorkoutHistories.indexOf(selectedWorkoutHistory)
+                            if (index < selectableWorkoutHistories.size - 1) {
+                                selectedWorkoutHistory = selectableWorkoutHistories[index + 1]
+                            }
+                        },
+                        enabled = canGoForward,
+                        colors = navIconColors
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Next"
+                        )
                     }
                 }
             }

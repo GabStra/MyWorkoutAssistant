@@ -48,14 +48,30 @@ fun buildExerciseTemplateRows(
     sets: List<Set>,
     exercise: Exercise,
     equipment: WeightLoadedEquipment?,
-): List<SetTableRowUiModel> {
-    val rows = mutableListOf<SetTableRowUiModel>()
+): List<SetTableRowUiModel> =
+    buildExerciseTemplatePreviewItems(
+        sets = sets,
+        exercise = exercise,
+        equipment = equipment,
+    ).flatMap { it.rows }
+
+fun buildExerciseTemplatePreviewItems(
+    sets: List<Set>,
+    exercise: Exercise,
+    equipment: WeightLoadedEquipment?,
+): List<SetPreviewItemUiModel> {
+    val previewItems = mutableListOf<SetPreviewItemUiModel>()
     val identifierCounter = SetRowIdentifierCounter()
     sets.forEach { set ->
         when (set) {
             is RestSet -> {
-                rows += SetTableRowUiModel.Rest(
-                    text = "REST ${formatTime(set.timeInSeconds)}",
+                previewItems += SetPreviewItemUiModel(
+                    setId = set.id,
+                    rows = listOf(
+                        SetTableRowUiModel.Rest(
+                            text = "REST ${formatTime(set.timeInSeconds)}",
+                        )
+                    ),
                 )
             }
 
@@ -70,10 +86,9 @@ fun buildExerciseTemplateRows(
                 } else {
                     equipment?.formatWeight(set.weight) ?: "${set.weight} kg"
                 }
-                appendTemplateDataRows(
-                    rows = rows,
-                    exercise = exercise,
+                previewItems += buildTemplatePreviewItem(
                     set = set,
+                    exercise = exercise,
                     row = SetTableRowUiModel.Data(
                         identifier = identifierCounter.nextIdentifier(subCategory),
                         primaryValue = weightText,
@@ -94,10 +109,9 @@ fun buildExerciseTemplateRows(
                         ?: "${set.additionalWeight} kg"
                     else -> "BW"
                 }
-                appendTemplateDataRows(
-                    rows = rows,
-                    exercise = exercise,
+                previewItems += buildTemplatePreviewItem(
                     set = set,
+                    exercise = exercise,
                     row = SetTableRowUiModel.Data(
                         identifier = identifierCounter.nextIdentifier(subCategory),
                         primaryValue = weightText,
@@ -107,45 +121,62 @@ fun buildExerciseTemplateRows(
             }
 
             is TimedDurationSet -> {
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(null),
-                    primaryValue = formatTime(set.timeInMillis / 1000),
-                    secondaryValue = null,
+                previewItems += SetPreviewItemUiModel(
+                    setId = set.id,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = identifierCounter.nextIdentifier(null),
+                            primaryValue = formatTime(set.timeInMillis / 1000),
+                            secondaryValue = null,
+                        )
+                    ),
                 )
             }
 
             is EnduranceSet -> {
-                rows += SetTableRowUiModel.Data(
-                    identifier = identifierCounter.nextIdentifier(null),
-                    primaryValue = formatTime(set.timeInMillis / 1000),
-                    secondaryValue = null,
+                previewItems += SetPreviewItemUiModel(
+                    setId = set.id,
+                    rows = listOf(
+                        SetTableRowUiModel.Data(
+                            identifier = identifierCounter.nextIdentifier(null),
+                            primaryValue = formatTime(set.timeInMillis / 1000),
+                            secondaryValue = null,
+                        )
+                    ),
                 )
             }
         }
     }
-    return rows
+    return previewItems
 }
 
-private fun appendTemplateDataRows(
-    rows: MutableList<SetTableRowUiModel>,
-    exercise: Exercise,
+private fun buildTemplatePreviewItem(
     set: Set,
+    exercise: Exercise,
     row: SetTableRowUiModel.Data,
-) {
+): SetPreviewItemUiModel {
     if (!shouldDuplicateUnilateralTemplateRow(exercise, set)) {
-        rows += row
-        return
+        return SetPreviewItemUiModel(
+            setId = set.id,
+            rows = listOf(row),
+        )
     }
 
     val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: 0
     val leftBadge = buildUnilateralSideLabel(sideIndex = 1u, intraSetTotal = 2u).orEmpty()
     val rightBadge = buildUnilateralSideLabel(sideIndex = 2u, intraSetTotal = 2u).orEmpty()
-
-    rows += row.copy(identifier = row.identifier + leftBadge)
+    val groupedRows = mutableListOf<SetTableRowUiModel>()
+    groupedRows += row.copy(identifier = row.identifier + leftBadge)
     if (intraSetRestSeconds > 0) {
-        rows += SetTableRowUiModel.Rest("REST ${formatTime(intraSetRestSeconds)}")
+        groupedRows += SetTableRowUiModel.Rest("REST ${formatTime(intraSetRestSeconds)}")
     }
-    rows += row.copy(identifier = row.identifier + rightBadge)
+    groupedRows += row.copy(identifier = row.identifier + rightBadge)
+    return SetPreviewItemUiModel(
+        setId = set.id,
+        rows = groupedRows,
+        usesDashedContainer = true,
+        isGroupedUnilateral = true,
+    )
 }
 
 internal fun buildExerciseHistoryRows(
