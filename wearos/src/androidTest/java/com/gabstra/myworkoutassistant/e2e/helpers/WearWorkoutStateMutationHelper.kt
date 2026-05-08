@@ -101,7 +101,12 @@ object WearWorkoutStateMutationHelper {
         return updated
     }
 
-    fun completeCurrentSet(device: UiDevice, context: Context, timeoutMs: Long = 15_000): Boolean {
+    fun completeCurrentSet(
+        device: UiDevice,
+        context: Context,
+        timeoutMs: Long = 15_000,
+        forceNotSend: Boolean = false
+    ): Boolean {
         val currentSetId = getCurrentSetId() ?: return false
         var invoked = false
 
@@ -112,7 +117,7 @@ object WearWorkoutStateMutationHelper {
             viewModel.pushAndStoreWorkoutData(
                 isDone = isDone,
                 context = context.applicationContext,
-                forceNotSend = false
+                forceNotSend = forceNotSend
             ) {
                 viewModel.goToNextState()
             }
@@ -189,7 +194,11 @@ object WearWorkoutStateMutationHelper {
         return false
     }
 
-    fun skipCurrentRest(device: UiDevice, timeoutMs: Long = 5_000): Boolean {
+    fun skipCurrentRest(
+        device: UiDevice,
+        timeoutMs: Long = 5_000,
+        forceNotSend: Boolean = false
+    ): Boolean {
         val currentRestId = when (val snapshot = readCurrentStateSnapshot()) {
             is CurrentStateSnapshot.RestState -> snapshot.setId
             else -> return false
@@ -204,7 +213,7 @@ object WearWorkoutStateMutationHelper {
             viewModel.pushAndStoreWorkoutData(
                 isDone = isDone,
                 context = appContext,
-                forceNotSend = false
+                forceNotSend = forceNotSend
             ) {
                 viewModel.goToNextState()
             }
@@ -244,6 +253,15 @@ object WearWorkoutStateMutationHelper {
         return when (val snapshot = readCurrentStateSnapshot()) {
             is CurrentStateSnapshot.SetState -> snapshot.setId
             is CurrentStateSnapshot.RestState,
+            CurrentStateSnapshot.Advanced,
+            CurrentStateSnapshot.Unavailable -> null
+        }
+    }
+
+    fun getCurrentExerciseId(): UUID? {
+        return when (val snapshot = readCurrentStateSnapshot()) {
+            is CurrentStateSnapshot.SetState -> snapshot.exerciseId
+            is CurrentStateSnapshot.RestState -> snapshot.exerciseId
             CurrentStateSnapshot.Advanced,
             CurrentStateSnapshot.Unavailable -> null
         }
@@ -356,9 +374,11 @@ object WearWorkoutStateMutationHelper {
     private fun withResumedViewModel(block: (AppViewModel) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {
-            val activity = ActivityLifecycleMonitorRegistry.getInstance()
-                .getActivitiesInStage(Stage.RESUMED)
-                .firstOrNull() as? ComponentActivity
+            val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+            val activity = (
+                monitor.getActivitiesInStage(Stage.RESUMED).firstOrNull()
+                    ?: monitor.getActivitiesInStage(Stage.STARTED).firstOrNull()
+                ) as? ComponentActivity
                 ?: return@runOnMainSync
             val viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
             block(viewModel)
@@ -369,17 +389,32 @@ object WearWorkoutStateMutationHelper {
         var snapshot: CurrentStateSnapshot = CurrentStateSnapshot.Unavailable
         withResumedViewModel { viewModel ->
             snapshot = when (val currentState = viewModel.workoutState.value) {
-                is WorkoutState.Set -> CurrentStateSnapshot.SetState(currentState.set.id)
-                is WorkoutState.Rest -> CurrentStateSnapshot.RestState(currentState.set.id)
+                is WorkoutState.Set -> CurrentStateSnapshot.SetState(
+                    setId = currentState.set.id,
+                    exerciseId = currentState.exerciseId
+                )
+                is WorkoutState.Rest -> CurrentStateSnapshot.RestState(
+                    setId = currentState.set.id,
+                    exerciseId = currentState.exerciseId ?: extractExerciseIdFromNextState(currentState.nextState)
+                )
                 else -> CurrentStateSnapshot.Advanced
             }
         }
         return snapshot
     }
 
+    private fun extractExerciseIdFromNextState(nextState: WorkoutState?): UUID? =
+        when (nextState) {
+            is WorkoutState.Set -> nextState.exerciseId
+            is WorkoutState.CalibrationLoadSelection -> nextState.exerciseId
+            is WorkoutState.CalibrationRIRSelection -> nextState.exerciseId
+            is WorkoutState.AutoRegulationRIRSelection -> nextState.exerciseId
+            else -> null
+        }
+
     private sealed interface CurrentStateSnapshot {
-        data class SetState(val setId: UUID) : CurrentStateSnapshot
-        data class RestState(val setId: UUID) : CurrentStateSnapshot
+        data class SetState(val setId: UUID, val exerciseId: UUID) : CurrentStateSnapshot
+        data class RestState(val setId: UUID, val exerciseId: UUID?) : CurrentStateSnapshot
         data object Advanced : CurrentStateSnapshot
         data object Unavailable : CurrentStateSnapshot
     }

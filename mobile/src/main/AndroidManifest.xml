@@ -40,6 +40,9 @@
                 <data android:pathPrefix="/workoutHistory/discard"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>
+                <data android:pathPrefix="/workoutSession/heartbeat"/>
+                <data android:scheme="wear"/>
+                <data android:host="*"/>
                 <data android:pathPrefix="/openPagePath"/>
                 <data android:scheme="wear"/>
                 <data android:host="*"/>

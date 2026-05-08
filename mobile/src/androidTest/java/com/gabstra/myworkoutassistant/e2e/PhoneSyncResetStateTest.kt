@@ -3,6 +3,7 @@ package com.gabstra.myworkoutassistant.e2e
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.WorkManager
+import com.gabstra.myworkoutassistant.e2e.helpers.WorkoutHeartbeatCrossDeviceObservationState
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.sync.MobileSyncToWatchWorker
 import kotlinx.coroutines.runBlocking
@@ -25,6 +26,7 @@ class PhoneSyncResetStateTest {
             db.exerciseSessionProgressionDao().deleteAll()
 
             WorkManager.getInstance(context).cancelUniqueWork(MobileSyncToWatchWorker.UNIQUE_WORK_NAME)
+            WorkoutHeartbeatCrossDeviceObservationState.clear(context)
         }
     }
 }

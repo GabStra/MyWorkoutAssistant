@@ -9,7 +9,8 @@ object WearWorkoutCompletionHelper {
         device: UiDevice,
         context: Context,
         maxSteps: Int,
-        completionErrorMessage: String
+        completionErrorMessage: String,
+        forceNotSend: Boolean = false
     ) {
         repeat(maxSteps) {
             if (WearWorkoutStateMutationHelper.isWorkoutCompleted()) return
@@ -18,7 +19,8 @@ object WearWorkoutCompletionHelper {
                 WearWorkoutStateMutationHelper.completeCurrentSet(
                     device = device,
                     context = context,
-                    timeoutMs = 20_000
+                    timeoutMs = 20_000,
+                    forceNotSend = forceNotSend
                 )
             ) {
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
@@ -28,7 +30,8 @@ object WearWorkoutCompletionHelper {
             if (
                 WearWorkoutStateMutationHelper.skipCurrentRest(
                     device = device,
-                    timeoutMs = 15_000
+                    timeoutMs = 15_000,
+                    forceNotSend = forceNotSend
                 )
             ) {
                 device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
