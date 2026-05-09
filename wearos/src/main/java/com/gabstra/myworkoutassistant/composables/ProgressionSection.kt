@@ -41,16 +41,21 @@ import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.verticalColumnScrollbar
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.ProgressionLifecycleComparisonConfig
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsForProgressionLifecycle
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -82,6 +87,65 @@ private fun SetHistory.toSimpleSetOrNull(): SimpleSet? {
         is BodyWeightSetData -> SimpleSet(setData.getWeight(), setData.actualReps)
         else -> null
     }
+}
+
+private fun compareProgressionAwareSetLists(
+    current: List<SimpleSet>,
+    baseline: List<SimpleSet>,
+    exercise: Exercise,
+    viewModel: AppViewModel,
+    progressionState: ProgressionState?,
+): Ternary {
+    val config = progressionLifecycleComparisonConfig(
+        exercise = exercise,
+        viewModel = viewModel,
+        progressionState = progressionState,
+    ) ?: return compareSetListsUnordered(current, baseline)
+
+    return compareSetListsForProgressionLifecycle(
+        current = current,
+        baseline = baseline,
+        config = config,
+    )
+}
+
+private fun progressionLifecycleComparisonConfig(
+    exercise: Exercise,
+    viewModel: AppViewModel,
+    progressionState: ProgressionState?,
+): ProgressionLifecycleComparisonConfig? {
+    if (progressionState == ProgressionState.RETRY || progressionState == ProgressionState.DELOAD) return null
+    if (exercise.progressionMode == ProgressionMode.OFF) return null
+
+    val availableWeights = when (exercise.exerciseType) {
+        ExerciseType.WEIGHT -> {
+            exercise.equipmentId
+                ?.let { viewModel.getEquipmentById(it) }
+                ?.let { viewModel.getWeightByEquipment(it) }
+                .orEmpty()
+        }
+        ExerciseType.BODY_WEIGHT -> {
+            val relativeBodyWeight = viewModel.bodyWeight.value * ((exercise.bodyWeightPercentage ?: 0.0) / 100)
+            val addedWeights = exercise.equipmentId
+                ?.let { viewModel.getEquipmentById(it) }
+                ?.let { viewModel.getWeightByEquipment(it) }
+                .orEmpty()
+            addedWeights.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
+        }
+        else -> emptySet()
+    }
+
+    if (availableWeights.isEmpty()) return null
+
+    return ProgressionLifecycleComparisonConfig(
+        repsRange = IntRange(exercise.minReps, exercise.maxReps),
+        availableWeights = availableWeights,
+        jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
+            defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
+            maxPct = exercise.loadJumpMaxPct ?: 0.5,
+            overcapUntil = exercise.loadJumpOvercapUntil ?: 2,
+        ),
+    )
 }
 
 @Composable
@@ -178,9 +242,21 @@ fun ProgressionSection(
 
                 val lastSessionSets = viewModel.getProgressionComparisonBaselineSets(exerciseId)
 
-                val vsExpected = compareSetListsUnordered(executedSets, expectedSets)
+                val vsExpected = compareProgressionAwareSetLists(
+                    current = executedSets,
+                    baseline = expectedSets,
+                    exercise = exercise,
+                    viewModel = viewModel,
+                    progressionState = progressionState
+                )
                 val vsLast = if (lastSessionSets != null) {
-                    compareSetListsUnordered(executedSets, lastSessionSets)
+                    compareProgressionAwareSetLists(
+                        current = executedSets,
+                        baseline = lastSessionSets,
+                        exercise = exercise,
+                        viewModel = viewModel,
+                        progressionState = progressionState
+                    )
                 } else {
                     Ternary.EQUAL
                 }

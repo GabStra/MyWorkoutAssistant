@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -113,6 +114,17 @@ fun BodyWeightSetScreen(
     }
 
     val equipment = state.equipmentId?.let { viewModel.getEquipmentById(it) }
+    val plannedNextSet = remember(state.exerciseId, state.set.id, viewModel.exerciseProgressionByExerciseId) {
+        val workSetIndex = exercise.sets
+            .filterIsInstance<BodyWeightSet>()
+            .filter { it.subCategory == SetSubCategory.WorkSet }
+            .indexOfFirst { it.id == state.set.id }
+        viewModel.exerciseProgressionByExerciseId[state.exerciseId]
+            ?.first
+            ?.sets
+            ?.getOrNull(workSetIndex)
+            ?.let { SimpleSet(it.weight, it.reps) }
+    }
     val shouldShowHistoricalDeltaBadge = remember(state.set.id) {
         val setSubCategory = (state.set as? BodyWeightSet)?.subCategory
         setSubCategory == SetSubCategory.WorkSet || setSubCategory == SetSubCategory.WarmupSet
@@ -131,6 +143,7 @@ fun BodyWeightSetScreen(
                     beforeSetData = historicalSetData,
                     afterSetData = currentSetData,
                     equipment = equipment,
+                    plannedNextSet = plannedNextSet,
                 )
             }
         }

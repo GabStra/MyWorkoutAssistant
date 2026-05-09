@@ -8,6 +8,9 @@ import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetData
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
+import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsForProgressionLifecycle
 
 enum class SetComparison {
     BETTER, EQUAL, WORSE, MIXED
@@ -63,8 +66,15 @@ private fun compareRepsAndWeight(
     beforeWeight: Double,
     afterReps: Int,
     afterWeight: Double,
+    plannedNextSet: SimpleSet? = null,
 ): SetComparison = when {
     afterReps == beforeReps && afterWeight == beforeWeight -> SetComparison.EQUAL
+    plannedNextSet != null &&
+        compareSetListsForProgressionLifecycle(
+            current = listOf(SimpleSet(afterWeight, afterReps)),
+            baseline = listOf(SimpleSet(beforeWeight, beforeReps)),
+            plannedNextSets = listOf(plannedNextSet),
+        ) == Ternary.ABOVE -> SetComparison.BETTER
     (afterWeight > beforeWeight && afterReps < beforeReps) ||
         (afterWeight < beforeWeight && afterReps > beforeReps) -> SetComparison.MIXED
     (afterWeight == beforeWeight && afterReps > beforeReps) ||
@@ -79,7 +89,11 @@ private fun compareDurationMs(beforeDurationMs: Int, afterDurationMs: Int): SetC
     else -> SetComparison.WORSE
 }
 
-fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison {
+fun compareSets(
+    beforeSetData: SetData?,
+    afterSetData: SetData?,
+    plannedNextSet: SimpleSet? = null,
+): SetComparison {
     if (beforeSetData == null || afterSetData == null) {
         return SetComparison.EQUAL
     }
@@ -91,6 +105,7 @@ fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison 
                 beforeSetData.actualWeight,
                 afterSetData.actualReps,
                 afterSetData.actualWeight,
+                plannedNextSet,
             )
         beforeSetData is BodyWeightSetData && afterSetData is BodyWeightSetData ->
             compareRepsAndWeight(
@@ -98,6 +113,7 @@ fun compareSets(beforeSetData: SetData?, afterSetData: SetData?): SetComparison 
                 beforeSetData.getWeight(),
                 afterSetData.actualReps,
                 afterSetData.getWeight(),
+                plannedNextSet,
             )
         beforeSetData is EnduranceSetData && afterSetData is EnduranceSetData ->
             compareDurationMs(
@@ -132,12 +148,13 @@ fun calculateSetDifference(
     beforeSetData: SetData?,
     afterSetData: SetData?,
     equipment: Equipment?,
+    plannedNextSet: SimpleSet? = null,
 ): SetDifference {
     if (beforeSetData == null || afterSetData == null) {
         return SetDifference()
     }
 
-    val comparison = compareSets(beforeSetData, afterSetData)
+    val comparison = compareSets(beforeSetData, afterSetData, plannedNextSet)
 
     return when {
         beforeSetData is WeightSetData && afterSetData is WeightSetData ->

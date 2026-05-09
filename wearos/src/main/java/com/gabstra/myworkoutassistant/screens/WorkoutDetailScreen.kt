@@ -306,7 +306,7 @@ fun WorkoutDetailScreen(
         message = IncompleteWorkoutStrings.DELETE_MESSAGE,
         handleYesClick = {
             hapticsViewModel.doGentleVibration()
-            viewModel.deleteWorkoutRecord()
+            viewModel.discardCurrentIncompleteWorkout()
             showDeleteDialog = false
         },
         handleNoClick = {

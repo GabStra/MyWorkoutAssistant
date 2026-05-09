@@ -50,6 +50,7 @@ import com.gabstra.myworkoutassistant.shared.sets.EnduranceSet
 import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.viewmodels.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
@@ -307,14 +308,27 @@ fun PageProgressionComparison(
             }
         }
 
-        val setDifference by remember(beforeSetData, afterSetData, afterSetState?.equipmentId, beforeSetState?.equipmentId) {
+        val plannedNextSet = progressionData
+            ?.first
+            ?.sets
+            ?.getOrNull(currentSetIndex)
+            ?.let { SimpleSet(it.weight, it.reps) }
+
+        val setDifference by remember(
+            beforeSetData,
+            afterSetData,
+            afterSetState?.equipmentId,
+            beforeSetState?.equipmentId,
+            plannedNextSet,
+        ) {
             derivedStateOf {
                 val afterEquipment = afterSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
                 val beforeEquipment = beforeSetState?.equipmentId?.let { viewModel.getEquipmentById(it) }
                 calculateSetDifference(
                     beforeSetData,
                     afterSetData,
-                    afterEquipment ?: beforeEquipment
+                    afterEquipment ?: beforeEquipment,
+                    plannedNextSet = plannedNextSet,
                 )
             }
         }
