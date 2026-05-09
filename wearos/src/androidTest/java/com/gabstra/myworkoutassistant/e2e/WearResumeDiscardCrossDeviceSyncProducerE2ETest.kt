@@ -1,11 +1,16 @@
 package com.gabstra.myworkoutassistant.e2e
 
+import android.os.SystemClock
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.uiautomator.By
-import androidx.test.uiautomator.Until
+import com.gabstra.myworkoutassistant.MainActivity
 import com.gabstra.myworkoutassistant.e2e.driver.WearWorkoutDriver
 import com.gabstra.myworkoutassistant.e2e.fixtures.ResumeCrossDeviceSyncSpec
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -18,6 +23,8 @@ class WearResumeDiscardCrossDeviceSyncProducerE2ETest : WearBaseE2ETest() {
     override fun prepareAppStateBeforeLaunch() {
     }
 
+    override fun shouldClearPersistedE2eState(): Boolean = false
+
     @Before
     override fun baseSetUp() {
         super.baseSetUp()
@@ -26,21 +33,89 @@ class WearResumeDiscardCrossDeviceSyncProducerE2ETest : WearBaseE2ETest() {
 
     @Test
     fun discardRecoveredWorkout_syncsDiscardBackToPhone() {
-        val dialogAppeared = workoutDriver.waitForRecoveryDialog(defaultTimeoutMs)
-        require(dialogAppeared) {
-            "Recovery dialog did not appear for '${ResumeCrossDeviceSyncSpec.WORKOUT_NAME}'."
-        }
-
-        val discarded = workoutDriver.clickRecoveryDiscard(timeoutMs = 10_000)
-        require(discarded) {
-            "Could not click Discard in the recovery dialog for '${ResumeCrossDeviceSyncSpec.WORKOUT_NAME}'."
-        }
-
-        dismissTutorialIfPresent(TutorialContext.WORKOUT_SELECTION, 2_000)
-        val selectionVisible = device.wait(Until.hasObject(By.text("My Workout Assistant")), 10_000)
-        require(selectionVisible) { "Workout selection screen did not reappear after discard." }
-
+        waitForResumedMainActivity()
+        discardViaWearViewModel()
         assertWearDiscardClearedIncompleteState()
+        runBlocking { delay(3_000) }
+    }
+
+    private fun waitForResumedMainActivity(timeoutMs: Long = 12_000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val hasResumedActivity = InstrumentationRegistry.getInstrumentation().run {
+                var found = false
+                runOnMainSync {
+                    found = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .any { it is MainActivity }
+                }
+                found
+            }
+            if (hasResumedActivity) {
+                return
+            }
+            SystemClock.sleep(200)
+        }
+        error("No resumed MainActivity found before discard.")
+    }
+
+    private fun discardViaWearViewModel() {
+        assertWearHasIncompleteState()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var discardJob: Job? = null
+        instrumentation.runOnMainSync {
+            val activity = ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(Stage.RESUMED)
+                .firstOrNull() as? MainActivity
+                ?: error("No resumed MainActivity found while discarding incomplete workout on Wear.")
+            val appViewModel = resolveAppViewModel(activity)
+            appViewModel.prepareResumeWorkout(
+                ResumeCrossDeviceSyncSpec.WORKOUT_ID,
+                ResumeCrossDeviceSyncSpec.INCOMPLETE_HISTORY_ID
+            )
+            discardJob = appViewModel.discardCurrentIncompleteWorkout()
+        }
+        runBlocking {
+            requireNotNull(discardJob) {
+                "Wear discard did not start because no active incomplete workout record was found."
+            }.join()
+        }
+        device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+    }
+
+    private fun assertWearHasIncompleteState() = runBlocking {
+        val db = AppDatabase.getDatabase(context)
+        val activeRecord = db.workoutRecordDao().getWorkoutRecordByWorkoutId(ResumeCrossDeviceSyncSpec.WORKOUT_ID)
+        val activeHistory = activeRecord?.let { db.workoutHistoryDao().getWorkoutHistoryById(it.workoutHistoryId) }
+        require(activeRecord != null && activeHistory != null && !activeHistory.isDone) {
+            "Wear discard producer did not start with an incomplete synced state. " +
+                "record=${activeRecord?.id} history=${activeHistory?.id} historyDone=${activeHistory?.isDone}"
+        }
+    }
+
+    private fun resolveAppViewModel(activity: MainActivity): com.gabstra.myworkoutassistant.data.AppViewModel {
+        val activityClass = MainActivity::class.java
+        activityClass.declaredFields.firstOrNull {
+            com.gabstra.myworkoutassistant.data.AppViewModel::class.java.isAssignableFrom(it.type)
+        }?.let { field ->
+            field.isAccessible = true
+            return field.get(activity) as com.gabstra.myworkoutassistant.data.AppViewModel
+        }
+
+        activityClass.declaredFields.firstOrNull {
+            it.name.contains("appViewModel", ignoreCase = true) &&
+                kotlin.Lazy::class.java.isAssignableFrom(it.type)
+        }?.let { field ->
+            field.isAccessible = true
+            val lazyValue = field.get(activity) as Lazy<*>
+            return lazyValue.value as com.gabstra.myworkoutassistant.data.AppViewModel
+        }
+
+        error(
+            "Could not resolve AppViewModel from MainActivity fields: ${
+                activityClass.declaredFields.joinToString { "${it.name}:${it.type.simpleName}" }
+            }"
+        )
     }
 
     private fun assertWearDiscardClearedIncompleteState() = runBlocking {

@@ -1,5 +1,6 @@
 Param(
     [string]$WearTestClass = "WearResumeDiscardCrossDeviceSyncProducerE2ETest",
+    [string]$WearPhoneToWatchHistoryTestClass = "ResumePhoneToWearWorkoutHistorySyncVerificationE2ETest",
     [string]$MobilePrepTestClass = "com.gabstra.myworkoutassistant.e2e.ResumePhoneSyncPreparationTest",
     [string]$MobileTestClass = "com.gabstra.myworkoutassistant.e2e.ResumeWorkoutDiscardSyncVerificationTest",
     [string]$ExpectedWorkoutName = "A - Squat/Bench",
@@ -459,16 +460,24 @@ try {
     $skipAssemble = $false
     $skipInstall = $false
 
-    Write-Host "Running Wear discard producer E2E test..." -ForegroundColor Cyan
+    Write-Host "Running Wear verification for phone->watch resume sync..." -ForegroundColor Cyan
     $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    Invoke-WearRunnerClass -className $WearTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_resume_discard_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+    Invoke-WearRunnerClass -className $WearPhoneToWatchHistoryTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_phone_to_watch_resume_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
     $phase.Stop()
-    $wearClassTimings["discardProducerSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
+    $wearClassTimings["phoneToWatchResumeSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
 
     if ($SkipWearRebuildAfterFirstRun) {
         $skipAssemble = $true
         $skipInstall = $true
     }
+
+    Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
+
+    Write-Host "Running Wear discard producer E2E test..." -ForegroundColor Cyan
+    $phase = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-WearRunnerClass -className $WearTestClass -watchSerial $watchSerial -timingPath (Join-Path $logsDir "wear_resume_discard_$timestamp.json") -skipAssemble:$skipAssemble -skipInstall:$skipInstall -fastProfile:$FastTimeoutProfile
+    $phase.Stop()
+    $wearClassTimings["discardProducerSeconds"] = [math]::Round($phase.Elapsed.TotalSeconds, 3)
 
     Assert-CrossDevicePackageParity -watchSerial $watchSerial -phoneSerial $phoneSerial -packageName $AppPackage
 

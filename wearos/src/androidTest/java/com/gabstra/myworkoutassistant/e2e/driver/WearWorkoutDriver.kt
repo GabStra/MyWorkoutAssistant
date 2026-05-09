@@ -378,6 +378,72 @@ class WearWorkoutDriver(
         error("Neither 'Start' nor 'Resume' is visible for workout '$workoutName'")
     }
 
+    fun discardIncompleteWorkoutFromDetail(
+        workoutName: String,
+        timeoutMs: Long
+    ): Boolean {
+        val openWorkoutDesc = "Open workout: $workoutName"
+        val detailDesc = "Workout detail: $workoutName"
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            val openWorkout = device.wait(Until.findObject(By.desc(openWorkoutDesc)), 1_000)
+                ?: device.wait(Until.findObject(By.text(workoutName)), 1_000)
+            if (openWorkout == null) {
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+                continue
+            }
+
+            clickObjectOrAncestorInternal(openWorkout)
+            device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+            val detailVisible =
+                device.wait(Until.hasObject(By.desc(detailDesc)), 3_000) ||
+                    device.wait(Until.hasObject(By.text(workoutName)), 2_000)
+            if (!detailVisible) {
+                continue
+            }
+
+            val primaryAction = findWorkoutDetailPrimaryAction(timeoutMs = 5_000)
+            if (primaryAction?.first != "resume") {
+                device.pressBack()
+                device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                continue
+            }
+
+            val discardButton = scrollUntilFound(
+                selector = By.desc("Discard incomplete workout"),
+                direction = Direction.DOWN,
+                initialWaitMs = 400
+            )
+                ?: scrollUntilFound(
+                    selector = By.desc("Discard incomplete workout"),
+                    direction = Direction.UP,
+                    initialWaitMs = 200
+                )
+                ?: device.wait(Until.findObject(By.desc("Discard incomplete workout")), 1_000)
+                ?: device.wait(Until.findObject(By.text("Discard")), 1_000)
+
+            if (discardButton != null) {
+                clickObjectOrAncestorInternal(discardButton)
+                device.waitForIdle(E2ETestTimings.SHORT_IDLE_MS)
+
+                val doneVisible = device.wait(Until.hasObject(By.desc("Done")), 3_000) ||
+                    device.wait(Until.hasObject(By.text("Done")), 1_000)
+                if (doneVisible) {
+                    longPressByDesc("Done", 5_000)
+                    device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+                    return true
+                }
+            }
+
+            device.pressBack()
+            device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
+        }
+
+        return false
+    }
+
     fun killAppProcess(packageName: String, settleMs: Long = 1_000) {
         killAppProcessTimed(packageName = packageName, settleMs = settleMs)
     }

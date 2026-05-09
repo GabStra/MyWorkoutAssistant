@@ -52,7 +52,9 @@ abstract class WearBaseE2ETest {
             android.Manifest.permission.BLUETOOTH_CONNECT
         )
 
-        clearPersistedE2eState()
+        if (shouldClearPersistedE2eState()) {
+            clearPersistedE2eState()
+        }
         markTutorialsAsSeenForE2E()
         configureE2eRuntimePreferences()
         prepareAppStateBeforeLaunch()
@@ -110,6 +112,8 @@ abstract class WearBaseE2ETest {
     protected open fun prepareAppStateBeforeLaunch() {
         seedWorkoutStore()
     }
+
+    protected open fun shouldClearPersistedE2eState(): Boolean = true
 
     protected open fun shouldDisableStartupUnsyncedHistorySync(): Boolean = true
 
