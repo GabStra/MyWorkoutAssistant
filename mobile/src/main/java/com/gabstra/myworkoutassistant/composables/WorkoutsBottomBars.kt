@@ -564,17 +564,10 @@ fun AccessoriesBottomBar(
                     onDismissRequest = { showDeleteConfirmation = false },
                     title = accessoryToDelete?.let { "Delete Accessory \"${it.name}\"?" } ?: "Delete Accessory",
                     body = {
-                        val scrollState = rememberScrollState()
-                        Box(
-                            modifier = Modifier
-                                .heightIn(max = 320.dp)
-                                .verticalScroll(scrollState)
-                        ) {
-                            Text(
-                                text = deleteMessage,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
+                        Text(
+                            text = deleteMessage,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     },
                     confirmText = "Delete",
                     onConfirm = {
@@ -772,17 +765,10 @@ fun EquipmentsBottomBar(
                     onDismissRequest = { showDeleteConfirmation = false },
                     title = equipmentToDelete?.let { "Delete Equipment \"${it.name}\"?" } ?: "Delete Equipment",
                     body = {
-                        val scrollState = rememberScrollState()
-                        Box(
-                            modifier = Modifier
-                                .heightIn(max = 320.dp)
-                                .verticalScroll(scrollState)
-                        ) {
-                            Text(
-                                text = deleteMessage,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
+                        Text(
+                            text = deleteMessage,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     },
                     confirmText = "Delete",
                     onConfirm = {

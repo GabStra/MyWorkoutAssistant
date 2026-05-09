@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
@@ -75,16 +73,13 @@ fun WeightPickerDialog(
                         )
                     }
                 } else {
-                    LazyColumn(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 360.dp),
+                            .padding(top = Spacing.xs),
                         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                     ) {
-                        items(
-                            items = combinations,
-                            key = { (weight, label) -> weight.hashCode() xor label.hashCode() }
-                        ) { (weight, label) ->
+                        combinations.forEach { (weight, label) ->
                             val isSelected = selectedWeight != null && selectedWeight == weight
                             val weightText = String.format(Locale.US, "%.2f kg", weight)
                             val showsDistinctWeightText = label.trim() != weightText

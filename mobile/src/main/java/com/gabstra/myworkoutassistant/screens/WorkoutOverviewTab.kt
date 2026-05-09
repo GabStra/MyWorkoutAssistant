@@ -1,6 +1,7 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -320,7 +322,10 @@ fun WorkoutOverviewTab(
                         MenuItem("Add Exercise") {
                             appViewModel.setScreenData(ScreenData.NewExercise(workout.id))
                         },
-                        MenuItem("Add rests between exercises") {
+                        MenuItem(
+                            label = "Rest between all exercises",
+                            description = "One duration; replaces existing."
+                        ) {
                             appViewModel.setScreenData(ScreenData.NewRest(workout.id, null))
                         },
                         MenuItem("Add Superset") {
@@ -384,25 +389,60 @@ private fun WorkoutSessionActionCard(
     PrimarySurface(
         modifier = Modifier.fillMaxWidth()
     ) {
-        when {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+        ) {
+            when {
             isCheckingWorkoutRecord -> {
+                // Match the "Ready to work out" card footprint so the list below does not jump
+                // when session data finishes loading; taller resume layouts animate smoothly.
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Text(
-                        text = IncompleteWorkoutStrings.CHECKING_SESSION,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Text(
+                                text = IncompleteWorkoutStrings.CHECKING_SESSION_PROGRESS,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = IncompleteWorkoutStrings.CHECKING_SESSION,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
                 }
             }
 
@@ -513,6 +553,7 @@ private fun WorkoutSessionActionCard(
                         onClick = onRequestStartWorkout
                     )
                 }
+            }
             }
         }
     }

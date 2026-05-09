@@ -44,8 +44,6 @@ object AutoRegulationSetBadgePhoneWorkoutStoreFixture {
                 WeightSet(id = SET_2_ID, reps = TEMPLATE_REPS, weight = TEMPLATE_WEIGHT)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = MIN_REPS,
             maxReps = MAX_REPS,
             lowerBoundMaxHRPercent = null,

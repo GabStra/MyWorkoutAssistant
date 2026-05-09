@@ -87,8 +87,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         )
                     ),
                     exerciseType = ExerciseType.COUNTDOWN,
-                    minLoadPercent = 0.0,
-                    maxLoadPercent = 0.0,
                     minReps = 0,
                     maxReps = 0,
                     lowerBoundMaxHRPercent = null,
@@ -111,8 +109,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         WeightSet(UUID.fromString("3525c514-9483-4bfc-a888-ab6d63ac0833"), 8, 100.0)
                     ),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 60.0,
-                    maxLoadPercent = 100.0,
                     minReps = 5,
                     maxReps = 12,
                     lowerBoundMaxHRPercent = null,
@@ -135,8 +131,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         WeightSet(UUID.fromString("02196bbe-97df-42e2-b909-a630f73f6b8d"), 8, 80.0)
                     ),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 60.0,
-                    maxLoadPercent = 100.0,
                     minReps = 5,
                     maxReps = 12,
                     lowerBoundMaxHRPercent = null,
@@ -159,8 +153,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         BodyWeightSet(UUID.fromString("a0bf7c38-ecbd-4582-a625-3e81fe48cc1b"), 8, 5.0)
                     ),
                     exerciseType = ExerciseType.BODY_WEIGHT,
-                    minLoadPercent = 60.0,
-                    maxLoadPercent = 100.0,
                     minReps = 5,
                     maxReps = 12,
                     lowerBoundMaxHRPercent = null,
@@ -183,8 +175,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         WeightSet(UUID.fromString("e16aa164-0df6-44be-93a4-e3ee529b5648"), 10, 50.0)
                     ),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 60.0,
-                    maxLoadPercent = 100.0,
                     minReps = 8,
                     maxReps = 15,
                     lowerBoundMaxHRPercent = null,
@@ -207,8 +197,6 @@ object ResumeCrossDevicePhoneWorkoutStoreFixture {
                         WeightSet(UUID.fromString("b2f2ac3b-7733-4328-a575-61d8ccf948d3"), 15, 20.0)
                     ),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 60.0,
-                    maxLoadPercent = 100.0,
                     minReps = 10,
                     maxReps = 20,
                     lowerBoundMaxHRPercent = null,

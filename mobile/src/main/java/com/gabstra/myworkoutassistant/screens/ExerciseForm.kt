@@ -159,8 +159,6 @@ fun ExerciseForm(
         }
     }
 
-    val minLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.minLoadPercent?.toFloat() ?: 65f) }
-    val maxLoadPercent = rememberSaveable { mutableFloatStateOf(exercise?.maxLoadPercent?.toFloat() ?: 85f) }
     val minReps = rememberSaveable { mutableFloatStateOf(exercise?.minReps?.toFloat() ?: 6f) }
     val maxReps = rememberSaveable { mutableFloatStateOf(exercise?.maxReps?.toFloat() ?: 12f) }
 
@@ -600,7 +598,7 @@ fun ExerciseForm(
                 }
 
                 Spacer(Modifier.height(Spacing.md))
-                // ----- Load & reps -----
+                // ----- Reps (& bodyweight) -----
                 if (selectedExerciseType.value == ExerciseType.WEIGHT ||
                     (selectedExerciseType.value == ExerciseType.BODY_WEIGHT && selectedEquipmentId.value != null)
                 ) {
@@ -609,22 +607,6 @@ fun ExerciseForm(
                             modifier = Modifier.padding(Spacing.md),
                             verticalArrangement = Arrangement.spacedBy(Spacing.md)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                                Text(
-                                    text = "Target load range (${minLoadPercent.floatValue.toInt()}% – ${maxLoadPercent.floatValue.toInt()}%)",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                MinMaxStepperRow(
-                                    minValue = minLoadPercent.floatValue.toInt(),
-                                    maxValue = maxLoadPercent.floatValue.toInt(),
-                                    onMinChange = { minLoadPercent.floatValue = it.toFloat() },
-                                    onMaxChange = { maxLoadPercent.floatValue = it.toFloat() },
-                                    minBound = 0,
-                                    maxBound = 100,
-                                    step = 5
-                                )
-                            }
-
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                                 Text(
                                     text = "Target reps range (${minReps.floatValue.toInt()} – ${maxReps.floatValue.toInt()})",
@@ -967,8 +949,6 @@ fun ExerciseForm(
                             notes = notesState.value.trim(),
                             sets = normalizedSets,
                             exerciseType = selectedExerciseType.value,
-                            minLoadPercent = minLoadPercent.floatValue.toDouble().round(2),
-                            maxLoadPercent = maxLoadPercent.floatValue.toDouble().round(2),
                             minReps = minReps.floatValue.toInt(),
                             maxReps = maxReps.floatValue.toInt(),
                             lowerBoundMaxHRPercent = selectedLowerBoundMaxHRPercent.value?.round(2),

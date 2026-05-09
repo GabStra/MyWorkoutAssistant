@@ -1,15 +1,17 @@
 package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -340,13 +342,20 @@ fun SetRestRowCard(
         modifier = modifier,
         enabled = enabled,
     ) {
-        Text(
-            text = restText,
-            modifier = textModifier
-                .padding( 15.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            color = textColor,
-            textAlign = TextAlign.Center
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = restText,
+                modifier = textModifier,
+                style = MaterialTheme.typography.titleMedium,
+                color = textColor,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }

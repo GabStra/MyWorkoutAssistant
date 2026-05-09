@@ -51,7 +51,9 @@ fun RestSetForm(
     onRestSetUpsert: (RestSet) -> Unit,
     onCancel: () -> Unit,
     restSet: RestSet? = null,
-    isSaving: Boolean = false
+    isSaving: Boolean = false,
+    // True when opened from exercise overview bulk “apply between all sets” (replaces existing between-set rests).
+    appliesSameRestBetweenAllSets: Boolean = false
 ) {
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(restSet?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
@@ -84,7 +86,11 @@ fun RestSetForm(
                             .basicMarquee(iterations = Int.MAX_VALUE),
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onBackground,
-                        text = if (restSet == null) "Insert Rest" else "Edit Rest",
+                        text = when {
+                            restSet != null -> "Edit Rest"
+                            appliesSameRestBetweenAllSets -> "Rest between all sets"
+                            else -> "Insert Rest"
+                        },
                     )
                 },
                 navigationIcon = {
@@ -127,6 +133,14 @@ fun RestSetForm(
                     text = "Rest between sets",
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (appliesSameRestBetweenAllSets && restSet == null) {
+                    Text(
+                        text = "Same time between each pair of sets; existing between-set rests are replaced.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 CustomTimePicker(
                     initialHour = hours,
                     initialMinute = minutes,

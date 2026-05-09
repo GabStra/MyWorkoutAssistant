@@ -282,7 +282,6 @@ class WorkoutInsightsPromptBuilderTest {
             #### Context
             - Type: WEIGHT
             - Rep range: 6-10
-            - Load range: 70%-85%
             - Progression mode: DOUBLE_PROGRESSION
 
             #### Planned

@@ -260,7 +260,10 @@ fun ExerciseOverviewTab(
                         MenuItem("Add Set") {
                             appViewModel.setScreenData(ScreenData.NewSet(workoutId, exercise.id))
                         },
-                        MenuItem("Add Rests between sets") {
+                        MenuItem(
+                            label = "Rest between all sets",
+                            description = "One duration; replaces existing."
+                        ) {
                             appViewModel.setScreenData(ScreenData.NewRestSet(workoutId, exercise.id))
                         }
                     ),

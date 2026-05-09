@@ -50,15 +50,17 @@ fun RestForm(
     onCancel: () -> Unit,
     rest: Rest? = null, // Add exercise parameter with default value null
     isSaving: Boolean = false,
-    workout: Workout? = null
+    workout: Workout? = null,
+    // True when opened from workout overview bulk “apply between all exercises” (replaces existing rests).
+    appliesSameRestBetweenAllExercises: Boolean = false
 ) {
     val hms = remember { mutableStateOf(TimeConverter.secondsToHms(rest?.timeInSeconds ?: 0)) }
     val (hours, minutes, seconds) = hms.value
 
-    val titleText = if (rest == null) {
-        "Insert Rest"
-    } else {
-        "Edit Rest"
+    val titleText = when {
+        rest != null -> "Edit Rest"
+        appliesSameRestBetweenAllExercises -> "Rest between all exercises"
+        else -> "Insert Rest"
     }
 
     val outlineVariant = MaterialTheme.colorScheme.outlineVariant
@@ -128,6 +130,14 @@ fun RestForm(
                     text = "Rest between exercises",
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (appliesSameRestBetweenAllExercises && rest == null) {
+                    Text(
+                        text = "Same time between each pair of exercises; existing rests are replaced.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 CustomTimePicker(
                     initialHour = hours,
                     initialMinute = minutes,

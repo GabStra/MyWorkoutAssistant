@@ -2302,6 +2302,7 @@ fun MyWorkoutAssistantNavHost(
                         } else {
                             var isSaving by remember { mutableStateOf(false) }
                             RestSetForm(
+                                appliesSameRestBetweenAllSets = true,
                                 onRestSetUpsert = { newRestSet ->
                                     if (isSaving) return@RestSetForm
                                     isSaving = true
@@ -2446,6 +2447,7 @@ fun MyWorkoutAssistantNavHost(
 
                         var isSaving by remember { mutableStateOf(false) }
                         RestForm(
+                            appliesSameRestBetweenAllExercises = true,
                             onRestUpsert = { newRest ->
                                 if (isSaving) return@RestForm
                                 isSaving = true

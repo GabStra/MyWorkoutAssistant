@@ -1271,7 +1271,6 @@ private fun compactExerciseContextLines(lines: List<String>): List<String> {
             line.startsWith("- Type:") ||
                 line.startsWith("- Equipment:") ||
                 line.startsWith("- Rep range:") ||
-                line.startsWith("- Load range:") ||
                 line.startsWith("- Progression mode:") ||
                 line.startsWith("- Exercise target zone:") ||
                 line.startsWith("- Intra-set rest:") ||
@@ -1755,14 +1754,13 @@ private fun sessionHeartRateLinePriority(line: String): Int = when {
 private fun exerciseContextLinePriority(line: String): Int = when {
     line.startsWith("- Type:") -> 0
     line.startsWith("- Rep range:") -> 1
-    line.startsWith("- Load range:") -> 2
-    line.startsWith("- Progression mode:") -> 3
-    line.startsWith("- Exercise target zone:") -> 4
-    line.startsWith("- Equipment:") -> 5
-    line.startsWith("- Intra-set rest:") -> 6
-    line.startsWith("- Warm-up sets:") -> 7
-    line.startsWith("- Notes:") -> 8
-    else -> 9
+    line.startsWith("- Progression mode:") -> 2
+    line.startsWith("- Exercise target zone:") -> 3
+    line.startsWith("- Equipment:") -> 4
+    line.startsWith("- Intra-set rest:") -> 5
+    line.startsWith("- Warm-up sets:") -> 6
+    line.startsWith("- Notes:") -> 7
+    else -> 8
 }
 
 private enum class SnapshotMetricKind {
@@ -2807,7 +2805,6 @@ private fun compactLabelLine(
         .replace("- Type:", "- Type")
         .replace("- Equipment:", "- Equipment")
         .replace("- Rep range:", "- Rep range")
-        .replace("- Load range:", "- Load range")
         .replace("- Progression mode:", "- Progression")
         .replace("- Exercise target zone:", "- Target zone")
         .replace("- Intra-set rest:", "- Intra-set rest")

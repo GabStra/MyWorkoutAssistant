@@ -461,9 +461,7 @@ fun ScheduleDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
                     .padding(Spacing.sm)
-                    .verticalScroll(rememberScrollState())
             ) {
                 OutlinedTextField(
                     value = labelState.value,
@@ -807,7 +805,6 @@ fun BatchScheduleDialog(
 
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
     val showDatePicker = remember { mutableStateOf(false) }
-    val formScrollState = rememberScrollState()
 
     StandardDialog(
         onDismissRequest = onDismiss,
@@ -830,128 +827,121 @@ fun BatchScheduleDialog(
 
                 Spacer(Modifier.height(Spacing.lg))
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(formScrollState)
+                OutlinedTextField(
+                    value = labelPrefixState.value,
+                    onValueChange = { labelPrefixState.value = it },
+                    label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(Spacing.lg))
+
+                Text("Time range", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedTextField(
-                        value = labelPrefixState.value,
-                        onValueChange = { labelPrefixState.value = it },
-                        label = { Text("Label prefix", style = MaterialTheme.typography.labelLarge) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(Modifier.height(Spacing.lg))
-
-                    Text("Time range", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("From", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.height(Spacing.xs))
-                            AppPrimaryOutlinedButton(
-                                text = "${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}",
-                                onClick = {
-                                    timePickerState.hour = startHourState.intValue
-                                    timePickerState.minute = startMinuteState.intValue
-                                    currentPickerMode.value = "start"
-                                    showTimePicker.value = true
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("To", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.height(Spacing.xs))
-                            AppPrimaryOutlinedButton(
-                                text = "${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}",
-                                onClick = {
-                                    timePickerState.hour = endHourState.intValue
-                                    timePickerState.minute = endMinuteState.intValue
-                                    currentPickerMode.value = "end"
-                                    showTimePicker.value = true
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(Spacing.lg))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(Spacing.lg))
-
-                    Text("Interval", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = intervalHoursState.value,
-                            onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
-                            label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.width(Spacing.md))
-                        OutlinedTextField(
-                            value = intervalMinutesState.value,
-                            onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
-                            label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    Spacer(Modifier.height(Spacing.lg))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(Spacing.lg))
-
-                    if (selectedTabIndex.value == 0) {
-                        val date = datePickerState.selectedDateMillis?.let {
-                            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-                        } ?: LocalDate.now()
-                        Text("Date", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(Spacing.sm))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("From", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(Spacing.xs))
                         AppPrimaryOutlinedButton(
-                            text = date.toString(),
-                            onClick = { showDatePicker.value = true },
+                            text = "${startHourState.intValue}:${startMinuteState.intValue.toString().padStart(2, '0')}",
+                            onClick = {
+                                timePickerState.hour = startHourState.intValue
+                                timePickerState.minute = startMinuteState.intValue
+                                currentPickerMode.value = "start"
+                                showTimePicker.value = true
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
-                    } else {
-                        Text("Days of week", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(Spacing.sm))
-                        WeekdaySelectionRow(
-                            days = listOf("Mon", "Tue", "Wed", "Thu"),
-                            bitValues = listOf(2, 4, 8, 16),
-                            daysOfWeekState = daysOfWeekState
-                        )
-                        WeekdaySelectionRow(
-                            days = listOf("Fri", "Sat", "Sun", ""),
-                            bitValues = listOf(32, 64, 1, 0),
-                            daysOfWeekState = daysOfWeekState,
-                            showLastCheckbox = false
-                        )
                     }
 
-                    Spacer(Modifier.height(Spacing.lg))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("To", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(Spacing.xs))
+                        AppPrimaryOutlinedButton(
+                            text = "${endHourState.intValue}:${endMinuteState.intValue.toString().padStart(2, '0')}",
+                            onClick = {
+                                timePickerState.hour = endHourState.intValue
+                                timePickerState.minute = endMinuteState.intValue
+                                currentPickerMode.value = "end"
+                                showTimePicker.value = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
 
-                    ListItem(
-                        colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
-                        headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
-                        trailingContent = {
-                            Switch(
-                                checked = isEnabledState.value,
-                                onCheckedChange = { isEnabledState.value = it }
-                            )
-                        }
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(Spacing.lg))
+
+                Text("Interval", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(Spacing.sm))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = intervalHoursState.value,
+                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalHoursState.value = v },
+                        label = { Text("Hours", style = MaterialTheme.typography.labelLarge) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(Spacing.md))
+                    OutlinedTextField(
+                        value = intervalMinutesState.value,
+                        onValueChange = { v -> if (v.isEmpty() || v.all { it.isDigit() }) intervalMinutesState.value = v },
+                        label = { Text("Minutes", style = MaterialTheme.typography.labelLarge) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f)
                     )
                 }
+
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(Spacing.lg))
+
+                if (selectedTabIndex.value == 0) {
+                    val date = datePickerState.selectedDateMillis?.let {
+                        Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+                    } ?: LocalDate.now()
+                    Text("Date", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    AppPrimaryOutlinedButton(
+                        text = date.toString(),
+                        onClick = { showDatePicker.value = true },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text("Days of week", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(Spacing.sm))
+                    WeekdaySelectionRow(
+                        days = listOf("Mon", "Tue", "Wed", "Thu"),
+                        bitValues = listOf(2, 4, 8, 16),
+                        daysOfWeekState = daysOfWeekState
+                    )
+                    WeekdaySelectionRow(
+                        days = listOf("Fri", "Sat", "Sun", ""),
+                        bitValues = listOf(32, 64, 1, 0),
+                        daysOfWeekState = daysOfWeekState,
+                        showLastCheckbox = false
+                    )
+                }
+
+                Spacer(Modifier.height(Spacing.lg))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                ListItem(
+                    colors = ListItemDefaults.colors().copy(containerColor = Color.Transparent),
+                    headlineContent = { Text("Enable all", style = MaterialTheme.typography.bodyLarge) },
+                    trailingContent = {
+                        Switch(
+                            checked = isEnabledState.value,
+                            onCheckedChange = { isEnabledState.value = it }
+                        )
+                    }
+                )
             }
         },
         confirmText = "Save",

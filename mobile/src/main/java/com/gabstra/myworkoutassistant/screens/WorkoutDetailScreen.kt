@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,10 +27,9 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
@@ -43,6 +41,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MoveDown
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -82,7 +81,6 @@ import com.gabstra.myworkoutassistant.MobileLlmFeatureFlags
 import com.gabstra.myworkoutassistant.ScreenData
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
-import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.composables.ConfirmationDialog
 import com.gabstra.myworkoutassistant.composables.ExerciseTemplateRenderer
 import com.gabstra.myworkoutassistant.composables.LoadingOverlay
@@ -94,21 +92,22 @@ import com.gabstra.myworkoutassistant.composables.SupersetRenderer
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberDebouncedSavingVisible
 import com.gabstra.myworkoutassistant.deleteWorkoutHistoriesFromHealthConnect
-import com.gabstra.myworkoutassistant.exportWorkoutSessionToMarkdown
 import com.gabstra.myworkoutassistant.ensureRestSeparatedByExercises
+import com.gabstra.myworkoutassistant.exportWorkoutSessionToMarkdown
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.getEnabledStatusOfWorkoutComponent
 import com.gabstra.myworkoutassistant.insights.ConfigurableWorkoutInsightsEngine
 import com.gabstra.myworkoutassistant.insights.LiteRtLmModelStore
-import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
-import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsDialog
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsPromptResult
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsRequest
+import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsUiState
 import com.gabstra.myworkoutassistant.insights.buildWorkoutSessionInsightsPrompt
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
 import com.gabstra.myworkoutassistant.shared.ExerciseInfoDao
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
+import com.gabstra.myworkoutassistant.shared.FilterRange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
@@ -218,7 +217,7 @@ fun WorkoutComponentRenderer(
 
         is Rest -> {
             SetRestRowCard(
-                modifier = Modifier.fillMaxWidth().then(titleModifier),
+                modifier = modifier.fillMaxWidth().then(titleModifier),
                 enabled = workoutComponent.enabled,
                 restText = "REST ${formatTime(workoutComponent.timeInSeconds)}"
             )
@@ -431,6 +430,7 @@ fun WorkoutDetailScreen(
 
     var showMoveWorkoutDialog by remember { mutableStateOf(false) }
     val allWorkouts by appViewModel.workoutsFlow.collectAsState()
+    val allWorkoutPlans by appViewModel.workoutPlansFlow.collectAsState()
 
 
     val scope = rememberCoroutineScope()
@@ -1350,6 +1350,7 @@ fun WorkoutDetailScreen(
                     show = showMoveWorkoutDialog,
                     onDismiss = { showMoveWorkoutDialog = false },
                     workouts = allWorkouts,
+                    workoutPlans = allWorkoutPlans,
                     currentWorkout = workout,
                     onMove = { targetWorkout ->
                         scope.launch {

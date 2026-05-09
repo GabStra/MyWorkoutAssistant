@@ -42,8 +42,6 @@ object StartupRestoreBackupFixture {
             notes = "Restored from a pre-existing Downloads backup during first app launch.",
             sets = listOf(WeightSet(id = SET_ID, reps = 7, weight = 42.5)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 10,
             lowerBoundMaxHRPercent = null,

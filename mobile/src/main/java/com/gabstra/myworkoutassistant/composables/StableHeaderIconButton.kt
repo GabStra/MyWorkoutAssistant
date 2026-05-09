@@ -17,13 +17,15 @@ fun StableHeaderIconButton(
     colors: IconButtonColors = IconButtonDefaults.iconButtonColors(),
     content: @Composable () -> Unit,
 ) {
+    if(!visible) return
+
     IconButton(
         onClick = onClick,
         enabled = enabled,
         colors = colors,
         modifier = modifier
-            .alpha(if (visible) 1f else 0f)
-            .then(if (visible) Modifier else Modifier.clearAndSetSemantics { })
+            .alpha(if (enabled) 1f else 0f)
+            .then(if (enabled) Modifier else Modifier.clearAndSetSemantics { })
     ) {
         content()
     }

@@ -4,11 +4,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
@@ -44,14 +42,11 @@ fun MoveWorkoutDialog(
                     modifier = Modifier.padding(bottom = Spacing.md)
                 )
                 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp),
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    // List of plans
-                    items(availablePlans) { plan ->
+                    availablePlans.forEach { plan ->
                         OutlinedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -67,25 +62,22 @@ fun MoveWorkoutDialog(
                             )
                         }
                     }
-                    
-                    // Create New Plan option (at the bottom with primary color)
-                    item {
-                        OutlinedCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                .clickable {
-                                    onCreateNewPlan()
-                                },
-                            border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                        ) {
-                            Text(
-                                text = "+ Create New Plan",
-                                modifier = Modifier.padding(Spacing.md),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
+
+                    OutlinedCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .clickable {
+                                onCreateNewPlan()
+                            },
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(
+                            text = "+ Create New Plan",
+                            modifier = Modifier.padding(Spacing.md),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     }
                 }
             },

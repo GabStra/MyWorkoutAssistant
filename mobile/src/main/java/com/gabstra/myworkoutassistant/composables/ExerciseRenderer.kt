@@ -42,7 +42,7 @@ import java.util.UUID
 
 @Composable
 fun historyExerciseNameTextStyle(): TextStyle =
-    MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+    MaterialTheme.typography.titleMedium
 
 fun buildExerciseTemplateRows(
     sets: List<Set>,

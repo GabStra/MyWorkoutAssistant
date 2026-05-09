@@ -59,8 +59,6 @@ object DoubleProgressionRoundTripBadgePhoneWorkoutStoreFixture {
             notes = "Cross-device first-phone-sync double progression badge reproduction",
             sets = listOf(WeightSet(id = SET_ID, reps = PHONE_TEMPLATE_REPS, weight = TEMPLATE_WEIGHT)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = MIN_REPS,
             maxReps = MAX_REPS,
             lowerBoundMaxHRPercent = null,

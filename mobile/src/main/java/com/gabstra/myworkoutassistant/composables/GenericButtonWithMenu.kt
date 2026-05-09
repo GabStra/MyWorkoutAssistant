@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +38,7 @@ import androidx.compose.ui.window.PopupProperties
 
 data class MenuItem(
     val label: String,
+    val description: String? = null,
     val onClick: () -> Unit
 )
 
@@ -78,23 +82,44 @@ fun GenericButtonWithMenu(
                         Column(
                             modifier = Modifier
                                 .width(IntrinsicSize.Max)
-                                .heightIn(max = 240.dp)
+                                .heightIn(max = 320.dp)
                                 .verticalScroll(scrollState)
                         ) {
                             menuItems.forEachIndexed { index, item ->
-                                Text(
-                                    text = item.label,
-                                    fontWeight = FontWeight.Normal,
-                                    maxLines = 1,
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .basicMarquee(iterations = Int.MAX_VALUE)
                                         .clickable {
                                             item.onClick()
                                             expanded = false
                                         }
                                         .padding(horizontal = 16.dp, vertical = 12.dp)
-                                )
+                                ) {
+                                    Text(
+                                        text = item.label,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = if (item.description == null) 1 else 3,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(
+                                                if (item.description == null) {
+                                                    Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                    )
+                                    item.description?.let { description ->
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
                                 if (index < menuItems.lastIndex) {
                                     HorizontalDivider(
                                         color = appMenuBorderColor()

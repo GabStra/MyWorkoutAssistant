@@ -6,15 +6,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,9 +61,7 @@ fun WorkoutInsightsDialog(
         title = title,
         body = {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(360.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Spacing.md),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -239,14 +233,12 @@ private fun defaultProgressLabel(
 private fun InsightBodySurface(
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     SecondarySurface(
         backgroundColor = MaterialTheme.colorScheme.surface
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
+                .fillMaxWidth()
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             content = content
@@ -264,7 +256,7 @@ private fun CenteredInsightBodySurface(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()
+                .heightIn(min = 200.dp)
                 .padding(Spacing.md),
             contentAlignment = Alignment.Center
         ) {
