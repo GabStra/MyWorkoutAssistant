@@ -972,6 +972,28 @@ class DataLayerListenerService : WearableListenerService() {
             "Successfully sent SYNC_COMPLETE for transaction: $transactionId (workout history)"
         )
     }
+
+    private suspend fun sendSyncComplete(transactionId: String, reason: String) {
+        val completePath = DataLayerPaths.buildPath(
+            DataLayerPaths.SYNC_COMPLETE_PREFIX,
+            transactionId
+        )
+        val completeDataMapRequest = PutDataMapRequest.create(completePath)
+        completeDataMapRequest.dataMap.putString("transactionId", transactionId)
+        val timestamp = System.currentTimeMillis().toString()
+        completeDataMapRequest.dataMap.putString("timestamp", timestamp)
+
+        val completeRequest = completeDataMapRequest.asPutDataRequest().setUrgent()
+        Log.d(
+            "DataLayerSync",
+            "Sending SYNC_COMPLETE for transaction: $transactionId, timestamp: $timestamp, reason: $reason"
+        )
+        Tasks.await(dataClient.putDataItem(completeRequest))
+        Log.d(
+            "DataLayerSync",
+            "Successfully sent SYNC_COMPLETE for transaction: $transactionId ($reason)"
+        )
+    }
     
     /**
      * Checks connection state and throws exception if disconnected.
@@ -1522,6 +1544,12 @@ class DataLayerListenerService : WearableListenerService() {
                                     setHistoryDao.deleteByWorkoutHistoryId(workoutHistoryId)
                                     workoutRecordDao.deleteByWorkoutId(workoutId)
                                     workoutHistoryDao.deleteById(workoutHistoryId)
+                                }
+                                if (!transactionId.isNullOrBlank()) {
+                                    sendSyncComplete(
+                                        transactionId = transactionId,
+                                        reason = "workout discard"
+                                    )
                                 }
                                 val intent = Intent(INTENT_ID).apply {
                                     putExtra(UPDATE_WORKOUTS, UPDATE_WORKOUTS)

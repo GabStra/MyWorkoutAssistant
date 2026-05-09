@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewModelScope
+import com.gabstra.myworkoutassistant.DataLayerListenerService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -402,16 +405,73 @@ open class AppViewModel : WorkoutViewModel() {
      * Discards an incomplete workout: deletes the workout record and persisted history row
      * locally, then notifies mobile to mirror the deletion.
      */
-    fun discardIncompleteWorkout(incompleteWorkout: IncompleteWorkout) {
+    fun discardIncompleteWorkout(incompleteWorkout: IncompleteWorkout): Job {
         stopWorkoutSessionHeartbeat()
-        launchIO {
-            setHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
-            restHistoryDao.deleteByWorkoutHistoryId(incompleteWorkout.workoutHistory.id)
-            workoutRecordDao.deleteByWorkoutId(incompleteWorkout.workoutId)
-            workoutHistoryDao.deleteById(incompleteWorkout.workoutHistory.id)
+        return launchIO {
+            discardIncompleteWorkoutLocallyAndSync(incompleteWorkout)
+        }
+    }
+
+    fun discardCurrentIncompleteWorkout(): Job? {
+        val selectedWorkoutId = selectedWorkout.value.id
+        return launchIO {
+            val recordSnapshot = _workoutRecord
+                ?: workoutRecordDao.getWorkoutRecordByWorkoutId(selectedWorkoutId)
+                ?: return@launchIO
+            val workoutHistoryId = recordSnapshot.workoutHistoryId
+            Log.d(
+                "WorkoutSync",
+                "Discard current incomplete workout workoutId=${recordSnapshot.workoutId} " +
+                    "historyId=$workoutHistoryId source=${if (_workoutRecord != null) "memory" else "database"}"
+            )
+            discardIncompleteWorkoutByIdsLocallyAndSync(
+                workoutId = recordSnapshot.workoutId,
+                workoutHistoryId = workoutHistoryId
+            )
+
+            withContext(Dispatchers.Main) {
+                if (currentWorkoutHistory?.id == workoutHistoryId) {
+                    currentWorkoutHistory = null
+                }
+                clearWorkoutInProgressFlag()
+                clearRecoveryCheckpoint()
+                refreshSelectedWorkoutRecord()
+            }
+        }
+    }
+
+    private suspend fun discardIncompleteWorkoutLocallyAndSync(incompleteWorkout: IncompleteWorkout) {
+        discardIncompleteWorkoutByIdsLocallyAndSync(
+            workoutId = incompleteWorkout.workoutId,
+            workoutHistoryId = incompleteWorkout.workoutHistory.id
+        )
+    }
+
+    private suspend fun discardIncompleteWorkoutByIdsLocallyAndSync(
+        workoutId: UUID,
+        workoutHistoryId: UUID
+    ) {
+        Log.d(
+            "WorkoutSync",
+            "Discard local+sync start workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+        )
+        withContext(NonCancellable) {
+            setHistoryDao.deleteByWorkoutHistoryId(workoutHistoryId)
+            restHistoryDao.deleteByWorkoutHistoryId(workoutHistoryId)
+            exerciseSessionProgressionDao.deleteByWorkoutHistoryId(workoutHistoryId)
+            workoutRecordDao.deleteByWorkoutId(workoutId)
+            workoutHistoryDao.deleteById(workoutHistoryId)
+            Log.d(
+                "WorkoutSync",
+                "Discard local delete complete workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+            )
             sendDiscardIncompleteWorkoutToPhone(
-                workoutId = incompleteWorkout.workoutId,
-                workoutHistoryId = incompleteWorkout.workoutHistory.id
+                workoutId = workoutId,
+                workoutHistoryId = workoutHistoryId
+            )
+            Log.d(
+                "WorkoutSync",
+                "Discard local+sync finished workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
             )
         }
     }
@@ -424,6 +484,7 @@ open class AppViewModel : WorkoutViewModel() {
             Log.w("WorkoutSync", "Discard sync skipped: dataClient not initialized")
             return
         }
+        val context = applicationContext
         val transactionId = UUID.randomUUID().toString()
         val path = DataLayerPaths.buildPath(DataLayerPaths.WORKOUT_HISTORY_DISCARD_PREFIX, transactionId)
         val request = PutDataMapRequest.create(path).apply {
@@ -432,19 +493,83 @@ open class AppViewModel : WorkoutViewModel() {
             dataMap.putString("workoutHistoryId", workoutHistoryId.toString())
             dataMap.putString("timestamp", System.currentTimeMillis().toString())
         }.asPutDataRequest().setUrgent()
+        val completionWaiter = SyncHandshakeManager.registerCompletionWaiter(transactionId)
+        val errorWaiter = SyncHandshakeManager.registerErrorWaiter(transactionId)
 
-        runCatching {
+        try {
+            if (context != null) {
+                val connected = checkConnection(context)
+                if (!connected) {
+                    Log.e(
+                        "WorkoutSync",
+                        "Discard sync aborted: no connected phone node tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+                    )
+                    return
+                }
+
+                val handshakeOk = sendSyncRequest(
+                    dataClient = client,
+                    transactionId = transactionId,
+                    context = context
+                )
+                if (!handshakeOk) {
+                    Log.w(
+                        "WorkoutSync",
+                        "Discard sync proceeding without ACK after handshake timeout tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+                    )
+                }
+            }
+
+            Log.d(
+                "WorkoutSync",
+                "Sending workout discard event tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+            )
             Tasks.await(client.putDataItem(request))
+            delay(100)
             Log.d(
                 "WorkoutSync",
                 "Sent workout discard event tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
             )
-        }.onFailure { exception ->
+            val completionTimeout = DataLayerListenerService.calculateCompletionTimeout(1)
+            val result = withTimeoutOrNull(completionTimeout) {
+                select<Pair<Boolean, String?>> {
+                    completionWaiter.onAwait {
+                        Pair(true, null)
+                    }
+                    errorWaiter.onAwait { errorMessage ->
+                        Pair(false, errorMessage)
+                    }
+                }
+            }
+
+            when {
+                result == null -> {
+                    Log.e(
+                        "WorkoutSync",
+                        "Discard sync completion timeout tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId timeoutMs=$completionTimeout"
+                    )
+                }
+                result.first -> {
+                    Log.d(
+                        "WorkoutSync",
+                        "Discard sync completed tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId"
+                    )
+                }
+                else -> {
+                    Log.e(
+                        "WorkoutSync",
+                        "Discard sync failed tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId error=${result.second}"
+                    )
+                }
+            }
+        } catch (exception: Exception) {
             Log.e(
                 "WorkoutSync",
                 "Failed to send workout discard event tx=$transactionId workoutId=$workoutId workoutHistoryId=$workoutHistoryId",
                 exception
             )
+        } finally {
+            SyncHandshakeManager.cleanup(transactionId)
         }
     }
 
