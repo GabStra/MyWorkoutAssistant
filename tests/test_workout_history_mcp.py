@@ -65,8 +65,6 @@ def fixture_backup() -> dict:
                             "progressionMode": "OFF",
                             "minReps": 6,
                             "maxReps": 10,
-                            "minLoadPercent": 70.0,
-                            "maxLoadPercent": 85.0,
                         },
                     ],
                 },
@@ -95,8 +93,6 @@ def fixture_backup() -> dict:
                             "progressionMode": "AUTO_REGULATION",
                             "minReps": 6,
                             "maxReps": 12,
-                            "minLoadPercent": 65.0,
-                            "maxLoadPercent": 85.0,
                             "muscleGroups": ["FRONT_CHEST"],
                         },
                         {

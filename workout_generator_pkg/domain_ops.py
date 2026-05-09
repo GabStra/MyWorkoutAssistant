@@ -404,49 +404,6 @@ def fix_equipment_weights(exercise, equipment_dict):
     return fixes_applied
 
 
-def validate_load_percent_range(exercise):
-    """
-    Validate that minLoadPercent and maxLoadPercent are reasonable.
-    
-    Args:
-        exercise: Exercise dictionary
-        
-    Returns:
-        tuple: (is_valid, error_message, should_fix)
-    """
-    exercise_type = exercise.get("exerciseType")
-    min_load = exercise.get("minLoadPercent", 0.0)
-    max_load = exercise.get("maxLoadPercent", 0.0)
-    progression_mode = exercise.get("progressionMode", "OFF")
-    progression_enabled = progression_mode in {"DOUBLE_PROGRESSION", "AUTO_REGULATION"}
-    
-    if not exercise_type:
-        return True, None, False
-    
-    if exercise_type in ["COUNTUP", "COUNTDOWN"]:
-        # Can be 0.0 for time-based exercises
-        return True, None, False
-    
-    if exercise_type in ["WEIGHT", "BODY_WEIGHT"]:
-        if min_load == 0.0 and max_load == 0.0:
-            if progression_enabled:
-                return False, f"Exercise '{exercise.get('name', 'Unknown')}' has progressionMode='{progression_mode}' but minLoadPercent=0.0 and maxLoadPercent=0.0. These are required for progression.", True
-            else:
-                # Warn but allow - should still be set correctly
-                return True, f"Exercise '{exercise.get('name', 'Unknown')}' has minLoadPercent=0.0 and maxLoadPercent=0.0. Consider setting appropriate values (e.g., 65-85% for hypertrophy).", True
-        
-        if min_load <= 0 or max_load <= 0:
-            return False, f"Exercise '{exercise.get('name', 'Unknown')}' has invalid load percentages: minLoadPercent={min_load}, maxLoadPercent={max_load}. Both must be > 0 for WEIGHT/BODY_WEIGHT exercises.", False
-        
-        if min_load >= max_load:
-            return False, f"Exercise '{exercise.get('name', 'Unknown')}' has minLoadPercent={min_load} >= maxLoadPercent={max_load}. minLoadPercent must be < maxLoadPercent.", False
-        
-        if min_load < 0 or max_load < 0 or min_load > 100 or max_load > 100:
-            return False, f"Exercise '{exercise.get('name', 'Unknown')}' has load percentages outside valid range (0-100): minLoadPercent={min_load}, maxLoadPercent={max_load}.", False
-    
-    return True, None, False
-
-
 def finalize_and_validate_exercise_definition(
     exercise_item,
     equipment_subset=None,
@@ -518,10 +475,6 @@ def finalize_and_validate_exercise_definition(
     is_valid_weight_combo, weight_combo_error, _ = validate_equipment_weight_combinations(exercise, equipment_by_id)
     if not is_valid_weight_combo and weight_combo_error:
         validation_errors.append(weight_combo_error)
-
-    is_valid_load, load_error, _ = validate_load_percent_range(exercise)
-    if not is_valid_load and load_error:
-        validation_errors.append(load_error)
 
     if validation_errors:
         exercise_name = exercise.get("name", "Unknown")
@@ -1515,8 +1468,6 @@ def sync_exercises_from_definitions(workout_store, exercise_definitions):
         "bodyWeightPercentage",
         "minReps",
         "maxReps",
-        "minLoadPercent",
-        "maxLoadPercent",
         "progressionMode",
         "requiresLoadCalibration",
     ]

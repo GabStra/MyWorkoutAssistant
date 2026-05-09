@@ -1270,9 +1270,6 @@ def emit_exercise_definition(
                 add("/equipmentId", seg, "enum")
             elif "requiredaccessoryequipmentids" in lower:
                 add("/requiredAccessoryEquipmentIds", seg, "enum")
-            elif "minloadpercent" in lower or "maxloadpercent" in lower or "load percentages" in lower:
-                add("/minLoadPercent", seg, "minimum")
-                add("/maxLoadPercent", seg, "maximum")
 
         return scoped
 
@@ -2680,7 +2677,6 @@ from workout_generator_pkg.domain_ops import (
     validate_equipment_references as _mod_validate_equipment_references,
     validate_equipment_weight_combinations as _mod_validate_equipment_weight_combinations,
     fix_equipment_weights as _mod_fix_equipment_weights,
-    validate_load_percent_range as _mod_validate_load_percent_range,
     finalize_and_validate_exercise_definition as _mod_finalize_and_validate_exercise_definition,
     generate_recursive_valid_subsets as _mod_generate_recursive_valid_subsets,
     calculate_equipment_weight_combinations as _mod_calculate_equipment_weight_combinations,
@@ -2769,7 +2765,6 @@ validate_muscle_groups = _mod_validate_muscle_groups
 validate_equipment_references = _mod_validate_equipment_references
 validate_equipment_weight_combinations = _mod_validate_equipment_weight_combinations
 fix_equipment_weights = _mod_fix_equipment_weights
-validate_load_percent_range = _mod_validate_load_percent_range
 finalize_and_validate_exercise_definition = _mod_finalize_and_validate_exercise_definition
 generate_recursive_valid_subsets = _mod_generate_recursive_valid_subsets
 calculate_equipment_weight_combinations = _mod_calculate_equipment_weight_combinations

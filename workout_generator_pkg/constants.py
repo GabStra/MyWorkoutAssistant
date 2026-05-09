@@ -175,8 +175,6 @@ JSON_SCHEMA = {
                 "notes",                                                                                                                                                                                                                         
                 "sets",                                                                                                                                                                                                                          
                 "exerciseType",                                                                                                                                                                                                                  
-                "minLoadPercent",                                                                                                                                                                                                                
-                "maxLoadPercent",                                                                                                                                                                                                                
                 "minReps",                                                                                                                                                                                                                       
                 "maxReps",                                                                                                                                                                                                                       
                 "generateWarmUpSets",                                                                                                                                                                                                            
@@ -193,8 +191,6 @@ JSON_SCHEMA = {
                 "notes": {"type": "string", "maxLength": 500},                                                                                                                                                                                                     
                 "sets": {"type": "array", "items": {"$ref": "#/$defs/Set"}},                                                                                                                                                                     
                 "exerciseType": {"$ref": "#/$defs/ExerciseType"},                                                                                                                                                                                
-                "minLoadPercent": {"type": "number"},                                                                                                                                                                                            
-                "maxLoadPercent": {"type": "number"},                                                                                                                                                                                            
                 "minReps": {"type": "integer"},                                                                                                                                                                                                  
                 "maxReps": {"type": "integer"},                                                                                                                                                                                                  
                 "lowerBoundMaxHRPercent": {"type": ["number", "null"]},                                                                                                                                                                          
@@ -509,8 +505,6 @@ EXAMPLE_JSON = {
                         }                                                                                                                                                                                                                        
                     ],                                                                                                                                                                                                                           
                     "exerciseType": "WEIGHT",                                                                                                                                                                                                    
-                    "minLoadPercent": 0.0,                                                                                                                                                                                                       
-                    "maxLoadPercent": 0.0,                                                                                                                                                                                                       
                     "minReps": 5,                                                                                                                                                                                                                
                     "maxReps": 5,                                                                                                                                                                                                                
                     "lowerBoundMaxHRPercent": None,                                                                                                                                                                                              
@@ -820,8 +814,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "COUNTDOWN",
-            "minLoadPercent": 0.0,
-            "maxLoadPercent": 0.0,
             "minReps": 0,
             "maxReps": 0,
             "equipmentId": None,
@@ -859,8 +851,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "WEIGHT",
-            "minLoadPercent": 85.0,
-            "maxLoadPercent": 100.0,
             "minReps": 5,
             "maxReps": 5,
             "equipmentId": "EQUIPMENT_0",
@@ -898,8 +888,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "WEIGHT",
-            "minLoadPercent": 65.0,
-            "maxLoadPercent": 85.0,
             "minReps": 8,
             "maxReps": 12,
             "equipmentId": "EQUIPMENT_1",
@@ -944,8 +932,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "BODY_WEIGHT",
-            "minLoadPercent": 70.0,
-            "maxLoadPercent": 100.0,
             "minReps": 8,
             "maxReps": 15,
             "equipmentId": None,
@@ -990,8 +976,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "BODY_WEIGHT",
-            "minLoadPercent": 85.0,
-            "maxLoadPercent": 100.0,
             "minReps": 5,
             "maxReps": 10,
             "equipmentId": None,
@@ -1017,7 +1001,6 @@ EXERCISE_SYSTEM_PROMPT = (
     "Output completeness (required):\n"
     "- Never leave required fields empty or invalid.\n"
     "- Do not output empty muscleGroups; if uncertain, infer best primary movers from exercise name.\n"
-    "- Do not output invalid load ranges; for WEIGHT/BODY_WEIGHT ensure minLoadPercent < maxLoadPercent.\n"
     "- If user input is ambiguous/noisy, infer sensible schema-valid values rather than leaving blanks.\n\n"
     "Core constraints:\n"
     "- Name normalization: exercise name must be movement-only (no equipment/accessory words and no set/time details).\n"
@@ -1033,7 +1016,6 @@ EXERCISE_SYSTEM_PROMPT = (
     f"- Valid SetSubCategory enum values: {SET_SUBCATEGORY_ENUM_VALUES}.\n"
     "- TimedDurationSet/EnduranceSet use timeInMillis and do not include subCategory.\n"
     "- COUNTUP/COUNTDOWN use minReps=0,maxReps=0. WEIGHT/BODY_WEIGHT use positive rep ranges.\n"
-    "- WEIGHT/BODY_WEIGHT require valid minLoadPercent/maxLoadPercent (not both zero).\n"
     f"- muscleGroups must be non-empty and use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- requiredAccessoryEquipmentIds must use ACCESSORY_X placeholders (use [] when none).\n"
     "- BODY_WEIGHT exercises must include bodyWeightPercentage; WEIGHT/COUNTUP/COUNTDOWN set it to null.\n"
