@@ -753,6 +753,89 @@ class WorkoutViewModelSessionTest {
         assertEquals("vsExpected should be EQUAL", Ternary.EQUAL, progression?.vsExpected)
     }
 
+    @Test
+    fun testProgressState_loadJumpRepResetCountsAbovePreviousLifecycle() = runTest(testDispatcher) {
+        val previousSetId1 = UUID.randomUUID()
+        val previousSetId2 = UUID.randomUUID()
+        val previousWorkoutHistory = createWorkoutHistory(testWorkoutId, testWorkoutGlobalId)
+        val previousSet1 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId1, 0u, 90.0, 12)
+        val previousSet2 = createSetHistory(previousWorkoutHistory.id, testExerciseId, previousSetId2, 1u, 90.0, 12)
+
+        createExerciseInfo(
+            exerciseId = testExerciseId,
+            lastSuccessfulSession = listOf(previousSet1, previousSet2),
+            successfulSessionCounter = 1u,
+            sessionFailedCounter = 0u
+        )
+
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(previousSetId1, 12, 90.0),
+                RestSet(UUID.randomUUID(), 90),
+                createWeightSetWithValidatedWeight(previousSetId2, 12, 90.0)
+            )
+        ).copy(loadJumpDefaultPct = 0.20)
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        Thread.sleep(10)
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        waitForWorkoutToLoad()
+
+        val exerciseProgressionByExerciseIdField =
+            WorkoutViewModel::class.java.getDeclaredField("exerciseProgressionByExerciseId")
+        exerciseProgressionByExerciseIdField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val exerciseProgressionMap = exerciseProgressionByExerciseIdField.get(viewModel)
+            as MutableMap<UUID, Pair<com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper.Plan, ProgressionState>>
+
+        val progressionData = exerciseProgressionMap[testExerciseId]
+        assertNotNull("Progression should be generated", progressionData)
+        val expectedSets = progressionData!!.first.sets
+        assertEquals("Expected progression should keep set count", 2, expectedSets.size)
+        assertTrue("Expected progression should increase load", expectedSets.all { it.weight > 90.0 })
+        assertTrue("Expected progression should reset reps lower", expectedSets.all { it.reps < 12 })
+
+        viewModel.setWorkoutStart()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        var expectedSetIndex = 0
+        executeSetsOnly { setState ->
+            val currentSetData = setState.currentSetData
+            if (currentSetData is WeightSetData && expectedSetIndex < expectedSets.size) {
+                val expectedSet = expectedSets[expectedSetIndex]
+                setState.currentSetData = currentSetData.copy(
+                    actualReps = expectedSet.reps,
+                    actualWeight = expectedSet.weight,
+                    volume = expectedSet.weight * expectedSet.reps
+                )
+                expectedSetIndex++
+            }
+        }
+
+        val exerciseInfo = database.exerciseInfoDao().getExerciseInfoById(testExerciseId)
+        assertNotNull("ExerciseInfo should exist", exerciseInfo)
+        assertEquals("successfulSessionCounter should be incremented", 2u, exerciseInfo?.successfulSessionCounter)
+        assertEquals("sessionFailedCounter should be reset", 0u, exerciseInfo?.sessionFailedCounter)
+
+        val progressions = database.exerciseSessionProgressionDao().getAllExerciseSessionProgressions()
+        val progression = progressions.firstOrNull { it.exerciseId == testExerciseId }
+        assertNotNull("Progression should exist", progression)
+        assertEquals("vsExpected should be EQUAL", Ternary.EQUAL, progression?.vsExpected)
+        assertEquals("vsPrevious should be ABOVE", Ternary.ABOVE, progression?.vsPrevious)
+    }
+
     // Test 4: PROGRESS State - Failure (BELOW)
     @Test
     fun testProgressState_failureBelow() = runTest(testDispatcher) {

@@ -6,6 +6,7 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ExerciseType
+import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.RestHistoryDao
 import com.gabstra.myworkoutassistant.shared.RestHistoryScope
@@ -33,8 +34,10 @@ import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedRestStore
 import com.gabstra.myworkoutassistant.shared.stores.ExecutedSetStore
 import com.gabstra.myworkoutassistant.shared.utils.DoubleProgressionHelper
+import com.gabstra.myworkoutassistant.shared.utils.ProgressionLifecycleComparisonConfig
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
+import com.gabstra.myworkoutassistant.shared.utils.compareSetListsForProgressionLifecycle
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workout.state.ProgressionState
 import com.gabstra.myworkoutassistant.shared.workout.persistence.WorkoutRestHistoryOps
@@ -411,7 +414,13 @@ internal class WorkoutPersistenceCoordinator(
 
                 val expectedSets = exerciseProgression?.sets ?: emptyList()
                 val vsExpected = if (exerciseProgression != null) {
-                    compareSetListsUnordered(executedSets, expectedSets)
+                    compareProgressionAwareSetLists(
+                        current = executedSets,
+                        baseline = expectedSets,
+                        exercise = exercise,
+                        workoutStore = workoutStoreRepositoryRef.getWorkoutStore(),
+                        progressionState = progressionState
+                    )
                 } else {
                     Ternary.EQUAL
                 }
@@ -420,7 +429,13 @@ internal class WorkoutPersistenceCoordinator(
                     comparisonBaselineByExerciseIdSnapshot[exerciseId].orEmpty()
 
                 val vsPrevious = if (previousSessionSets.isNotEmpty()) {
-                    compareSetListsUnordered(executedSets, previousSessionSets)
+                    compareProgressionAwareSetLists(
+                        current = executedSets,
+                        baseline = previousSessionSets,
+                        exercise = exercise,
+                        workoutStore = workoutStoreRepositoryRef.getWorkoutStore(),
+                        progressionState = progressionState
+                    )
                 } else {
                     Ternary.EQUAL
                 }
@@ -455,7 +470,14 @@ internal class WorkoutPersistenceCoordinator(
 
                         val bestSessionSets = toExecutedWorkSets(updatedInfo.bestSession)
 
-                        if (compareSetListsUnordered(executedSets, bestSessionSets) == Ternary.ABOVE) {
+                        if (compareProgressionAwareSetLists(
+                                current = executedSets,
+                                baseline = bestSessionSets,
+                                exercise = exercise,
+                                workoutStore = workoutStoreRepositoryRef.getWorkoutStore(),
+                                progressionState = progressionState
+                            ) == Ternary.ABOVE
+                        ) {
                             updatedInfo = updatedInfo.copy(bestSession = currentSessionSnapshot)
                         }
 
@@ -521,7 +543,13 @@ internal class WorkoutPersistenceCoordinator(
                                 }
                             } else {
                                 val lastSessionSets = toExecutedWorkSets(updatedInfo.lastSuccessfulSession)
-                                updatedInfo = when (compareSetListsUnordered(executedSets, lastSessionSets)) {
+                                updatedInfo = when (compareProgressionAwareSetLists(
+                                    current = executedSets,
+                                    baseline = lastSessionSets,
+                                    exercise = exercise,
+                                    workoutStore = workoutStoreRepositoryRef.getWorkoutStore(),
+                                    progressionState = progressionState
+                                )) {
                                     Ternary.ABOVE -> updatedInfo.copy(
                                         lastSuccessfulSession = currentSessionSnapshot,
                                         successfulSessionCounter = updatedInfo.successfulSessionCounter.inc(),
@@ -681,6 +709,65 @@ internal class WorkoutPersistenceCoordinator(
             }
             setSnapshot.simpleSet
         }
+    }
+
+    private fun compareProgressionAwareSetLists(
+        current: List<SimpleSet>,
+        baseline: List<SimpleSet>,
+        exercise: Exercise,
+        workoutStore: WorkoutStore,
+        progressionState: ProgressionState?,
+    ): Ternary {
+        val config = progressionLifecycleComparisonConfig(
+            exercise = exercise,
+            workoutStore = workoutStore,
+            progressionState = progressionState,
+        ) ?: return compareSetListsUnordered(current, baseline)
+
+        return compareSetListsForProgressionLifecycle(
+            current = current,
+            baseline = baseline,
+            config = config,
+        )
+    }
+
+    private fun progressionLifecycleComparisonConfig(
+        exercise: Exercise,
+        workoutStore: WorkoutStore,
+        progressionState: ProgressionState?,
+    ): ProgressionLifecycleComparisonConfig? {
+        if (progressionState == ProgressionState.RETRY || progressionState == ProgressionState.DELOAD) return null
+        if (exercise.progressionMode == ProgressionMode.OFF) return null
+
+        val availableWeights = when (exercise.exerciseType) {
+            ExerciseType.WEIGHT -> {
+                exercise.equipmentId
+                    ?.let { equipmentId -> workoutStore.equipments.firstOrNull { it.id == equipmentId } }
+                    ?.getWeightsCombinations()
+                    .orEmpty()
+            }
+            ExerciseType.BODY_WEIGHT -> {
+                val relativeBodyWeight = workoutStore.weightKg * ((exercise.bodyWeightPercentage ?: 0.0) / 100)
+                val addedWeights = exercise.equipmentId
+                    ?.let { equipmentId -> workoutStore.equipments.firstOrNull { it.id == equipmentId } }
+                    ?.getWeightsCombinations()
+                    .orEmpty()
+                addedWeights.map { relativeBodyWeight + it }.toSet() + setOf(relativeBodyWeight)
+            }
+            else -> emptySet()
+        }
+
+        if (availableWeights.isEmpty()) return null
+
+        return ProgressionLifecycleComparisonConfig(
+            repsRange = IntRange(exercise.minReps, exercise.maxReps),
+            availableWeights = availableWeights,
+            jumpPolicy = DoubleProgressionHelper.LoadJumpPolicy(
+                defaultPct = exercise.loadJumpDefaultPct ?: 0.025,
+                maxPct = exercise.loadJumpMaxPct ?: 0.5,
+                overcapUntil = exercise.loadJumpOvercapUntil ?: 2,
+            ),
+        )
     }
 
     private fun flattenExercises(workout: Workout): List<Exercise> {
