@@ -34,8 +34,6 @@ object WarmupSetWorkoutStoreFixture {
                 WeightSet(workSetId, 10, 100.0) // Work set - warmups will be generated before this
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

@@ -65,8 +65,6 @@ object CompletionVsLastWorkoutStoreFixture {
                 WeightSet(id = template.id, reps = template.reps, weight = template.weight)
             },
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

@@ -29,8 +29,6 @@ object MinimalCrossDeviceRestPauseWorkoutStoreFixture {
                 WeightSet(id = SET_1_ID, reps = 6, weight = 50.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 4,
             maxReps = 8,
             lowerBoundMaxHRPercent = null,

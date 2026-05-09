@@ -32,8 +32,6 @@ object PolarRecoveryWorkoutStoreFixture {
                 )
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 4,
             maxReps = 8,
             lowerBoundMaxHRPercent = null,

@@ -96,8 +96,6 @@ object TestWorkoutStoreSeeder {
                 WeightSet(set2Id, 8, 100.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -123,8 +121,6 @@ object TestWorkoutStoreSeeder {
                 WeightSet(set3Id, 12, 80.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,

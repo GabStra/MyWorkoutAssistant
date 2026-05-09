@@ -32,8 +32,6 @@ object TimedDurationSetWorkoutStoreFixture {
                 TimedDurationSet(setId, 60_000, autoStart = true, autoStop = false) // 60 seconds
             ),
             exerciseType = ExerciseType.COUNTDOWN,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

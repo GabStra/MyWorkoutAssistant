@@ -36,8 +36,6 @@ object AlarmTriggerWorkoutStoreFixture {
             notes = "Alarm fixture exercise",
             sets = listOf(WeightSet(id = SET_ID, reps = 8, weight = 55.0)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 4,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

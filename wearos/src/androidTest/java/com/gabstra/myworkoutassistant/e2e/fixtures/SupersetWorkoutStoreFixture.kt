@@ -45,8 +45,6 @@ object SupersetWorkoutStoreFixture {
                 WeightSet(setA2Id, 8, 60.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -74,8 +72,6 @@ object SupersetWorkoutStoreFixture {
                 WeightSet(setB2Id, 10, 40.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,

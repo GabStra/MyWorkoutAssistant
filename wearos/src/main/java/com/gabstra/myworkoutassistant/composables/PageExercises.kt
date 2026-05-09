@@ -923,8 +923,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
             )
         ),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 6,
         maxReps = 10,
         lowerBoundMaxHRPercent = null,
@@ -950,8 +948,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
             )
         ),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 6,
         maxReps = 12,
         lowerBoundMaxHRPercent = null,
@@ -977,8 +973,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
             )
         ),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 8,
         maxReps = 15,
         lowerBoundMaxHRPercent = null,
@@ -1004,8 +998,6 @@ private fun buildPageExercisesPreviewFixture(): PageExercisesPreviewFixture {
             )
         ),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 8,
         maxReps = 15,
         lowerBoundMaxHRPercent = null,
@@ -1196,8 +1188,6 @@ private fun buildPageExercisesManySetsPreviewFixture(): PageExercisesManySetsPre
         notes = "",
         sets = sets,
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 6,
         maxReps = 10,
         lowerBoundMaxHRPercent = null,

@@ -31,8 +31,6 @@ object EnduranceSetManualStartWorkoutStoreFixture {
                 EnduranceSet(setId, 60_000, autoStart = false, autoStop = false)
             ),
             exerciseType = ExerciseType.COUNTUP,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

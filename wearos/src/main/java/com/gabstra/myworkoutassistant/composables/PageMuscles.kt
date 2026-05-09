@@ -96,8 +96,6 @@ private fun PageMusclesPreview() {
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 65.0,
-            maxLoadPercent = 85.0,
             minReps = 6,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

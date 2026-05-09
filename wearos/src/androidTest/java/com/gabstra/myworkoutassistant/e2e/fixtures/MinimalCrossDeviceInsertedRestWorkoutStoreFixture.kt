@@ -33,8 +33,6 @@ object MinimalCrossDeviceInsertedRestWorkoutStoreFixture {
                 WeightSet(id = SET_2_ID, reps = 5, weight = 45.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 4,
             maxReps = 8,
             lowerBoundMaxHRPercent = null,

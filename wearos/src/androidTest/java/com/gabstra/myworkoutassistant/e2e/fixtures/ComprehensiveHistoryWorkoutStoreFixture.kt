@@ -212,8 +212,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(workSet2Id, 6, 80.0, SetSubCategory.WorkSet) // 20kg bar + 60kg plates
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -248,8 +246,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 10, 30.0) // 2x15kg
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 8,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
@@ -282,8 +278,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 12, 15.0) // Single 15kg
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 10,
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
@@ -318,8 +312,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 10, 15.0) // 10kg + 5kg plates
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 8,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
@@ -352,8 +344,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 8, 15.0) // 15kg vest
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -388,8 +378,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 12, 25.0) // 20kg base + 5kg extra
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 10,
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
@@ -422,8 +410,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(set2Id, 10, 50.0) // Any valid weight
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 8,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
@@ -458,8 +444,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 BodyWeightSet(set2Id, 12, 10.0) // Body weight + 10kg
             ),
             exerciseType = ExerciseType.BODY_WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 10,
             maxReps = 20,
             lowerBoundMaxHRPercent = null,
@@ -490,8 +474,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 TimedDurationSet(setId, 60_000, autoStart = true, autoStop = true) // 60 seconds
             ),
             exerciseType = ExerciseType.COUNTDOWN,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 0,
             maxReps = 0,
             lowerBoundMaxHRPercent = null,
@@ -522,8 +504,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 EnduranceSet(setId, 120_000, autoStart = false, autoStop = false) // 2 minutes
             ),
             exerciseType = ExerciseType.COUNTUP,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 0,
             maxReps = 0,
             lowerBoundMaxHRPercent = null,
@@ -554,8 +534,6 @@ object ComprehensiveHistoryWorkoutStoreFixture {
                 WeightSet(setId, 5, 40.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 10,
             lowerBoundMaxHRPercent = null,

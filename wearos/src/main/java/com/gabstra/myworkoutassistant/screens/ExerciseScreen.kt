@@ -633,8 +633,6 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
             ExercisePreviewSetType.WEIGHT, ExercisePreviewSetType.TIMED_DURATION, ExercisePreviewSetType.ENDURANCE -> ExerciseType.WEIGHT
             ExercisePreviewSetType.BODY_WEIGHT -> ExerciseType.BODY_WEIGHT
         },
-        minLoadPercent = 0.0,
-        maxLoadPercent = 0.0,
         minReps = 6,
         maxReps = 12,
         lowerBoundMaxHRPercent = null,
@@ -661,8 +659,6 @@ internal fun buildExercisePreviewFixture(scenario: ExercisePreviewScenario): Exe
         notes = "",
         sets = listOf(WeightSet(UUID.fromString("20000000-0000-0000-0000-000000000009"), reps = 10, weight = 50.0)),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 0.0,
         minReps = 8,
         maxReps = 12,
         lowerBoundMaxHRPercent = null,

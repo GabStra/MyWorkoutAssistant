@@ -30,8 +30,6 @@ object CompletionWorkoutStoreFixture {
                 WeightSet(setId, 10, 100.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
