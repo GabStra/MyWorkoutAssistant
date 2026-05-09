@@ -79,8 +79,6 @@ class WorkoutProgressionServiceTest {
                 )
             ),
             exerciseType = ExerciseType.BODY_WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 8,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -156,8 +154,6 @@ class WorkoutProgressionServiceTest {
                 WeightSet(w2, 8, 50.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 6,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -214,8 +210,6 @@ class WorkoutProgressionServiceTest {
                 WeightSet(w3, 12, 40.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 6,
             maxReps = 15,
             lowerBoundMaxHRPercent = null,
@@ -280,8 +274,6 @@ class WorkoutProgressionServiceTest {
             notes = "",
             sets = listOf(WeightSet(setId, 8, 80.0)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 6,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -327,8 +319,6 @@ class WorkoutProgressionServiceTest {
                 WeightSet(w2, 8, 60.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 6,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

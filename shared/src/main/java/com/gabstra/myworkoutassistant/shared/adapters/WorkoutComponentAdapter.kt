@@ -47,8 +47,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 jsonObject.add("sets", context.serialize(src.sets))
                 jsonObject.addProperty("exerciseType", src.exerciseType.name)
 
-                jsonObject.addProperty("minLoadPercent", src.minLoadPercent)
-                jsonObject.addProperty("maxLoadPercent", src.maxLoadPercent)
                 jsonObject.addProperty("minReps", src.minReps)
                 jsonObject.addProperty("maxReps", src.maxReps)
 
@@ -141,19 +139,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     jsonObject.get("notes").asString
                 } else {
                     ""
-                }
-
-
-                val minLoadPercent = if (jsonObject.has("minLoadPercent")) {
-                    jsonObject.get("minLoadPercent").asDouble
-                } else {
-                    0.0
-                }
-
-                val maxLoadPercent = if (jsonObject.has("maxLoadPercent")) {
-                    jsonObject.get("maxLoadPercent").asDouble
-                } else {
-                    0.0
                 }
 
                 val minReps = if (jsonObject.has("minReps")) {
@@ -306,8 +291,6 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     notes,
                     sets,
                     exerciseType,
-                    minLoadPercent,
-                    maxLoadPercent,
                     minReps,
                     maxReps,
                     lowerBoundMaxHRPercent,

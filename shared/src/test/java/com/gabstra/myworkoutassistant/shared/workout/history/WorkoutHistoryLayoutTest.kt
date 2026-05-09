@@ -185,8 +185,6 @@ class WorkoutHistoryLayoutTest {
             notes = "",
             sets = listOf(WeightSet(setId, 5, 50.0)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 1,
             maxReps = 10,
             lowerBoundMaxHRPercent = null,

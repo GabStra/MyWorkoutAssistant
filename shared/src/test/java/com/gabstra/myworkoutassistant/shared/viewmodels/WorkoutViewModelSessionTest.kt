@@ -183,8 +183,6 @@ class WorkoutViewModelSessionTest {
             notes = "",
             sets = sets,
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -1280,8 +1278,6 @@ class WorkoutViewModelSessionTest {
                 createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -1404,8 +1400,6 @@ class WorkoutViewModelSessionTest {
                 createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 95.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -2098,8 +2092,6 @@ class WorkoutViewModelSessionTest {
                 createWeightSetWithValidatedWeight(unilateralSetId, 10, 20.0)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

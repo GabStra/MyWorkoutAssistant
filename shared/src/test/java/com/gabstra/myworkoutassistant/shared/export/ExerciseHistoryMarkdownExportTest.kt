@@ -165,8 +165,6 @@ class ExerciseHistoryMarkdownExportTest {
             notes = "",
             sets = listOf(BodyWeightSet(id = setId, reps = 8, additionalWeight = 10.0)),
             exerciseType = ExerciseType.BODY_WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 0.0,
             minReps = 6,
             maxReps = 10,
             lowerBoundMaxHRPercent = null,

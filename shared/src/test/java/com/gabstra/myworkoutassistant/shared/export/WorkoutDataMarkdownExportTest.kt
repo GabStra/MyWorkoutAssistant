@@ -281,8 +281,6 @@ class WorkoutDataMarkdownExportTest {
                         )
                     ),
                     exerciseType = ExerciseType.COUNTDOWN,
-                    minLoadPercent = 0.0,
-                    maxLoadPercent = 0.0,
                     minReps = 0,
                     maxReps = 0,
                     lowerBoundMaxHRPercent = 60f,
@@ -492,8 +490,6 @@ class WorkoutDataMarkdownExportTest {
                     notes = "Pause on chest.",
                     sets = listOf(WeightSet(id = setId, reps = 8, weight = 40.0)),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 70.0,
-                    maxLoadPercent = 85.0,
                     minReps = 6,
                     maxReps = 8,
                     lowerBoundMaxHRPercent = 0.65f,

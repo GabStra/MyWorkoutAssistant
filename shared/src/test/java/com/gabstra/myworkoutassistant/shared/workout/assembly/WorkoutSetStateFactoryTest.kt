@@ -27,8 +27,6 @@ class WorkoutSetStateFactoryTest {
             notes = "",
             sets = emptyList(),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 0.0,
             minReps = 8,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

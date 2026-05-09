@@ -298,8 +298,6 @@ class WorkoutSessionMarkdownExportTest {
                         WeightSet(id = workSet2Id, reps = 8, weight = 45.0)
                     ),
                     exerciseType = ExerciseType.WEIGHT,
-                    minLoadPercent = 70.0,
-                    maxLoadPercent = 85.0,
                     minReps = 6,
                     maxReps = 8,
                     lowerBoundMaxHRPercent = 0.65f,

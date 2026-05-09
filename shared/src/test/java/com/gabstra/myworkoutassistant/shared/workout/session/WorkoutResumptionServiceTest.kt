@@ -155,8 +155,6 @@ class WorkoutResumptionServiceTest {
         notes = "",
         sets = emptyList(),
         exerciseType = ExerciseType.WEIGHT,
-        minLoadPercent = 0.0,
-        maxLoadPercent = 100.0,
         minReps = 1,
         maxReps = 10,
         lowerBoundMaxHRPercent = null,

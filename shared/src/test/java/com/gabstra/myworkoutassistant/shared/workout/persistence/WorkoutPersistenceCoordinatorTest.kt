@@ -169,8 +169,6 @@ class WorkoutPersistenceCoordinatorTest {
             notes = "",
             sets = listOf(WeightSet(workSetId, 5, 100.0)),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 10,
             lowerBoundMaxHRPercent = null,

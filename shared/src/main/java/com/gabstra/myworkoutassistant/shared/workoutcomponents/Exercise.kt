@@ -14,8 +14,6 @@ data class Exercise (
     val notes: String,
     val sets: List<Set>,
     val exerciseType: ExerciseType,
-    val minLoadPercent : Double,
-    val maxLoadPercent : Double,
     val minReps : Int,
     val maxReps : Int,
 
@@ -48,8 +46,6 @@ data class Exercise (
         result = 31 * result + notes.hashCode()
         result = 31 * result + sets.hashCode()
         result = 31 * result + exerciseType.hashCode()
-        result = 31 * result + minLoadPercent.hashCode()
-        result = 31 * result + maxLoadPercent.hashCode()
         result = 31 * result + minReps.hashCode()
         result = 31 * result + maxReps.hashCode()
         result = 31 * result + (lowerBoundMaxHRPercent?.hashCode() ?: 0)
@@ -82,8 +78,6 @@ data class Exercise (
         if (notes != other.notes) return false
         if (sets != other.sets) return false
         if (exerciseType != other.exerciseType) return false
-        if (minLoadPercent != other.minLoadPercent) return false
-        if (maxLoadPercent != other.maxLoadPercent) return false
         if (minReps != other.minReps) return false
         if (maxReps != other.maxReps) return false
         if (lowerBoundMaxHRPercent != other.lowerBoundMaxHRPercent) return false

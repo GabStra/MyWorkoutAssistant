@@ -160,8 +160,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -327,8 +325,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = programmedReps, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -490,8 +486,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -638,8 +632,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = followingSetProgrammedWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -775,8 +767,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = followingSetProgrammedWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -907,8 +897,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,
@@ -1066,8 +1054,6 @@ class AutoRegulationProgressionTest {
                 WeightSet(workSet2Id, reps = 8, weight = initialWeight, subCategory = SetSubCategory.WorkSet)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

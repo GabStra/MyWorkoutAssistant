@@ -237,8 +237,6 @@ class ApplyCalibrationRIRPlateRecalculationTest {
                 WeightSet(workSet2Id, reps = 8, weight = initialWorkSetWeight)
             ),
             exerciseType = ExerciseType.WEIGHT,
-            minLoadPercent = 0.0,
-            maxLoadPercent = 100.0,
             minReps = 5,
             maxReps = 12,
             lowerBoundMaxHRPercent = null,

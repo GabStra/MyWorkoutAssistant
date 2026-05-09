@@ -130,12 +130,6 @@ internal fun appendExerciseContextMarkdown(
         markdown.append("- Rep range: ${exercise.minReps}-${exercise.maxReps}\n")
     }
 
-    if (exercise.exerciseType == ExerciseType.WEIGHT) {
-        markdown.append(
-            "- Load range: ${formatNumber(exercise.minLoadPercent)}%-${formatNumber(exercise.maxLoadPercent)}%\n"
-        )
-    }
-
     markdown.append("- Progression mode: ${exercise.progressionMode.name}\n")
 
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {

@@ -25,7 +25,6 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
-import kotlin.math.roundToInt
 import java.util.UUID
 
 fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
@@ -276,12 +275,6 @@ private fun appendExerciseDetails(
     
     if (exercise.exerciseType != ExerciseType.COUNTDOWN && exercise.exerciseType != ExerciseType.COUNTUP) {
         markdown.append("  - **Rep Range**: ${exercise.minReps}-${exercise.maxReps}\n")
-    }
-    
-    if (exercise.exerciseType == ExerciseType.WEIGHT) {
-        val minLoadPct = exercise.minLoadPercent.roundToInt()
-        val maxLoadPct = exercise.maxLoadPercent.roundToInt()
-        markdown.append("  - **Load Range**: ${minLoadPct}%-${maxLoadPct}%\n")
     }
     
     if (exercise.lowerBoundMaxHRPercent != null && exercise.upperBoundMaxHRPercent != null) {
