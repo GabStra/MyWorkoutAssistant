@@ -28,8 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -58,11 +58,11 @@ fun <T> StandardFilterDropdown(
     enabled: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var anchorSize by remember { mutableStateOf(IntSize.Zero) }
     val scrollState = rememberScrollState()
-    val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val fieldTextStyle = MaterialTheme.typography.bodyLarge
-    val maxPopupWidth = (configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val popupWidth = with(density) { anchorSize.width.toDp() }
     val accessibilityLabel = "$label $selectedText"
     val popupPositionProvider = remember(density) {
         FilterMenuPositionProvider(
@@ -71,7 +71,13 @@ fun <T> StandardFilterDropdown(
     }
 
     Box(modifier = modifier) {
-        Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    anchorSize = coordinates.size
+                }
+        ) {
             OutlinedTextField(
                 value = selectedText,
                 onValueChange = { },
@@ -118,11 +124,11 @@ fun <T> StandardFilterDropdown(
                     properties = PopupProperties(focusable = true)
                 ) {
                     MenuSurface(
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.width(popupWidth)
                     ) {
                         Column(
                             modifier = Modifier
-                                .width(IntrinsicSize.Max)
+                                .fillMaxWidth()
                                 .heightIn(max = 320.dp)
                                 .verticalScroll(scrollState)
                         ) {
