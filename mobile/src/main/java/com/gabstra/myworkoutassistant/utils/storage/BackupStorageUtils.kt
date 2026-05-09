@@ -1571,3 +1571,33 @@ suspend fun writeMarkdownToDownloadsFolder(context: Context, fileName: String, f
     }
 }
 
+suspend fun streamMarkdownToDownloadsFolder(
+    context: Context,
+    fileName: String,
+    writeContent: suspend (appendMarkdown: suspend (String) -> Unit) -> Unit,
+) {
+    withContext(Dispatchers.IO) {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/markdown")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+        }
+
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            ?: error("Couldn't create the Markdown file in Downloads.")
+
+        try {
+            resolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                writeContent { markdown ->
+                    writer.write(markdown)
+                }
+                writer.flush()
+            } ?: error("Couldn't open the Markdown file for writing.")
+        } catch (exception: Exception) {
+            resolver.delete(uri, null, null)
+            throw exception
+        }
+    }
+}
+

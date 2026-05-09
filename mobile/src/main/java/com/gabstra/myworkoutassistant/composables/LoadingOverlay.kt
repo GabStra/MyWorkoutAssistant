@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.gabstra.myworkoutassistant.Spacing
+import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import kotlinx.coroutines.delay
 
 @Composable
@@ -73,13 +74,22 @@ fun rememberDebouncedSavingVisible(
 }
 
 @Composable
-fun LoadingOverlay(isVisible: Boolean, text: String = "Loading...") {
+fun LoadingOverlay(
+    isVisible: Boolean,
+    text: String = "Loading...",
+    useOpaqueBackground: Boolean = false,
+) {
     if (isVisible) {
         val interactionSource = remember { MutableInteractionSource() }
+        val backgroundColor = if (useOpaqueBackground) {
+            MaterialTheme.colorScheme.background
+        } else {
+            MaterialTheme.colorScheme.background.copy(alpha = 0.75f)
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.75f))
+                .background(backgroundColor)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
@@ -88,7 +98,10 @@ fun LoadingOverlay(isVisible: Boolean, text: String = "Loading...") {
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MediumDarkGray,
+                )
                 Spacer(Modifier.height(Spacing.md))
                 Text(text = text, style = MaterialTheme.typography.bodyLarge)
             }

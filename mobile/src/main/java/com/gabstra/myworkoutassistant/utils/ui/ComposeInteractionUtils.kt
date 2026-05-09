@@ -70,10 +70,13 @@ import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.export.equipmentToJSON
 import com.gabstra.myworkoutassistant.shared.export.ExerciseHistoryMarkdownResult
+import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
+import com.gabstra.myworkoutassistant.shared.export.WorkoutDataMarkdownWriteResult
 import com.gabstra.myworkoutassistant.shared.export.WorkoutSessionMarkdownResult
 import com.gabstra.myworkoutassistant.shared.export.buildExerciseHistoryMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutSessionMarkdown
 import com.gabstra.myworkoutassistant.shared.export.buildWorkoutPlanMarkdown
+import com.gabstra.myworkoutassistant.shared.export.writeWorkoutDataMarkdown
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSON
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromJSONtoAppBackup
@@ -124,6 +127,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 import kotlin.math.roundToInt
+
+private const val TAG = "ComposeInteractionUtils"
 
 private fun Throwable.toExportToastMessage(
     intro: String,
@@ -782,6 +787,61 @@ suspend fun exportWorkoutPlanToMarkdown(
                 context,
                 e.toExportToastMessage(
                     intro = "Couldn't export the workout plan.",
+                    fallbackDetail = "Please try again."
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+}
+
+suspend fun exportAllWorkoutDataToMarkdown(
+    context: Context,
+    workoutHistoryDao: WorkoutHistoryDao,
+    setHistoryDao: SetHistoryDao,
+    restHistoryDao: RestHistoryDao,
+    exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
+    workoutStore: WorkoutStore,
+    exportRange: WorkoutDataExportRange = WorkoutDataExportRange.ALL,
+    onProgress: suspend (String) -> Unit = {},
+) {
+    try {
+        onProgress("Preparing ${exportRange.label.lowercase(Locale.getDefault())} export...")
+        val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        val timestamp = sdf.format(Date())
+        val filename = "workout_data_llm_export_${exportRange.fileSlug}_$timestamp.md"
+        onProgress("Saving Markdown file to Downloads...")
+        streamMarkdownToDownloadsFolder(context, filename) { appendMarkdown ->
+            when (
+                val result = writeWorkoutDataMarkdown(
+                    workoutHistoryDao = workoutHistoryDao,
+                    setHistoryDao = setHistoryDao,
+                    restHistoryDao = restHistoryDao,
+                    exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                    workoutStore = workoutStore,
+                    exportRange = exportRange,
+                    appendMarkdown = appendMarkdown,
+                    onProgress = onProgress
+                )
+            ) {
+                is WorkoutDataMarkdownWriteResult.Success -> Unit
+                is WorkoutDataMarkdownWriteResult.Failure -> error(result.message)
+            }
+        }
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                context,
+                "${exportRange.label} workout data export saved as $filename.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error exporting all workout data", e)
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                context,
+                e.toExportToastMessage(
+                    intro = "Couldn't export workout data.",
                     fallbackDetail = "Please try again."
                 ),
                 Toast.LENGTH_SHORT

@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.composables
 
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
@@ -15,8 +17,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun StandardDialog(
@@ -32,15 +36,22 @@ fun StandardDialog(
     showDismiss: Boolean = true,
     confirmEnabled: Boolean = true,
     isConfirmDestructive: Boolean = false,
+    maxWidth: Dp = 560.dp,
+    usePlatformDefaultWidth: Boolean = true,
+    contentHorizontalPadding: Dp = 10.dp,
+    contentVerticalPadding: Dp = 10.dp,
 ) {
     val hasConfirmButton = showConfirm && confirmText != null && onConfirm != null
     val hasDismissButton = showDismiss && dismissText != null
 
-    Dialog(onDismissRequest = onDismissRequest) {
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = usePlatformDefaultWidth)
+    ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 560.dp),
+                .widthIn(max = maxWidth),
             shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 0.dp
@@ -48,7 +59,10 @@ fun StandardDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(
+                        horizontal = contentHorizontalPadding,
+                        vertical = contentVerticalPadding
+                    ),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 when {
@@ -65,7 +79,12 @@ fun StandardDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 480.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         body()
                     }
                 }

@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.composables.WorkoutPlanNameDialog
 import com.gabstra.myworkoutassistant.composables.WorkoutsBottomBar
 import com.gabstra.myworkoutassistant.composables.WorkoutsMenu
 import com.gabstra.myworkoutassistant.composables.SwipeableTabs
+import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
 import com.gabstra.myworkoutassistant.shared.DarkGray
@@ -69,6 +70,7 @@ import com.gabstra.myworkoutassistant.shared.WeeklyProgressResolver
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressSnapshot
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.core.CalendarDay
 import com.kizitonwose.calendar.core.DayPosition
@@ -92,6 +94,8 @@ fun WorkoutsScreen(
     workoutScheduleDao: com.gabstra.myworkoutassistant.shared.WorkoutScheduleDao,
     healthConnectClient: HealthConnectClient,
     isSyncing: Boolean = false,
+    isExportingWorkoutDataForLlm: Boolean = false,
+    workoutDataExportStatus: String = "Exporting workout data...",
     onSyncClick: () -> Unit,
     onBackupClick: () -> Unit,
     onRestoreClick: () -> Unit,
@@ -101,6 +105,7 @@ fun WorkoutsScreen(
     onSyncToHealthConnectClick: () -> Unit,
     onExportWorkouts: () -> Unit,
     onExportWorkoutPlan: () -> Unit,
+    onExportWorkoutDataForLlm: (WorkoutDataExportRange) -> Unit,
     onExportEquipment: () -> Unit,
     onClearAllExerciseInfo: () -> Unit,
     onViewErrorLogs: () -> Unit,
@@ -472,6 +477,7 @@ fun WorkoutsScreen(
                         onSyncWithHealthConnectClick = onSyncToHealthConnectClick,
                         onExportWorkouts = onExportWorkouts,
                         onExportWorkoutPlan = onExportWorkoutPlan,
+                        onExportWorkoutDataForLlm = onExportWorkoutDataForLlm,
                         onExportEquipment = onExportEquipment,
                         onClearAllExerciseInfo = onClearAllExerciseInfo,
                         onViewErrorLogs = onViewErrorLogs,
@@ -813,7 +819,19 @@ fun WorkoutsScreen(
         )
 
         LoadingOverlay(isVisible = rememberDebouncedSavingVisible(isSaving), text = "Saving...")
-        LoadingOverlay(isVisible = isSyncing, text = "Syncing...")
+        LoadingOverlay(
+            isVisible = isSyncing,
+            text = "Syncing...",
+            useOpaqueBackground = true
+        )
+        LoadingOverlay(
+            isVisible = rememberMinimumLoadingVisibility(
+                isLoading = isExportingWorkoutDataForLlm,
+                minVisibleMs = 1_000L,
+            ),
+            text = workoutDataExportStatus,
+            useOpaqueBackground = true
+        )
     }
 }
 

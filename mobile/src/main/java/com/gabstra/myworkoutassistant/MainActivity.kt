@@ -106,6 +106,7 @@ import com.gabstra.myworkoutassistant.shared.equipments.EquipmentType
 import com.gabstra.myworkoutassistant.shared.equipments.Machine
 import com.gabstra.myworkoutassistant.shared.equipments.PlateLoadedCable
 import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
+import com.gabstra.myworkoutassistant.shared.export.WorkoutDataExportRange
 import com.gabstra.myworkoutassistant.shared.fromAppBackupToJSONPrettyPrint
 import com.gabstra.myworkoutassistant.shared.fromBackupJsonToAppBackup
 import com.gabstra.myworkoutassistant.shared.fromJSONToWorkoutPlanPackage
@@ -135,6 +136,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -479,6 +481,8 @@ fun MyWorkoutAssistantNavHost(
     }
 
     var isSyncing by remember { mutableStateOf(false) }
+    var isExportingWorkoutDataForLlm by remember { mutableStateOf(false) }
+    var workoutDataExportStatus by remember { mutableStateOf("Exporting workout data...") }
 
     if (showPrerequisitesDialog) {
         StandardDialog(
@@ -1241,6 +1245,8 @@ fun MyWorkoutAssistantNavHost(
                             workoutScheduleDao,
                             healthConnectClient,
                             isSyncing = isSyncing,
+                            isExportingWorkoutDataForLlm = isExportingWorkoutDataForLlm,
+                            workoutDataExportStatus = workoutDataExportStatus,
                             onSyncClick = {
                                 syncWithWatch()
                             },
@@ -1287,6 +1293,44 @@ fun MyWorkoutAssistantNavHost(
                                             ),
                                             Toast.LENGTH_SHORT
                                         ).show()
+                                    }
+                                }
+                            },
+                            onExportWorkoutDataForLlm = { exportRange: WorkoutDataExportRange ->
+                                scope.launch {
+                                    workoutDataExportStatus =
+                                        "Preparing ${exportRange.label.lowercase(Locale.getDefault())} export..."
+                                    isExportingWorkoutDataForLlm = true
+                                    yield()
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            exportAllWorkoutDataToMarkdown(
+                                                context = context,
+                                                workoutHistoryDao = workoutHistoryDao,
+                                                setHistoryDao = setHistoryDao,
+                                                restHistoryDao = restHistoryDao,
+                                                exerciseSessionProgressionDao = exerciseSessionProgressionDao,
+                                                workoutStore = appViewModel.workoutStore,
+                                                exportRange = exportRange,
+                                                onProgress = { status ->
+                                                    withContext(Dispatchers.Main) {
+                                                        workoutDataExportStatus = status
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            e.toMainActivityToastMessage(
+                                                intro = "Couldn't export workout data.",
+                                                fallbackDetail = "Please try again."
+                                            ),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } finally {
+                                        isExportingWorkoutDataForLlm = false
+                                        workoutDataExportStatus = "Exporting workout data..."
                                     }
                                 }
                             },
