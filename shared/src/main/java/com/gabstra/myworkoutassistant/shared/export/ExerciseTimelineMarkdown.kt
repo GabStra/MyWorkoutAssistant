@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.RestHistory
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.formatNumber
@@ -33,6 +34,7 @@ internal fun appendExerciseTimelineToMarkdown(
     userAge: Int,
     achievableWeights: List<Double>?,
     equipmentNameForHeader: String?,
+    equipment: WeightLoadedEquipment? = null,
 ) {
     val timeline = mergeSessionTimeline(setHistories, restsForExercise)
     val setOrdinalCounter = TimelineSetOrdinalCounter()
@@ -53,13 +55,13 @@ internal fun appendExerciseTimelineToMarkdown(
                     is WeightSetData -> {
                         setLine.append("${setOrdinalCounter.nextLabel(setData.subCategory)}: ")
                         val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
-                        setLine.append("${formatNumber(adjustedWeight)} kg x ${setData.actualReps}")
+                        setLine.append(formatWeightWithRepsForExport(adjustedWeight, setData.actualReps, equipment))
                         appendSetCategoryLabel(setLine, setData.subCategory)
                     }
                     is BodyWeightSetData -> {
                         setLine.append("${setOrdinalCounter.nextLabel(setData.subCategory)}: ")
                         val totalWeight = setData.getWeight()
-                        setLine.append("${formatNumber(totalWeight)} kg x ${setData.actualReps}")
+                        setLine.append(formatWeightWithRepsForExport(totalWeight, setData.actualReps, equipment = null))
                         appendSetCategoryLabel(setLine, setData.subCategory)
                     }
                     is TimedDurationSetData -> {

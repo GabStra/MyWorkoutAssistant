@@ -26,6 +26,7 @@ import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import com.gabstra.myworkoutassistant.shared.utils.WarmupPlanner
 import kotlin.math.roundToInt
+import java.util.UUID
 
 fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     val markdown = StringBuilder()
@@ -60,7 +61,7 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                         markdown.append("- **Available Dumbbells**: ")
                         val dumbbellsStr = equipment.availableDumbbells
                             .sortedByDescending { it.weight }
-                            .joinToString(", ") { "${formatNumber(it.weight)} kg each" }
+                            .joinToString(", ") { "${formatNumber(it.weight)} kg x 2" }
                         markdown.append(dumbbellsStr).append("\n")
                     }
                     if (equipment.extraWeights.isNotEmpty()) {
@@ -77,7 +78,7 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
                         markdown.append("- **Available Dumbbells**: ")
                         val dumbbellsStr = equipment.availableDumbbells
                             .sortedByDescending { it.weight }
-                            .joinToString(", ") { "${formatNumber(it.weight)} kg each" }
+                            .joinToString(", ") { "${formatNumber(it.weight)} kg" }
                         markdown.append(dumbbellsStr).append("\n")
                     }
                     if (equipment.extraWeights.isNotEmpty()) {
@@ -140,8 +141,11 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     
     val sortedPlans = workoutStore.workoutPlans.sortedBy { it.order }
     val workoutsById = workoutStore.workouts.associateBy { it.id }
+    val latestActiveWorkoutsByGlobalId = workoutStore.workouts
+        .filter { it.isActive }
+        .associateBy { it.globalId }
     
-    if (sortedPlans.isEmpty() && workoutStore.workouts.isEmpty()) {
+    if (sortedPlans.isEmpty() && latestActiveWorkoutsByGlobalId.isEmpty()) {
         markdown.append("No workouts configured.\n\n")
     } else {
         // Group workouts by plan
@@ -150,6 +154,14 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
             
             val planWorkouts = plan.workoutIds
                 .mapNotNull { workoutsById[it] }
+                .map { workout ->
+                    resolveLatestWorkoutVersion(
+                        workout = workout,
+                        workoutsById = workoutsById,
+                        latestActiveWorkoutsByGlobalId = latestActiveWorkoutsByGlobalId
+                    )
+                }
+                .distinctBy { it.globalId }
                 .sortedBy { it.order }
             
             if (planWorkouts.isEmpty()) {
@@ -163,7 +175,15 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
         
         // Show unassigned workouts
         val unassignedWorkouts = workoutStore.workouts
-            .filter { it.workoutPlanId == null }
+            .map { workout ->
+                resolveLatestWorkoutVersion(
+                    workout = workout,
+                    workoutsById = workoutsById,
+                    latestActiveWorkoutsByGlobalId = latestActiveWorkoutsByGlobalId
+                )
+            }
+            .filter { it.isActive && it.workoutPlanId == null }
+            .distinctBy { it.globalId }
             .sortedBy { it.order }
         
         if (unassignedWorkouts.isNotEmpty()) {
@@ -175,6 +195,23 @@ fun buildWorkoutPlanMarkdown(workoutStore: WorkoutStore): String {
     }
     
     return markdown.toString()
+}
+
+private fun resolveLatestWorkoutVersion(
+    workout: Workout,
+    workoutsById: Map<UUID, Workout>,
+    latestActiveWorkoutsByGlobalId: Map<UUID, Workout>,
+): Workout {
+    val seenIds = mutableSetOf<UUID>()
+    var current = workout
+    while (current.nextVersionId != null && seenIds.add(current.id)) {
+        current = workoutsById[current.nextVersionId] ?: break
+    }
+    return if (current.isActive) {
+        current
+    } else {
+        latestActiveWorkoutsByGlobalId[current.globalId] ?: current
+    }
 }
 
 private fun appendWorkoutDetails(markdown: StringBuilder, workout: Workout, index: Int, workoutStore: WorkoutStore) {
@@ -297,7 +334,9 @@ private fun appendExerciseDetails(
                     if (warmups.isNotEmpty()) {
                         markdown.append("\n")
                         warmups.forEachIndexed { index, (weight, reps) ->
-                            markdown.append("    Warm-up ${index + 1}: ${formatNumber(weight)} kg x $reps reps\n")
+                            markdown.append(
+                                "    Warm-up ${index + 1}: ${formatWeightWithRepsForExport(weight, reps, equipment)}\n"
+                            )
                         }
                     } else {
                         markdown.append("Enabled\n")
@@ -329,7 +368,7 @@ private fun appendExerciseDetails(
         exercise.sets.forEachIndexed { index, set ->
             if (set !is RestSet) {
                 workSetNumber++
-                val setStr = formatSetInline(set)
+                val setStr = formatSetInline(set, equipment)
                 
                 if (hasIntraSetRest) {
                     markdown.append("    Set $workSetNumber (Side A): $setStr\n")
@@ -386,7 +425,10 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
         superset.exercises.forEachIndexed { exerciseIndex, exercise ->
             if (round < exerciseWorkSets[exerciseIndex].size) {
                 val set = exerciseWorkSets[exerciseIndex][round]
-                val setStr = formatSetInline(set)
+                val equipment = exercise.equipmentId?.let { equipmentId ->
+                    workoutStore.equipments.find { it.id == equipmentId }
+                }
+                val setStr = formatSetInline(set, equipment)
                 val hasIntraSetRest = exercise.intraSetRestInSeconds != null && exercise.intraSetRestInSeconds!! > 0
                 
                 if (hasIntraSetRest) {
@@ -414,14 +456,14 @@ private fun appendSupersetDetails(markdown: StringBuilder, superset: Superset, i
     }
 }
 
-private fun formatSet(set: Set, setNumber: Int): String {
+private fun formatSet(set: Set, setNumber: Int, equipment: WeightLoadedEquipment? = null): String {
     val prefix = "Set $setNumber: "
-    val setStr = formatSetInlineForExport(set)
+    val setStr = formatSetInlineForExport(set, equipment)
     return prefix + setStr
 }
 
-private fun formatSetInline(set: Set): String {
-    return formatSetInlineForExport(set)
+private fun formatSetInline(set: Set, equipment: WeightLoadedEquipment? = null): String {
+    return formatSetInlineForExport(set, equipment)
 }
 
 private fun EquipmentType.toDisplayText(): String {

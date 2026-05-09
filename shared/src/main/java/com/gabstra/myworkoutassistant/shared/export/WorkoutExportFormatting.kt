@@ -1,5 +1,6 @@
 package com.gabstra.myworkoutassistant.shared.export
 
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.sets.BodyWeightSet
@@ -10,10 +11,13 @@ import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import kotlin.math.abs
 
-internal fun formatSetInlineForExport(set: Set): String {
+internal fun formatSetInlineForExport(
+    set: Set,
+    equipment: WeightLoadedEquipment? = null,
+): String {
     return when (set) {
         is WeightSet -> {
-            var str = "${formatNumber(set.weight)} kg x ${set.reps} reps"
+            var str = formatWeightWithRepsForExport(set.weight, set.reps, equipment)
             if (set.subCategory != SetSubCategory.WorkSet) {
                 str += " [${set.subCategory.name}]"
             }
@@ -26,7 +30,7 @@ internal fun formatSetInlineForExport(set: Set): String {
             } else if (set.additionalWeight < 0) {
                 str += " - ${formatNumber(-set.additionalWeight)} kg"
             }
-            str += " x ${set.reps} reps"
+            str += " for ${set.reps} reps"
             if (set.subCategory != SetSubCategory.WorkSet) {
                 str += " [${set.subCategory.name}]"
             }
@@ -43,6 +47,22 @@ internal fun formatSetInlineForExport(set: Set): String {
             "${minutes}:${String.format("%02d", seconds)} (endurance)"
         }
         is RestSet -> "${set.timeInSeconds} seconds rest"
+    }
+}
+
+internal fun formatWeightWithRepsForExport(
+    weight: Double,
+    reps: Int,
+    equipment: WeightLoadedEquipment?,
+): String = "${formatWeightForExport(weight, equipment)} for $reps reps"
+
+internal fun formatWeightForExport(
+    weight: Double,
+    equipment: WeightLoadedEquipment?,
+): String {
+    return when (equipment) {
+        null -> "${formatNumber(weight)} kg"
+        else -> equipment.formatWeight(weight)
     }
 }
 

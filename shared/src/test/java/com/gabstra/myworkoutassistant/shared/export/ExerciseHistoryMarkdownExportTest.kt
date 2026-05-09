@@ -95,12 +95,12 @@ class ExerciseHistoryMarkdownExportTest {
 
         val markdown = (result as ExerciseHistoryMarkdownResult.Success).markdown
 
-        assertTrue(markdown.contains("#### Equipment\n- Weighted Vest | Weights: 5,10,15 kg\n- Dip Dumbbell | Weights: 10,12.5,15 kg"))
+        assertTrue(markdown.contains("#### Equipment\n- Weighted Vest | Weights: 5,10,15\n- Dip Dumbbell | Weights: 10,12.50,15"))
         assertTrue(markdown.contains("#### Body Weight Load"))
         assertTrue(markdown.contains("Relative BW = session BW x 75%"))
         assertTrue(markdown.contains("Set load = relative BW +/- equipment weight"))
-        assertTrue(markdown.contains("60 kg relative BW (80 kg x 75%) + 10 kg equipment = 70 kg x 8"))
-        assertTrue(markdown.contains("60 kg relative BW (80 kg x 75%) + 12.5 kg equipment = 72.5 kg x 9"))
+        assertTrue(markdown.contains("60 kg relative BW (80 kg x 75%) + 10 kg equipment = 70 kg for 8 reps"))
+        assertTrue(markdown.contains("60 kg relative BW (80 kg x 75%) + 12.5 kg equipment = 72.5 kg for 9 reps"))
         assertEquals(
             "Equipment section should only be emitted once",
             markdown.indexOf("#### Equipment"),

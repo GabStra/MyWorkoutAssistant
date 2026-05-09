@@ -138,9 +138,9 @@ class ExerciseSessionCoachingMarkdownTest {
         val rendered = markdown.toString()
         assertTrue(rendered.contains("- Executed sets: 1"))
         assertFalse(rendered.contains("- Total volume:"))
-        assertTrue(rendered.contains("- 1: 80 kg x 8"))
-        assertFalse(rendered.contains("40 kg x 5"))
-        assertFalse(rendered.contains("70 kg x 3"))
+        assertTrue(rendered.contains("- 1: 80 kg for 8 reps"))
+        assertFalse(rendered.contains("40 kg for 5 reps"))
+        assertFalse(rendered.contains("70 kg for 3 reps"))
     }
 
     @Test
@@ -165,8 +165,8 @@ class ExerciseSessionCoachingMarkdownTest {
             achievableWeights = null
         )
 
-        assertTrue(executedMarkdown.toString().contains("- Set summary: 80 kg x 8 (auto RIR 2)"))
-        assertTrue(historicalMarkdown.toString().contains("- 1: 80 kg x 8 (auto RIR 2)"))
+        assertTrue(executedMarkdown.toString().contains("- Set summary: 80 kg for 8 reps (auto RIR 2)"))
+        assertTrue(historicalMarkdown.toString().contains("- 1: 80 kg for 8 reps (auto RIR 2)"))
     }
 
     private fun comparableSession(

@@ -40,6 +40,20 @@ interface WorkoutHistoryDao {
     @Query("SELECT * FROM workout_history WHERE isDone = :isDone")
     suspend fun getAllWorkoutHistoriesByIsDone(isDone: Boolean = true): List<WorkoutHistory>
 
+    @Query(
+        """
+        SELECT * FROM workout_history
+        WHERE isDone = 1
+        AND date >= :startInclusive
+        AND date <= :endInclusive
+        ORDER BY startTime ASC, date ASC, time ASC, id ASC
+        """
+    )
+    suspend fun getCompletedWorkoutHistoriesBetweenInclusive(
+        startInclusive: LocalDate,
+        endInclusive: LocalDate,
+    ): List<WorkoutHistory>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(workoutHistory: WorkoutHistory)
 

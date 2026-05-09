@@ -10,6 +10,7 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -24,6 +25,7 @@ import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
+import java.time.LocalDate
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -49,6 +51,8 @@ internal suspend fun loadComparableExerciseSessions(
     workoutHistoryDao: WorkoutHistoryDao,
     setHistoryDao: SetHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
+    historyStartDate: LocalDate? = null,
+    historyEndDate: LocalDate? = null,
 ): List<ComparableExerciseSession> {
     val workoutsContainingExercise = workouts.filter { workout ->
         workout.workoutComponents.any { component ->
@@ -65,6 +69,8 @@ internal suspend fun loadComparableExerciseSessions(
     val completedWorkoutHistories = workoutsContainingExercise
         .flatMap { workout -> workoutHistoryDao.getWorkoutsByWorkoutId(workout.id) }
         .filter { it.isDone }
+        .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
+        .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
         .sortedWith(compareBy<WorkoutHistory> { it.date }.thenBy { it.time })
 
     return completedWorkoutHistories.mapNotNull { workoutHistory ->
@@ -163,6 +169,7 @@ private fun formatPercentValue(value: Double): String {
 internal fun appendPlannedMarkdown(
     markdown: StringBuilder,
     exercise: Exercise,
+    equipment: WeightLoadedEquipment? = null,
 ) {
     markdown.append("#### Planned\n")
     if (exercise.sets.isEmpty()) {
@@ -171,7 +178,7 @@ internal fun appendPlannedMarkdown(
     }
 
     exercise.sets.forEachIndexed { index, set ->
-        markdown.append("- P${index + 1}: ${formatSetInlineForExport(set)}\n")
+        markdown.append("- P${index + 1}: ${formatSetInlineForExport(set, equipment)}\n")
     }
     markdown.append("\n")
 }
@@ -181,6 +188,7 @@ internal fun appendHistoricalSessionBlockMarkdown(
     heading: String,
     session: ComparableExerciseSession?,
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment? = null,
     includeSelectionNote: Boolean = false,
 ) {
     markdown.append("#### $heading\n")
@@ -189,7 +197,7 @@ internal fun appendHistoricalSessionBlockMarkdown(
         return
     }
 
-    val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights)
+    val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights, equipment)
     markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
     session.workout?.name?.let { markdown.append("- Workout: $it\n") }
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
@@ -203,7 +211,7 @@ internal fun appendHistoricalSessionBlockMarkdown(
         markdown.append("- Note: selected session\n")
     }
     session.activeSetHistories.forEachIndexed { index, setHistory ->
-        markdown.append("- ${index + 1}: ${formatSetHistoryInline(setHistory, achievableWeights)}\n")
+        markdown.append("- ${index + 1}: ${formatSetHistoryInline(setHistory, achievableWeights, equipment)}\n")
     }
     markdown.append("\n")
 }
@@ -212,8 +220,9 @@ internal fun appendExecutedSummaryMarkdown(
     markdown: StringBuilder,
     session: ComparableExerciseSession,
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment? = null,
 ) {
-    val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights)
+    val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights, equipment)
     markdown.append("#### Executed\n")
     markdown.append("- Date: ${session.workoutHistory.date} ${session.workoutHistory.time}\n")
     markdown.append("- Executed sets: ${metrics.executedSetCount}\n")
@@ -233,11 +242,12 @@ internal fun appendExerciseTrendMarkdown(
     sessionsThroughSelected: List<ComparableExerciseSession>,
     selectedSessionId: UUID,
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment? = null,
 ) {
     val window = sessionsThroughSelected.takeLast(8)
     markdown.append("#### Trend (last ${window.size} sessions)\n")
     window.forEach { session ->
-        val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights)
+        val metrics = metricsForSetHistories(session.activeSetHistories, achievableWeights, equipment)
         val line = buildString {
             append("- ${session.workoutHistory.date}")
             append(" | ")
@@ -389,6 +399,7 @@ internal fun findBestSessionThroughIndex(
 private fun metricsForSetHistories(
     setHistories: List<SetHistory>,
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment? = null,
 ): ExportSessionMetrics {
     var totalVolume = 0.0
     var totalDurationSeconds = 0
@@ -406,6 +417,7 @@ private fun metricsForSetHistories(
                 setSummaryEntries += formatSimpleSetSummaryEntry(
                     weight = adjustedWeight,
                     reps = setData.actualReps,
+                    equipment = equipment,
                     autoRegulationRIR = setData.autoRegulationRIR
                 )
                 totalVolume += adjustedWeight * setData.actualReps
@@ -450,6 +462,7 @@ private fun metricsForSetHistories(
 private fun formatSetHistoryInline(
     setHistory: SetHistory,
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment? = null,
 ): String {
     val prefix = if (setHistory.skipped) "[skipped] " else ""
     return prefix + when (val setData = setHistory.setData) {
@@ -458,6 +471,7 @@ private fun formatSetHistoryInline(
             formatSimpleSetSummaryEntry(
                 weight = adjustedWeight,
                 reps = setData.actualReps,
+                equipment = equipment,
                 autoRegulationRIR = setData.autoRegulationRIR
             )
         }
@@ -485,11 +499,10 @@ private fun formatSetHistoryInline(
 private fun formatSimpleSetSummaryEntry(
     weight: Double,
     reps: Int,
+    equipment: WeightLoadedEquipment? = null,
     autoRegulationRIR: Double? = null,
 ): String = buildString {
-    append(formatNumber(weight))
-    append(" kg x ")
-    append(reps)
+    append(formatWeightWithRepsForExport(weight, reps, equipment))
     autoRegulationRIR?.let { rir ->
         append(" (auto RIR ")
         append(formatNumber(rir))

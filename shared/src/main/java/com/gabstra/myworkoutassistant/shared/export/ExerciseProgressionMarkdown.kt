@@ -2,7 +2,6 @@ package com.gabstra.myworkoutassistant.shared.export
 
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.SetHistory
-import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
@@ -41,13 +40,15 @@ internal fun appendExerciseProgressionMarkdown(
         if (previousSets.isEmpty()) {
             markdown.append("- Previous: none\n")
         } else {
-            markdown.append("- Previous: ${previousSets.joinToString(", ") { "${formatNumber(it.weight)} kg x ${it.reps}" }}\n")
+            markdown.append(
+                "- Previous: ${previousSets.joinToString(", ") { formatWeightWithRepsForExport(it.weight, it.reps, equipment = null) }}\n"
+            )
         }
     }
 
     if (progression.expectedSets.isNotEmpty()) {
         val expectedSetsStr = progression.expectedSets.joinToString(", ") {
-            "${formatNumber(it.weight)} kg x ${it.reps}"
+            formatWeightWithRepsForExport(it.weight, it.reps, equipment = null)
         }
         markdown.append("- Expected: $expectedSetsStr\n")
     }

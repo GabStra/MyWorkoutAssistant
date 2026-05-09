@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.workout.history.elapsedSecondsFromH
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import java.util.Calendar
+import java.time.LocalDate
 import kotlin.math.roundToInt
 
 sealed class ExerciseHistoryMarkdownResult {
@@ -50,7 +51,9 @@ suspend fun buildExerciseHistoryMarkdown(
     restHistoryDao: RestHistoryDao,
     exerciseSessionProgressionDao: ExerciseSessionProgressionDao,
     workouts: List<Workout>,
-    workoutStore: WorkoutStore
+    workoutStore: WorkoutStore,
+    historyStartDate: LocalDate? = null,
+    historyEndDate: LocalDate? = null,
 ): ExerciseHistoryMarkdownResult {
     val workoutsContainingExercise = workouts.filter { workout ->
         workout.workoutComponents.any { component ->
@@ -69,6 +72,8 @@ suspend fun buildExerciseHistoryMarkdown(
     val completedWorkoutHistories = workoutsContainingExercise
         .flatMap { workout -> workoutHistoryDao.getWorkoutsByWorkoutId(workout.id) }
         .filter { it.isDone }
+        .filter { historyStartDate == null || !it.date.isBefore(historyStartDate) }
+        .filter { historyEndDate == null || !it.date.isAfter(historyEndDate) }
         .sortedWith(compareBy({ it.date }, { it.time }))
 
     if (completedWorkoutHistories.isEmpty()) {
@@ -168,7 +173,7 @@ suspend fun buildExerciseHistoryMarkdown(
             workoutStore = workoutStore,
             exercise = exercise,
             progression = progressionData,
-            achievableWeights = equipmentBySession.getValue(session).achievableWeights,
+            equipment = equipmentBySession.getValue(session).equipment,
         )
         markdown.append("\n")
     }
@@ -188,10 +193,11 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
     workoutStore: WorkoutStore,
     exercise: Exercise,
     progression: com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression?,
-    achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment?,
 ) {
+    val achievableWeights = equipment?.getWeightsCombinations()?.sorted()
     val executedSets = activeSetHistories.toSimpleSets(achievableWeights)
-    val executedSetTokens = activeSetHistories.toCompactSetTokens(achievableWeights)
+    val executedSetTokens = activeSetHistories.toCompactSetTokens(achievableWeights, equipment)
     markdown.append("### Performance\n")
     val setsLine = if (executedSetTokens.isEmpty()) {
         "none"
@@ -201,7 +207,7 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
     markdown.append("- Sets: $setsLine\n")
 
     val topSet = executedSets.maxWithOrNull(compareBy<SimpleSet>({ it.weight }, { it.reps }))
-    markdown.append("- Top set: ${topSet?.toCompactToken() ?: "none"}\n")
+    markdown.append("- Top set: ${topSet?.toCompactToken(equipment) ?: "none"}\n")
     markdown.append("- Total reps: ${executedSets.sumOf { it.reps }}\n")
     markdown.append("- Rest: ${formatCompactRestSummary(restsForExercise)}\n")
     markdown.append("\n")
@@ -227,7 +233,7 @@ private fun appendExerciseSessionCompactSummaryMarkdown(
     val plannedLine = if (plannedSets.isEmpty()) {
         "none"
     } else {
-        plannedSets.joinToString(", ") { "${formatNumber(it.weight)}x${it.reps}" }
+        plannedSets.joinToString(", ") { formatWeightWithRepsForExport(it.weight, it.reps, equipment) }
     }
     markdown.append("- Planned sets: $plannedLine\n")
     markdown.append("- Outcome: ${describeOutcome(executedSets, plannedSets)}\n")
@@ -284,21 +290,20 @@ private fun appendExerciseEquipmentMarkdown(
         markdown.append("- ")
         markdown.append(info.name ?: "Unknown")
         if (includeWeights) {
-            appendSelectableWeights(markdown, info.achievableWeights)
+            appendSelectableWeights(markdown, info.achievableWeights, info.equipment)
         }
         markdown.append("\n")
     }
     markdown.append("\n")
 }
 
-private fun appendSelectableWeights(markdown: StringBuilder, weights: List<Double>?) {
+private fun appendSelectableWeights(markdown: StringBuilder, weights: List<Double>?, equipment: WeightLoadedEquipment? = null) {
     markdown.append(" | Weights: ")
     if (weights.isNullOrEmpty()) {
         markdown.append("none configured")
         return
     }
-    markdown.append(weights.joinToString(",") { weight -> formatNumber(weight) })
-    markdown.append(" kg")
+    markdown.append(weights.joinToString(",") { weight -> formatWeightForExport(weight, equipment) })
 }
 
 private fun appendBodyWeightLoadFormulaMarkdown(
@@ -329,11 +334,12 @@ private fun List<SetHistory>.toSimpleSets(
 
 private fun List<SetHistory>.toCompactSetTokens(
     achievableWeights: List<Double>?,
+    equipment: WeightLoadedEquipment?,
 ): List<String> = mapNotNull { setHistory ->
     when (val setData = setHistory.setData) {
         is WeightSetData -> {
             val adjustedWeight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
-            "${formatNumber(adjustedWeight)}x${setData.actualReps}"
+            formatWeightWithRepsForExport(adjustedWeight, setData.actualReps, equipment)
         }
         is BodyWeightSetData -> setData.toBodyWeightFormulaToken()
         else -> null
@@ -358,11 +364,13 @@ private fun BodyWeightSetData.toBodyWeightFormulaToken(): String = buildString {
     }
     append(" = ")
     append(formatNumber(getWeight()))
-    append(" kg x ")
+    append(" kg for ")
     append(actualReps)
+    append(" reps")
 }
 
-private fun SimpleSet.toCompactToken(): String = "${formatNumber(weight)}x$reps"
+private fun SimpleSet.toCompactToken(equipment: WeightLoadedEquipment?): String =
+    formatWeightWithRepsForExport(weight, reps, equipment)
 
 private fun formatCompactRestSummary(
     restsForExercise: List<RestHistory>,

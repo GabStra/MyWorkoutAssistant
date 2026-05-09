@@ -124,7 +124,7 @@ class WorkoutSessionMarkdownExportTest {
         assertTrue(markdown.contains("#### Athlete Context"))
         assertTrue(markdown.contains("#### Session Heart Rate"))
         assertTrue(markdown.contains("#### Planned"))
-        assertTrue(markdown.contains("- P1: 45 kg × 8 reps"))
+        assertTrue(markdown.contains("- P1: 45 for 8 reps"))
         assertTrue(markdown.contains("#### Executed"))
         assertTrue(markdown.contains("#### Previous Session"))
         assertTrue(markdown.contains("- Date: 2026-01-12 09:00"))
