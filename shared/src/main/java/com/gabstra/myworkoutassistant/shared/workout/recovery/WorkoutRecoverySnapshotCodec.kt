@@ -315,11 +315,12 @@ object WorkoutRecoverySnapshotCodec {
                 val currentData = currentSetDataJson.toSetDataOrNull() ?: initializeSetData(parsedSet)
                 val legacyPreviousData = previousSetDataJson?.toSetDataOrNull()
                 val historicalData = historicalSetDataJson?.toSetDataOrNull() ?: legacyPreviousData
+                val previousData = legacyPreviousData ?: copySetData(currentData)
                 WorkoutState.Set(
                     exerciseId = exerciseId?.toUuidOrNull() ?: return null,
                     set = parsedSet,
                     setIndex = (setIndex ?: return null).toUInt(),
-                    previousSetData = copySetData(currentData),
+                    previousSetData = previousData,
                     currentSetDataState = mutableStateOf(copySetData(currentData)),
                     historicalSetData = historicalData,
                     hasNoHistory = hasNoHistory ?: false,
