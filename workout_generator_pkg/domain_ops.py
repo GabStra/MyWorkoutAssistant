@@ -11,6 +11,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from .constants import JSON_SCHEMA, MUSCLE_GROUP_FIXES
+from .exercise_contracts import get_exercise_emission_profile
 
 try:
     from jsonschema import validate
@@ -475,8 +476,157 @@ def apply_requires_load_calibration_policy(exercise, allow_educated_load_guesses
     return exercise
 
 
+def _is_positive_percentage_semantics(value: Any) -> bool:
+    return isinstance(value, (int, float)) and value > 1.0
+
+
+def validate_exercise_type_profile(
+    exercise: Dict[str, Any],
+    plan_entry: Optional[Dict[str, Any]] = None,
+    require_full_shape: bool = False,
+) -> List[str]:
+    if not isinstance(exercise, dict):
+        return ["Exercise definition must be a JSON object."]
+
+    exercise_type = exercise.get("exerciseType")
+    if not isinstance(exercise_type, str):
+        return ["Exercise definition is missing exerciseType."]
+
+    try:
+        profile = get_exercise_emission_profile(exercise_type)
+    except ValueError as exc:
+        return [str(exc)]
+
+    errors: List[str] = []
+    exercise_name = exercise.get("name", "Unknown")
+
+    if require_full_shape:
+        for field in profile["required_top_level_fields"]:
+            if field not in exercise:
+                errors.append(
+                    f"Exercise '{exercise_name}' is missing required top-level field '{field}' for {exercise_type}."
+                )
+
+    for field in profile["forbidden_top_level_fields"]:
+        if field in exercise:
+            errors.append(
+                f"Exercise '{exercise_name}' must not include top-level field '{field}' for {exercise_type}."
+            )
+
+    if exercise_type == "BODY_WEIGHT":
+        if not _is_positive_percentage_semantics(exercise.get("bodyWeightPercentage")):
+            errors.append(
+                f"Exercise '{exercise_name}' must include a positive numeric bodyWeightPercentage in percentage form for BODY_WEIGHT exercises."
+            )
+    elif exercise.get("bodyWeightPercentage") is not None:
+        errors.append(
+            f"Exercise '{exercise_name}' must set bodyWeightPercentage to null for non-BODY_WEIGHT exercises."
+        )
+
+    if exercise_type == "COUNTDOWN" and exercise.get("showCountDownTimer") is not True:
+        errors.append(
+            f"Exercise '{exercise_name}' must set showCountDownTimer=true for COUNTDOWN exercises."
+        )
+
+    if exercise_type in ("COUNTDOWN", "COUNTUP"):
+        if "minReps" in exercise or "maxReps" in exercise:
+            errors.append(
+                f"Exercise '{exercise_name}' must not emit minReps or maxReps for timed exercises."
+            )
+    elif require_full_shape:
+        for rep_field in ("minReps", "maxReps"):
+            if rep_field not in exercise:
+                errors.append(
+                    f"Exercise '{exercise_name}' is missing required top-level field '{rep_field}' for {exercise_type}."
+                )
+
+    allowed_work_set_type = profile["allowed_work_set_type"]
+    sets = exercise.get("sets")
+    if not isinstance(sets, list) or not sets:
+        errors.append(f"Exercise '{exercise_name}' must include a non-empty sets array.")
+        return errors
+
+    work_set_count = 0
+    rest_values: List[int] = []
+
+    for idx, set_item in enumerate(sets):
+        if not isinstance(set_item, dict):
+            errors.append(f"Exercise '{exercise_name}' sets[{idx}] must be an object.")
+            continue
+        set_type = set_item.get("type")
+        if set_type == allowed_work_set_type:
+            work_set_count += 1
+            if require_full_shape:
+                for field in profile["required_set_level_fields"]:
+                    if field not in set_item:
+                        errors.append(
+                            f"Exercise '{exercise_name}' {allowed_work_set_type} at sets[{idx}] is missing required field '{field}'."
+                        )
+            for field in profile["forbidden_set_level_fields"]:
+                if field in set_item:
+                    errors.append(
+                        f"Exercise '{exercise_name}' {allowed_work_set_type} at sets[{idx}] must not include field '{field}'."
+                    )
+        elif set_type == "RestSet":
+            if not profile["allowed_rest_set"]:
+                errors.append(
+                    f"Exercise '{exercise_name}' must not emit RestSet entries for {exercise_type} exercises."
+                )
+            if require_full_shape:
+                for field in ("id", "type", "timeInSeconds", "subCategory"):
+                    if field not in set_item:
+                        errors.append(
+                            f"Exercise '{exercise_name}' RestSet at sets[{idx}] is missing required field '{field}'."
+                        )
+            for field in ("reps", "weight", "additionalWeight", "timeInMillis", "autoStart", "autoStop"):
+                if field in set_item:
+                    errors.append(
+                        f"Exercise '{exercise_name}' RestSet at sets[{idx}] must not include field '{field}'."
+                    )
+            time_in_seconds = set_item.get("timeInSeconds")
+            if isinstance(time_in_seconds, int):
+                rest_values.append(time_in_seconds)
+            prev_type = sets[idx - 1].get("type") if idx > 0 and isinstance(sets[idx - 1], dict) else None
+            next_type = sets[idx + 1].get("type") if idx + 1 < len(sets) and isinstance(sets[idx + 1], dict) else None
+            if prev_type != allowed_work_set_type or next_type != allowed_work_set_type:
+                errors.append(
+                    f"Exercise '{exercise_name}' RestSet at sets[{idx}] must appear only between adjacent {allowed_work_set_type} work sets."
+                )
+        else:
+            errors.append(
+                f"Exercise '{exercise_name}' has exerciseType '{exercise_type}' but contains set type '{set_type}'. Expected only {allowed_work_set_type} and optional RestSet between work sets."
+            )
+
+    if work_set_count == 0:
+        errors.append(
+            f"Exercise '{exercise_name}' must include at least one {allowed_work_set_type} work set."
+        )
+
+    if plan_entry:
+        expected_work_sets = plan_entry.get("numWorkSets")
+        if isinstance(expected_work_sets, int) and expected_work_sets >= 0 and work_set_count != expected_work_sets:
+            errors.append(
+                f"Exercise '{exercise_name}' must emit exactly {expected_work_sets} work sets, got {work_set_count}."
+            )
+
+        expected_rest_between = plan_entry.get("restBetweenSetsSeconds")
+        if isinstance(expected_rest_between, int) and work_set_count > 1:
+            expected_rest_count = work_set_count - 1
+            if len(rest_values) != expected_rest_count:
+                errors.append(
+                    f"Exercise '{exercise_name}' must emit exactly {expected_rest_count} RestSet entries between work sets when restBetweenSetsSeconds={expected_rest_between}."
+                )
+            elif any(rest_value != expected_rest_between for rest_value in rest_values):
+                errors.append(
+                    f"Exercise '{exercise_name}' must set every RestSet timeInSeconds to {expected_rest_between}, got {rest_values}."
+                )
+
+    return errors
+
+
 def finalize_and_validate_exercise_definition(
     exercise_item,
+    plan_entry=None,
     equipment_subset=None,
     accessory_subset=None,
     all_equipment_candidates=None,
@@ -517,7 +667,8 @@ def finalize_and_validate_exercise_definition(
         equipment_candidates=merged_equipment,
         accessory_subset=accessory_subset,
     )
-    if inferred_equipment_id and not exercise.get("equipmentId"):
+    plan_explicitly_owns_equipment_id = isinstance(plan_entry, dict) and "equipmentId" in plan_entry
+    if inferred_equipment_id and not exercise.get("equipmentId") and not plan_explicitly_owns_equipment_id:
         exercise["equipmentId"] = inferred_equipment_id
 
     # Calibration policy is controlled by the generator setting and the
@@ -526,12 +677,17 @@ def finalize_and_validate_exercise_definition(
         exercise,
         allow_educated_load_guesses=allow_educated_load_guesses,
     )
+    sync_plan_owned_exercise_fields(exercise, plan_entry)
 
     equipment_ids = {eq.get("id") for eq in merged_equipment if eq.get("id")}
     accessory_ids = {acc.get("id") for acc in accessory_subset if isinstance(acc, dict) and acc.get("id")}
     equipment_by_id = {eq.get("id"): eq for eq in merged_equipment if eq.get("id")}
 
-    validation_errors = []
+    validation_errors = validate_exercise_type_profile(
+        exercise,
+        plan_entry=plan_entry,
+        require_full_shape=True,
+    )
 
     checks = [
         validate_exercise_type_consistency(exercise),
@@ -1723,6 +1879,14 @@ def fix_exercise_errors(exercises, allow_educated_load_guesses=False):
         # Normalize requiredAccessoryEquipmentIds to empty array if None
         if ex_copy.get("requiredAccessoryEquipmentIds") is None:
             ex_copy["requiredAccessoryEquipmentIds"] = []
+        if ex_copy.get("secondaryMuscleGroups") is None:
+            ex_copy["secondaryMuscleGroups"] = []
+        if "intraSetRestInSeconds" not in ex_copy:
+            ex_copy["intraSetRestInSeconds"] = None
+        if "bodyWeightPercentage" not in ex_copy and ex_copy.get("exerciseType") != "BODY_WEIGHT":
+            ex_copy["bodyWeightPercentage"] = None
+        if "exerciseCategory" not in ex_copy and ex_copy.get("exerciseType") in ("COUNTDOWN", "COUNTUP"):
+            ex_copy["exerciseCategory"] = None
         
         apply_requires_load_calibration_policy(
             ex_copy,
@@ -1820,16 +1984,6 @@ def sync_exercises_from_plan_index(workout_store, plan_index):
         if ex_id:
             plan_exercise_by_id[ex_id] = exercise
 
-    fields_to_sync = [
-        "exerciseType",
-        "equipmentId",
-        "bodyWeightPercentage",
-        "exerciseCategory",
-        "requiredAccessoryEquipmentIds",
-        "minReps",
-        "maxReps",
-    ]
-
     def sync_one(exercise):
         if not isinstance(exercise, dict):
             return
@@ -1837,16 +1991,7 @@ def sync_exercises_from_plan_index(workout_store, plan_index):
         if not ex_id:
             return
         source = plan_exercise_by_id.get(ex_id)
-        if not isinstance(source, dict):
-            return
-        for field in fields_to_sync:
-            if field in ("minReps", "maxReps") and source.get("exerciseType") in ("COUNTDOWN", "COUNTUP"):
-                continue
-            if field in source:
-                value = source[field]
-                if field in ("minReps", "maxReps") and value is None:
-                    continue
-                exercise[field] = copy.deepcopy(value)
+        sync_plan_owned_exercise_fields(exercise, source)
 
     for workout in workout_store.get("workouts", []):
         for component in workout.get("workoutComponents", []):
@@ -1858,6 +2003,36 @@ def sync_exercises_from_plan_index(workout_store, plan_index):
                     sync_one(ex)
 
     return workout_store
+
+
+def sync_plan_owned_exercise_fields(exercise, plan_entry):
+    """
+    Synchronize exercise fields that are structurally owned by the PlanIndex.
+
+    Explicit plan values, including explicit nulls, must win over later
+    normalization or inference passes.
+    """
+    if not isinstance(exercise, dict) or not isinstance(plan_entry, dict):
+        return exercise
+
+    fields_to_sync = [
+        "exerciseType",
+        "equipmentId",
+        "bodyWeightPercentage",
+        "exerciseCategory",
+        "requiredAccessoryEquipmentIds",
+        "minReps",
+        "maxReps",
+    ]
+    for field in fields_to_sync:
+        if field in ("minReps", "maxReps") and plan_entry.get("exerciseType") in ("COUNTDOWN", "COUNTUP"):
+            continue
+        if field in plan_entry:
+            value = plan_entry[field]
+            if field in ("minReps", "maxReps") and value is None:
+                continue
+            exercise[field] = copy.deepcopy(value)
+    return exercise
 
 
 def fix_equipment_errors(equipments):

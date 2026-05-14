@@ -29,19 +29,20 @@ from workout_generator_pkg.constants import (
     SUMMARIZATION_SYSTEM_PROMPT,
     JSON_SYSTEM_PROMPT,
     SELF_HEAL_SYSTEM_PROMPT,
-    EQUIPMENT_SCHEMA,
-    EQUIPMENT_EXAMPLE,
-    EQUIPMENT_SYSTEM_PROMPT,
-    EXERCISE_SCHEMA,
-    EXERCISE_EXAMPLE,
-    EXERCISE_SYSTEM_PROMPT,
-    WORKOUT_STRUCTURE_EXAMPLE,
-    WORKOUT_STRUCTURE_SYSTEM_PROMPT,
-    PLAN_INDEX_EXAMPLE,
-    PLAN_INDEX_SYSTEM_PROMPT,
-    JSON_PATCH_REPAIR_SYSTEM_PROMPT,
     GENERATE_WORKOUT_TOOL,
     MUSCLE_GROUP_FIXES,
+)
+from workout_generator_pkg.exercise_contracts import get_exercise_emission_profile
+from workout_generator_pkg.stage_prompts import (
+    EQUIPMENT_EXAMPLE,
+    EQUIPMENT_SCHEMA,
+    EQUIPMENT_SYSTEM_PROMPT,
+    EXERCISE_SYSTEM_PROMPT,
+    JSON_PATCH_REPAIR_SYSTEM_PROMPT,
+    PLAN_INDEX_EXAMPLE,
+    PLAN_INDEX_SYSTEM_PROMPT,
+    WORKOUT_STRUCTURE_EXAMPLE,
+    WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
 from workout_generator_pkg.plan_contract import ContractValidationError, validate_single_exercise_definition_contract
 
@@ -1140,6 +1141,16 @@ def emit_exercise_definition(
     
     if not exercise_entry:
         raise ValueError(f"Exercise ID {exercise_id} not found in PlanIndex")
+
+    exercise_type = exercise_entry.get("exerciseType")
+    profile = get_exercise_emission_profile(exercise_type)
+    profile_schema_json = json.dumps(profile["schema"], indent=2)
+    profile_example_json = json.dumps(profile["example_object"], indent=2)
+    required_top_fields_text = ", ".join(profile["required_top_level_fields"])
+    forbidden_top_fields = profile.get("forbidden_top_level_fields") or []
+    forbidden_top_fields_text = ", ".join(forbidden_top_fields) if forbidden_top_fields else "(none)"
+    required_set_fields_text = ", ".join(profile["required_set_level_fields"])
+    forbidden_set_fields_text = ", ".join(profile["forbidden_set_level_fields"])
     
     prompt_exercise_brief = {
         "id": exercise_entry.get("id"),
@@ -1204,11 +1215,26 @@ def emit_exercise_definition(
     # Build explicit instructions from plan entry (numWorkSets, restBetweenSetsSeconds, minReps, maxReps, exact targets)
     plan_spec_lines = []
     num_work_sets = exercise_entry.get("numWorkSets")
-    if num_work_sets is not None and exercise_entry.get("exerciseType") not in ("COUNTDOWN", "COUNTUP"):
-        plan_spec_lines.append(f"This exercise has exactly {num_work_sets} work sets. Emit exactly {num_work_sets} work sets (with RestSets between them).")
+    if num_work_sets is not None:
+        if exercise_type in ("COUNTDOWN", "COUNTUP"):
+            plan_spec_lines.append(
+                f"This timed exercise has exactly {num_work_sets} work sets. "
+                f"Emit exactly {num_work_sets} {profile['allowed_work_set_type']} work sets."
+            )
+        else:
+            plan_spec_lines.append(
+                f"This exercise has exactly {num_work_sets} work sets. "
+                f"Emit exactly {num_work_sets} work sets (with RestSets between them when the plan specifies rest)."
+            )
     rest_between = exercise_entry.get("restBetweenSetsSeconds")
     if rest_between is not None:
-        plan_spec_lines.append(f"Rest between sets: {rest_between} seconds.")
+        if num_work_sets and num_work_sets > 1:
+            plan_spec_lines.append(
+                f"Rest between work sets: {rest_between} seconds exactly. "
+                "Emit one RestSet between each adjacent pair of work sets, and do not place RestSets anywhere else."
+            )
+        else:
+            plan_spec_lines.append(f"Rest between sets: {rest_between} seconds.")
     if "equipmentId" in exercise_entry:
         equipment_id = exercise_entry.get("equipmentId")
         if equipment_id is None:
@@ -1226,7 +1252,7 @@ def emit_exercise_definition(
     target_set_prescriptions = exercise_entry.get("targetSetPrescriptions")
     if (
         min_reps is not None and max_reps is not None
-        and exercise_entry.get("exerciseType") not in ("COUNTDOWN", "COUNTUP")
+        and exercise_type not in ("COUNTDOWN", "COUNTUP")
         and not target_set_prescriptions
     ):
         plan_spec_lines.append(f"Rep range: minReps={min_reps}, maxReps={max_reps}. Set minReps and maxReps accordingly and use a representative rep value within that range for each work set.")
@@ -1249,12 +1275,16 @@ def emit_exercise_definition(
             + "\n".join(target_lines)
         )
     body_weight_percentage = exercise_entry.get("bodyWeightPercentage")
-    if exercise_entry.get("exerciseType") == "BODY_WEIGHT":
+    if exercise_type == "BODY_WEIGHT":
         plan_spec_lines.append(
             f"Set bodyWeightPercentage EXACTLY to {body_weight_percentage}. "
             "This field is the percentage of the user's body mass that counts as the exercise's baseline load before any additionalWeight is added. "
             "Do not omit it and do not change it."
         )
+    elif exercise_type in ("WEIGHT", "COUNTDOWN", "COUNTUP"):
+        plan_spec_lines.append("Set bodyWeightPercentage EXACTLY to null.")
+    if exercise_type == "COUNTDOWN":
+        plan_spec_lines.append("Set showCountDownTimer EXACTLY to true.")
     plan_spec_instructions = "\n".join(plan_spec_lines)
     if plan_spec_instructions:
         plan_spec_instructions = "CRITICAL - Follow these exact specifications from the plan:\n" + plan_spec_instructions + "\n\n"
@@ -1285,17 +1315,15 @@ def emit_exercise_definition(
         "If this is not unilateral, set intraSetRestInSeconds to null. "
         "Do not leave unilateral intent implicit.\n"
     )
-    user_content = (
+    common_instructions = (
         "CRITICAL: Use a movement-only exercise name. Remove equipment/accessory words and remove set/time details from the name.\n"
         "Examples: 'Barbell Back Squat' -> 'Back Squat', 'DB Bulgarian Split Squat' -> 'Bulgarian Split Squat', "
         "'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n\n"
-        f"{plan_spec_instructions}"
         f"Exercise brief for {exercise_id}:\n{prompt_exercise_brief_json}\n\n"
         f"Relevant equipment (id, type, name):\n{equipment_list_short}\n"
         f"{accessory_json_text}"
         f"{combinations_text}\n"
         f"Generate ONLY this one exercise definition using placeholder IDs. "
-        f"Output format should match $defs.Exercise from the schema. "
         f"Use placeholder ID: {exercise_id} for the exercise, SET_X for sets, "
         f"and reference equipment using EQUIPMENT_X placeholders.\n"
         "CRITICAL: For placeholders, use exact canonical numeric forms only: "
@@ -1313,6 +1341,22 @@ def emit_exercise_definition(
         f"{warmup_instruction}"
         f"{unilateral_instruction}"
         f"{calibration_instruction}"
+    )
+    type_specific_instructions = (
+        f"{profile['instruction_text']}\n"
+        f"Required top-level fields for this {exercise_type} object: {required_top_fields_text}.\n"
+        f"Forbidden top-level fields for this {exercise_type} object: {forbidden_top_fields_text}.\n"
+        f"Allowed work-set type for this {exercise_type} object: {profile['allowed_work_set_type']}.\n"
+        f"Required fields on each {profile['allowed_work_set_type']}: {required_set_fields_text}.\n"
+        f"Forbidden fields on each {profile['allowed_work_set_type']}: {forbidden_set_fields_text}.\n"
+        "RestSet, when allowed, must contain only id, type, timeInSeconds, and subCategory and may appear only between adjacent work sets.\n"
+        f"Type-specific schema to follow exactly:\n{profile_schema_json}\n\n"
+        f"Type-specific example object:\n{profile_example_json}\n"
+    )
+    user_content = (
+        f"{plan_spec_instructions}"
+        f"{common_instructions}"
+        f"{type_specific_instructions}"
         "Output only the exercise object JSON, not a wrapper."
     )
     
@@ -1401,7 +1445,7 @@ def emit_exercise_definition(
         allowed_descendant_paths_list = sorted(
             normalize_json_pointer(p) for p in allowed_descendant_paths if p is not None
         )
-        exercise_schema_json = json.dumps(EXERCISE_SCHEMA, indent=2)
+        exercise_schema_json = json.dumps(profile["schema"], indent=2)
         muscle_group_enum_text = ", ".join(valid_muscle_groups)
         exercise_type_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseType", {}).get("enum", [])
         exercise_category_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseCategory", {}).get("enum", [])
@@ -1422,7 +1466,12 @@ def emit_exercise_definition(
             f"Plan entry for this exercise:\n{plan_entry_text}\n\n"
             f"Validation errors for this exercise:\n{errors_text}\n\n"
             f"Exercise JSON (with errors):\n{exercise_json_str}\n\n"
-            f"Exercise schema ($defs.Exercise):\n{exercise_schema_json}\n\n"
+            f"Type-specific exercise schema:\n{exercise_schema_json}\n\n"
+            f"Type-specific required top-level fields: {required_top_fields_text}\n"
+            f"Type-specific forbidden top-level fields: {forbidden_top_fields_text}\n"
+            f"Allowed work-set type: {profile['allowed_work_set_type']}\n"
+            f"Required work-set fields: {required_set_fields_text}\n"
+            f"Forbidden work-set fields: {forbidden_set_fields_text}\n\n"
             f"Valid ExerciseType values: {exercise_type_enum_text}\n"
             f"Valid ExerciseCategory values: {exercise_category_enum_text}\n"
             f"Valid MuscleGroup enum values: {muscle_group_enum_text}\n"
@@ -1561,6 +1610,7 @@ def emit_exercise_definition(
             # Finalize and validate this exercise before adding it to exercise_definitions.
             normalized_item = finalize_and_validate_exercise_definition(
                 exercise_item,
+                plan_entry=exercise_entry,
                 equipment_subset=equipment_subset,
                 accessory_subset=accessory_subset,
                 all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
@@ -1606,6 +1656,7 @@ def emit_exercise_definition(
                         patched_item = _apply_plan_authoritative_fields(patched_item)
                         normalized_item = finalize_and_validate_exercise_definition(
                             patched_item,
+                            plan_entry=exercise_entry,
                             equipment_subset=equipment_subset,
                             accessory_subset=accessory_subset,
                             all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,

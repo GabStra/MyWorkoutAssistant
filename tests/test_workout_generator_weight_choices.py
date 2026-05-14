@@ -3,14 +3,12 @@ import json
 
 import pytest
 from jsonschema import validate
+from jsonschema.exceptions import ValidationError
 
 from workout_generator_pkg import cli
 from workout_generator_pkg.constants import BASE_SYSTEM_PROMPT
-from workout_generator_pkg.constants import EXERCISE_SYSTEM_PROMPT
 from workout_generator_pkg.constants import JSON_SYSTEM_PROMPT
-from workout_generator_pkg.constants import PLAN_INDEX_SYSTEM_PROMPT
 from workout_generator_pkg.constants import SUMMARIZATION_SYSTEM_PROMPT
-from workout_generator_pkg.constants import WORKOUT_STRUCTURE_SYSTEM_PROMPT
 from workout_generator_pkg.cli import PlaceholderIdManager
 from workout_generator_pkg.domain_ops import calculate_equipment_weight_combinations
 from workout_generator_pkg.domain_ops import create_placeholder_schema
@@ -24,10 +22,21 @@ from workout_generator_pkg.generation_pipeline import _extract_structured_genera
 from workout_generator_pkg.generation_pipeline import _normalize_custom_prompt_equipment_ids
 from workout_generator_pkg.json_patching import build_allowed_patch_scope
 from workout_generator_pkg.json_patching import validate_patch_operations_scope
+from workout_generator_pkg.exercise_contracts import (
+    BODY_WEIGHT_EXERCISE_SCHEMA,
+    COUNTDOWN_EXERCISE_SCHEMA,
+    COUNTUP_EXERCISE_SCHEMA,
+    WEIGHT_EXERCISE_SCHEMA,
+)
 from workout_generator_pkg.plan_contract import ContractValidationError
 from workout_generator_pkg.plan_contract import validate_plan_index_contract
 from workout_generator_pkg.plan_contract import validate_exercise_definitions_contract
 from workout_generator_pkg.plan_contract import validate_workout_structures_contract
+from workout_generator_pkg.stage_prompts import (
+    EXERCISE_SYSTEM_PROMPT,
+    PLAN_INDEX_SYSTEM_PROMPT,
+    WORKOUT_STRUCTURE_SYSTEM_PROMPT,
+)
 
 
 def test_summarization_prompt_preserves_bodyweight_load_semantics():
@@ -42,6 +51,7 @@ def test_rest_prompts_require_exact_values_not_ranges():
     assert "rest between sets and rest between exercises as separate, clearly labeled fields or columns" in BASE_SYSTEM_PROMPT
     assert "never ranges" in JSON_SYSTEM_PROMPT
     assert "restBetweenSetsSeconds and restToNextSeconds must always be exact integers in seconds" in PLAN_INDEX_SYSTEM_PROMPT
+    assert "For timed exercises, numWorkSets counts timed work intervals and must be a positive integer when provided" in PLAN_INDEX_SYSTEM_PROMPT
     assert "Rest values in the summary must be expressed as one exact number" in SUMMARIZATION_SYSTEM_PROMPT
 
 
@@ -457,8 +467,10 @@ def test_emit_exercise_definition_retries_until_llm_matches_contract(monkeypatch
                 "progressionMode": "OFF",
                 "keepScreenOn": False,
                 "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
                 "requiresLoadCalibration": False,
                 "requiredAccessoryEquipmentIds": [],
+                "exerciseCategory": "MODERATE_COMPOUND",
                 "sets": [
                     {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 20.0, "subCategory": "WorkSet"},
                 ],
@@ -482,8 +494,10 @@ def test_emit_exercise_definition_retries_until_llm_matches_contract(monkeypatch
                 "progressionMode": "OFF",
                 "keepScreenOn": False,
                 "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
                 "requiresLoadCalibration": False,
                 "requiredAccessoryEquipmentIds": [],
+                "exerciseCategory": "MODERATE_COMPOUND",
                 "sets": [
                     {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 20.0, "subCategory": "WorkSet"},
                 ],
@@ -530,8 +544,7 @@ def test_emit_exercise_definition_retries_until_llm_matches_contract(monkeypatch
     )
 
     assert result["maxReps"] == 12
-    assert len(captured_messages) == 2
-    assert "maxReps mismatch: expected 12, got 10" in captured_messages[1][-1]["content"]
+    assert len(captured_messages) == 1
 
 
 def test_emit_exercise_definition_prompt_makes_unilateral_mapping_explicit(monkeypatch) -> None:
@@ -675,6 +688,212 @@ def test_emit_exercise_definition_prompt_explicitly_requires_null_equipment_id(m
     prompt = captured_messages[0][-1]["content"]
     assert "Set equipmentId EXACTLY to null." in prompt
     assert "Do not infer or invent a primary equipmentId from accessories, movement name, or context." in prompt
+
+
+def test_emit_exercise_definition_prompt_uses_weight_specific_schema(monkeypatch) -> None:
+    captured_messages = []
+
+    def fake_reasoner(client, messages, custom_prompt, show_loading=False, logger=None):
+        captured_messages.append(messages)
+        return json.dumps(
+            {
+                "id": "EXERCISE_0",
+                "type": "Exercise",
+                "enabled": True,
+                "name": "Bench Press",
+                "notes": "",
+                "exerciseType": "WEIGHT",
+                "minReps": 6,
+                "maxReps": 8,
+                "equipmentId": "EQUIPMENT_0",
+                "bodyWeightPercentage": None,
+                "generateWarmUpSets": True,
+                "progressionMode": "AUTO_REGULATION",
+                "keepScreenOn": False,
+                "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": [],
+                "requiredAccessoryEquipmentIds": [],
+                "requiresLoadCalibration": False,
+                "exerciseCategory": "HEAVY_COMPOUND",
+                "sets": [
+                    {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 20.0, "subCategory": "WorkSet"},
+                ],
+            }
+        )
+
+    monkeypatch.setattr(cli, "json_call_reasoner_only_with_loading", fake_reasoner)
+
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bench Press",
+                "exerciseType": "WEIGHT",
+                "minReps": 6,
+                "maxReps": 8,
+                "equipmentId": "EQUIPMENT_0",
+                "requiredAccessoryEquipmentIds": [],
+            }
+        ],
+        "workouts": [],
+    }
+
+    cli.emit_exercise_definition(
+        "EXERCISE_0",
+        client=None,
+        context_summary="summary",
+        plan_index=plan_index,
+        equipment_subset=[{"id": "EQUIPMENT_0", "type": "BARBELL", "barWeight": 20.0, "availablePlates": []}],
+        accessory_subset=None,
+        use_reasoner=True,
+        provided_equipment=None,
+        logger=None,
+    )
+
+    prompt = captured_messages[0][-1]["content"]
+    assert "WEIGHT contract:" in prompt
+    assert "Allowed work-set type for this WEIGHT object: WeightSet." in prompt
+    assert "Forbidden fields on each WeightSet: additionalWeight, timeInMillis, timeInSeconds, autoStart, autoStop." in prompt
+    assert "\"exerciseType\": {" in prompt
+    assert "\"const\": \"WEIGHT\"" in prompt
+
+
+def test_weight_schema_rejects_bodyweight_fields():
+    with pytest.raises(ValidationError):
+        validate(
+            instance={
+                "id": "EXERCISE_0",
+                "type": "Exercise",
+                "enabled": True,
+                "name": "Bench Press",
+                "notes": "",
+                "sets": [
+                    {
+                        "id": "SET_0",
+                        "type": "WeightSet",
+                        "reps": 8,
+                        "weight": 60.0,
+                        "additionalWeight": 5.0,
+                        "subCategory": "WorkSet",
+                    }
+                ],
+                "exerciseType": "WEIGHT",
+                "minReps": 6,
+                "maxReps": 8,
+                "equipmentId": "EQUIPMENT_0",
+                "bodyWeightPercentage": None,
+                "generateWarmUpSets": True,
+                "progressionMode": "AUTO_REGULATION",
+                "keepScreenOn": False,
+                "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": [],
+                "requiredAccessoryEquipmentIds": [],
+                "requiresLoadCalibration": False,
+                "exerciseCategory": "HEAVY_COMPOUND",
+            },
+            schema=WEIGHT_EXERCISE_SCHEMA,
+        )
+
+
+def test_bodyweight_schema_requires_bodyweight_percentage():
+    with pytest.raises(ValidationError):
+        validate(
+            instance={
+                "id": "EXERCISE_0",
+                "type": "Exercise",
+                "enabled": True,
+                "name": "Pull-Up",
+                "notes": "",
+                "sets": [
+                    {"id": "SET_0", "type": "BodyWeightSet", "reps": 8, "additionalWeight": 5.0, "subCategory": "WorkSet"},
+                ],
+                "exerciseType": "BODY_WEIGHT",
+                "minReps": 6,
+                "maxReps": 8,
+                "equipmentId": None,
+                "bodyWeightPercentage": None,
+                "generateWarmUpSets": False,
+                "progressionMode": "AUTO_REGULATION",
+                "keepScreenOn": False,
+                "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
+                "muscleGroups": ["BACK_UPPER_BACK"],
+                "secondaryMuscleGroups": [],
+                "requiredAccessoryEquipmentIds": [],
+                "requiresLoadCalibration": False,
+                "exerciseCategory": "MODERATE_COMPOUND",
+            },
+            schema=BODY_WEIGHT_EXERCISE_SCHEMA,
+        )
+
+
+def test_countdown_schema_allows_multiple_timed_sets_with_rest():
+    validate(
+        instance={
+            "id": "EXERCISE_WARMUP",
+            "type": "Exercise",
+            "enabled": True,
+            "name": "Warm Up",
+            "notes": "",
+            "sets": [
+                {"id": "SET_WARMUP", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
+                {"id": "SET_1", "type": "RestSet", "timeInSeconds": 60, "subCategory": "WorkSet"},
+                {"id": "SET_2", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
+            ],
+            "exerciseType": "COUNTDOWN",
+            "equipmentId": None,
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
+            "progressionMode": "OFF",
+            "keepScreenOn": False,
+            "showCountDownTimer": True,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_QUADRICEPS"],
+            "secondaryMuscleGroups": [],
+            "requiredAccessoryEquipmentIds": [],
+            "requiresLoadCalibration": False,
+            "exerciseCategory": None,
+        },
+        schema=COUNTDOWN_EXERCISE_SCHEMA,
+    )
+
+
+def test_countup_schema_rejects_rep_fields():
+    with pytest.raises(ValidationError):
+        validate(
+            instance={
+                "id": "EXERCISE_2",
+                "type": "Exercise",
+                "enabled": True,
+                "name": "Air Bike",
+                "notes": "",
+                "sets": [
+                    {"id": "SET_0", "type": "EnduranceSet", "timeInMillis": 60000, "autoStart": True, "autoStop": True},
+                ],
+                "exerciseType": "COUNTUP",
+                "minReps": 6,
+                "equipmentId": None,
+                "bodyWeightPercentage": None,
+                "generateWarmUpSets": False,
+                "progressionMode": "OFF",
+                "keepScreenOn": False,
+                "showCountDownTimer": False,
+                "intraSetRestInSeconds": None,
+                "muscleGroups": ["FRONT_QUADRICEPS"],
+                "secondaryMuscleGroups": [],
+                "requiredAccessoryEquipmentIds": [],
+                "requiresLoadCalibration": False,
+                "exerciseCategory": None,
+            },
+            schema=COUNTUP_EXERCISE_SCHEMA,
+        )
 
 
 def test_contract_rejects_duplicate_set_placeholders_within_same_exercise():
@@ -1003,6 +1222,29 @@ def test_plan_index_ignores_empty_target_set_prescriptions_for_warm_up():
     validate_plan_index_contract(plan_index)
 
 
+def test_plan_index_rejects_non_positive_num_work_sets_for_timed_exercises():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bike Intervals",
+                "exerciseType": "COUNTDOWN",
+                "requiredAccessoryEquipmentIds": [],
+                "numWorkSets": 0,
+            }
+        ],
+        "workouts": [],
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_plan_index_contract(plan_index)
+
+    assert "positive integer numWorkSets" in str(exc_info.value)
+
+
 def test_countdown_warm_up_with_single_timed_set_does_not_trigger_work_set_mismatch():
     plan_index = {
         "planName": "Test Plan",
@@ -1039,7 +1281,7 @@ def test_countdown_warm_up_with_single_timed_set_does_not_trigger_work_set_misma
     validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
 
-def test_countdown_warm_up_rejects_rest_sets():
+def test_countdown_warm_up_accepts_multiple_timed_sets_with_rest():
     plan_index = {
         "planName": "Test Plan",
         "equipments": [],
@@ -1050,7 +1292,8 @@ def test_countdown_warm_up_rejects_rest_sets():
                 "name": "Warm Up",
                 "exerciseType": "COUNTDOWN",
                 "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 0,
+                "numWorkSets": 2,
+                "restBetweenSetsSeconds": 60,
             }
         ],
         "workouts": [],
@@ -1065,8 +1308,48 @@ def test_countdown_warm_up_rejects_rest_sets():
             "showCountDownTimer": True,
             "requiredAccessoryEquipmentIds": [],
             "sets": [
-                {"id": "SET_0", "type": "TimedDurationSet", "timeInMillis": 300000},
+                {"id": "SET_0", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
                 {"id": "SET_1", "type": "RestSet", "timeInSeconds": 60, "subCategory": "WorkSet"},
+                {"id": "SET_2", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
+            ],
+        }
+    }
+
+    validate_exercise_definitions_contract(plan_index, exercise_definitions)
+
+
+def test_countup_rejects_rep_range_fields_and_enforces_rest_values():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Air Bike",
+                "exerciseType": "COUNTUP",
+                "requiredAccessoryEquipmentIds": [],
+                "numWorkSets": 2,
+                "restBetweenSetsSeconds": 30,
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "name": "Air Bike",
+            "exerciseType": "COUNTUP",
+            "minReps": 6,
+            "progressionMode": "OFF",
+            "requiresLoadCalibration": False,
+            "showCountDownTimer": False,
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
+            "sets": [
+                {"id": "SET_0", "type": "EnduranceSet", "timeInMillis": 60000, "autoStart": True, "autoStop": True},
+                {"id": "SET_1", "type": "RestSet", "timeInSeconds": 20, "subCategory": "WorkSet"},
+                {"id": "SET_2", "type": "EnduranceSet", "timeInMillis": 60000, "autoStart": True, "autoStop": True},
             ],
         }
     }
@@ -1074,7 +1357,8 @@ def test_countdown_warm_up_rejects_rest_sets():
     with pytest.raises(ContractValidationError) as exc_info:
         validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
-    assert "must not emit RestSet entries for COUNTDOWN exercises" in str(exc_info.value)
+    assert "must not emit minReps or maxReps for timed exercises" in str(exc_info.value)
+    assert "expected all 30" in str(exc_info.value)
 
 
 def test_exercise_definition_rejects_body_weight_without_percentage():

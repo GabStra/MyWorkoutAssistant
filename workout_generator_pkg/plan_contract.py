@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from .domain_ops import get_selectable_weights_for_exercise
+from .domain_ops import get_selectable_weights_for_exercise, validate_exercise_type_profile
 
 
 class ContractValidationError(ValueError):
@@ -320,6 +320,25 @@ def _collect_contract_issues_plan_index(
                         f"Exercise '{ex_name}' has minReps={min_reps} greater than maxReps={max_reps}.",
                     )
                 )
+        else:
+            expected_work_sets = ex.get("numWorkSets")
+            if expected_work_sets is not None:
+                if not isinstance(expected_work_sets, int) or expected_work_sets <= 0:
+                    issues.append(
+                        ContractIssue(
+                            "invalid_timed_num_work_sets",
+                            f"Exercise '{ex_name}' must use a positive integer numWorkSets for timed exercises when numWorkSets is provided.",
+                        )
+                    )
+            rest_between_sets_seconds = ex.get("restBetweenSetsSeconds")
+            if rest_between_sets_seconds is not None:
+                if not isinstance(rest_between_sets_seconds, int) or rest_between_sets_seconds < 0:
+                    issues.append(
+                        ContractIssue(
+                            "invalid_timed_rest_between_sets",
+                            f"Exercise '{ex_name}' must use a non-negative integer restBetweenSetsSeconds for timed exercises when restBetweenSetsSeconds is provided.",
+                        )
+                    )
 
         target_set_prescriptions = ex.get("targetSetPrescriptions")
         expected_load_field = _load_field_for_exercise_type(ex_type)
@@ -451,8 +470,6 @@ def validate_plan_index_contract(
 
 def _count_work_sets(exercise: Dict[str, Any]) -> Tuple[int, List[int]]:
     exercise_type = exercise.get("exerciseType")
-    if exercise_type in ("COUNTDOWN", "COUNTUP"):
-        return 0, []
     target_set_type = _work_set_type_for_exercise_type(exercise_type)
     sets = exercise.get("sets", []) or []
 
@@ -681,6 +698,8 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
     actual_work_sets, actual_rest_sets = _count_work_sets(actual)
     expected_load_field = _load_field_for_exercise_type(plan_type)
     actual_sets = actual.get("sets", []) or []
+    for profile_error in validate_exercise_type_profile(actual, plan_entry=plan_ex):
+        issues.append(ContractIssue("exercise_type_profile_mismatch", profile_error))
     seen_set_ids_in_exercise: set[str] = set()
     for idx, set_item in enumerate(actual_sets):
         if not isinstance(set_item, dict):
@@ -702,38 +721,6 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
         else:
             seen_set_ids_in_exercise.add(set_id)
-
-    if plan_type in ("COUNTDOWN", "COUNTUP"):
-        timed_set_type = _work_set_type_for_exercise_type(plan_type)
-        timed_sets = [
-            set_item for set_item in actual_sets
-            if isinstance(set_item, dict) and set_item.get("type") == timed_set_type
-        ]
-        rest_sets = [
-            set_item for set_item in actual_sets
-            if isinstance(set_item, dict) and set_item.get("type") == "RestSet"
-        ]
-        if len(timed_sets) != 1:
-            issues.append(
-                ContractIssue(
-                    "timed_set_count_mismatch",
-                    f"Exercise '{ex_id}' must emit exactly one {timed_set_type}, got {len(timed_sets)} (name: '{actual_name}').",
-                )
-            )
-        if rest_sets:
-            issues.append(
-                ContractIssue(
-                    "timed_exercise_has_rest_sets",
-                    f"Exercise '{ex_id}' must not emit RestSet entries for {plan_type} exercises (name: '{actual_name}').",
-                )
-            )
-        if plan_type == "COUNTDOWN" and actual.get("showCountDownTimer") is not True:
-            issues.append(
-                ContractIssue(
-                    "countdown_timer_flag_mismatch",
-                    f"Exercise '{ex_id}' must set showCountDownTimer=true for COUNTDOWN exercises (name: '{actual_name}').",
-                )
-            )
 
     target_set_prescriptions = plan_ex.get("targetSetPrescriptions")
     if isinstance(target_set_prescriptions, list) and expected_load_field is not None:
@@ -787,10 +774,8 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
                         )
                     )
 
-    # COUNTDOWN/COUNTUP use timed work sets (TimedDurationSet / EnduranceSet), not WeightSet/BodyWeightSet.
-    # _count_work_sets intentionally returns 0 for those types; timed_set_count_mismatch covers them.
     if isinstance(expected_work_sets, int) and expected_work_sets >= 0:
-        if plan_type not in ("COUNTDOWN", "COUNTUP") and actual_work_sets != expected_work_sets:
+        if actual_work_sets != expected_work_sets:
             issues.append(
                 ContractIssue(
                     "work_set_count_mismatch",
@@ -799,7 +784,15 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
             )
 
     if isinstance(expected_rest_between, int) and actual_work_sets > 1:
-        if actual_rest_sets:
+        expected_rest_count = actual_work_sets - 1
+        if len(actual_rest_sets) != expected_rest_count:
+            issues.append(
+                ContractIssue(
+                    "rest_between_sets_count_mismatch",
+                    f"Exercise '{ex_id}' must emit exactly {expected_rest_count} RestSet entries for {actual_work_sets} work sets, got {len(actual_rest_sets)} (name: '{actual_name}').",
+                )
+            )
+        else:
             invalid = [x for x in actual_rest_sets if x != expected_rest_between]
             if invalid:
                 issues.append(
