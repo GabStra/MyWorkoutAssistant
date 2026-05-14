@@ -475,6 +475,7 @@ private fun PagePlatesContent(
 
                 if (!shouldAnimateTransition) {
                     animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                    // `currentStepIndex == steps.size` is the final-state branch in BarbellVisualization (all plates primary).
                     currentStepIndex = steps.size
                     return@LaunchedEffect
                 }
