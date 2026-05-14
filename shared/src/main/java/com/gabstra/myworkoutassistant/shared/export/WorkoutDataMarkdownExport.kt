@@ -15,7 +15,6 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
-import com.gabstra.myworkoutassistant.shared.OneRM
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.EnduranceSetData
@@ -666,15 +665,6 @@ private fun appendCompactExerciseSessionMarkdown(
     compactExerciseRepRangeLine(section.exercise)?.let { line ->
         markdown.append("  - $line\n")
     }
-    if (section.exercise.exerciseType == ExerciseType.WEIGHT ||
-        section.exercise.exerciseType == ExerciseType.BODY_WEIGHT
-    ) {
-        estimatedSessionOneRmFromInsightSets(activeSets, achievableWeights)?.let { e1rm ->
-            markdown.append(
-                "  - Estimated 1RM (Mayhew, session best set): ${formatNumber(e1rm)} kg\n"
-            )
-        }
-    }
     if (section.exercise.exerciseType == ExerciseType.BODY_WEIGHT &&
         section.exercise.bodyWeightPercentage != null
     ) {
@@ -796,41 +786,6 @@ private fun appendCompactExerciseSessionMarkdown(
     progression?.let {
         markdown.append("  - Progression: ${it.progressionState.name}\n")
     }
-}
-
-private fun estimatedSessionOneRmFromInsightSets(
-    insightSets: List<SetHistory>,
-    achievableWeights: List<Double>?,
-): Double? {
-    var best: Double? = null
-    for (history in insightSets) {
-        if (history.skipped) continue
-        val e1rm = when (val setData = history.setData) {
-            is WeightSetData -> {
-                val reps = setData.actualReps
-                if (reps < 1) {
-                    null
-                } else {
-                    val weight = normalizeWeightForExport(setData.actualWeight, achievableWeights)
-                    if (weight <= 0) null else runCatching { OneRM.estimate1RM(weight, reps) }.getOrNull()
-                }
-            }
-            is BodyWeightSetData -> {
-                val reps = setData.actualReps
-                if (reps < 1) {
-                    null
-                } else {
-                    val weight = setData.getWeight()
-                    if (weight <= 0) null else runCatching { OneRM.estimate1RM(weight, reps) }.getOrNull()
-                }
-            }
-            else -> null
-        }
-        if (e1rm != null && (best == null || e1rm > best)) {
-            best = e1rm
-        }
-    }
-    return best
 }
 
 private fun compactExerciseRepRangeLine(exercise: Exercise): String? {

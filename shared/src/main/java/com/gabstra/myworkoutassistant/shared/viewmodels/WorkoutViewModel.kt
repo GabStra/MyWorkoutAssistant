@@ -946,7 +946,7 @@ open class WorkoutViewModel(
     private data class SetKey(val exerciseId: UUID, val setId: UUID)
     private val latestSetHistoryMap: MutableMap<SetKey, SetHistory> = mutableMapOf()
 
-    protected val weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>> =
+    protected val weightsByEquipment: MutableMap<UUID, kotlin.collections.Set<Double>> =
         mutableMapOf()
 
     // Cache for available totals (getWeightsCombinationsNoExtra results) per equipment ID
@@ -955,7 +955,9 @@ open class WorkoutViewModel(
 
     fun getWeightByEquipment(equipment: WeightLoadedEquipment?): kotlin.collections.Set<Double> {
         if (equipment == null) return emptySet()
-        return weightsByEquipment[equipment] ?: emptySet()
+        return weightsByEquipment.getOrPut(equipment.id) {
+            equipment.getWeightsCombinations()
+        }
     }
 
     internal fun getCachedAvailableTotals(equipment: WeightLoadedEquipment): kotlin.collections.Set<Double> {

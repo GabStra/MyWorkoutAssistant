@@ -149,6 +149,40 @@ class WorkoutViewModelSessionTest {
         testEquipmentId = UUID.randomUUID()
     }
 
+    @Test
+    fun getWeightByEquipment_populatesMissingCacheFromEquipment() {
+        val barbell = createTestBarbell()
+
+        val availableWeights = viewModel.getWeightByEquipment(barbell)
+
+        assertEquals(barbell.getWeightsCombinations(), availableWeights)
+        assertTrue(availableWeights.isNotEmpty())
+    }
+
+    @Test
+    fun getWeightByEquipment_reusesCacheAcrossDifferentEquipmentInstancesWithSameId() {
+        val original = createTestBarbell()
+        val refreshed = Barbell(
+            id = testEquipmentId,
+            name = "Refreshed Test Barbell",
+            availablePlates = original.availablePlates,
+            sleeveLength = original.sleeveLength,
+            barWeight = original.barWeight
+        )
+
+        val initialWeights = viewModel.getWeightByEquipment(original)
+        val refreshedWeights = viewModel.getWeightByEquipment(refreshed)
+
+        val weightsField = WorkoutViewModel::class.java.getDeclaredField("weightsByEquipment")
+        weightsField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val cache = weightsField.get(viewModel) as MutableMap<UUID, Set<Double>>
+
+        assertEquals(initialWeights, refreshedWeights)
+        assertEquals(1, cache.size)
+        assertTrue(cache.containsKey(testEquipmentId))
+    }
+
     @After
     fun tearDown() {
         Dispatchers.resetMain()

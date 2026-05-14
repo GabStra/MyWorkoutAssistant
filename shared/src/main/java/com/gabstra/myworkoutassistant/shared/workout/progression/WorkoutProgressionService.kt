@@ -68,7 +68,7 @@ class WorkoutProgressionService(
         bodyWeightKg: Double,
         getEquipmentById: (UUID) -> WeightLoadedEquipment?,
         getWeightByEquipment: (WeightLoadedEquipment?) -> kotlin.collections.Set<Double>,
-        weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>>
+        weightsByEquipment: MutableMap<UUID, kotlin.collections.Set<Double>>
     ): ProgressionGenerationResult {
         val progressions = mutableMapOf<UUID, Pair<DoubleProgressionHelper.Plan, ProgressionState>>()
         val plateauReasons = mutableMapOf<UUID, String?>()
@@ -77,8 +77,8 @@ class WorkoutProgressionService(
 
         exercises.filter { it.enabled && it.equipmentId != null }.forEach { exercise ->
             val equipment = exercise.equipmentId?.let(getEquipmentById)
-            if (equipment != null && !weightsByEquipment.containsKey(equipment)) {
-                weightsByEquipment[equipment] = equipment.getWeightsCombinations()
+            if (equipment != null && !weightsByEquipment.containsKey(equipment.id)) {
+                weightsByEquipment[equipment.id] = equipment.getWeightsCombinations()
             }
         }
 
@@ -215,15 +215,15 @@ class WorkoutProgressionService(
         bodyWeightKg: Double,
         getEquipmentById: (UUID) -> WeightLoadedEquipment?,
         getWeightByEquipment: (WeightLoadedEquipment?) -> kotlin.collections.Set<Double>,
-        weightsByEquipment: MutableMap<WeightLoadedEquipment, kotlin.collections.Set<Double>>,
+        weightsByEquipment: MutableMap<UUID, kotlin.collections.Set<Double>>,
         plateauReasonByExerciseId: MutableMap<UUID, String?>
     ): Pair<DoubleProgressionHelper.Plan, ProgressionState> {
         val repsRange = IntRange(exercise.minReps, exercise.maxReps)
         val baseAvailableWeights = when (exercise.exerciseType) {
             ExerciseType.WEIGHT -> {
                 val equipment = exercise.equipmentId?.let(getEquipmentById)
-                if (equipment != null && !weightsByEquipment.containsKey(equipment)) {
-                    weightsByEquipment[equipment] = equipment.getWeightsCombinations()
+                if (equipment != null && !weightsByEquipment.containsKey(equipment.id)) {
+                    weightsByEquipment[equipment.id] = equipment.getWeightsCombinations()
                 }
                 exercise.equipmentId?.let { getWeightByEquipment(getEquipmentById(it)) } ?: emptySet()
             }

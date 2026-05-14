@@ -13,11 +13,8 @@ import com.gabstra.myworkoutassistant.shared.RestHistoryScope
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
-import com.gabstra.myworkoutassistant.shared.OneRM
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
-import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
-import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -127,26 +124,6 @@ class WorkoutDataMarkdownExportTest {
         assertTrue(markdown.contains("- Bench Press"))
         assertTrue(markdown.contains("  - Equipment: Test Barbell (BARBELL)"))
         assertTrue(markdown.contains("  - Rep range: 6-8 reps"))
-        assertTrue(markdown.contains("  - Estimated 1RM (Mayhew, session best set):"))
-        val achievable = workoutStore.equipments
-            .filterIsInstance<WeightLoadedEquipment>()
-            .first()
-            .getWeightsCombinations()
-            .sorted()
-        assertTrue(
-            markdown.contains(
-                formatNumber(
-                    OneRM.estimate1RM(normalizeWeightForExport(40.0, achievable), 8)
-                )
-            )
-        )
-        assertTrue(
-            markdown.contains(
-                formatNumber(
-                    OneRM.estimate1RM(normalizeWeightForExport(42.5, achievable), 7)
-                )
-            )
-        )
         assertTrue(markdown.contains("  - Execution:"))
         assertTrue(
             markdown.contains(
