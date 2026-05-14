@@ -45,7 +45,6 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.Green
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -329,11 +328,6 @@ fun WeightSetScreen(
 
             hapticsViewModel.doGentleVibration()
         }
-        val textColor = when {
-            currentSetData.actualReps == comparisonSetData.actualReps -> MaterialTheme.colorScheme.onBackground
-            currentSetData.actualReps < comparisonSetData.actualReps -> Red
-            else -> Green
-        }
 
         Column(
             modifier = modifier
@@ -387,10 +381,10 @@ fun WeightSetScreen(
                 modifier = Modifier.height(40.dp),
                 text = repsText,
                 style = style,
-                color = textColor,
+                color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (repsDeltaText != null && !isRepsInEditMode) {
+            if (repsDeltaText != null) {
                 ScalableText(
                     text = repsDeltaText,
                     style = MaterialTheme.typography.bodySmall,
@@ -413,11 +407,6 @@ fun WeightSetScreen(
             isRepsInEditMode = false
 
             hapticsViewModel.doGentleVibration()
-        }
-        val textColor = when {
-            currentSetData.actualWeight == comparisonSetData.actualWeight -> MaterialTheme.colorScheme.onBackground
-            currentSetData.actualWeight < comparisonSetData.actualWeight -> Red
-            else -> Green
         }
 
         Column(
@@ -472,10 +461,10 @@ fun WeightSetScreen(
                 modifier = Modifier.height(40.dp),
                 text = weightText,
                 style = style,
-                color = textColor,
+                color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (weightDeltaText != null && !isWeightInEditMode) {
+            if (weightDeltaText != null) {
                 ScalableText(
                     text = weightDeltaText,
                     style = MaterialTheme.typography.bodySmall,

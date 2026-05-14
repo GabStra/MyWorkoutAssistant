@@ -94,7 +94,7 @@ fun ExerciseMetadataStrip(
 
             repRange?.let {
                 Text(
-                    text = "Reps: $it",
+                    text = "Rep range: $it",
                     style = baseStyle,
                     color = secondaryTextColor
                 )

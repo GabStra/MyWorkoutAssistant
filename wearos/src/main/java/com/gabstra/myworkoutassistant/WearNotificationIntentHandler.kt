@@ -1,9 +1,11 @@
 package com.gabstra.myworkoutassistant
 
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.data.OPEN_ACTIVE_WORKOUT_ACTION
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import java.util.UUID
 
@@ -12,6 +14,7 @@ internal object WearNotificationIntentHandler {
     private const val SCHEDULE_ID = "SCHEDULE_ID"
 
     fun handle(
+        context: Context,
         intent: Intent,
         notificationManager: NotificationManager,
         workoutStoreRepository: WorkoutStoreRepository,
@@ -35,6 +38,13 @@ internal object WearNotificationIntentHandler {
             }
             .getOrNull()
             ?: return
+
+        val isWorkoutInProgress = context
+            .getSharedPreferences("workout_state", Context.MODE_PRIVATE)
+            .getBoolean("isWorkoutInProgress", false)
+        if (intent.action == OPEN_ACTIVE_WORKOUT_ACTION && isWorkoutInProgress) {
+            return
+        }
 
         val workoutStore = workoutStoreRepository.getWorkoutStore()
         val workout = workoutStore.workouts.find { it.globalId == workoutUuid } ?: return

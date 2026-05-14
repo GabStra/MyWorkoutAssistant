@@ -97,7 +97,7 @@ fun PreparingStandardScreen(
         Column(horizontalAlignment = Alignment.CenterHorizontally){
             Text(
                 modifier = Modifier.fillMaxWidth(),
-                text = "Getting heart rate ready",
+                text = "Preparing HR sensor",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center
             )

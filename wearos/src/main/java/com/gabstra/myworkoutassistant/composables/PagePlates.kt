@@ -325,6 +325,12 @@ private fun PagePlatesContent(
 
             val steps = effectiveSteps
 
+            // Looping step animation only when the transition mixes removes and adds (true swap).
+            val shouldAnimateTransition = remember(steps) {
+                steps.any { it.action == PlateCalculator.Companion.Action.ADD } &&
+                    steps.any { it.action == PlateCalculator.Companion.Action.REMOVE }
+            }
+
             // Index of the current step being animated (or -1 when idle, or steps.size for final state)
             var currentStepIndex by remember(plateChangeResult) { mutableIntStateOf(-1) }
 
@@ -464,6 +470,12 @@ private fun PagePlatesContent(
                 if (steps.isEmpty()) {
                     currentStepIndex = -1
                     animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                    return@LaunchedEffect
+                }
+
+                if (!shouldAnimateTransition) {
+                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
+                    currentStepIndex = steps.size
                     return@LaunchedEffect
                 }
 

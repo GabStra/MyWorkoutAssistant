@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.runtime.Composable
-import com.gabstra.myworkoutassistant.composables.rememberWearCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,7 +55,7 @@ fun ControlButtonsVertical(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
         Box(
             modifier = Modifier
@@ -89,7 +88,7 @@ fun ControlButtonsVertical(
         ) {
             Box(
                 modifier = Modifier
-                    .size(50.dp)
+                    .fillMaxSize()
                     .background(Green,CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -105,7 +104,7 @@ fun ControlButtonsVertical(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 5.dp),
+                .padding(vertical = 2.5.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
@@ -142,7 +141,7 @@ fun ControlButtonsVertical(
         ) {
             Box(
                 modifier = Modifier
-                    .size(50.dp)
+                    .fillMaxSize()
                     .background(Red,CircleShape),
                 contentAlignment = Alignment.Center
             ) {

@@ -304,13 +304,15 @@ internal fun RecoveryDialog(
                     }
 
                     item {
-                        OutlinedRecoveryChoiceButton(
+                        RecoveryChoiceButton(
                             modifier = Modifier.transformedHeight(this, spec),
                             transformation = SurfaceTransformation(spec),
                             contentDescription = "Recovery discard action",
                             text = IncompleteWorkoutStrings.DISCARD_BUTTON,
-                            borderColor = MaterialTheme.colorScheme.error,
-                            textColor = MaterialTheme.colorScheme.error,
+                            colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            ),
                             onClick = { onDiscard(workout) }
                         )
                     }

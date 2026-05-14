@@ -173,6 +173,7 @@ class MainActivity : ComponentActivity() {
 
         // Handle intent if app was launched from notification
         WearNotificationIntentHandler.handle(
+            context = this,
             intent = intent,
             notificationManager = notificationManager,
             workoutStoreRepository = workoutStoreRepository,
@@ -237,6 +238,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Update the old intent
         WearNotificationIntentHandler.handle(
+            context = this,
             intent = intent,
             notificationManager = notificationManager,
             workoutStoreRepository = workoutStoreRepository,
