@@ -458,7 +458,6 @@ class WorkoutInsightsPromptBuilderTest {
             # Back Squat
             Type: WEIGHT | Equipment: Barbell | Weights: 9,9.5,10,10.5,11 kg
 
-            #### Athlete Context
             - Age: 31 years
             - Weight (kg): 65
             - Max HR: age-based estimate

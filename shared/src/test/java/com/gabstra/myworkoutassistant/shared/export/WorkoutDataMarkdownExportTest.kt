@@ -15,7 +15,9 @@ import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
+import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Plate
+import com.gabstra.myworkoutassistant.shared.equipments.WeightVest
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
 import com.gabstra.myworkoutassistant.shared.setdata.TimedDurationSetData
@@ -101,14 +103,17 @@ class WorkoutDataMarkdownExportTest {
         val markdown = (result as WorkoutDataMarkdownResult.Success).markdown
         assertTrue(markdown.contains("# My Workout Assistant Export"))
         assertTrue(markdown.contains("- Exported at: 2026-02-01T10:30:00"))
+        assertTrue(markdown.contains("- Session dates: all completed sessions (All data)"))
         assertTrue(markdown.contains("- Time format:"))
         assertTrue(markdown.contains("mm:ss"))
         assertTrue(markdown.contains("hh:mm:ss"))
         assertTrue(markdown.contains("Privacy note:"))
         assertTrue(markdown.contains("## Athlete Info"))
-        assertTrue(markdown.contains("#### Athlete Context"))
-        assertEquals(1, markdown.countOccurrences("#### Athlete Context"))
+        assertTrue(markdown.contains("- Age:"))
+        assertFalse(markdown.contains("#### Athlete Context"))
+        assertFalse(markdown.contains("### Athlete Context"))
         assertTrue(markdown.contains("## Plan Reference"))
+        assertTrue(markdown.contains("### How loads are reported"))
         assertTrue(markdown.contains("- Push A: 2/week"))
         assertTrue(markdown.contains("- Test Barbell: BARBELL | available loads:"))
         assertTrue(markdown.contains("## Weekly Training Log"))
@@ -127,17 +132,17 @@ class WorkoutDataMarkdownExportTest {
         assertTrue(markdown.contains("  - Execution:"))
         assertTrue(
             markdown.contains(
-                    "    - Warm-up 1: expected: 20 for 5 reps | achieved: 20 for 5 reps (duration 00:15)"
+                    "    - Warm-up 1: expected: 20 kg for 5 reps | achieved: 20 kg for 5 reps (elapsed 00:15)"
             )
         )
         assertTrue(
             markdown.contains(
-                    "    - Set 1: expected: 40 for 8 reps"
+                    "    - Set 1: expected: 40 kg for 8 reps"
             )
         )
-        assertTrue(markdown.contains("      - Side A: 40 for 8 reps (duration 00:30)"))
+        assertTrue(markdown.contains("      - Side A: 40 kg for 8 reps (elapsed 00:30)"))
         assertTrue(markdown.contains("      - Intra-set rest: planned 01:00 | actual 00:55"))
-        assertTrue(markdown.contains("      - Side B: 40 for 8 reps (duration 00:30)"))
+        assertTrue(markdown.contains("      - Side B: 40 kg for 8 reps (elapsed 00:30)"))
         assertTrue(markdown.contains("  - Summary: matched expected"))
         assertTrue(markdown.contains("  - Progression: PROGRESS"))
         assertFalse(markdown.contains("  - Warm-up achieved:"))
@@ -202,13 +207,13 @@ class WorkoutDataMarkdownExportTest {
         )
 
         val markdown = (result as WorkoutDataMarkdownResult.Success).markdown
-        assertTrue(markdown.contains("- Export range: 2026-01-25 to 2026-01-29"))
-        assertTrue(markdown.contains("- Sessions since: 2026-01-25"))
-        assertTrue(markdown.contains("- Sessions until: 2026-01-29"))
+        assertTrue(markdown.contains("- Session dates included: 2026-01-25 to 2026-01-29"))
+        assertFalse(markdown.contains("- Sessions since:"))
+        assertFalse(markdown.contains("- Sessions until:"))
         assertTrue(markdown.contains("- Completed sessions: 1"))
         assertTrue(markdown.contains("### Week 2026-01-26 to 2026-02-01"))
         assertTrue(markdown.contains("##### Session 1: 2026-01-28 09:00"))
-        assertTrue(markdown.contains("50 for 6 reps"))
+        assertTrue(markdown.contains("50 kg for 6 reps"))
         assertFalse(markdown.contains("2025-12-20"))
         assertFalse(markdown.contains("35 kg for 5 reps"))
         assertFalse(markdown.contains("2026-01-30"))
@@ -338,6 +343,36 @@ class WorkoutDataMarkdownExportTest {
                 "  - Heart rate: avg 142 bpm, peak 144 bpm, target range 136-162 bpm, in range 100%"
             )
         )
+    }
+
+    @Test
+    fun buildWorkoutDataMarkdown_listsAllAvailableLoadsWhenManyUniformWeights() = runTest {
+        val workout = createWorkout()
+        val vestId = UUID.randomUUID()
+        val uniformWeights = (1..25).map { weight -> BaseWeight(weight.toDouble()) }
+        val vest = WeightVest(
+            id = vestId,
+            name = "Many Vest",
+            availableWeights = uniformWeights
+        )
+        val baseStore = createWorkoutStore(workout)
+        val workoutStore = baseStore.copy(equipments = baseStore.equipments + vest)
+
+        val result = buildWorkoutDataMarkdown(
+            workoutHistoryDao = database.workoutHistoryDao(),
+            setHistoryDao = database.setHistoryDao(),
+            restHistoryDao = database.restHistoryDao(),
+            exerciseSessionProgressionDao = database.exerciseSessionProgressionDao(),
+            workoutStore = workoutStore,
+            exportedAt = LocalDateTime.of(2026, 2, 1, 10, 30)
+        )
+
+        val markdown = (result as WorkoutDataMarkdownResult.Success).markdown
+        val vestLine = markdown.lineSequence().first { it.contains("Many Vest") }
+        assertFalse("Must not summarize loads", vestLine.contains("step"))
+        assertTrue(vestLine.contains("1 kg"))
+        assertTrue(vestLine.contains("25 kg"))
+        assertTrue(vestLine.count { it == ',' } >= 23)
     }
 
     private suspend fun insertCompletedSession(

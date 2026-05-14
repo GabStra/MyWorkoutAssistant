@@ -8,7 +8,6 @@ internal fun appendLlmExportContextMarkdown(
     workoutStore: WorkoutStore,
     userAge: Int,
 ) {
-    markdown.append("#### Athlete Context\n\n")
     markdown.append("- Age: $userAge years\n")
     markdown.append("- Weight (kg): ${formatNumber(workoutStore.weightKg)}\n")
     if (workoutStore.measuredMaxHeartRate != null) {

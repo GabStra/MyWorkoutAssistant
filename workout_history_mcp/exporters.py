@@ -59,7 +59,7 @@ def compact_duration(seconds: int) -> str:
 def athlete_context_markdown(store: WorkoutHistoryStore) -> str:
     profile = store.athlete_profile()
     lines = [
-        "#### Athlete Context",
+        "### Athlete Context",
         f"- Age: {profile['age'] or 'unknown'} (birth year: {profile['birth_year'] or 'unknown'})",
         f"- Body weight: {format_number(profile['body_weight_kg'])} kg",
         f"- Measured max HR: {profile['measured_max_heart_rate'] or 'unknown'} bpm",

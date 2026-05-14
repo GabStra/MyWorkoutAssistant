@@ -44,9 +44,11 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import java.util.Calendar
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private const val EXPORT_RENDER_BATCH_SIZE = 8
+/** Parallel export chunk size (sessions / histories / exercise blocks processed per coroutine batch). */
+private const val EXPORT_RENDER_BATCH_SIZE = 16
 
 private val EXPORT_HISTORY_OPEN_START: LocalDate = LocalDate.of(1970, 1, 1)
 private val EXPORT_HISTORY_OPEN_END: LocalDate = LocalDate.of(9999, 12, 31)
@@ -208,9 +210,20 @@ suspend fun writeWorkoutDataMarkdown(
 
     appendMarkdown("# My Workout Assistant Export\n\n")
     appendMarkdown("- Exported at: ${exportedAt.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)}\n")
-    appendMarkdown("- Export range: ${exportRange.label}\n")
-    rangeStartDate?.let { appendMarkdown("- Sessions since: $it\n") }
-    rangeEndDate?.let { appendMarkdown("- Sessions until: $it\n") }
+    appendMarkdown(
+        "- ${
+            when {
+                rangeStartDate != null && rangeEndDate != null ->
+                    "Session dates included: $rangeStartDate to $rangeEndDate"
+                rangeStartDate != null ->
+                    "Session dates from $rangeStartDate (${exportRange.label})"
+                rangeEndDate != null ->
+                    "Session dates through $rangeEndDate (${exportRange.label})"
+                else ->
+                    "Session dates: all completed sessions (${exportRange.label})"
+            }
+        }\n"
+    )
     appendMarkdown("- Completed sessions: ${completedHistories.size}\n")
     appendMarkdown("- Exercises in plan: ${exercises.size}\n")
     appendMarkdown(
@@ -248,6 +261,12 @@ private suspend fun appendPlanReferenceMarkdown(
     workoutStore: WorkoutStore,
 ) {
     appendMarkdown("## Plan Reference\n\n")
+    appendMarkdown("### How loads are reported\n\n")
+    appendMarkdown(
+        "- For exercises that use a **body-weight percentage**, baseline moving load is " +
+            "`profile weight (kg) × exercise % ÷ 100`. Logged sets describe **extra load vs that baseline** " +
+            "and **total moving load** (baseline plus added equipment weight).\n\n"
+    )
     val activeWorkouts = workoutStore.workouts
         .filter { it.isActive && it.enabled }
         .distinctBy { it.globalId }
@@ -257,10 +276,17 @@ private suspend fun appendPlanReferenceMarkdown(
         appendMarkdown("No workouts configured.\n\n")
     } else {
         appendMarkdown("### Active Workouts\n\n")
-        activeWorkouts.forEach { workout ->
-            val weeklyTarget = workout.timesCompletedInAWeek?.takeIf { it > 0 }
-            val targetText = weeklyTarget?.let { "$it/week" } ?: "no weekly target"
-            appendMarkdown("- ${workout.name}: $targetText\n")
+        val withWeeklyTarget = activeWorkouts.filter { (it.timesCompletedInAWeek ?: 0) > 0 }
+        val withoutWeeklyTarget = activeWorkouts.filter { (it.timesCompletedInAWeek ?: 0) <= 0 }
+        withWeeklyTarget.forEach { workout ->
+            val weeklyTarget = workout.timesCompletedInAWeek!!
+            appendMarkdown("- ${workout.name}: $weeklyTarget/week\n")
+        }
+        if (withoutWeeklyTarget.isNotEmpty()) {
+            val names = withoutWeeklyTarget.map { it.name }
+            appendMarkdown(
+                "- No weekly target (${names.size} workouts): ${names.joinToString(", ")}\n"
+            )
         }
         appendMarkdown("\n")
     }
@@ -671,8 +697,7 @@ private fun appendCompactExerciseSessionMarkdown(
         val relativeBodyWeight = workoutStore.weightKg * (section.exercise.bodyWeightPercentage / 100.0)
         markdown.append(
             "  - Baseline load: ${formatNumber(relativeBodyWeight)} kg " +
-                "(${formatNumber(section.exercise.bodyWeightPercentage)}% × ${formatNumber(workoutStore.weightKg)} kg profile; " +
-                "% varies by exercise). Sets use ±kg vs baseline; total = full moving load.\n"
+                "(${formatNumber(section.exercise.bodyWeightPercentage)}% of ${formatNumber(workoutStore.weightKg)} kg profile)\n"
         )
     }
     markdown.append("  - Execution:\n")
@@ -690,7 +715,7 @@ private fun appendCompactExerciseSessionMarkdown(
                         val line = if (expected != null) {
                             "Warm-up $warmupIndex: expected: $expected | achieved: $setText$durationSuffix"
                         } else {
-                            "Warm-up $warmupIndex: achieved: $setText$durationSuffix"
+                            "Warm-up $warmupIndex: $setText$durationSuffix"
                         }
                         markdown.append("    - $line\n")
                     }
@@ -733,7 +758,7 @@ private fun appendCompactExerciseSessionMarkdown(
                             val line = if (expected != null) {
                                 "Set $workIndex: expected: $expected | achieved: $setText$durationSuffix"
                             } else {
-                                "Set $workIndex: achieved: $setText$durationSuffix"
+                                "Set $workIndex: $setText$durationSuffix"
                             }
                             markdown.append("    - $line\n")
                         }
@@ -764,9 +789,15 @@ private fun appendCompactExerciseSessionMarkdown(
         }
     }
     if (expectedWarmupTokens.size >= warmupCounter) {
-        for (index in warmupCounter..expectedWarmupTokens.size) {
-            val expected = expectedWarmupTokens[index - 1]
-            markdown.append("    - Warm-up $index: expected: $expected | achieved: not recorded\n")
+        val missing = buildList {
+            for (index in warmupCounter..expectedWarmupTokens.size) {
+                add(expectedWarmupTokens[index - 1])
+            }
+        }
+        if (missing.isNotEmpty()) {
+            markdown.append(
+                "    - Planned warm-ups not logged: ${missing.joinToString("; ")}\n"
+            )
         }
     }
     progression?.let {
@@ -1066,14 +1097,13 @@ private fun formatRelativeBodyWeightSet(
     val additionalWeight = totalWeight - relativeBodyWeight
     return when {
         additionalWeight > 0.0001 -> {
-            "+${formatNumber(additionalWeight)} kg added vs baseline (total ${formatNumber(totalWeight)} kg) for $reps reps"
+            "Additional +${formatNumber(additionalWeight)} kg vs baseline, total ${formatNumber(totalWeight)} kg, $reps reps"
         }
         additionalWeight < -0.0001 -> {
-            "-${formatNumber(kotlin.math.abs(additionalWeight))} kg vs baseline " +
-                "(total ${formatNumber(totalWeight)} kg) for $reps reps"
+            "Below baseline by ${formatNumber(abs(additionalWeight))} kg, total ${formatNumber(totalWeight)} kg, $reps reps"
         }
         else -> {
-            "baseline load only (total ${formatNumber(totalWeight)} kg) for $reps reps"
+            "At baseline, total ${formatNumber(totalWeight)} kg, $reps reps"
         }
     }
 }
@@ -1124,7 +1154,7 @@ private fun SetHistory.executionDurationSuffix(): String {
         }
     }
     if (seconds <= 0) return ""
-    return " (duration ${formatDurationForExport(seconds)})"
+    return " (elapsed ${formatDurationForExport(seconds)})"
 }
 
 private inline fun <T> List<T>.anyIndexed(predicate: (index: Int, item: T) -> Boolean): Boolean {
@@ -1331,9 +1361,9 @@ private fun findExerciseById(workout: Workout, exerciseId: UUID): Exercise? {
 }
 
 private fun compactAvailableLoads(equipment: WeightLoadedEquipment): String? {
-    val loads = equipment.getWeightsCombinations().sorted()
-    if (loads.isEmpty()) return null
-    return loads.joinToString(", ") { load -> formatWeightForExport(load, equipment) }
+    val weights = equipment.getWeightsCombinations().sorted()
+    if (weights.isEmpty()) return null
+    return weights.joinToString(", ") { w -> "${formatNumber(w)} kg" }
 }
 
 private fun plannedDurationSecondsByOrderForExercise(exercise: Exercise): Map<UInt, Int> {

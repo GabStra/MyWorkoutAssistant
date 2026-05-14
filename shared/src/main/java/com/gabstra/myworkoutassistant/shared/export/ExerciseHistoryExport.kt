@@ -18,8 +18,8 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workout.history.elapsedSecondsFromHistoryBounds
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import java.util.Calendar
 import java.time.LocalDate
+import java.util.Calendar
 import kotlin.math.roundToInt
 
 sealed class ExerciseHistoryMarkdownResult {
@@ -303,7 +303,7 @@ private fun appendSelectableWeights(markdown: StringBuilder, weights: List<Doubl
         markdown.append("none configured")
         return
     }
-    markdown.append(weights.joinToString(",") { weight -> formatWeightForExport(weight, equipment) })
+    markdown.append(weights.joinToString(",") { weight -> "$weight kg" })
 }
 
 private fun appendBodyWeightLoadFormulaMarkdown(

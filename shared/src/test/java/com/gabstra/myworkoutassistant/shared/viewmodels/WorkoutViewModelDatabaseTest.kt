@@ -572,7 +572,7 @@ class WorkoutViewModelDatabaseTest {
         assertTrue("Bench press export should succeed", benchResult is ExerciseHistoryMarkdownResult.Success)
         val benchMarkdown = (benchResult as ExerciseHistoryMarkdownResult.Success).markdown
         assertTrue("Bench export should include header", benchMarkdown.contains("# Bench Press"))
-        assertTrue("Bench export should include athlete context", benchMarkdown.contains("#### Athlete Context"))
+        assertTrue("Bench export should include athlete context", benchMarkdown.contains("- Age:"))
         assertTrue("Bench export should list available weights", benchMarkdown.contains("Weights:") && (benchMarkdown.contains("20,") || benchMarkdown.contains("20 kg") || benchMarkdown.contains("20.0 kg")))
         assertTrue("Bench export should include compact sets line", benchMarkdown.contains("- Sets:"))
         assertTrue("Bench export should include top set line", benchMarkdown.contains("- Top set:"))

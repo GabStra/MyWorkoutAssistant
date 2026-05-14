@@ -121,7 +121,7 @@ class WorkoutSessionMarkdownExportTest {
         )
 
         val markdown = (result as WorkoutSessionMarkdownResult.Success).markdown
-        assertTrue(markdown.contains("#### Athlete Context"))
+        assertTrue(markdown.contains("- Age:"))
         assertTrue(markdown.contains("#### Session Heart Rate"))
         assertTrue(markdown.contains("#### Planned"))
         assertTrue(markdown.contains("- P1: 45 for 8 reps"))

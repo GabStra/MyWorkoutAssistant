@@ -54,17 +54,7 @@ internal fun formatWeightWithRepsForExport(
     weight: Double,
     reps: Int,
     equipment: WeightLoadedEquipment?,
-): String = "${formatWeightForExport(weight, equipment)} for $reps reps"
-
-internal fun formatWeightForExport(
-    weight: Double,
-    equipment: WeightLoadedEquipment?,
-): String {
-    return when (equipment) {
-        null -> "${formatNumber(weight)} kg"
-        else -> equipment.formatWeight(weight)
-    }
-}
+): String = "${formatNumber(weight)} kg for $reps reps"
 
 internal fun normalizeWeightForExport(
     targetWeight: Double,

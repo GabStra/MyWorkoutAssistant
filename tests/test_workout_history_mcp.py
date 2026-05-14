@@ -287,7 +287,7 @@ def test_exercise_markdown_includes_chronological_sets_formula_and_equipment(tmp
     markdown = exercise_history_markdown(store, pullup_id)
 
     assert "# Pull-Ups" in markdown
-    assert "#### Athlete Context" in markdown
+    assert "### Athlete Context" in markdown
     assert "#### Body Weight Load" in markdown
     assert "Relative BW = session BW x 100%" in markdown
     assert "80 kg relative BW (80 kg x 100%) + 5 kg equipment = 85 kg x 8" in markdown
@@ -301,7 +301,7 @@ def test_session_markdown_includes_context_summary_and_progression(tmp_path: Pat
     markdown = session_markdown(store, session_2)
 
     assert "# Strength A" in markdown
-    assert "#### Athlete Context" in markdown
+    assert "### Athlete Context" in markdown
     assert "## Session Summary" in markdown
     assert "### Bench Press" in markdown
     assert "- Sets: 82.5x6" in markdown
