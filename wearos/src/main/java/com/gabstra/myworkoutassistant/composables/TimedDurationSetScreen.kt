@@ -136,6 +136,7 @@ fun TimedDurationSetScreen(
         val setData = state.currentSetData as? TimedDurationSetData
         mutableStateOf(setData ?: TimedDurationSetData(0, 0, false, false))
     }
+    var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(currentSet.startTimer) }
 
     val isPaused by viewModel.isPaused
     val timerEditModeController = remember(set.id) {
@@ -196,6 +197,12 @@ fun TimedDurationSetScreen(
         val setData = state.currentSetData as? TimedDurationSetData ?: return@LaunchedEffect
         if (setData.startTimer != currentSet.startTimer) {
             state.currentSetData = clampTimedDurationData(setData.copy(startTimer = currentSet.startTimer))
+        }
+    }
+
+    LaunchedEffect(timerUiState?.displayMillis) {
+        timerUiState?.displayMillis?.let { displayMillis ->
+            lastLiveDisplayMillis = displayMillis.coerceIn(0, currentSet.startTimer.coerceAtLeast(0))
         }
     }
 
@@ -296,6 +303,16 @@ fun TimedDurationSetScreen(
         showRepeatButton = false
     }
 
+    fun resolveTimedDurationDisplayMillis(): Int {
+        val maxMillis = currentSet.startTimer.coerceAtLeast(0)
+        return when {
+            timerUiState != null -> timerUiState!!.displayMillis.coerceIn(0, maxMillis)
+            state.hasBeenExecuted -> 0
+            state.startTime == null -> maxMillis
+            else -> lastLiveDisplayMillis.coerceIn(0, maxMillis)
+        }
+    }
+
     LaunchedEffect(set.id, set.autoStart, isPaused) {
         val setData = state.currentSetData as? TimedDurationSetData
         state.hasBeenExecuted = setData?.hasBeenExecuted == true
@@ -393,8 +410,7 @@ fun TimedDurationSetScreen(
 
     @Composable
     fun TimedDurationRunningDisplay(initialMillis: Int) {
-        val setData = state.currentSetData as? TimedDurationSetData
-        val displayMillis = timerUiState?.displayMillis ?: setData?.endTimer ?: initialMillis
+        val displayMillis = resolveTimedDurationDisplayMillis()
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

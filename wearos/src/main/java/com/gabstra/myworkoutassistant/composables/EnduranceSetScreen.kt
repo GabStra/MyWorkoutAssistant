@@ -131,6 +131,7 @@ fun EnduranceSetScreen (
         val setData = state.currentSetData as? EnduranceSetData
         mutableStateOf(setData ?: EnduranceSetData(0, 0, false, false))
     }
+    var lastLiveDisplayMillis by remember(set.id) { mutableIntStateOf(0) }
 
     var isTimerInEditMode by remember { mutableStateOf(false) }
     var wasTimerRunningBeforeEditMode by remember(set.id) { mutableStateOf(false) }
@@ -218,6 +219,12 @@ fun EnduranceSetScreen (
         }
     }
 
+    LaunchedEffect(timerUiState?.displayMillis) {
+        timerUiState?.displayMillis?.let { displayMillis ->
+            lastLiveDisplayMillis = displayMillis.coerceAtLeast(0)
+        }
+    }
+
     var currentMillis by remember(set.id) { mutableIntStateOf(0) }
     var showStopDialog by remember { mutableStateOf(false) }
 
@@ -285,11 +292,20 @@ fun EnduranceSetScreen (
         updateInteractionTime()
     }
 
+    fun resolveEnduranceDisplayMillis(): Int {
+        val targetMillis = currentSet.startTimer.coerceAtLeast(0)
+        return when {
+            timerUiState != null -> timerUiState!!.displayMillis.coerceAtLeast(0)
+            state.hasBeenExecuted && set.autoStop -> targetMillis
+            state.startTime == null -> 0
+            else -> lastLiveDisplayMillis.coerceAtLeast(0)
+        }
+    }
+
     @Composable
     fun EnduranceRunningDisplay(initialMillis: Int) {
-        val setData = state.currentSetData as? EnduranceSetData
-        val displayMillis = timerUiState?.displayMillis ?: setData?.endTimer ?: initialMillis
-        val overLimit = setData != null && displayMillis >= setData.startTimer && !set.autoStop
+        val displayMillis = resolveEnduranceDisplayMillis()
+        val overLimit = displayMillis >= currentSet.startTimer && !set.autoStop
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
