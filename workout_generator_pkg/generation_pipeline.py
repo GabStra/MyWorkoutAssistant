@@ -18,6 +18,7 @@ from .plan_contract import (
     validate_uuid_conversion_parity,
     validate_workout_structures_contract,
 )
+from .progress_migration import migrate_progress_schema_v2_layout_step
 
 
 FULL_BODYWEIGHT_NAME_HINTS = (
@@ -34,7 +35,6 @@ PARTIAL_BODYWEIGHT_NAME_HINTS = (
     "inverted row",
     "body row",
 )
-
 
 def _normalize_custom_prompt_equipment_ids(custom_prompt, uuid_to_placeholder):
     """Rewrite raw equipment UUID references in custom prompts to planner-safe placeholders."""
@@ -407,6 +407,9 @@ def execute_workout_generation(
                     "Using saved model preference: hybrid-fast (reasoner for plan index, chat for emitting)"
                 )
         
+        if migrate_progress_schema_v2_layout_step(progress_data):
+            _gen_print("  → Migrated saved generation progress (pre-layout schema → v2).")
+
         current_step = progress_data.get("current_step", -1)
         _gen_print(f"Resuming from step {current_step + 1} (last completed: step {current_step})")
     else:
@@ -478,7 +481,7 @@ def execute_workout_generation(
             step_data["step_0_context_summary"] = context_summary
             step_data["step_0_structured_generation_facts"] = structured_generation_facts
             _gen_print("Step 0: Using saved context summary")
-        
+
         # Step 1: Generate PlanIndex (planner stage)
         if current_step < 1:
             step_start_time = time.time()
@@ -590,7 +593,7 @@ def execute_workout_generation(
             if "step_1_provided_equipment" in progress_data["step_data"]:
                 provided_equipment = progress_data["step_data"]["step_1_provided_equipment"]
             _gen_print("Step 1: Using saved plan index")
-        
+
         # Step 2: Emit equipment items (chunked emitters) - parallelized
         if current_step < 2:
             step_start_time = time.time()
@@ -785,19 +788,16 @@ def execute_workout_generation(
             exercise_items_list = []
             for ex_entry in exercise_entries:
                 ex_id = ex_entry.get("id")
-                # Get relevant equipment subset for this exercise
                 equipment_id = ex_entry.get("equipmentId")
                 equipment_subset = []
-                if equipment_id and equipment_id in equipment_items:
+                if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
                     equipment_subset = [equipment_items[equipment_id]]
-                
-                # Get relevant accessory equipment for this exercise
-                required_accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds", [])
-                accessory_subset = []
-                if accessory_items:
-                    for acc_id in required_accessory_ids:
-                        if acc_id in accessory_items:
-                            accessory_subset.append(accessory_items[acc_id])
+                accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
+                accessory_subset = [
+                    accessory_items[acc_id]
+                    for acc_id in accessory_ids
+                    if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
+                ]
                 
                 exercise_items_list.append((
                     ex_id,
@@ -837,9 +837,15 @@ def execute_workout_generation(
                 for ex_id in missing_exercise_ids:
                     ex_entry = exercise_entry_by_id.get(ex_id, {})
                     equipment_id = ex_entry.get("equipmentId")
-                    equipment_subset = [equipment_items[equipment_id]] if equipment_id and equipment_id in equipment_items else []
-                    required_accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds", [])
-                    accessory_subset = [accessory_items[acc_id] for acc_id in required_accessory_ids if acc_id in accessory_items]
+                    equipment_subset = []
+                    if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
+                        equipment_subset = [equipment_items[equipment_id]]
+                    accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
+                    accessory_subset = [
+                        accessory_items[acc_id]
+                        for acc_id in accessory_ids
+                        if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
+                    ]
                     try:
                         retry_result, retry_conv = emit_exercise_definition(
                             ex_id,
@@ -901,9 +907,15 @@ def execute_workout_generation(
                         ]
                         per_ex_error_context = "\n".join(per_ex_error_lines) if per_ex_error_lines else err_text
                         equipment_id = ex_entry.get("equipmentId")
-                        equipment_subset = [equipment_items[equipment_id]] if equipment_id and equipment_id in equipment_items else []
-                        required_accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds", [])
-                        accessory_subset = [accessory_items[acc_id] for acc_id in required_accessory_ids if acc_id in accessory_items]
+                        equipment_subset = []
+                        if equipment_id and equipment_id in equipment_items and isinstance(equipment_items[equipment_id], dict):
+                            equipment_subset = [equipment_items[equipment_id]]
+                        accessory_ids = ex_entry.get("requiredAccessoryEquipmentIds") or []
+                        accessory_subset = [
+                            accessory_items[acc_id]
+                            for acc_id in accessory_ids
+                            if acc_id in accessory_items and isinstance(accessory_items[acc_id], dict)
+                        ]
                         try:
                             retry_result, retry_conv = emit_exercise_definition(
                                 ex_id,

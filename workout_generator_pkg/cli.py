@@ -44,7 +44,11 @@ from workout_generator_pkg.stage_prompts import (
     WORKOUT_STRUCTURE_EXAMPLE,
     WORKOUT_STRUCTURE_SYSTEM_PROMPT,
 )
-from workout_generator_pkg.plan_contract import ContractValidationError, validate_single_exercise_definition_contract
+from workout_generator_pkg.plan_contract import (
+    ContractValidationError,
+    _load_field_for_exercise_type,
+    validate_single_exercise_definition_contract,
+)
 
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(PACKAGE_DIR)
@@ -1132,162 +1136,14 @@ def emit_exercise_definition(
     Returns:
         dict: Single ExerciseDefinition with placeholder IDs, or None if cancelled
     """
-    # Find the exercise entry in plan_index
     exercise_entry = None
     for ex in plan_index.get("exercises", []):
         if ex.get("id") == exercise_id:
             exercise_entry = ex
             break
-    
+
     if not exercise_entry:
         raise ValueError(f"Exercise ID {exercise_id} not found in PlanIndex")
-
-    exercise_type = exercise_entry.get("exerciseType")
-    profile = get_exercise_emission_profile(exercise_type)
-    profile_schema_json = json.dumps(profile["schema"], indent=2)
-    profile_example_json = json.dumps(profile["example_object"], indent=2)
-    required_top_fields_text = ", ".join(profile["required_top_level_fields"])
-    forbidden_top_fields = profile.get("forbidden_top_level_fields") or []
-    forbidden_top_fields_text = ", ".join(forbidden_top_fields) if forbidden_top_fields else "(none)"
-    required_set_fields_text = ", ".join(profile["required_set_level_fields"])
-    forbidden_set_fields_text = ", ".join(profile["forbidden_set_level_fields"])
-    
-    prompt_exercise_brief = {
-        "id": exercise_entry.get("id"),
-        "name": exercise_entry.get("name"),
-        "exerciseType": exercise_entry.get("exerciseType"),
-        "muscleGroups": exercise_entry.get("muscleGroups"),
-        "allowEmptyMuscleGroups": exercise_entry.get("id") == "EXERCISE_WARMUP",
-        "secondaryMuscleGroups": exercise_entry.get("secondaryMuscleGroups"),
-        "exerciseCategory": exercise_entry.get("exerciseCategory"),
-        "numWorkSets": exercise_entry.get("numWorkSets"),
-        "restBetweenSetsSeconds": exercise_entry.get("restBetweenSetsSeconds"),
-    }
-    prompt_exercise_brief = {
-        key: value for key, value in prompt_exercise_brief.items()
-        if value not in (None, [], {})
-    }
-    prompt_exercise_brief_json = json.dumps(prompt_exercise_brief, indent=2)
-    # Short list: id, type, name only for relevant equipment (subset used by this exercise)
-    equipment_list_short = format_equipment_list_for_plan(equipment_subset, accessory_subset)
-    
-    # Include accessory equipment if available (id/type/name already in equipment_list_short)
-    accessory_json_text = ""
-    if accessory_subset:
-        accessory_json = json.dumps({"accessoryEquipments": accessory_subset}, indent=2)
-        accessory_json_text = f"\nRelevant accessory equipment:\n{accessory_json}\n"
-    
-    # Weight combinations only for equipment used by this exercise (subset), not entire gym
-    equipment_combinations_info = []
-    for eq in equipment_subset:
-        eq_id = eq.get("id", "Unknown")
-        eq_name = eq.get("name", "Unknown")
-        eq_type = eq.get("type", "").upper()
-        valid_combinations = get_selectable_weights_for_exercise(
-            exercise_entry.get("exerciseType"),
-            eq,
-        )
-        if valid_combinations:
-            sorted_combos = sorted(valid_combinations)
-            combo_str = ", ".join(f"{w}kg" for w in sorted_combos)
-            total_count = len(sorted_combos)
-            equipment_combinations_info.append(f"  - {eq_id} ({eq_name}, {eq_type}): {combo_str} (total {total_count} combinations)")
-        else:
-            equipment_combinations_info.append(f"  - {eq_id} ({eq_name}, {eq_type}): (none calculated)")
-    combinations_text = ""
-    if equipment_combinations_info:
-        combinations_text = (
-            "\n\nValid weight combinations for equipment used by this exercise:\n"
-            + "\n".join(equipment_combinations_info)
-            + "\n\nUse only equipment from the list above. "
-            "For WEIGHT exercises, all WeightSet weights must be from the valid combinations shown. "
-            "For BODY_WEIGHT exercises, all BodyWeightSet additionalWeight values must be from the valid combinations shown.\n"
-        )
-    
-    # Check if plan entry specifies requiredAccessoryEquipmentIds
-    plan_accessory_ids = exercise_entry.get("requiredAccessoryEquipmentIds", [])
-    accessory_hint = ""
-    if plan_accessory_ids:
-        accessory_hint = f"\nIMPORTANT: The plan entry specifies requiredAccessoryEquipmentIds: {plan_accessory_ids}. Copy this list exactly in the exercise definition (same IDs, no extras, no omissions).\n"
-    elif accessory_subset:
-        accessory_hint = "\nIMPORTANT: The plan entry requiredAccessoryEquipmentIds is empty. Use an empty array [] for requiredAccessoryEquipmentIds.\n"
-    
-    # Build explicit instructions from plan entry (numWorkSets, restBetweenSetsSeconds, minReps, maxReps, exact targets)
-    plan_spec_lines = []
-    num_work_sets = exercise_entry.get("numWorkSets")
-    if num_work_sets is not None:
-        if exercise_type in ("COUNTDOWN", "COUNTUP"):
-            plan_spec_lines.append(
-                f"This timed exercise has exactly {num_work_sets} work sets. "
-                f"Emit exactly {num_work_sets} {profile['allowed_work_set_type']} work sets."
-            )
-        else:
-            plan_spec_lines.append(
-                f"This exercise has exactly {num_work_sets} work sets. "
-                f"Emit exactly {num_work_sets} work sets (with RestSets between them when the plan specifies rest)."
-            )
-    rest_between = exercise_entry.get("restBetweenSetsSeconds")
-    if rest_between is not None:
-        if num_work_sets and num_work_sets > 1:
-            plan_spec_lines.append(
-                f"Rest between work sets: {rest_between} seconds exactly. "
-                "Emit one RestSet between each adjacent pair of work sets, and do not place RestSets anywhere else."
-            )
-        else:
-            plan_spec_lines.append(f"Rest between sets: {rest_between} seconds.")
-    if "equipmentId" in exercise_entry:
-        equipment_id = exercise_entry.get("equipmentId")
-        if equipment_id is None:
-            plan_spec_lines.append(
-                "Set equipmentId EXACTLY to null. "
-                "Do not infer or invent a primary equipmentId from accessories, movement name, or context."
-            )
-        else:
-            plan_spec_lines.append(
-                f"Set equipmentId EXACTLY to {equipment_id}. "
-                "Do not change it and do not replace it with an accessory ID."
-            )
-    min_reps = exercise_entry.get("minReps")
-    max_reps = exercise_entry.get("maxReps")
-    target_set_prescriptions = exercise_entry.get("targetSetPrescriptions")
-    if (
-        min_reps is not None and max_reps is not None
-        and exercise_type not in ("COUNTDOWN", "COUNTUP")
-        and not target_set_prescriptions
-    ):
-        plan_spec_lines.append(f"Rep range: minReps={min_reps}, maxReps={max_reps}. Set minReps and maxReps accordingly and use a representative rep value within that range for each work set.")
-    if isinstance(target_set_prescriptions, list) and target_set_prescriptions:
-        exercise_type = exercise_entry.get("exerciseType")
-        load_field = "weight" if exercise_type == "WEIGHT" else "additionalWeight"
-        target_lines = []
-        for item in target_set_prescriptions:
-            work_set_index = item.get("workSetIndex")
-            reps = item.get("reps")
-            load_value = item.get(load_field)
-            target_lines.append(
-                f"workSetIndex {work_set_index}: reps={reps}, {load_field}={load_value}"
-            )
-        plan_spec_lines.append(
-            "Use these EXACT work-set prescriptions from the latest session. "
-            "Map them by workSetIndex, where workSetIndex is 0-based among work sets only. "
-            "Rest sets and warm-up sets do not count toward workSetIndex. "
-            "Emit the same number of work sets and copy reps and load values exactly:\n"
-            + "\n".join(target_lines)
-        )
-    body_weight_percentage = exercise_entry.get("bodyWeightPercentage")
-    if exercise_type == "BODY_WEIGHT":
-        plan_spec_lines.append(
-            f"Set bodyWeightPercentage EXACTLY to {body_weight_percentage}. "
-            "This field is the percentage of the user's body mass that counts as the exercise's baseline load before any additionalWeight is added. "
-            "Do not omit it and do not change it."
-        )
-    elif exercise_type in ("WEIGHT", "COUNTDOWN", "COUNTUP"):
-        plan_spec_lines.append("Set bodyWeightPercentage EXACTLY to null.")
-    if exercise_type == "COUNTDOWN":
-        plan_spec_lines.append("Set showCountDownTimer EXACTLY to true.")
-    plan_spec_instructions = "\n".join(plan_spec_lines)
-    if plan_spec_instructions:
-        plan_spec_instructions = "CRITICAL - Follow these exact specifications from the plan:\n" + plan_spec_instructions + "\n\n"
 
     valid_muscle_groups = (
         JSON_SCHEMA.get("$defs", {})
@@ -1295,7 +1151,26 @@ def emit_exercise_definition(
         .get("enum", [])
     )
     muscle_group_enum_text = ", ".join(valid_muscle_groups)
-    
+
+    exercise_plan_json = json.dumps(exercise_entry, indent=2)
+    equipment_list_short = format_equipment_list_for_plan(equipment_subset, accessory_subset)
+    equipment_json_text = json.dumps(
+        {
+            "equipments": equipment_subset or [],
+            "accessoryEquipments": accessory_subset or [],
+        },
+        indent=2,
+    )
+
+    profile = get_exercise_emission_profile(exercise_entry.get("exerciseType"))
+    load_field = _load_field_for_exercise_type(exercise_entry.get("exerciseType"))
+    exact_load_instruction = ""
+    if isinstance(exercise_entry.get("targetSetPrescriptions"), list) and load_field:
+        exact_load_instruction = (
+            f"- Copy targetSetPrescriptions exactly into the emitted work sets using `{load_field}` and `reps`.\n"
+            "- Emit exactly one work set per targetSetPrescriptions item in workSetIndex order.\n"
+        )
+
     calibration_instruction = (
         "The generator, not the model, decides requiresLoadCalibration in educated-guess mode. "
         "For load-based exercises with explicit work-set loads, the final output will set requiresLoadCalibration=false. "
@@ -1303,68 +1178,62 @@ def emit_exercise_definition(
         if allow_educated_load_guesses
         else "Set requiresLoadCalibration to true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
     )
-    warmup_instruction = (
-        "Set generateWarmUpSets explicitly to true or false. "
-        "Use true for heavy or technically demanding compound lifts that should ramp into work sets, unless the context says otherwise. "
-        "Use false for timed/cardio work, light isolation work, and exercises where extra ramp-up sets are not needed.\n"
-    )
-    unilateral_instruction = (
-        "Set unilateral intent explicitly through intraSetRestInSeconds. "
-        "intraSetRestInSeconds means the rest in whole seconds between the two sides of one logical unilateral set, for example Left side, then rest, then Right side. "
-        "If this is unilateral single-side work, set intraSetRestInSeconds to that positive integer side-to-side rest value. "
-        "If this is not unilateral, set intraSetRestInSeconds to null. "
-        "Do not leave unilateral intent implicit.\n"
-    )
-    common_instructions = (
-        "CRITICAL: Use a movement-only exercise name. Remove equipment/accessory words and remove set/time details from the name.\n"
-        "Examples: 'Barbell Back Squat' -> 'Back Squat', 'DB Bulgarian Split Squat' -> 'Bulgarian Split Squat', "
-        "'Cable Triceps Pushdown' -> 'Triceps Pushdown', 'Warm up (spin bike)' -> 'Warm Up'.\n\n"
-        f"Exercise brief for {exercise_id}:\n{prompt_exercise_brief_json}\n\n"
-        f"Relevant equipment (id, type, name):\n{equipment_list_short}\n"
-        f"{accessory_json_text}"
-        f"{combinations_text}\n"
-        f"Generate ONLY this one exercise definition using placeholder IDs. "
-        f"Use placeholder ID: {exercise_id} for the exercise, SET_X for sets, "
-        f"and reference equipment using EQUIPMENT_X placeholders.\n"
-        "CRITICAL: For placeholders, use exact canonical numeric forms only: "
-        "SET_<number>, EQUIPMENT_<number>, ACCESSORY_<number>. "
-        "Do not invent semantic IDs like SET_D3_0 or SET_PUSH_A_1.\n"
-        f"CRITICAL: muscleGroups must use ONLY these valid enum values:\n"
-        f"{muscle_group_enum_text}\n"
-        "Keep muscleGroups non-empty unless the exercise brief explicitly allows an empty array.\n"
-        f"Set requiredAccessoryEquipmentIds to EXACTLY match plan entry requiredAccessoryEquipmentIds.\n"
-        f"{accessory_hint}"
-        f"IMPORTANT: Set progressionMode to either OFF or AUTO_REGULATION only. "
-        f"AUTO_REGULATION means double progression plus per-set RIR (or auto RIR) on every work set except the last. "
-        f"Use AUTO_REGULATION for load-based exercises that should keep progressing once the work-set loads are known. "
-        f"Use OFF for timed/cardio work and exercises that should not auto-progress. "
-        f"{warmup_instruction}"
-        f"{unilateral_instruction}"
-        f"{calibration_instruction}"
-    )
-    type_specific_instructions = (
+
+    base_user_content = (
+        "Generate ONLY the final JSON object for this one exercise definition.\n"
+        f"Placeholder exercise id must remain exactly `{exercise_id}`.\n"
+        "Use canonical placeholder IDs only: SET_<number>, EQUIPMENT_<number>, ACCESSORY_<number>.\n"
+        "Do not invent semantic IDs.\n\n"
+        f"Conversation summary:\n{context_summary}\n\n"
+        f"PlanIndex exercise entry for {exercise_id}:\n{exercise_plan_json}\n\n"
+        "Treat the PlanIndex exercise entry as the source of truth for all deterministic exercise details. "
+        "Do not reinterpret or change exerciseType, equipmentId, requiredAccessoryEquipmentIds, "
+        "bodyWeightPercentage, exerciseCategory, muscle groups, rep range, work-set count, restBetweenSetsSeconds, "
+        "or targetSetPrescriptions.\n"
+        "Your job is to emit a valid Exercise object that implements that plan entry exactly.\n"
+        "Preserve the movement-only name from the plan entry.\n"
+        f"CRITICAL: muscleGroups must use ONLY these valid enum values:\n{muscle_group_enum_text}\n"
+        "Keep muscleGroups non-empty unless this is the warm-up exercise.\n\n"
+        f"Available equipment for this exercise:\n{equipment_list_short}\n"
+        f"Equipment details JSON:\n{equipment_json_text}\n\n"
+        "Implementation rules:\n"
+        f"- exerciseType must be `{exercise_entry.get('exerciseType')}`.\n"
+        f"- equipmentId must be {json.dumps(exercise_entry.get('equipmentId'))}.\n"
+        f"- requiredAccessoryEquipmentIds must be {json.dumps(exercise_entry.get('requiredAccessoryEquipmentIds') or [])}.\n"
+        f"- bodyWeightPercentage must be {json.dumps(exercise_entry.get('bodyWeightPercentage'))}.\n"
+        f"- intraSetRestInSeconds must be {json.dumps(exercise_entry.get('intraSetRestInSeconds'))}.\n"
+        f"- exerciseCategory must be {json.dumps(exercise_entry.get('exerciseCategory'))}.\n"
+        f"- minReps must be {json.dumps(exercise_entry.get('minReps'))}.\n"
+        f"- maxReps must be {json.dumps(exercise_entry.get('maxReps'))}.\n"
+        f"- numWorkSets must be {json.dumps(exercise_entry.get('numWorkSets'))}.\n"
+        f"- restBetweenSetsSeconds must be {json.dumps(exercise_entry.get('restBetweenSetsSeconds'))}.\n"
+        f"{exact_load_instruction}"
+        "Generate work sets and rest sets so the emitted structure matches the plan entry exactly.\n"
+        "If numWorkSets is N and restBetweenSetsSeconds is provided, emit exactly N work sets and N-1 RestSet entries between them.\n"
+        "Do not add extra work sets, rest sets, warm-up sets, or target loads that are not implied by the plan entry.\n"
+        "Warm-up sets may be auto-generated later by the pipeline, so focus on the required work-set structure.\n"
+        "Set progressionMode to either OFF or AUTO_REGULATION only. "
+        "Use AUTO_REGULATION for load-based exercises that should continue progressing after these planned work-set targets. "
+        "Use OFF for timed/cardio work and exercises that should not auto-progress.\n"
+        "Set generateWarmUpSets explicitly to true or false based on whether this movement should receive ramp-up sets.\n"
+        "Set intraSetRestInSeconds to a positive integer only for unilateral side-to-side work; otherwise set it to null.\n"
+        f"{calibration_instruction}\n"
+        "Use this type-specific contract:\n"
         f"{profile['instruction_text']}\n"
-        f"Required top-level fields for this {exercise_type} object: {required_top_fields_text}.\n"
-        f"Forbidden top-level fields for this {exercise_type} object: {forbidden_top_fields_text}.\n"
-        f"Allowed work-set type for this {exercise_type} object: {profile['allowed_work_set_type']}.\n"
-        f"Required fields on each {profile['allowed_work_set_type']}: {required_set_fields_text}.\n"
-        f"Forbidden fields on each {profile['allowed_work_set_type']}: {forbidden_set_fields_text}.\n"
-        "RestSet, when allowed, must contain only id, type, timeInSeconds, and subCategory and may appear only between adjacent work sets.\n"
-        f"Type-specific schema to follow exactly:\n{profile_schema_json}\n\n"
-        f"Type-specific example object:\n{profile_example_json}\n"
-    )
-    user_content = (
-        f"{plan_spec_instructions}"
-        f"{common_instructions}"
-        f"{type_specific_instructions}"
+        f"Required top-level fields: {', '.join(profile['required_top_level_fields'])}.\n"
+        f"Forbidden top-level fields: {', '.join(profile.get('forbidden_top_level_fields') or ['(none)'])}.\n"
+        f"Allowed work-set type: {profile['allowed_work_set_type']}.\n"
+        f"Required fields on each {profile['allowed_work_set_type']}: {', '.join(profile['required_set_level_fields'])}.\n"
+        f"Forbidden fields on each {profile['allowed_work_set_type']}: {', '.join(profile['forbidden_set_level_fields'])}.\n"
+        f"Schema:\n{json.dumps(profile['schema'], indent=2)}\n"
+        f"Example:\n{json.dumps(profile['example_object'], indent=2)}\n\n"
         "Output only the exercise object JSON, not a wrapper."
     )
-    
+
     max_attempts = 4
     attempt = 1
     last_error = None
     last_content = None
-    active_contract_error_context = contract_error_context
 
     def _emit_log(msg):
         if logger:
@@ -1372,166 +1241,13 @@ def emit_exercise_definition(
         else:
             print(msg)
 
-    def _apply_plan_authoritative_fields(exercise_item):
-        if not isinstance(exercise_item, dict):
-            return exercise_item
-
-        keys_from_plan = ("id", "exerciseType", "minReps", "maxReps", "equipmentId", "bodyWeightPercentage", "exerciseCategory")
-        for key in keys_from_plan:
-            if key not in exercise_entry:
-                continue
-            if key in ("minReps", "maxReps") and exercise_entry.get("exerciseType") in ("COUNTDOWN", "COUNTUP"):
-                continue
-            exercise_item[key] = exercise_entry.get(key)
-
-        if "requiredAccessoryEquipmentIds" in exercise_entry:
-            accessory_ids = exercise_entry.get("requiredAccessoryEquipmentIds")
-            exercise_item["requiredAccessoryEquipmentIds"] = list(accessory_ids) if isinstance(accessory_ids, list) else []
-
-        return exercise_item
-
-    def _path_to_parts(path):
-        if not isinstance(path, str) or not path.startswith("/"):
-            return []
-        parts = []
-        for token in path.strip("/").split("/"):
-            token = token.replace("~1", "/").replace("~0", "~")
-            if token.isdigit():
-                parts.append(int(token))
-            else:
-                parts.append(token)
-        return parts
-
-    def _scoped_errors_from_validation_message(error_text):
-        if not error_text:
-            return []
-        segments = [seg.strip() for seg in str(error_text).split(" | ") if seg.strip()]
-        scoped = []
-
-        def add(path, message, validator="type"):
-            scoped.append(
-                SimpleNamespace(
-                    message=message,
-                    absolute_path=_path_to_parts(path),
-                    validator=validator,
-                )
-            )
-
-        for seg in segments:
-            lower = seg.lower()
-            if "empty musclegroups array" in lower or "invalid muscle group values" in lower:
-                add("/muscleGroups", seg, "minItems")
-            elif "invalid secondarymusclegroups values" in lower:
-                add("/secondaryMuscleGroups", seg, "minItems")
-            elif "contains set type" in lower or "set type" in lower or "weightset weights" in lower:
-                add("/sets", seg, "oneOf")
-            elif "minreps" in lower or "maxreps" in lower:
-                add("/minReps", seg, "minimum")
-                add("/maxReps", seg, "minimum")
-            elif "equipmentid" in lower and "references" in lower:
-                add("/equipmentId", seg, "enum")
-            elif "requiredaccessoryequipmentids" in lower:
-                add("/requiredAccessoryEquipmentIds", seg, "enum")
-
-        return scoped
-
-    def _repair_exercise_with_json_patch(exercise_obj, validation_error_text):
-        scoped_errors = _scoped_errors_from_validation_message(validation_error_text)
-        if not scoped_errors:
-            raise ValueError("Cannot derive scoped error paths for exercise patch repair")
-
-        allowed_paths, allowed_descendant_paths = build_allowed_patch_scope(scoped_errors)
-        allowed_paths_list = sorted(normalize_json_pointer(p) for p in allowed_paths if p is not None)
-        allowed_descendant_paths_list = sorted(
-            normalize_json_pointer(p) for p in allowed_descendant_paths if p is not None
-        )
-        exercise_schema_json = json.dumps(profile["schema"], indent=2)
-        muscle_group_enum_text = ", ".join(valid_muscle_groups)
-        exercise_type_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseType", {}).get("enum", [])
-        exercise_category_enum = JSON_SCHEMA.get("$defs", {}).get("ExerciseCategory", {}).get("enum", [])
-        exercise_type_enum_text = ", ".join(exercise_type_enum)
-        exercise_category_enum_text = ", ".join(exercise_category_enum)
-        equipment_ids_text = ", ".join(
-            sorted(eq.get("id") for eq in (equipment_subset or []) if isinstance(eq, dict) and eq.get("id"))
-        ) or "(none)"
-        accessory_ids_text = ", ".join(
-            sorted(acc.get("id") for acc in (accessory_subset or []) if isinstance(acc, dict) and acc.get("id"))
-        ) or "(none)"
-        plan_entry_text = json.dumps(exercise_entry, indent=2)
-
-        errors_text = "\n".join(f"- {err.message}" for err in scoped_errors)
-        exercise_json_str = json.dumps(exercise_obj, indent=2)
-        patch_user_content = (
-            f"Context summary:\n{context_summary}\n\n"
-            f"Plan entry for this exercise:\n{plan_entry_text}\n\n"
-            f"Validation errors for this exercise:\n{errors_text}\n\n"
-            f"Exercise JSON (with errors):\n{exercise_json_str}\n\n"
-            f"Type-specific exercise schema:\n{exercise_schema_json}\n\n"
-            f"Type-specific required top-level fields: {required_top_fields_text}\n"
-            f"Type-specific forbidden top-level fields: {forbidden_top_fields_text}\n"
-            f"Allowed work-set type: {profile['allowed_work_set_type']}\n"
-            f"Required work-set fields: {required_set_fields_text}\n"
-            f"Forbidden work-set fields: {forbidden_set_fields_text}\n\n"
-            f"Valid ExerciseType values: {exercise_type_enum_text}\n"
-            f"Valid ExerciseCategory values: {exercise_category_enum_text}\n"
-            f"Valid MuscleGroup enum values: {muscle_group_enum_text}\n"
-            f"Available equipment IDs for this exercise: {equipment_ids_text}\n"
-            f"Available accessory IDs for this exercise: {accessory_ids_text}\n\n"
-            "Generate a JSON Patch (RFC 6902) array for this exercise object only. "
-            "CRITICAL: JSON Pointer paths are relative to this exercise object root. "
-            "Do NOT use paths starting with /workouts, /exercises, /equipments, or any outer wrapper.\n"
-            f"Allowed exact patch paths: {allowed_paths_list}\n"
-            f"Allowed descendant patch roots: {allowed_descendant_paths_list}\n"
-            "Fix ONLY the highlighted validation issues. "
-            "Do NOT modify fields outside the failing paths. "
-            "Any value written to muscleGroups/secondaryMuscleGroups MUST use only valid MuscleGroup enum values above.\n"
-            "Output only the JSON Patch array."
-        )
-        patch_messages = [
-            {"role": "system", "content": BASE_SYSTEM_PROMPT},
-            {"role": "system", "content": JSON_PATCH_REPAIR_SYSTEM_PROMPT},
-            {"role": "user", "content": patch_user_content},
-        ]
-
-        if logger:
-            trunc = patch_user_content[:2000] + (f"... [truncated, total {len(patch_user_content)} chars]" if len(patch_user_content) > 2000 else "")
-            logger.log_request("repair_exercise_with_json_patch " + exercise_id, trunc)
-        patch_content = json_call_reasoner_only_with_loading(
-            client,
-            patch_messages,
-            "",
-            show_loading=False,
-            logger=logger,
-        )
-        if patch_content is None:
-            return None
-        if not patch_content:
-            raise ValueError("Model returned empty JSON Patch content for exercise repair")
-        if logger:
-            logger.log_response("repair_exercise_with_json_patch " + exercise_id, patch_content, truncate_at=8000)
-
-        patch = json.loads(patch_content)
-        if isinstance(patch, list):
-            patch_array = patch
-        elif isinstance(patch, dict) and isinstance(patch.get("patch"), list):
-            patch_array = patch["patch"]
-        else:
-            raise ValueError("Invalid JSON Patch format: expected array of patch operations")
-
-        validate_patch_operations_scope(patch_array, allowed_paths, allowed_descendant_paths)
-        repaired = apply_json_patch(exercise_obj, patch_array)
-        changed_paths = collect_changed_json_paths(exercise_obj, repaired)
-        validate_changed_paths_scope(changed_paths, allowed_paths, allowed_descendant_paths)
-        return repaired
-
     while attempt <= max_attempts:
         retry_context = ""
-        if active_contract_error_context:
+        if contract_error_context:
             retry_context = (
                 "\n\nCONTRACT RETRY CONTEXT:\n"
-                f"The previous emitted exercise failed Step 3 contract validation with:\n{active_contract_error_context}\n\n"
-                "Regenerate this exercise so it matches the plan entry exactly, while still satisfying schema constraints.\n"
-                "Output only valid exercise JSON.\n"
+                f"{contract_error_context}\n\n"
+                "Regenerate the FULL exercise object so it satisfies schema and Step 3 contract.\n"
             )
         elif last_error:
             previous_output = (last_content or "")[:3500]
@@ -1539,23 +1255,21 @@ def emit_exercise_definition(
                 "\n\nAUTO-HEAL RETRY CONTEXT:\n"
                 f"Previous attempt failed validation/parsing with error:\n{last_error}\n\n"
                 "Regenerate the FULL exercise object and fix all issues.\n"
-                "CRITICAL: muscleGroups must use valid enum values and stay non-empty unless the exercise brief explicitly allows an empty array.\n"
-                "Do not return explanations. Return only valid exercise JSON.\n"
                 f"Previous invalid JSON snippet:\n{previous_output}\n"
             )
 
-        retry_user_content = user_content + retry_context
+        retry_user_content = base_user_content + retry_context
         messages = [
             {"role": "system", "content": BASE_SYSTEM_PROMPT},
             {"role": "system", "content": EXERCISE_SYSTEM_PROMPT},
-            {"role": "user", "content": retry_user_content}
+            {"role": "user", "content": retry_user_content},
         ]
 
         if logger:
             request_truncate = PARALLEL_LOG_REQUEST_TRUNCATE if getattr(logger, "is_parallel", False) else 2000
             trunc = retry_user_content[:request_truncate] + (f"... [truncated, total {len(retry_user_content)} chars]" if request_truncate and len(retry_user_content) > request_truncate else "")
             logger.log_request("emit_exercise " + exercise_id, trunc)
-        # Always use reasoner during auto-heal retries for higher repair quality.
+
         use_reasoner_for_this_attempt = use_reasoner or bool(last_error) or bool(contract_error_context)
         if use_reasoner_for_this_attempt:
             content = json_call_reasoner_only_with_loading(client, messages, "", show_loading=False, logger=logger)
@@ -1588,26 +1302,17 @@ def emit_exercise_definition(
 
         try:
             data = json.loads(content)
-            # If it's wrapped in an "exercises" array, extract the first item
             if "exercises" in data and isinstance(data["exercises"], list) and len(data["exercises"]) > 0:
                 exercise_item = data["exercises"][0]
             elif "id" in data and data.get("type") == "Exercise":
-                # It's already a single exercise object
                 exercise_item = data
             else:
                 raise ValueError(f"Invalid exercise JSON format for {exercise_id}: expected exercise object or exercises array")
 
-            # Ensure the ID matches
-            if exercise_item.get("id") != exercise_id:
-                exercise_item["id"] = exercise_id
-
-            # Normalize requiredAccessoryEquipmentIds to empty array if None
+            exercise_item["id"] = exercise_id
             if exercise_item.get("requiredAccessoryEquipmentIds") is None:
                 exercise_item["requiredAccessoryEquipmentIds"] = []
 
-            exercise_item = _apply_plan_authoritative_fields(exercise_item)
-
-            # Finalize and validate this exercise before adding it to exercise_definitions.
             normalized_item = finalize_and_validate_exercise_definition(
                 exercise_item,
                 plan_entry=exercise_entry,
@@ -1617,59 +1322,10 @@ def emit_exercise_definition(
                 allow_educated_load_guesses=allow_educated_load_guesses,
             )
             validate_single_exercise_definition_contract(exercise_entry, normalized_item)
-
             return (ExerciseDefinition(normalized_item), log_entry)
-        except ContractValidationError as e:
-            active_contract_error_context = str(e)
-            last_error = active_contract_error_context
-            last_content = content
-            if attempt >= max_attempts:
-                raise ValueError(
-                    f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
-                    f"Last error: {last_error}"
-                )
-            attempt += 1
-            _emit_log(f"  Retrying {exercise_id} due to Step 3 contract mismatch (attempt {attempt})...")
-            continue
         except Exception as e:
             last_error = str(e)
             last_content = content
-
-            # If exercise JSON parsed successfully, try scoped JSON Patch repair first.
-            try:
-                parsed = json.loads(content)
-                if "exercises" in parsed and isinstance(parsed["exercises"], list) and len(parsed["exercises"]) > 0:
-                    exercise_item = parsed["exercises"][0]
-                elif "id" in parsed and parsed.get("type") == "Exercise":
-                    exercise_item = parsed
-                else:
-                    exercise_item = None
-            except Exception:
-                exercise_item = None
-
-            if isinstance(exercise_item, dict):
-                try:
-                    if exercise_item.get("id") != exercise_id:
-                        exercise_item["id"] = exercise_id
-                    patched_item = _repair_exercise_with_json_patch(exercise_item, last_error)
-                    if patched_item is not None:
-                        patched_item = _apply_plan_authoritative_fields(patched_item)
-                        normalized_item = finalize_and_validate_exercise_definition(
-                            patched_item,
-                            plan_entry=exercise_entry,
-                            equipment_subset=equipment_subset,
-                            accessory_subset=accessory_subset,
-                            all_equipment_candidates=(provided_equipment or {}).get("equipments", []) if isinstance(provided_equipment, dict) else None,
-                        )
-                        validate_single_exercise_definition_contract(exercise_entry, normalized_item)
-                        _emit_log(f"  Patched {exercise_id} with scoped JSON Patch auto-heal.")
-                        return (ExerciseDefinition(normalized_item), log_entry)
-                except ContractValidationError as patch_contract_error:
-                    active_contract_error_context = str(patch_contract_error)
-                    last_error = active_contract_error_context
-                except Exception as patch_error:
-                    last_error = f"{last_error} | JSON Patch repair failed: {patch_error}"
-
             if attempt >= max_attempts:
                 raise ValueError(
                     f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
@@ -1683,6 +1339,7 @@ def emit_exercise_definition(
         f"Exercise '{exercise_id}' failed after {max_attempts} auto-heal attempts. "
         f"Last error: {last_error or 'unknown error'}"
     )
+
 
 def emit_workout_structure(
     workout_id,
@@ -1719,12 +1376,12 @@ def emit_workout_structure(
     
     if not workout_entry:
         raise ValueError(f"Workout ID {workout_id} not found in PlanIndex")
-    
+
     workout_entry_json = json.dumps(workout_entry, indent=2)
     
     # Build minimal exercise reference list (just IDs and names for context)
     exercise_refs = []
-    for ex_id in workout_entry.get("exerciseIds", []):
+    for ex_id in workout_entry.get("exerciseIds", []) or []:
         if ex_id in exercise_index:
             ex = exercise_index[ex_id]
             exercise_refs.append({
@@ -1738,7 +1395,7 @@ def emit_workout_structure(
     # When plan entry provides restToNextSeconds (same order as exerciseIds), instruct to use those values exactly
     rest_to_next_instruction = ""
     rest_to_next_seconds = workout_entry.get("restToNextSeconds")
-    exercise_ids_ordered = workout_entry.get("exerciseIds", [])
+    exercise_ids_ordered = workout_entry.get("exerciseIds", []) or []
     if rest_to_next_seconds is not None and isinstance(rest_to_next_seconds, list) and len(rest_to_next_seconds) == len(exercise_ids_ordered):
         pairs = [f"after {ex_id}: {sec}s" for ex_id, sec in zip(exercise_ids_ordered, rest_to_next_seconds)]
         rest_to_next_instruction = (
@@ -2148,7 +1805,7 @@ def validate_and_repair_placeholder_json(client, context_summary, placeholder_js
                     step_data["step_6_best_json"] = best_json
                     step_data["step_6_best_error_count"] = best_error_count
                     step_data["step_6_current_attempt"] = attempt
-                    _, _ = save_generation_progress(session_id, 5, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
+                    _, _ = save_generation_progress(session_id, 6, step_data, custom_prompt, conversation_hash, id_manager, script_dir, timing_data, use_reasoner_for_emitting)
             
             if attempt >= max_attempts:
                 # Max attempts reached

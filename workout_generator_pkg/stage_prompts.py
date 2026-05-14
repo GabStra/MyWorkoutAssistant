@@ -420,9 +420,10 @@ PLAN_INDEX_EXAMPLE = {
         {
             "id": "EXERCISE_0",
             "equipmentId": "EQUIPMENT_0",
-            "exerciseType": "WEIGHT",
             "name": "Back Squat",
+            "exerciseType": "WEIGHT",
             "bodyWeightPercentage": None,
+            "intraSetRestInSeconds": None,
             "muscleGroups": ["BACK_GLUTEAL", "FRONT_QUADRICEPS"],
             "requiredAccessoryEquipmentIds": [],
             "exerciseCategory": "HEAVY_COMPOUND",
@@ -438,9 +439,10 @@ PLAN_INDEX_EXAMPLE = {
         {
             "id": "EXERCISE_1",
             "equipmentId": None,
-            "exerciseType": "BODY_WEIGHT",
             "name": "Ring Row",
+            "exerciseType": "BODY_WEIGHT",
             "bodyWeightPercentage": 65.0,
+            "intraSetRestInSeconds": None,
             "muscleGroups": ["BACK_UPPER_BACK", "FRONT_BICEPS"],
             "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
             "exerciseCategory": "MODERATE_COMPOUND",
@@ -492,8 +494,12 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For accessory-dependent exercises, use requiredAccessoryEquipmentIds with ACCESSORY_X IDs; use [] when none.\n"
     f"- Use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
     "- If user provided sets/reps/rest structure, copy exact work-set counts and exact rest values into numWorkSets and restBetweenSetsSeconds for any exercise type when they are known.\n"
+    "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds.\n"
+    "- intraSetRestInSeconds means the exact rest in whole seconds between the two sides of one logical unilateral set, for example left side, then rest, then right side.\n"
+    "- If an exercise is unilateral or single-side work (for example single-arm row, split squat, lunge, step-up, single-leg calf raise), set intraSetRestInSeconds to the exact positive integer side-to-side rest.\n"
+    "- If the exercise is not unilateral, set intraSetRestInSeconds to null.\n"
     "- For timed exercises, numWorkSets counts timed work intervals and must be a positive integer when provided; omit minReps/maxReps for COUNTUP/COUNTDOWN.\n"
-    "- restBetweenSetsSeconds and restToNextSeconds must always be exact integers in seconds, never ranges.\n"
+    "- restBetweenSetsSeconds must always be exact integers in seconds, never ranges.\n"
     "- If the request mentions a rest range, choose one exact value within that range and store only that exact value.\n"
     "- If user provided exact working loads, store them in targetSetPrescriptions.\n"
     "- Treat exact working loads in the request as mandatory structured output, not optional detail.\n"
@@ -522,17 +528,16 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "- For WEIGHT exercises, each item must be {workSetIndex, reps, weight}.\n"
     "- For BODY_WEIGHT exercises, each item must be {workSetIndex, reps, additionalWeight}.\n"
     "- Preserve exact load targets when they are provided.\n\n"
-    "Workout constraints:\n"
+    "Workout plan constraints:\n"
     "- Preserve exact workout names from user plan (including day labels/prefixes such as 'A -', 'Day A:', etc.).\n"
     "- workout.exerciseIds defines exact order.\n"
     "- If provided, restToNextSeconds must match exerciseIds length and values exactly.\n"
+    "- restToNextSeconds must always use exact integers in seconds, never ranges.\n"
     "- If the plan uses supersets, populate workout.supersetGroups explicitly.\n"
     "- Each supersetGroups item must be an object with exerciseIds containing the exact grouped exercises in order.\n"
     "- Superset exerciseIds must be a contiguous subsequence of workout.exerciseIds.\n"
     "- Do not rely on hasSupersets alone; when any exercises are supersetted, supersetGroups must encode the exact grouping.\n"
-    "- Use restToNextSeconds alongside supersetGroups: for a superset, grouped exercises usually have 0 rest to the next grouped exercise and the last grouped exercise carries the post-superset rest.\n"
-    "- Include EXERCISE_WARMUP only when the intended workout actually has a dedicated warm-up exercise.\n"
-    "- Do not invent EXERCISE_WARMUP when the workout can be represented without a dedicated warm-up exercise entry.\n\n"
+    "- Use restToNextSeconds alongside supersetGroups: for a superset, grouped exercises usually have 0 rest to the next grouped exercise and the last grouped exercise carries the post-superset rest.\n\n"
     "Output format:\n"
     f"{json.dumps(PLAN_INDEX_EXAMPLE, indent=2)}\n\n"
     "Generate the PlanIndex based on the conversation context."

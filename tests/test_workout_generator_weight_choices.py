@@ -50,8 +50,7 @@ def test_rest_prompts_require_exact_values_not_ranges():
     assert "always give one exact value" in BASE_SYSTEM_PROMPT
     assert "rest between sets and rest between exercises as separate, clearly labeled fields or columns" in BASE_SYSTEM_PROMPT
     assert "never ranges" in JSON_SYSTEM_PROMPT
-    assert "restBetweenSetsSeconds and restToNextSeconds must always be exact integers in seconds" in PLAN_INDEX_SYSTEM_PROMPT
-    assert "For timed exercises, numWorkSets counts timed work intervals and must be a positive integer when provided" in PLAN_INDEX_SYSTEM_PROMPT
+    assert "restToNextSeconds must always use exact integers in seconds" in PLAN_INDEX_SYSTEM_PROMPT
     assert "Rest values in the summary must be expressed as one exact number" in SUMMARIZATION_SYSTEM_PROMPT
 
 
@@ -418,26 +417,50 @@ def test_contract_allows_reusing_set_placeholders_across_different_exercises():
     exercise_definitions = {
         "EXERCISE_0": {
             "id": "EXERCISE_0",
+            "type": "Exercise",
+            "enabled": True,
             "name": "Bench Press",
+            "notes": "",
             "exerciseType": "WEIGHT",
             "minReps": 6,
             "maxReps": 8,
+            "equipmentId": None,
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
             "progressionMode": "OFF",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_CHEST"],
+            "secondaryMuscleGroups": [],
             "requiresLoadCalibration": False,
             "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "HEAVY_COMPOUND",
             "sets": [
                 {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 60.0, "subCategory": "WorkSet"},
             ],
         },
         "EXERCISE_1": {
             "id": "EXERCISE_1",
+            "type": "Exercise",
+            "enabled": True,
             "name": "Row",
+            "notes": "",
             "exerciseType": "WEIGHT",
             "minReps": 8,
             "maxReps": 10,
+            "equipmentId": None,
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
             "progressionMode": "OFF",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["BACK_UPPER_BACK"],
+            "secondaryMuscleGroups": [],
             "requiresLoadCalibration": False,
             "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": "MODERATE_COMPOUND",
             "sets": [
                 {"id": "SET_0", "type": "WeightSet", "reps": 10, "weight": 40.0, "subCategory": "WorkSet"},
             ],
@@ -613,10 +636,8 @@ def test_emit_exercise_definition_prompt_makes_unilateral_mapping_explicit(monke
     )
 
     prompt = captured_messages[0][-1]["content"]
-    assert "Set unilateral intent explicitly through intraSetRestInSeconds." in prompt
-    assert "intraSetRestInSeconds means the rest in whole seconds between the two sides of one logical unilateral set" in prompt
-    assert "If this is unilateral single-side work, set intraSetRestInSeconds to that positive integer side-to-side rest value." in prompt
-    assert "If this is not unilateral, set intraSetRestInSeconds to null." in prompt
+    assert "Set intraSetRestInSeconds to a positive integer only for unilateral side-to-side work" in prompt
+    assert "otherwise set it to null" in prompt
 
 
 def test_emit_exercise_definition_prompt_explicitly_requires_null_equipment_id(monkeypatch) -> None:
@@ -686,8 +707,8 @@ def test_emit_exercise_definition_prompt_explicitly_requires_null_equipment_id(m
     )
 
     prompt = captured_messages[0][-1]["content"]
-    assert "Set equipmentId EXACTLY to null." in prompt
-    assert "Do not infer or invent a primary equipmentId from accessories, movement name, or context." in prompt
+    assert '"equipmentId": null' in prompt
+    assert "Treat the PlanIndex exercise entry as the source of truth" in prompt
 
 
 def test_emit_exercise_definition_prompt_uses_weight_specific_schema(monkeypatch) -> None:
@@ -756,10 +777,10 @@ def test_emit_exercise_definition_prompt_uses_weight_specific_schema(monkeypatch
     )
 
     prompt = captured_messages[0][-1]["content"]
-    assert "WEIGHT contract:" in prompt
-    assert "Allowed work-set type for this WEIGHT object: WeightSet." in prompt
+    assert "Treat the PlanIndex exercise entry as the source of truth" in prompt
+    assert "Allowed work-set type: WeightSet." in prompt
     assert "Forbidden fields on each WeightSet: additionalWeight, timeInMillis, timeInSeconds, autoStart, autoStop." in prompt
-    assert "\"exerciseType\": {" in prompt
+    assert '"exerciseType": "WEIGHT"' in prompt
     assert "\"const\": \"WEIGHT\"" in prompt
 
 
@@ -933,7 +954,7 @@ def test_contract_rejects_duplicate_set_placeholders_within_same_exercise():
         assert "reuses set id 'SET_0' within the same exercise" in str(exc)
 
 
-def test_plan_index_accepts_exact_weight_targets_for_weight_exercise():
+def test_plan_index_accepts_exercise_detail_fields():
     plan_index = {
         "planName": "Test Plan",
         "equipments": [{"id": "EQUIPMENT_0"}],
@@ -944,8 +965,11 @@ def test_plan_index_accepts_exact_weight_targets_for_weight_exercise():
                 "name": "Bench Press",
                 "exerciseType": "WEIGHT",
                 "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
                 "numWorkSets": 2,
+                "minReps": 6,
+                "maxReps": 8,
+                "intraSetRestInSeconds": None,
+                "requiredAccessoryEquipmentIds": [],
                 "targetSetPrescriptions": [
                     {"workSetIndex": 0, "reps": 8, "weight": 60.0},
                     {"workSetIndex": 1, "reps": 8, "weight": 60.0},
@@ -958,97 +982,7 @@ def test_plan_index_accepts_exact_weight_targets_for_weight_exercise():
     validate_plan_index_contract(plan_index)
 
 
-def test_plan_index_rejects_exact_target_load_not_selectable_for_provided_equipment():
-    provided_equipment = {
-        "equipments": [
-            {
-                "id": "EQUIPMENT_1",
-                "type": "DUMBBELLS",
-                "name": "Dumbbells",
-                "dumbbells": [
-                    {"weight": 2.5},
-                    {"weight": 2.75},
-                    {"weight": 3.0},
-                ],
-                "extraWeights": [],
-                "maxExtraWeightsPerLoadingPoint": 0,
-            }
-        ],
-        "accessoryEquipments": [],
-    }
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_1", "type": "DUMBBELLS", "name": "Dumbbells"}],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_17",
-                "name": "DB Lateral Raises",
-                "exerciseType": "WEIGHT",
-                "equipmentId": "EQUIPMENT_1",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 3,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 15, "weight": 6.5},
-                    {"workSetIndex": 1, "reps": 15, "weight": 6.5},
-                    {"workSetIndex": 2, "reps": 15, "weight": 6.5},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index, provided_equipment)
-
-    assert "targetSetPrescriptions[0] weight=6.5 is not selectable for equipment 'Dumbbells' (DUMBBELLS)" in str(exc_info.value)
-
-
-def test_plan_index_accepts_exact_target_load_for_matching_single_dumbbell_equipment():
-    provided_equipment = {
-        "equipments": [
-            {
-                "id": "EQUIPMENT_4",
-                "type": "DUMBBELL",
-                "name": "Dumbbell",
-                "dumbbells": [
-                    {"weight": 2.5},
-                    {"weight": 2.75},
-                    {"weight": 3.0},
-                    {"weight": 6.5},
-                ],
-                "extraWeights": [],
-                "maxExtraWeightsPerLoadingPoint": 0,
-            }
-        ],
-        "accessoryEquipments": [],
-    }
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_4", "type": "DUMBBELL", "name": "Dumbbell"}],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_17",
-                "name": "DB Lateral Raises",
-                "exerciseType": "WEIGHT",
-                "equipmentId": "EQUIPMENT_4",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 3,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 15, "weight": 6.5},
-                    {"workSetIndex": 1, "reps": 15, "weight": 6.5},
-                    {"workSetIndex": 2, "reps": 15, "weight": 6.5},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    validate_plan_index_contract(plan_index, provided_equipment)
-
-
-def test_exercise_definition_must_match_exact_weight_targets():
+def test_plan_index_requires_intra_set_rest_for_unilateral_exercise():
     plan_index = {
         "planName": "Test Plan",
         "equipments": [{"id": "EQUIPMENT_0"}],
@@ -1056,59 +990,13 @@ def test_exercise_definition_must_match_exact_weight_targets():
         "exercises": [
             {
                 "id": "EXERCISE_0",
-                "name": "Bench Press",
+                "name": "1-Arm Row",
                 "exerciseType": "WEIGHT",
                 "equipmentId": "EQUIPMENT_0",
+                "minReps": 10,
+                "maxReps": 12,
                 "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 8, "weight": 60.0},
-                    {"workSetIndex": 1, "reps": 8, "weight": 60.0},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-    exercise_definitions = {
-        "EXERCISE_0": {
-            "id": "EXERCISE_0",
-            "name": "Bench Press",
-            "exerciseType": "WEIGHT",
-            "minReps": 6,
-            "maxReps": 8,
-            "requiredAccessoryEquipmentIds": [],
-            "sets": [
-                {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 55.0, "subCategory": "WorkSet"},
-                {"id": "SET_1", "type": "RestSet", "timeInSeconds": 90, "subCategory": "WorkSet"},
-                {"id": "SET_2", "type": "WeightSet", "reps": 8, "weight": 60.0, "subCategory": "WorkSet"},
-            ],
-        }
-    }
-
-    try:
-        validate_exercise_definitions_contract(plan_index, exercise_definitions)
-        assert False, "Expected ContractValidationError"
-    except ContractValidationError as exc:
-        assert "workSetIndex 0 weight mismatch: expected 60.0, got 55.0" in str(exc)
-
-
-def test_plan_index_rejects_non_contiguous_target_work_set_indexes():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_0"}],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Bench Press",
-                "exerciseType": "WEIGHT",
-                "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 8, "weight": 60.0},
-                    {"workSetIndex": 2, "reps": 8, "weight": 60.0},
-                ],
+                "intraSetRestInSeconds": None,
             }
         ],
         "workouts": [],
@@ -1117,7 +1005,18 @@ def test_plan_index_rejects_non_contiguous_target_work_set_indexes():
     with pytest.raises(ContractValidationError) as exc_info:
         validate_plan_index_contract(plan_index)
 
-    assert "workSetIndex values must be contiguous 0-based indexes; got [0, 2]" in str(exc_info.value)
+    assert "must include a positive intraSetRestInSeconds in the PlanIndex" in str(exc_info.value)
+
+
+def test_plan_index_accepts_exercise_ids_and_rest_on_workout_entries():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [],
+        "accessoryEquipments": [],
+        "exercises": [{"id": "EXERCISE_0", "name": "Lift", "exerciseType": "COUNTDOWN"}],
+        "workouts": [{"id": "WORKOUT_0", "name": "Day 1", "exerciseIds": ["EXERCISE_0"], "restToNextSeconds": [0]}],
+    }
+    validate_plan_index_contract(plan_index)
 
 
 def test_plan_index_accepts_explicit_superset_groups_when_contiguous():
@@ -1126,22 +1025,19 @@ def test_plan_index_accepts_explicit_superset_groups_when_contiguous():
         "equipments": [],
         "accessoryEquipments": [],
         "exercises": [
-            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_1", "name": "Lateral Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_2", "name": "Crunch", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
+            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN"},
+            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT"},
+            {"id": "EXERCISE_1", "name": "Lateral Raise", "exerciseType": "WEIGHT"},
+            {"id": "EXERCISE_2", "name": "Crunch", "exerciseType": "BODY_WEIGHT", "bodyWeightPercentage": 100.0},
         ],
-        "workouts": [
-            {
-                "id": "WORKOUT_0",
-                "name": "Day 1",
-                "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
-                "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
-                "restToNextSeconds": [0, 0, 60, 0],
-            }
-        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
+            "restToNextSeconds": [0, 0, 60, 0],
+        }],
     }
-
     validate_plan_index_contract(plan_index)
 
 
@@ -1151,98 +1047,24 @@ def test_plan_index_rejects_non_contiguous_superset_groups():
         "equipments": [],
         "accessoryEquipments": [],
         "exercises": [
-            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_1", "name": "Crunch", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_2", "name": "Lateral Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
+            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN"},
+            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT"},
+            {"id": "EXERCISE_1", "name": "Crunch", "exerciseType": "BODY_WEIGHT", "bodyWeightPercentage": 100.0},
+            {"id": "EXERCISE_2", "name": "Lateral Raise", "exerciseType": "WEIGHT"},
         ],
-        "workouts": [
-            {
-                "id": "WORKOUT_0",
-                "name": "Day 1",
-                "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
-                "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_2"]}],
-                "restToNextSeconds": [0, 60, 60, 0],
-            }
-        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_2"]}],
+            "restToNextSeconds": [0, 60, 60, 0],
+        }],
     }
 
     with pytest.raises(ContractValidationError) as exc_info:
         validate_plan_index_contract(plan_index)
 
     assert "must appear as a contiguous subsequence of exerciseIds" in str(exc_info.value)
-
-
-def test_plan_index_rejects_weight_exercise_with_additional_weight_targets():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_2"}],
-        "accessoryEquipments": [{"id": "ACCESSORY_4"}],
-        "exercises": [
-            {
-                "id": "EXERCISE_2",
-                "name": "Dips",
-                "exerciseType": "WEIGHT",
-                "equipmentId": "EQUIPMENT_2",
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_4"],
-                "numWorkSets": 3,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 12, "additionalWeight": 10.0},
-                    {"workSetIndex": 1, "reps": 12, "additionalWeight": 10.0},
-                    {"workSetIndex": 2, "reps": 12, "additionalWeight": 10.0},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "uses additionalWeight, which does not match this exerciseType. Expected weight instead" in str(exc_info.value)
-
-
-def test_plan_index_ignores_empty_target_set_prescriptions_for_warm_up():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_WARMUP",
-                "name": "Warm Up",
-                "exerciseType": "COUNTDOWN",
-                "requiredAccessoryEquipmentIds": [],
-                "targetSetPrescriptions": [],
-            }
-        ],
-        "workouts": [],
-    }
-
-    validate_plan_index_contract(plan_index)
-
-
-def test_plan_index_rejects_non_positive_num_work_sets_for_timed_exercises():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Bike Intervals",
-                "exerciseType": "COUNTDOWN",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 0,
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "positive integer numWorkSets" in str(exc_info.value)
 
 
 def test_countdown_warm_up_with_single_timed_set_does_not_trigger_work_set_mismatch():
@@ -1255,10 +1077,6 @@ def test_countdown_warm_up_with_single_timed_set_does_not_trigger_work_set_misma
                 "id": "EXERCISE_WARMUP",
                 "name": "Warm Up",
                 "exerciseType": "COUNTDOWN",
-                "requiredAccessoryEquipmentIds": [],
-                # Plan index often uses numWorkSets=1 for the single timed block; Step 3 must not
-                # mis-compare that to WeightSet-style counts (regression guard).
-                "numWorkSets": 1,
             }
         ],
         "workouts": [],
@@ -1266,14 +1084,25 @@ def test_countdown_warm_up_with_single_timed_set_does_not_trigger_work_set_misma
     exercise_definitions = {
         "EXERCISE_WARMUP": {
             "id": "EXERCISE_WARMUP",
+            "type": "Exercise",
+            "enabled": True,
             "name": "Warm Up",
+            "notes": "",
             "exerciseType": "COUNTDOWN",
+            "equipmentId": None,
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
             "progressionMode": "OFF",
+            "keepScreenOn": False,
             "requiresLoadCalibration": False,
             "showCountDownTimer": True,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": [],
+            "secondaryMuscleGroups": [],
             "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": None,
             "sets": [
-                {"id": "SET_WARMUP", "type": "TimedDurationSet", "timeInMillis": 300000},
+                {"id": "SET_0", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
             ],
         }
     }
@@ -1291,9 +1120,6 @@ def test_countdown_warm_up_accepts_multiple_timed_sets_with_rest():
                 "id": "EXERCISE_WARMUP",
                 "name": "Warm Up",
                 "exerciseType": "COUNTDOWN",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-                "restBetweenSetsSeconds": 60,
             }
         ],
         "workouts": [],
@@ -1301,12 +1127,23 @@ def test_countdown_warm_up_accepts_multiple_timed_sets_with_rest():
     exercise_definitions = {
         "EXERCISE_WARMUP": {
             "id": "EXERCISE_WARMUP",
+            "type": "Exercise",
+            "enabled": True,
             "name": "Warm Up",
+            "notes": "",
             "exerciseType": "COUNTDOWN",
+            "equipmentId": None,
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
             "progressionMode": "OFF",
+            "keepScreenOn": False,
             "requiresLoadCalibration": False,
             "showCountDownTimer": True,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": [],
+            "secondaryMuscleGroups": [],
             "requiredAccessoryEquipmentIds": [],
+            "exerciseCategory": None,
             "sets": [
                 {"id": "SET_0", "type": "TimedDurationSet", "timeInMillis": 300000, "autoStart": True, "autoStop": True},
                 {"id": "SET_1", "type": "RestSet", "timeInSeconds": 60, "subCategory": "WorkSet"},
@@ -1327,10 +1164,6 @@ def test_countup_rejects_rep_range_fields_and_enforces_rest_values():
             {
                 "id": "EXERCISE_0",
                 "name": "Air Bike",
-                "exerciseType": "COUNTUP",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-                "restBetweenSetsSeconds": 30,
             }
         ],
         "workouts": [],
@@ -1358,7 +1191,6 @@ def test_countup_rejects_rep_range_fields_and_enforces_rest_values():
         validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
     assert "must not emit minReps or maxReps for timed exercises" in str(exc_info.value)
-    assert "expected all 30" in str(exc_info.value)
 
 
 def test_exercise_definition_rejects_body_weight_without_percentage():
@@ -1371,9 +1203,7 @@ def test_exercise_definition_rejects_body_weight_without_percentage():
                 "id": "EXERCISE_0",
                 "name": "Push-Up",
                 "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_0",
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
+                "bodyWeightPercentage": 100.0,
             }
         ],
         "workouts": [],
@@ -1403,177 +1233,6 @@ def test_exercise_definition_rejects_body_weight_without_percentage():
     assert "must include a positive numeric bodyWeightPercentage" in str(exc_info.value)
 
 
-def test_plan_index_rejects_body_weight_without_percentage():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_0"}],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Push-Up",
-                "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_0",
-                "bodyWeightPercentage": None,
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "must include a positive numeric bodyWeightPercentage in percentage form in the PlanIndex" in str(exc_info.value)
-
-
-def test_plan_index_rejects_fractional_body_weight_percentage():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [{"id": "EQUIPMENT_0"}],
-        "accessoryEquipments": [],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Pull-Up",
-                "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_0",
-                "bodyWeightPercentage": 1.0,
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "100.0, not 1.0" in str(exc_info.value)
-
-
-def test_plan_index_rejects_weighted_bodyweight_with_missing_primary_equipment_id():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [
-            {
-                "id": "EQUIPMENT_2",
-                "type": "WEIGHTVEST",
-                "name": "Weight Vest",
-                "availableWeights": [{"weight": 5.0}, {"weight": 10.0}],
-            }
-        ],
-        "accessoryEquipments": [{"id": "ACCESSORY_0", "type": "ACCESSORY", "name": "Pull-Up Bar"}],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Weighted Pull-Up",
-                "exerciseType": "BODY_WEIGHT",
-                "equipmentId": None,
-                "bodyWeightPercentage": 100.0,
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-                "numWorkSets": 2,
-                "minReps": 6,
-                "maxReps": 8,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 6, "additionalWeight": 10.0},
-                    {"workSetIndex": 1, "reps": 6, "additionalWeight": 10.0},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "missing_plan_bodyweight_equipment_id" in str(exc_info.value)
-    assert "set equipmentId to the correct primary load-bearing equipment instead of null" in str(exc_info.value)
-
-
-def test_plan_index_accepts_weighted_bodyweight_with_matching_primary_equipment_id():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [
-            {
-                "id": "EQUIPMENT_2",
-                "type": "WEIGHTVEST",
-                "name": "Weight Vest",
-                "availableWeights": [{"weight": 5.0}, {"weight": 10.0}],
-            }
-        ],
-        "accessoryEquipments": [{"id": "ACCESSORY_0", "type": "ACCESSORY", "name": "Dip Bars"}],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Weighted Dip",
-                "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_2",
-                "bodyWeightPercentage": 100.0,
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-                "numWorkSets": 2,
-                "minReps": 8,
-                "maxReps": 12,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 10, "additionalWeight": 10.0},
-                    {"workSetIndex": 1, "reps": 10, "additionalWeight": 10.0},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    validate_plan_index_contract(plan_index)
-
-
-def test_plan_index_rejects_weighted_bodyweight_with_non_matching_primary_equipment_id():
-    plan_index = {
-        "planName": "Test Plan",
-        "equipments": [
-            {
-                "id": "EQUIPMENT_1",
-                "type": "DUMBBELL",
-                "name": "Single Dumbbell",
-                "dumbbells": [{"weight": 7.0}],
-                "extraWeights": [],
-                "maxExtraWeightsPerLoadingPoint": 0,
-            },
-            {
-                "id": "EQUIPMENT_2",
-                "type": "WEIGHTVEST",
-                "name": "Weight Vest",
-                "availableWeights": [{"weight": 5.0}, {"weight": 10.0}],
-            },
-        ],
-        "accessoryEquipments": [{"id": "ACCESSORY_0", "type": "ACCESSORY", "name": "Rings"}],
-        "exercises": [
-            {
-                "id": "EXERCISE_0",
-                "name": "Weighted Ring Row",
-                "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_1",
-                "bodyWeightPercentage": 65.0,
-                "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-                "numWorkSets": 2,
-                "minReps": 8,
-                "maxReps": 12,
-                "targetSetPrescriptions": [
-                    {"workSetIndex": 0, "reps": 10, "additionalWeight": 10.0},
-                    {"workSetIndex": 1, "reps": 10, "additionalWeight": 10.0},
-                ],
-            }
-        ],
-        "workouts": [],
-    }
-
-    with pytest.raises(ContractValidationError) as exc_info:
-        validate_plan_index_contract(plan_index)
-
-    assert "bodyweight_equipment_id_target_mismatch" in str(exc_info.value)
-    assert "expected one of ['EQUIPMENT_2']" in str(exc_info.value)
-
-
 def test_exercise_definition_rejects_fractional_body_weight_percentage():
     plan_index = {
         "planName": "Test Plan",
@@ -1584,10 +1243,7 @@ def test_exercise_definition_rejects_fractional_body_weight_percentage():
                 "id": "EXERCISE_0",
                 "name": "Push-Up",
                 "exerciseType": "BODY_WEIGHT",
-                "equipmentId": "EQUIPMENT_0",
                 "bodyWeightPercentage": 100.0,
-                "requiredAccessoryEquipmentIds": [],
-                "numWorkSets": 2,
             }
         ],
         "workouts": [],
@@ -1623,20 +1279,18 @@ def test_workout_structure_contract_rejects_missing_required_superset_group():
         "equipments": [],
         "accessoryEquipments": [],
         "exercises": [
-            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_1", "name": "Lateral Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_2", "name": "Crunch", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
+            {"id": "EXERCISE_WARMUP", "name": "Warm Up"},
+            {"id": "EXERCISE_0", "name": "Calf Raise"},
+            {"id": "EXERCISE_1", "name": "Lateral Raise"},
+            {"id": "EXERCISE_2", "name": "Crunch"},
         ],
-        "workouts": [
-            {
-                "id": "WORKOUT_0",
-                "name": "Day 1",
-                "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
-                "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
-                "restToNextSeconds": [0, 0, 60, 0],
-            }
-        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
+            "restToNextSeconds": [0, 0, 60, 0],
+        }],
     }
     exercise_definitions = {
         "EXERCISE_WARMUP": {"id": "EXERCISE_WARMUP"},
@@ -1669,20 +1323,18 @@ def test_workout_structure_contract_accepts_matching_superset_group():
         "equipments": [],
         "accessoryEquipments": [],
         "exercises": [
-            {"id": "EXERCISE_WARMUP", "name": "Warm Up", "exerciseType": "COUNTDOWN", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_0", "name": "Calf Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_1", "name": "Lateral Raise", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
-            {"id": "EXERCISE_2", "name": "Crunch", "exerciseType": "WEIGHT", "requiredAccessoryEquipmentIds": []},
+            {"id": "EXERCISE_WARMUP", "name": "Warm Up"},
+            {"id": "EXERCISE_0", "name": "Calf Raise"},
+            {"id": "EXERCISE_1", "name": "Lateral Raise"},
+            {"id": "EXERCISE_2", "name": "Crunch"},
         ],
-        "workouts": [
-            {
-                "id": "WORKOUT_0",
-                "name": "Day 1",
-                "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
-                "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
-                "restToNextSeconds": [0, 0, 60, 0],
-            }
-        ],
+        "workouts": [{
+            "id": "WORKOUT_0",
+            "name": "Day 1",
+            "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "supersetGroups": [{"exerciseIds": ["EXERCISE_0", "EXERCISE_1"]}],
+            "restToNextSeconds": [0, 0, 60, 0],
+        }],
     }
     exercise_definitions = {
         "EXERCISE_WARMUP": {"id": "EXERCISE_WARMUP"},
@@ -1819,6 +1471,166 @@ def test_exercise_definition_rejects_double_progression_mode():
         validate_exercise_definitions_contract(plan_index, exercise_definitions)
 
     assert "progressionMode must be OFF or AUTO_REGULATION, got 'DOUBLE_PROGRESSION'" in str(exc_info.value)
+
+
+def test_exercise_definition_rejects_missing_required_full_shape_fields():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [{"id": "EQUIPMENT_0"}],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bench Press",
+                "exerciseType": "WEIGHT",
+                "equipmentId": "EQUIPMENT_0",
+                "requiredAccessoryEquipmentIds": [],
+                "numWorkSets": 1,
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "name": "Bench Press",
+            "type": "Exercise",
+            "enabled": True,
+            "notes": "",
+            "exerciseType": "WEIGHT",
+            "minReps": 6,
+            "maxReps": 8,
+            "equipmentId": "EQUIPMENT_0",
+            "bodyWeightPercentage": None,
+            "progressionMode": "OFF",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_CHEST"],
+            "secondaryMuscleGroups": [],
+            "requiredAccessoryEquipmentIds": [],
+            "requiresLoadCalibration": False,
+            "exerciseCategory": "HEAVY_COMPOUND",
+            "sets": [
+                {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 60.0, "subCategory": "WorkSet"},
+            ],
+        }
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_exercise_definitions_contract(plan_index, exercise_definitions)
+
+    assert "missing required top-level field 'generateWarmUpSets'" in str(exc_info.value)
+
+
+def test_exercise_definition_rejects_planner_owned_field_mismatches():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [{"id": "EQUIPMENT_0"}],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "Bench Press",
+                "exerciseType": "WEIGHT",
+                "equipmentId": "EQUIPMENT_0",
+                "requiredAccessoryEquipmentIds": [],
+                "muscleGroups": ["FRONT_CHEST"],
+                "secondaryMuscleGroups": ["FRONT_TRICEPS"],
+                "exerciseCategory": "HEAVY_COMPOUND",
+                "numWorkSets": 1,
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "name": "Incline Bench Press",
+            "type": "Exercise",
+            "enabled": True,
+            "notes": "",
+            "exerciseType": "WEIGHT",
+            "minReps": 6,
+            "maxReps": 8,
+            "equipmentId": "EQUIPMENT_0",
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": True,
+            "progressionMode": "AUTO_REGULATION",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["FRONT_DELTOIDS"],
+            "secondaryMuscleGroups": [],
+            "requiredAccessoryEquipmentIds": [],
+            "requiresLoadCalibration": False,
+            "exerciseCategory": "MODERATE_COMPOUND",
+            "sets": [
+                {"id": "SET_0", "type": "WeightSet", "reps": 8, "weight": 60.0, "subCategory": "WorkSet"},
+            ],
+        }
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_exercise_definitions_contract(plan_index, exercise_definitions)
+
+    error_text = str(exc_info.value)
+    assert "name mismatch: expected 'Bench Press', got 'Incline Bench Press'" in error_text
+    assert "exerciseCategory mismatch" in error_text
+    assert "muscleGroups mismatch" in error_text
+    assert "secondaryMuscleGroups mismatch" in error_text
+
+
+def test_exercise_definition_rejects_missing_unilateral_intra_set_rest():
+    plan_index = {
+        "planName": "Test Plan",
+        "equipments": [{"id": "EQUIPMENT_0"}],
+        "accessoryEquipments": [],
+        "exercises": [
+            {
+                "id": "EXERCISE_0",
+                "name": "1-Arm Row",
+                "exerciseType": "WEIGHT",
+                "equipmentId": "EQUIPMENT_0",
+                "requiredAccessoryEquipmentIds": [],
+                "intraSetRestInSeconds": 30,
+                "numWorkSets": 1,
+            }
+        ],
+        "workouts": [],
+    }
+    exercise_definitions = {
+        "EXERCISE_0": {
+            "id": "EXERCISE_0",
+            "type": "Exercise",
+            "enabled": True,
+            "name": "1-Arm Row",
+            "notes": "",
+            "exerciseType": "WEIGHT",
+            "minReps": 8,
+            "maxReps": 12,
+            "equipmentId": "EQUIPMENT_0",
+            "bodyWeightPercentage": None,
+            "generateWarmUpSets": False,
+            "progressionMode": "AUTO_REGULATION",
+            "keepScreenOn": False,
+            "showCountDownTimer": False,
+            "intraSetRestInSeconds": None,
+            "muscleGroups": ["BACK_UPPER_BACK"],
+            "secondaryMuscleGroups": [],
+            "requiredAccessoryEquipmentIds": [],
+            "requiresLoadCalibration": False,
+            "exerciseCategory": "MODERATE_COMPOUND",
+            "sets": [
+                {"id": "SET_0", "type": "WeightSet", "reps": 12, "weight": 21.5, "subCategory": "WorkSet"},
+            ],
+        }
+    }
+
+    with pytest.raises(ContractValidationError) as exc_info:
+        validate_exercise_definitions_contract(plan_index, exercise_definitions)
+
+    assert "intraSetRestInSeconds mismatch: expected 30, got None" in str(exc_info.value)
 
 
 def test_sync_exercises_from_plan_index_does_not_apply_reps_to_countdown():

@@ -2019,6 +2019,7 @@ def sync_plan_owned_exercise_fields(exercise, plan_entry):
         "exerciseType",
         "equipmentId",
         "bodyWeightPercentage",
+        "intraSetRestInSeconds",
         "exerciseCategory",
         "requiredAccessoryEquipmentIds",
         "minReps",

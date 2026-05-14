@@ -67,6 +67,59 @@ def _load_field_for_exercise_type(exercise_type: str) -> Optional[str]:
     return mapping.get(exercise_type)
 
 
+def _normalize_unilateral_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.lower()
+    normalized = normalized.replace("—", "-").replace("–", "-")
+    normalized = normalized.replace("/", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _exercise_requires_unilateral_rest(exercise: Dict[str, Any]) -> bool:
+    if not isinstance(exercise, dict):
+        return False
+
+    combined = " ".join(
+        part
+        for part in (
+            _normalize_unilateral_text(exercise.get("name")),
+            _normalize_unilateral_text(exercise.get("notes")),
+        )
+        if part
+    )
+    if not combined:
+        return False
+
+    hint_tokens = (
+        "single arm",
+        "single-arm",
+        "1-arm",
+        "1 arm",
+        "one arm",
+        "single leg",
+        "single-leg",
+        "1-leg",
+        "1 leg",
+        "one leg",
+        "per leg",
+        "per side",
+        "each side",
+        "each leg",
+        "each arm",
+        "between sides",
+        "side-to-side",
+        "side to side",
+        "bulgarian split squat",
+        "split squat",
+        "step-up",
+        "step up",
+        "lunge",
+    )
+    return any(token in combined for token in hint_tokens)
+
+
 def _equipment_ids_matching_bodyweight_targets(
     equipment_lookup: Dict[str, Dict[str, Any]],
     target_set_prescriptions: Any,
@@ -264,6 +317,24 @@ def _collect_contract_issues_plan_index(
             issues.append(ContractIssue("missing_exercise_type", f"Exercise '{ex_name}' is missing exerciseType."))
         if not ex.get("name"):
             issues.append(ContractIssue("missing_exercise_name", f"Exercise '{ex_id or 'Unknown'}' is missing name."))
+        intra_set_rest_in_seconds = ex.get("intraSetRestInSeconds")
+        if intra_set_rest_in_seconds is not None:
+            if not isinstance(intra_set_rest_in_seconds, int) or intra_set_rest_in_seconds <= 0:
+                issues.append(
+                    ContractIssue(
+                        "invalid_intra_set_rest",
+                        f"Exercise '{ex_name}' must use a positive integer intraSetRestInSeconds when provided.",
+                    )
+                )
+        if _exercise_requires_unilateral_rest(ex) and not (
+            isinstance(intra_set_rest_in_seconds, int) and intra_set_rest_in_seconds > 0
+        ):
+            issues.append(
+                ContractIssue(
+                    "missing_unilateral_intra_set_rest",
+                    f"Exercise '{ex_name}' is unilateral single-side work and must include a positive intraSetRestInSeconds in the PlanIndex.",
+                )
+            )
         equipment_id = ex.get("equipmentId")
         if equipment_id is not None and not _is_canonical_plan_placeholder(equipment_id, "equipment"):
             issues.append(
@@ -407,16 +478,22 @@ def _collect_contract_issues_plan_index(
 
         wo_name = wo.get("name", "Unknown")
         wo_id = wo.get("id")
-        exercise_ids_in_workout = wo.get("exerciseIds", []) or []
-        rest_to_next = wo.get("restToNextSeconds")
-        superset_groups = wo.get("supersetGroups")
-
         if not wo_id:
             issues.append(ContractIssue("missing_workout_id", f"Workout '{wo_name}' is missing id."))
         elif not _is_canonical_plan_placeholder(wo_id, "workout"):
             issues.append(
                 ContractIssue("invalid_workout_placeholder", f"Workout id '{wo_id}' is not a canonical WORKOUT_<number> placeholder.")
             )
+        if not isinstance(wo.get("name"), str) or not str(wo.get("name")).strip():
+            issues.append(
+                ContractIssue(
+                    "missing_workout_name",
+                    f"Workout '{wo_id or 'Unknown'}' must include a non-empty name string in the PlanIndex.",
+                )
+            )
+        exercise_ids_in_workout = wo.get("exerciseIds", []) or []
+        rest_to_next = wo.get("restToNextSeconds")
+        superset_groups = wo.get("supersetGroups")
 
         for ex_id in exercise_ids_in_workout:
             if not _is_canonical_plan_placeholder(ex_id, "exercise"):
@@ -617,6 +694,13 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
 
     plan_name = plan_ex.get("name")
     actual_name = actual.get("name")
+    if plan_name and actual_name != plan_name:
+        issues.append(
+            ContractIssue(
+                "exercise_name_mismatch",
+                f"Exercise '{ex_id}' name mismatch: expected '{plan_name}', got '{actual_name}'.",
+            )
+        )
 
     plan_type = plan_ex.get("exerciseType")
     actual_type = actual.get("exerciseType")
@@ -638,12 +722,23 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
         )
 
     if plan_type == "BODY_WEIGHT":
+        planned_body_weight_percentage = plan_ex.get("bodyWeightPercentage")
         body_weight_percentage = actual.get("bodyWeightPercentage")
         if not _has_percentage_semantics(body_weight_percentage):
             issues.append(
                 ContractIssue(
                     "missing_body_weight_percentage",
                     f"Exercise '{ex_id}' must include a positive numeric bodyWeightPercentage in percentage form for BODY_WEIGHT exercises, got {body_weight_percentage!r} (name: '{actual_name}'; use 100.0 for full bodyweight, not 1.0).",
+                )
+            )
+        elif (
+            planned_body_weight_percentage is not None
+            and body_weight_percentage != planned_body_weight_percentage
+        ):
+            issues.append(
+                ContractIssue(
+                    "body_weight_percentage_mismatch",
+                    f"Exercise '{ex_id}' bodyWeightPercentage mismatch: expected {planned_body_weight_percentage}, got {body_weight_percentage} (name: '{actual_name}').",
                 )
             )
     else:
@@ -654,6 +749,51 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
                     f"Exercise '{ex_id}' must set bodyWeightPercentage to null for non-BODY_WEIGHT exercises, got {actual.get('bodyWeightPercentage')!r} (name: '{actual_name}').",
                 )
             )
+
+    planned_intra_set_rest = plan_ex.get("intraSetRestInSeconds")
+    actual_intra_set_rest = actual.get("intraSetRestInSeconds")
+    if "intraSetRestInSeconds" in plan_ex and actual_intra_set_rest != planned_intra_set_rest:
+        issues.append(
+            ContractIssue(
+                "intra_set_rest_mismatch",
+                f"Exercise '{ex_id}' intraSetRestInSeconds mismatch: expected {planned_intra_set_rest!r}, got {actual_intra_set_rest!r} (name: '{actual_name}').",
+            )
+        )
+    if _exercise_requires_unilateral_rest(plan_ex) and not (
+        isinstance(actual_intra_set_rest, int) and actual_intra_set_rest > 0
+    ):
+        issues.append(
+            ContractIssue(
+                "missing_unilateral_intra_set_rest",
+                f"Exercise '{ex_id}' is unilateral single-side work and must emit a positive intraSetRestInSeconds (name: '{actual_name}').",
+            )
+        )
+
+    actual_work_sets, actual_rest_sets = _count_work_sets(actual)
+    actual_sets = actual.get("sets", []) or []
+    for profile_error in validate_exercise_type_profile(actual, plan_entry=plan_ex, require_full_shape=True):
+        issues.append(ContractIssue("exercise_type_profile_mismatch", profile_error))
+    seen_set_ids_in_exercise: set[str] = set()
+    for idx, set_item in enumerate(actual_sets):
+        if not isinstance(set_item, dict):
+            continue
+        set_id = set_item.get("id")
+        if not _is_canonical_plan_placeholder(set_id, "set"):
+            issues.append(
+                ContractIssue(
+                    "invalid_set_placeholder",
+                    f"Exercise '{ex_id}' has non-canonical set id '{set_id}' at sets[{idx}].",
+                )
+            )
+        elif set_id in seen_set_ids_in_exercise:
+            issues.append(
+                ContractIssue(
+                    "duplicate_set_placeholder",
+                    f"Exercise '{ex_id}' reuses set id '{set_id}' within the same exercise.",
+                )
+            )
+        else:
+            seen_set_ids_in_exercise.add(set_id)
 
     if plan_type not in ("COUNTDOWN", "COUNTUP"):
         plan_min = plan_ex.get("minReps")
@@ -693,34 +833,37 @@ def _collect_contract_issues_for_exercise(plan_ex: Dict[str, Any], actual: Dict[
                 )
             )
 
+    if "exerciseCategory" in plan_ex and actual.get("exerciseCategory") != plan_ex.get("exerciseCategory"):
+        issues.append(
+            ContractIssue(
+                "exercise_category_mismatch",
+                f"Exercise '{ex_id}' exerciseCategory mismatch: expected {plan_ex.get('exerciseCategory')!r}, got {actual.get('exerciseCategory')!r} (name: '{actual_name}').",
+            )
+        )
+
+    if isinstance(plan_ex.get("muscleGroups"), list):
+        actual_muscle_groups = actual.get("muscleGroups")
+        if actual_muscle_groups != plan_ex.get("muscleGroups"):
+            issues.append(
+                ContractIssue(
+                    "muscle_groups_mismatch",
+                    f"Exercise '{ex_id}' muscleGroups mismatch: expected {plan_ex.get('muscleGroups')}, got {actual_muscle_groups} (name: '{actual_name}').",
+                )
+            )
+
+    if isinstance(plan_ex.get("secondaryMuscleGroups"), list):
+        actual_secondary_muscle_groups = actual.get("secondaryMuscleGroups")
+        if actual_secondary_muscle_groups != plan_ex.get("secondaryMuscleGroups"):
+            issues.append(
+                ContractIssue(
+                    "secondary_muscle_groups_mismatch",
+                    f"Exercise '{ex_id}' secondaryMuscleGroups mismatch: expected {plan_ex.get('secondaryMuscleGroups')}, got {actual_secondary_muscle_groups} (name: '{actual_name}').",
+                )
+            )
+
     expected_work_sets = plan_ex.get("numWorkSets")
     expected_rest_between = plan_ex.get("restBetweenSetsSeconds")
-    actual_work_sets, actual_rest_sets = _count_work_sets(actual)
     expected_load_field = _load_field_for_exercise_type(plan_type)
-    actual_sets = actual.get("sets", []) or []
-    for profile_error in validate_exercise_type_profile(actual, plan_entry=plan_ex):
-        issues.append(ContractIssue("exercise_type_profile_mismatch", profile_error))
-    seen_set_ids_in_exercise: set[str] = set()
-    for idx, set_item in enumerate(actual_sets):
-        if not isinstance(set_item, dict):
-            continue
-        set_id = set_item.get("id")
-        if not _is_canonical_plan_placeholder(set_id, "set"):
-            issues.append(
-                ContractIssue(
-                    "invalid_set_placeholder",
-                    f"Exercise '{ex_id}' has non-canonical set id '{set_id}' at sets[{idx}].",
-                )
-            )
-        elif set_id in seen_set_ids_in_exercise:
-            issues.append(
-                ContractIssue(
-                    "duplicate_set_placeholder",
-                    f"Exercise '{ex_id}' reuses set id '{set_id}' within the same exercise.",
-                )
-            )
-        else:
-            seen_set_ids_in_exercise.add(set_id)
 
     target_set_prescriptions = plan_ex.get("targetSetPrescriptions")
     if isinstance(target_set_prescriptions, list) and expected_load_field is not None:
