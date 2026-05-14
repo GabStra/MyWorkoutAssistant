@@ -8,6 +8,8 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
@@ -15,11 +17,12 @@ import com.google.ai.edge.litertlm.ToolProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.coroutineContext
+
 
 data class WorkoutInsightsChunk(
     val title: String,
@@ -116,6 +119,7 @@ private data class EngineHandle(
     val backendPreference: LiteRtLmBackendPreference,
 )
 
+@OptIn(ExperimentalApi::class)
 private object LiteRtLmEnginePool {
     private val mutex = Mutex()
     private var cachedHandle: EngineHandle? = null
@@ -138,6 +142,7 @@ private object LiteRtLmEnginePool {
             return cached
         }
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
+        ExperimentalFlags.enableSpeculativeDecoding = true
 
         cachedHandle?.engine?.close()
         val created = createEngine(

@@ -165,12 +165,20 @@ class MobileSyncToWatchWorker(
         private val workerSyncMutex = Mutex()
 
         fun enqueue(context: Context) {
+            enqueueInternal(context, ExistingWorkPolicy.KEEP)
+        }
+
+        fun enqueueManual(context: Context) {
+            enqueueInternal(context, ExistingWorkPolicy.REPLACE)
+        }
+
+        private fun enqueueInternal(context: Context, policy: ExistingWorkPolicy) {
             val request = OneTimeWorkRequestBuilder<MobileSyncToWatchWorker>()
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                policy,
                 request
             )
         }

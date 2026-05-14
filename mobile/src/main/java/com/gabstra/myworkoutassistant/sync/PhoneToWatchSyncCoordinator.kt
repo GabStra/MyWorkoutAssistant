@@ -153,8 +153,8 @@ object PhoneToWatchSyncCoordinator {
                 setPendingFollowUp(appContext, true)
                 Log.d(TAG, "manual sync: worker running, pending follow-up set")
             } else {
-                MobileSyncToWatchWorker.enqueue(appContext)
-                Log.d(TAG, "manual sync: enqueued mobile sync to watch")
+                MobileSyncToWatchWorker.enqueueManual(appContext)
+                Log.d(TAG, "manual sync: replaced pending work and enqueued mobile sync to watch")
             }
         }
     }
