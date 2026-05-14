@@ -22,14 +22,28 @@ def load_conversation_meta(script_dir: Optional[str] = None) -> Dict[str, Any]:
     return {}
 
 
-def save_conversation_meta(conversation_id: str, script_dir: Optional[str] = None) -> None:
-    """Persist conversation metadata."""
+def save_conversation_meta(active_conversation_id: str, script_dir: Optional[str] = None) -> None:
+    """Persist active conversation metadata."""
     meta_path = conversation_meta_path(script_dir)
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump({"conversation_id": conversation_id}, f, indent=2)
+            json.dump({"active_conversation_id": active_conversation_id}, f, indent=2)
     except Exception:
         pass
+
+
+def get_active_conversation_id(script_dir: Optional[str] = None) -> Optional[str]:
+    """Return the active conversation id from either the new or legacy meta shape."""
+    meta = load_conversation_meta(script_dir)
+    active_conversation_id = meta.get("active_conversation_id")
+    if isinstance(active_conversation_id, str) and active_conversation_id.strip():
+        return active_conversation_id.strip()
+
+    legacy_conversation_id = meta.get("conversation_id")
+    if isinstance(legacy_conversation_id, str) and legacy_conversation_id.strip():
+        return legacy_conversation_id.strip()
+
+    return None
 
 
 def hash_conversation(messages: List[Dict[str, Any]]) -> str:

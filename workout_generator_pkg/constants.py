@@ -175,8 +175,6 @@ JSON_SCHEMA = {
                 "notes",                                                                                                                                                                                                                         
                 "sets",                                                                                                                                                                                                                          
                 "exerciseType",                                                                                                                                                                                                                  
-                "minReps",                                                                                                                                                                                                                       
-                "maxReps",                                                                                                                                                                                                                       
                 "generateWarmUpSets",                                                                                                                                                                                                            
                 "progressionMode",                                                                                                                                                                                                               
                 "keepScreenOn",                                                                                                                                                                                                                  
@@ -213,8 +211,7 @@ JSON_SCHEMA = {
                 "muscleGroups": {
                     "type": "array",
                     "items": {"$ref": "#/$defs/MuscleGroup"},
-                    "uniqueItems": True,
-                    "minItems": 1
+                    "uniqueItems": True
                 },
                 "secondaryMuscleGroups": {                                                                                                                                                                                                       
                     "type": "array",                                                                                                                                                                                                             
@@ -569,6 +566,7 @@ EXERCISE_CATEGORY_ENUM_VALUES = ", ".join(JSON_SCHEMA["$defs"]["ExerciseCategory
 MUSCLE_GROUP_ENUM_VALUES = ", ".join(JSON_SCHEMA["$defs"]["MuscleGroup"]["enum"])
 SET_SUBCATEGORY_ENUM_VALUES = ", ".join(JSON_SCHEMA["$defs"]["SetSubCategory"]["enum"])
 WORKOUT_COMPONENT_TYPE_VALUES = "Exercise, Rest, Superset"
+EXACT_GENERATION_CONFIRMATION = "CONFIRM GENERATE"
 
 BASE_SYSTEM_PROMPT = (
     "You are a workout assistant. In normal chat mode, respond conversationally. "
@@ -589,9 +587,15 @@ BASE_SYSTEM_PROMPT = (
     "- Mark unilateral intent when exercise or user request indicates single-side work.\n\n"
     "4. Preview formatting.\n"
     "- For conversational preview workouts, use a clear plain-text table.\n"
+    "- The recap/preview table must show rest between sets and rest between exercises as separate, clearly labeled fields or columns.\n"
+    "- Do not collapse those two rest concepts into one generic 'Rest' column when both are relevant.\n"
+    "- When showing or proposing rest values, always give one exact value. Never present rest as a range such as '2:00-2:30' or '120-150s'.\n"
+    "- If the source conversation gives a rest range, choose one exact value within that range and use that exact value consistently.\n"
     "- Keep notes concise and practical.\n\n"
-    "5. Function usage.\n"
-    "- Call generate_workout only when the user explicitly asks to generate/create workout JSON.\n"
+    "5. Generation confirmation gate.\n"
+    f"- Before final generation, show the workout preview/summary and tell the user to reply with exactly {EXACT_GENERATION_CONFIRMATION!r} to start generation.\n"
+    f"- Call generate_workout only when the user's most recent message is exactly {EXACT_GENERATION_CONFIRMATION!r}.\n"
+    "- Treat every other wording as not confirmed yet, including 'yes', 'looks good', 'go ahead', 'generate it', or paraphrases.\n"
     "- Optionally pass custom_prompt with extra constraints."
 )
 
@@ -601,11 +605,17 @@ SUMMARIZATION_SYSTEM_PROMPT = (
     "- goals, target muscles, constraints, style, duration/intensity preferences\n"
     "- available equipment (with any technical details)\n"
     "- include/exclude exercises\n"
-    "- explicit prescriptions (sets, rep ranges, rest between sets, rest to next exercise)\n\n"
+    "- explicit prescriptions (sets, rep ranges, rest between sets, rest to next exercise, superset pairings)\n"
+    "- exact load semantics for each exercise when provided\n\n"
     "Rules:\n"
     "- Remove fluff and duplicates.\n"
     "- Preserve exercise names verbatim.\n"
     "- Preserve numeric values exactly (do not broaden ranges or replace user values).\n"
+    "- Rest values in the summary must be expressed as one exact number, never as a range. If the conversation gave a rest range, preserve the chosen exact rest value that will drive generation.\n"
+    "- Preserve explicit superset relationships exactly, including which exercises are grouped together and any stated rest after the pair/group.\n"
+    "- For BODY_WEIGHT movements, preserve all load semantics that affect baseline interpretation: added load, total effective load, bodyweight assumptions, explicit percentages, and whether the movement is full-bodyweight or partial-bodyweight.\n"
+    "- If both added load and total effective load are given, keep both explicitly. Example: keep 'Weighted Ring Row +10 kg, 52.3 kg total' as both facts, not just '+10 kg vest'.\n"
+    "- If the exact baseline percentage is not stated but can be inferred, preserve the raw numbers needed for that inference.\n"
     "- If information is missing/unclear, mark it explicitly without guessing."
 )
 
@@ -619,12 +629,14 @@ JSON_SYSTEM_PROMPT = (
     "- Rest component {type:\"Rest\"} is only in workoutComponents (between exercises).\n"
     "- Never mix RestSet and Rest component locations.\n"
     "- If user gives explicit rest values, use them exactly.\n"
-    "- If not provided, pick consistent defaults by goal/intensity (strength usually longer than hypertrophy/endurance).\n\n"
+    "- Rest values in generated output must always be exact numbers, never ranges.\n"
+    "- If the source request gives a rest range, resolve it to one exact value before output and keep that exact value consistently.\n"
+    "- If not provided, pick consistent exact defaults by goal/intensity (strength usually longer than hypertrophy/endurance).\n\n"
     "Exercise validity:\n"
     "- WEIGHT -> WeightSet work sets; BODY_WEIGHT -> BodyWeightSet; COUNTUP -> EnduranceSet; COUNTDOWN -> TimedDurationSet.\n"
-    "- COUNTUP/COUNTDOWN must use minReps=0 and maxReps=0.\n"
-    "- WEIGHT/BODY_WEIGHT must have minReps/maxReps > 0 and valid load percent ranges.\n"
-    f"- muscleGroups must be non-empty and use MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
+    "- WEIGHT/BODY_WEIGHT exercises must include minReps/maxReps > 0 and valid load percent ranges.\n"
+    f"- muscleGroups must use MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
+    "- muscleGroups may be empty only when the exercise context explicitly allows it.\n"
     f"- exerciseType must use ExerciseType enum values only: {EXERCISE_TYPE_ENUM_VALUES}.\n"
     f"- exerciseCategory must use ExerciseCategory enum values only: {EXERCISE_CATEGORY_ENUM_VALUES}.\n\n"
     "Text fields:\n"
@@ -814,8 +826,6 @@ EXERCISE_EXAMPLE = {
                 }
             ],
             "exerciseType": "COUNTDOWN",
-            "minReps": 0,
-            "maxReps": 0,
             "equipmentId": None,
             "bodyWeightPercentage": None,
             "generateWarmUpSets": False,
@@ -855,8 +865,8 @@ EXERCISE_EXAMPLE = {
             "maxReps": 5,
             "equipmentId": "EQUIPMENT_0",
             "bodyWeightPercentage": None,
-            "generateWarmUpSets": False,
-            "progressionMode": "OFF",
+            "generateWarmUpSets": True,
+            "progressionMode": "AUTO_REGULATION",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
@@ -870,14 +880,14 @@ EXERCISE_EXAMPLE = {
             "id": "EXERCISE_1",
             "type": "Exercise",
             "enabled": True,
-            "name": "Single-Arm Dumbbell Row",
-            "notes": "Focus on controlled movement",
+            "name": "Ring Rows",
+            "notes": "Pause briefly at the top and control the lowering phase",
             "sets": [
                 {
                     "id": "SET_2",
-                    "type": "WeightSet",
+                    "type": "BodyWeightSet",
                     "reps": 8,
-                    "weight": 20.0,
+                    "additionalWeight": 5.0,
                     "subCategory": "WorkSet"
                 },
                 {
@@ -885,93 +895,12 @@ EXERCISE_EXAMPLE = {
                     "type": "RestSet",
                     "timeInSeconds": 90,
                     "subCategory": "WorkSet"
-                }
-            ],
-            "exerciseType": "WEIGHT",
-            "minReps": 8,
-            "maxReps": 12,
-            "equipmentId": "EQUIPMENT_1",
-            "bodyWeightPercentage": None,
-            "generateWarmUpSets": False,
-            "progressionMode": "DOUBLE_PROGRESSION",
-            "keepScreenOn": False,
-            "showCountDownTimer": False,
-            "intraSetRestInSeconds": 60,
-            "muscleGroups": ["BACK_UPPER_BACK", "BACK_DELTOIDS"],
-            "secondaryMuscleGroups": ["FRONT_BICEPS"],
-            "requiredAccessoryEquipmentIds": [],
-            "requiresLoadCalibration": False,
-            "exerciseCategory": "MODERATE_COMPOUND"
-        },
-        {
-            "id": "EXERCISE_2",
-            "type": "Exercise",
-            "enabled": True,
-            "name": "Push-ups",
-            "notes": "Keep core tight, full range of motion",
-            "sets": [
+                },
                 {
                     "id": "SET_4",
                     "type": "BodyWeightSet",
-                    "reps": 12,
-                    "additionalWeight": 0.0,
-                    "subCategory": "WorkSet"
-                },
-                {
-                    "id": "SET_5",
-                    "type": "RestSet",
-                    "timeInSeconds": 60,
-                    "subCategory": "WorkSet"
-                },
-                {
-                    "id": "SET_6",
-                    "type": "BodyWeightSet",
-                    "reps": 12,
-                    "additionalWeight": 0.0,
-                    "subCategory": "WorkSet"
-                }
-            ],
-            "exerciseType": "BODY_WEIGHT",
-            "minReps": 8,
-            "maxReps": 15,
-            "equipmentId": None,
-            "bodyWeightPercentage": 100.0,
-            "generateWarmUpSets": False,
-            "progressionMode": "DOUBLE_PROGRESSION",
-            "keepScreenOn": False,
-            "showCountDownTimer": False,
-            "intraSetRestInSeconds": None,
-            "muscleGroups": ["FRONT_CHEST", "FRONT_TRICEPS", "FRONT_DELTOIDS"],
-            "secondaryMuscleGroups": ["FRONT_ABS"],
-            "requiredAccessoryEquipmentIds": [],
-            "requiresLoadCalibration": False,
-            "exerciseCategory": "MODERATE_COMPOUND"
-        },
-        {
-            "id": "EXERCISE_3",
-            "type": "Exercise",
-            "enabled": True,
-            "name": "Pull-Ups",
-            "notes": "Full range of motion, controlled descent",
-            "sets": [
-                {
-                    "id": "SET_7",
-                    "type": "BodyWeightSet",
                     "reps": 8,
-                    "additionalWeight": 0.0,
-                    "subCategory": "WorkSet"
-                },
-                {
-                    "id": "SET_8",
-                    "type": "RestSet",
-                    "timeInSeconds": 120,
-                    "subCategory": "WorkSet"
-                },
-                {
-                    "id": "SET_9",
-                    "type": "BodyWeightSet",
-                    "reps": 8,
-                    "additionalWeight": 0.0,
+                    "additionalWeight": 5.0,
                     "subCategory": "WorkSet"
                 }
             ],
@@ -979,9 +908,9 @@ EXERCISE_EXAMPLE = {
             "minReps": 5,
             "maxReps": 10,
             "equipmentId": None,
-            "bodyWeightPercentage": 100.0,
+            "bodyWeightPercentage": 65.0,
             "generateWarmUpSets": False,
-            "progressionMode": "DOUBLE_PROGRESSION",
+            "progressionMode": "AUTO_REGULATION",
             "keepScreenOn": False,
             "showCountDownTimer": False,
             "intraSetRestInSeconds": None,
@@ -998,9 +927,14 @@ EXERCISE_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate only the exercise list with placeholder IDs (EXERCISE_X, SET_X). Do not use UUIDs.\n"
     "Use only provided equipment/accessory placeholder IDs.\n\n"
+    "Placeholder ID rules:\n"
+    "- Use exact canonical numeric placeholders only: EXERCISE_<number>, SET_<number>, EQUIPMENT_<number>, ACCESSORY_<number>.\n"
+    "- Do not invent semantic suffixes like EXERCISE_D1, SET_A_0, WORKOUT_PUSH, etc.\n"
+    "- The only reserved exceptions are EXERCISE_WARMUP and SET_WARMUP.\n\n"
     "Output completeness (required):\n"
     "- Never leave required fields empty or invalid.\n"
-    "- Do not output empty muscleGroups; if uncertain, infer best primary movers from exercise name.\n"
+    "- If the exercise brief explicitly allows empty muscleGroups, an empty array is allowed when primary movers are genuinely unclear.\n"
+    "- Otherwise, do not output empty muscleGroups; if uncertain, infer best primary movers from exercise name.\n"
     "- If user input is ambiguous/noisy, infer sensible schema-valid values rather than leaving blanks.\n\n"
     "Core constraints:\n"
     "- Name normalization: exercise name must be movement-only (no equipment/accessory words and no set/time details).\n"
@@ -1015,18 +949,34 @@ EXERCISE_SYSTEM_PROMPT = (
     f"- Valid ExerciseCategory enum values: {EXERCISE_CATEGORY_ENUM_VALUES}.\n"
     f"- Valid SetSubCategory enum values: {SET_SUBCATEGORY_ENUM_VALUES}.\n"
     "- TimedDurationSet/EnduranceSet use timeInMillis and do not include subCategory.\n"
-    "- COUNTUP/COUNTDOWN use minReps=0,maxReps=0. WEIGHT/BODY_WEIGHT use positive rep ranges.\n"
-    f"- muscleGroups must be non-empty and use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
+    "- For COUNTUP/COUNTDOWN exercises, omit minReps and maxReps entirely (reps do not apply).\n"
+    "- WEIGHT/BODY_WEIGHT exercises use positive minReps/maxReps when provided.\n"
+    f"- muscleGroups must use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
+    "- Keep muscleGroups non-empty unless the exercise brief explicitly allows an empty array.\n"
     "- requiredAccessoryEquipmentIds must use ACCESSORY_X placeholders (use [] when none).\n"
-    "- BODY_WEIGHT exercises must include bodyWeightPercentage; WEIGHT/COUNTUP/COUNTDOWN set it to null.\n"
+    "- BODY_WEIGHT exercises must include bodyWeightPercentage and it must never be null.\n"
+    "- bodyWeightPercentage uses percentage semantics, not unit fractions. Example: use 100.0 for full bodyweight and 65.0 for about sixty-five percent of bodyweight; do not use 1.0 to mean 100%.\n"
+    "- bodyWeightPercentage is the percentage of the user's body mass that counts toward the movement's effective load baseline.\n"
+    "- WEIGHT/COUNTUP/COUNTDOWN exercises must set bodyWeightPercentage to null.\n"
+    "- WEIGHT work sets use weight and must never use additionalWeight.\n"
+    "- BODY_WEIGHT work sets use additionalWeight and must never use weight.\n"
+    "- If exact work-set loads are supplied, preserve them exactly.\n"
     "- Set weights/additionalWeight must be valid for equipment combinations.\n\n"
-    "Warm-up rule:\n"
-    "- For COUNTDOWN warm-up entry, emit exactly one TimedDurationSet of 300000 ms, no RestSet, showCountDownTimer=true, equipmentId=null.\n\n"
+    "Timed exercise rule:\n"
+    "- For COUNTDOWN exercises, emit exactly one TimedDurationSet, no RestSet, and showCountDownTimer=true.\n\n"
     "Other required behavior:\n"
     "- Use notes as concise string (max 500 chars).\n"
     "- Set exerciseCategory for WEIGHT/BODY_WEIGHT (HEAVY_COMPOUND, MODERATE_COMPOUND, ISOLATION); null for COUNTUP/COUNTDOWN.\n"
-    "- progressionMode must be one of OFF, DOUBLE_PROGRESSION, AUTO_REGULATION.\n"
-    "- requiresLoadCalibration=true for WEIGHT exercises and BODY_WEIGHT exercises with equipmentId; otherwise false.\n"
+    "- Set generateWarmUpSets explicitly to true or false for every exercise.\n"
+    "- Set generateWarmUpSets=true for exercises that should normally ramp into work sets, especially heavy or technically demanding compound lifts with meaningful external load.\n"
+    "- Set generateWarmUpSets=false for timed/cardio work, light isolation work, and exercises where extra ramp-up sets are not warranted.\n"
+    "- If the conversation or plan explicitly says an exercise should or should not have warm-up sets, follow that instruction exactly.\n"
+    "- Unilateral intent must be encoded explicitly via intraSetRestInSeconds. This field means the rest in whole seconds between the two sides of one logical unilateral set, for example Left side, then rest, then Right side. Use a positive integer only for that unilateral side-to-side rest; otherwise set intraSetRestInSeconds=null.\n"
+    "- progressionMode must be either OFF or AUTO_REGULATION. Do not use DOUBLE_PROGRESSION for now.\n"
+    "- AUTO_REGULATION means double progression plus per-set RIR (or auto RIR) on every work set except the last.\n"
+    "- Use AUTO_REGULATION for load-based exercises that should keep progressing once the work-set loads are known.\n"
+    "- Use OFF for timed/cardio work and exercises that should not auto-progress.\n"
+    "- requiresLoadCalibration must always be set to true or false. Use true when calibration is needed; use false when a confident starting load is already specified or can be reasonably inferred.\n"
     "- Optional HR/load-jump fields only when explicitly requested; otherwise null.\n\n"
     "Output format:\n"
     f"{json.dumps(EXERCISE_EXAMPLE, indent=2)}\n\n"
@@ -1046,11 +996,6 @@ WORKOUT_STRUCTURE_EXAMPLE = {
         "type": 0
     },
     "workoutComponents": [
-        {
-            "componentType": "Exercise",
-            "exerciseId": "EXERCISE_WARMUP",
-            "enabled": True
-        },
         {
             "componentType": "Exercise",
             "exerciseId": "EXERCISE_0",
@@ -1076,21 +1021,28 @@ WORKOUT_STRUCTURE_EXAMPLE = {
 WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate one workout structure using placeholder IDs (WORKOUT_X, COMPONENT_X, EXERCISE_X).\n\n"
+    "Placeholder ID rules:\n"
+    "- Use exact canonical numeric placeholders only: WORKOUT_<number>, COMPONENT_<number>, EXERCISE_<number>.\n"
+    "- Do not invent semantic suffixes like WORKOUT_A, COMPONENT_DAY1, EXERCISE_D3, etc.\n"
+    "- The only reserved exception is EXERCISE_WARMUP.\n\n"
     "Structure rules:\n"
     "- Return workoutMetadata + workoutComponents only.\n"
     "- workoutMetadata.order is 0-based and follows workout order.\n"
     "- workoutMetadata.description must be specific and <= 50 chars.\n"
+    "- Make workoutMetadata.description a compact training-focus summary, not an exhaustive exercise list.\n"
+    "- Prefer at most 2 to 4 short focus terms or movement themes.\n"
+    "- Before finalizing, count the characters in workoutMetadata.description; if it exceeds 50, rewrite it until it is <= 50.\n"
     f"- workoutComponents may contain only valid componentType values: {WORKOUT_COMPONENT_TYPE_VALUES}.\n"
     "- Never output null/empty components.\n\n"
     "Rest rules:\n"
     "- RestSet is internal to exercise.sets and must not be created here.\n"
     "- Rest component is between exercises in workoutComponents.\n"
     "- If restToNextSeconds is provided, use values exactly.\n"
-    "- If a transition rest value is 0, do not add a Rest component.\n"
-    "- Never place a Rest component immediately after the warm-up.\n\n"
+    "- All rest values must be exact seconds, never ranges.\n"
+    "- If a transition rest value is 0, do not add a Rest component.\n\n"
     "Warm-up rules:\n"
-    "- First component must be warm-up exercise reference (EXERCISE_WARMUP) unless user asked otherwise.\n"
-    "- Warm-up is expected as COUNTDOWN with single TimedDurationSet 300000ms in exercise definitions.\n\n"
+    "- Include a warm-up exercise reference only if it already exists in the workout plan entry's exerciseIds.\n"
+    "- Do not invent or prepend EXERCISE_WARMUP when it is not present in the workout plan entry.\n\n"
     "Superset rules:\n"
     "- Include exerciseIds and restSecondsByExercise mapping.\n"
     "- Superset must include at least one valid exercise.\n\n"
@@ -1100,31 +1052,19 @@ WORKOUT_STRUCTURE_SYSTEM_PROMPT = (
 )
 # PlanIndex structure for planner/emitter architecture
 PLAN_INDEX_EXAMPLE = {
-    "planName": "Push Pull Legs",
+    "planName": "Example Strength Plan",
     "equipments": [
         {
             "id": "EQUIPMENT_0",
             "type": "BARBELL",
             "name": "Standard Barbell"
-        },
-        {
-            "id": "EQUIPMENT_1",
-            "type": "DUMBBELLS",
-            "name": "Standard Dumbbells",
-            "maxExtraWeightsPerLoadingPoint": 0,
-            "extraWeights": [],
-            "dumbbells": [
-                {"weight": 10.0},
-                {"weight": 15.0},
-                {"weight": 20.0}
-            ]
         }
     ],
     "accessoryEquipments": [
         {
             "id": "ACCESSORY_0",
             "type": "ACCESSORY",
-            "name": "Resistance Bands"
+            "name": "Gymnastic Rings"
         }
     ],
     "exercises": [
@@ -1133,6 +1073,8 @@ PLAN_INDEX_EXAMPLE = {
             "equipmentId": None,
             "exerciseType": "COUNTDOWN",
             "name": "Warm Up",
+            "bodyWeightPercentage": None,
+            "requiredAccessoryEquipmentIds": [],
             "muscleGroups": ["FRONT_QUADRICEPS"]
         },
         {
@@ -1140,40 +1082,47 @@ PLAN_INDEX_EXAMPLE = {
             "equipmentId": "EQUIPMENT_0",
             "exerciseType": "WEIGHT",
             "name": "Back Squat",
+            "bodyWeightPercentage": None,
             "muscleGroups": ["BACK_GLUTEAL", "FRONT_QUADRICEPS"],
+            "requiredAccessoryEquipmentIds": [],
             "exerciseCategory": "HEAVY_COMPOUND",
             "numWorkSets": 2,
             "minReps": 6,
             "maxReps": 10,
-            "restBetweenSetsSeconds": 120
+            "restBetweenSetsSeconds": 120,
+            "targetSetPrescriptions": [
+                {"workSetIndex": 0, "reps": 8, "weight": 100.0},
+                {"workSetIndex": 1, "reps": 8, "weight": 100.0}
+            ]
         },
         {
             "id": "EXERCISE_1",
-            "equipmentId": "EQUIPMENT_0",
-            "exerciseType": "WEIGHT",
-            "name": "Bench Press",
-            "muscleGroups": ["FRONT_CHEST", "FRONT_DELTOIDS", "FRONT_TRICEPS"],
-            "requiredAccessoryEquipmentIds": [],
-            "exerciseCategory": "HEAVY_COMPOUND"
-        },
-        {
-            "id": "EXERCISE_2",
             "equipmentId": None,
             "exerciseType": "BODY_WEIGHT",
-            "name": "Band Pull-Aparts",
-            "muscleGroups": ["BACK_DELTOIDS"],
+            "name": "Ring Row",
+            "bodyWeightPercentage": 65.0,
+            "muscleGroups": ["BACK_UPPER_BACK", "FRONT_BICEPS"],
             "requiredAccessoryEquipmentIds": ["ACCESSORY_0"],
-            "exerciseCategory": "ISOLATION"
+            "exerciseCategory": "MODERATE_COMPOUND",
+            "numWorkSets": 2,
+            "minReps": 8,
+            "maxReps": 12,
+            "restBetweenSetsSeconds": 90,
+            "targetSetPrescriptions": [
+                {"workSetIndex": 0, "reps": 10, "additionalWeight": 5.0},
+                {"workSetIndex": 1, "reps": 10, "additionalWeight": 5.0}
+            ]
         }
     ],
     "workouts": [
         {
             "id": "WORKOUT_0",
             "name": "Example Workout",
-            "exerciseIds": ["EXERCISE_WARMUP", "EXERCISE_0", "EXERCISE_1", "EXERCISE_2"],
+            "exerciseIds": ["EXERCISE_0", "EXERCISE_1"],
             "hasSupersets": False,
+            "supersetGroups": [],
             "hasRestComponents": True,
-            "restToNextSeconds": [0, 90, 90, 0]
+            "restToNextSeconds": [90, 0]
         }
     ]
 }
@@ -1182,12 +1131,18 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     "Output JSON only (no markdown/explanations).\n"
     "Generate a PlanIndex (not full workout JSON) using placeholder IDs only.\n"
     "IDs: EQUIPMENT_X, ACCESSORY_X, EXERCISE_X, WORKOUT_X.\n\n"
+    "Placeholder ID rules:\n"
+    "- Use exact canonical numeric placeholders only: EQUIPMENT_<number>, ACCESSORY_<number>, EXERCISE_<number>, WORKOUT_<number>.\n"
+    "- Do not invent semantic suffixes like EQUIPMENT_HOME, EXERCISE_D1, WORKOUT_PUSH, etc.\n"
+    "- The only reserved exception is EXERCISE_WARMUP.\n\n"
     "Plan constraints:\n"
     "- Include a top-level planName string for the single workout plan package.\n\n"
     "Equipment constraints:\n"
     "- Provided equipment/accessory lists are immutable.\n"
     "- Reuse existing IDs when available (especially accessories by same name).\n"
     "- Create new items only when missing, with non-conflicting placeholders.\n"
+    "- equipmentId must be null or an EQUIPMENT_X placeholder only. Never use an ACCESSORY_X as equipmentId.\n"
+    "- requiredAccessoryEquipmentIds must contain ACCESSORY_X placeholders only. Never use an EQUIPMENT_X there.\n"
     "- Ensure all equipmentId/requiredAccessoryEquipmentIds references exist.\n\n"
     "Exercise constraints:\n"
     "- Exercise names must be movement-only labels (remove equipment/accessory wording and set/time details).\n"
@@ -1196,12 +1151,47 @@ PLAN_INDEX_SYSTEM_PROMPT = (
     f"- exerciseCategory (when present) must use one of: {EXERCISE_CATEGORY_ENUM_VALUES}.\n"
     "- For accessory-dependent exercises, use requiredAccessoryEquipmentIds with ACCESSORY_X IDs; use [] when none.\n"
     f"- Use valid MuscleGroup enum values only: {MUSCLE_GROUP_ENUM_VALUES}.\n"
-    "- If user provided sets/reps/rest table, copy values exactly into optional fields (numWorkSets, minReps, maxReps, restBetweenSetsSeconds).\n\n"
+    "- If user provided sets/reps/rest table, copy values exactly into optional fields (numWorkSets, minReps, maxReps, restBetweenSetsSeconds) for load-based exercises only; omit minReps/maxReps for COUNTUP/COUNTDOWN.\n"
+    "- restBetweenSetsSeconds and restToNextSeconds must always be exact integers in seconds, never ranges.\n"
+    "- If the request mentions a rest range, choose one exact value within that range and store only that exact value.\n"
+    "- If user provided exact working loads, store them in targetSetPrescriptions.\n"
+    "- Treat exact working loads in the request as mandatory structured output, not optional detail.\n"
+    "- When an exercise line in the request includes an exact load such as '64kg', '21kgx2', '+4kg', or '(97kg)', you MUST emit targetSetPrescriptions for that exercise.\n"
+    "- Do not leave a load-based exercise without targetSetPrescriptions if the request already specified the exact working load.\n"
+    "- For those exact-load exercises, emit one targetSetPrescriptions item per work set and copy the exact load into every work set unless the request explicitly varies it by set.\n"
+    "- Only use targetSetPrescriptions for WEIGHT or BODY_WEIGHT exercises that actually have exact work-set load targets.\n"
+    "- Do not include targetSetPrescriptions for COUNTUP, COUNTDOWN, warm-up, or movement-only entries.\n"
+    "- targetSetPrescriptions is an ordered list of indexed work sets only, one item per work set.\n"
+    "- Every targetSetPrescriptions item must include workSetIndex, where workSetIndex is 0-based among work sets only.\n"
+    "- Rest sets do not count toward workSetIndex.\n"
+    "- Warm-up sets do not count toward workSetIndex.\n"
+    "- Exercises that move the user's bodyweight, with or without extra vest/ring/pull-up load, must use exerciseType BODY_WEIGHT, not WEIGHT.\n"
+    "- If the plan specifies baseline bodyweight and/or added load (for example dips, pull-ups, chin-ups, nordics, ab wheel, push-ups), use BODY_WEIGHT and store target loads as additionalWeight.\n"
+    "- Every BODY_WEIGHT exercise in the PlanIndex must include bodyWeightPercentage explicitly. Do not omit it and do not leave it null.\n"
+    "- bodyWeightPercentage is the percentage of the user's body mass that counts as the exercise's baseline load before any additionalWeight is added.\n"
+    "- Use percentage semantics, not unit fractions. Example: use 100.0 for full bodyweight and 65.0 for about sixty-five percent of bodyweight; do not use 1.0 to mean 100%.\n"
+    "- Preserve the correct load semantics from the source when choosing exerciseType, bodyWeightPercentage, and target-set load fields.\n"
+    "- For BODY_WEIGHT exercises with positive additionalWeight targets, choose a real load-bearing primary equipmentId when one exists, such as a WEIGHTVEST. Do not leave equipmentId null if the added load comes from a primary load-bearing item.\n"
+    "- Keep support gear such as rings, dip bars, benches, or pull-up bars in requiredAccessoryEquipmentIds, not equipmentId.\n"
+    "- Do not use exerciseType WEIGHT together with additionalWeight targets.\n"
+    "- Do not use exerciseType BODY_WEIGHT together with weight targets.\n"
+    "- Preserve exact equipment semantics when the user or context specifies them. DUMBBELL means a single implement load; DUMBBELLS means paired implements with total selectable loads across both hands.\n"
+    "- When the planner input lists selectable app loads for a provided equipment item, exact target loads must match those listed selectable values for the chosen equipmentId.\n"
+    "- For exact target loads, choose an equipmentId whose selectable app loads can represent those exact values.\n"
+    "- For WEIGHT exercises, each item must be {workSetIndex, reps, weight}.\n"
+    "- For BODY_WEIGHT exercises, each item must be {workSetIndex, reps, additionalWeight}.\n"
+    "- Preserve exact load targets when they are provided.\n\n"
     "Workout constraints:\n"
     "- Preserve exact workout names from user plan (including day labels/prefixes such as 'A -', 'Day A:', etc.).\n"
     "- workout.exerciseIds defines exact order.\n"
     "- If provided, restToNextSeconds must match exerciseIds length and values exactly.\n"
-    "- Include warm-up as first exercise ID (EXERCISE_WARMUP) unless user explicitly requests otherwise.\n\n"
+    "- If the plan uses supersets, populate workout.supersetGroups explicitly.\n"
+    "- Each supersetGroups item must be an object with exerciseIds containing the exact grouped exercises in order.\n"
+    "- Superset exerciseIds must be a contiguous subsequence of workout.exerciseIds.\n"
+    "- Do not rely on hasSupersets alone; when any exercises are supersetted, supersetGroups must encode the exact grouping.\n"
+    "- Use restToNextSeconds alongside supersetGroups: for a superset, grouped exercises usually have 0 rest to the next grouped exercise and the last grouped exercise carries the post-superset rest.\n"
+    "- Include EXERCISE_WARMUP only when the intended workout actually has a dedicated warm-up exercise.\n"
+    "- Do not invent EXERCISE_WARMUP when the workout can be represented without a dedicated warm-up exercise entry.\n\n"
     "Output format:\n"
     f"{json.dumps(PLAN_INDEX_EXAMPLE, indent=2)}\n\n"
     "Generate the PlanIndex based on the conversation context."
@@ -1215,6 +1205,7 @@ JSON_PATCH_REPAIR_SYSTEM_PROMPT = (
     "3. Do NOT introduce new UUIDs - the document uses placeholder IDs (EQUIPMENT_X, EXERCISE_X, etc.)\n"
     "4. Do NOT modify fields that are already valid - only fix the specific errors mentioned\n"
     "5. Preserve all placeholder IDs and relationships\n"
+    "5b. If you must create or replace a placeholder ID, use exact canonical numeric forms only: EQUIPMENT_<number>, ACCESSORY_<number>, EXERCISE_<number>, WORKOUT_<number>, COMPONENT_<number>, SET_<number>. Reserved exceptions: EXERCISE_WARMUP, SET_WARMUP.\n"
     "6. Use contextually appropriate values when fixing errors (e.g., infer muscle groups from exercise names)\n"
     "7. NEVER set values to null in workoutComponents arrays - if a component is invalid, use \"remove\" operation instead\n"
     "8. When fixing workoutComponents, ensure each element is a complete, valid component object (Exercise, Rest, or Superset)\n"
@@ -1258,7 +1249,7 @@ GENERATE_WORKOUT_TOOL = {
     "type": "function",
     "function": {
         "name": "generate_workout",
-        "description": "Generate a workout JSON file based on the conversation context. Use this when the user explicitly asks you to generate a workout or create workout JSON.",
+        "description": f"Generate a workout JSON file based on the conversation context. Use this only when the user's most recent message is exactly {EXACT_GENERATION_CONFIRMATION!r}. Do not use it for paraphrased approval like 'yes', 'go ahead', or 'looks good'.",
         "parameters": {
             "type": "object",
             "properties": {

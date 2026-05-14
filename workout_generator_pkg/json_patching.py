@@ -240,6 +240,14 @@ def build_allowed_patch_scope(validation_errors: List[Any]) -> Tuple[Set[str], S
             # Avoid allowing root-wide edits by default.
             exact_paths.add("")
 
+        # Leaf-level validators like pattern/const on fields such as /id or /type often
+        # need sibling-field repairs on the containing object. Allow descendant edits on
+        # the immediate parent object, not just the single failing field.
+        if len(path_parts) > 0:
+            parent_path = to_json_pointer(path_parts[:-1])
+            if parent_path:
+                descendant_paths.add(parent_path)
+
         if validator == "required":
             m = re.search(r"'([^']+)' is a required property", message)
             if m:
@@ -248,6 +256,8 @@ def build_allowed_patch_scope(validation_errors: List[Any]) -> Tuple[Set[str], S
                 exact_paths.add(required_path)
                 # Allow filling nested object fields under newly required field.
                 descendant_paths.add(required_path)
+                if base_path:
+                    descendant_paths.add(base_path)
 
         if validator == "additionalProperties":
             # Example: "Additional properties are not allowed ('foo' was unexpected)"
@@ -255,6 +265,8 @@ def build_allowed_patch_scope(validation_errors: List[Any]) -> Tuple[Set[str], S
             for field in found:
                 extra_path = to_json_pointer(list(path_parts) + [field])
                 exact_paths.add(extra_path)
+            if base_path:
+                descendant_paths.add(base_path)
 
         # Container-level validators often require index/key-level fixes.
         if validator in {"minItems", "maxItems", "contains", "uniqueItems", "oneOf", "anyOf", "allOf"}:

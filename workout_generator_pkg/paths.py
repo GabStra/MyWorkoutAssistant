@@ -48,6 +48,19 @@ def get_log_dir(script_dir: Optional[str] = None) -> str:
     return log_dir
 
 
+def get_conversations_dir(script_dir: Optional[str] = None) -> str:
+    """Get the directory path for archived conversation sessions."""
+    if script_dir is None:
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+        except (NameError, AttributeError):
+            script_dir = os.getcwd()
+
+    conversations_dir = os.path.join(script_dir, "workouts", "conversation_sessions")
+    os.makedirs(conversations_dir, exist_ok=True)
+    return conversations_dir
+
+
 def conversation_meta_path(script_dir: Optional[str] = None) -> str:
     """Get path to conversation metadata file."""
     if script_dir is None:
@@ -56,3 +69,13 @@ def conversation_meta_path(script_dir: Optional[str] = None) -> str:
         except (NameError, AttributeError):
             script_dir = os.getcwd()
     return os.path.join(script_dir, "conversation_meta.json")
+
+
+def legacy_conversation_history_path(script_dir: Optional[str] = None) -> str:
+    """Get path to the legacy single-file conversation history."""
+    if script_dir is None:
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+        except (NameError, AttributeError):
+            script_dir = os.getcwd()
+    return os.path.join(script_dir, "conversation_history.json")

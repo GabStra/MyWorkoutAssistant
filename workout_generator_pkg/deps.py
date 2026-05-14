@@ -24,6 +24,7 @@ class PipelineDeps:
     parallel_emit_items: Any
     assemble_placeholder_workout_store: Any
     sync_exercises_from_definitions: Any
+    sync_exercises_from_plan_index: Any
     apply_accessory_id_rewrite: Any
     validate_and_repair_placeholder_json: Any
     save_validation_error: Any
@@ -43,6 +44,12 @@ class ShellDeps:
     default_script_dir: Any
     load_equipment_from_file: Any
     load_conversation: Any
+    load_active_conversation_record: Any
+    load_conversation_record: Any
+    list_conversations: Any
+    set_active_conversation: Any
+    update_conversation_metadata: Any
+    resolve_conversation_id: Any
     has_equipment_in_messages: Any
     format_equipment_for_conversation: Any
     base_system_prompt: Any
@@ -82,6 +89,7 @@ def resolve_pipeline_deps() -> PipelineDeps:
         parallel_emit_items=_c.parallel_emit_items,
         assemble_placeholder_workout_store=_c.assemble_placeholder_workout_store,
         sync_exercises_from_definitions=_c.sync_exercises_from_definitions,
+        sync_exercises_from_plan_index=_c.sync_exercises_from_plan_index,
         apply_accessory_id_rewrite=_c.apply_accessory_id_rewrite,
         validate_and_repair_placeholder_json=_c.validate_and_repair_placeholder_json,
         save_validation_error=_c.save_validation_error,
@@ -104,6 +112,12 @@ def resolve_shell_deps() -> ShellDeps:
         default_script_dir=_c._default_script_dir,
         load_equipment_from_file=_c.load_equipment_from_file,
         load_conversation=_c.load_conversation,
+        load_active_conversation_record=_c.load_active_conversation_record,
+        load_conversation_record=_c.load_conversation_record,
+        list_conversations=_c.list_conversations,
+        set_active_conversation=_c.set_active_conversation,
+        update_conversation_metadata=_c.update_conversation_metadata,
+        resolve_conversation_id=_c.resolve_conversation_id,
         has_equipment_in_messages=_c.has_equipment_in_messages,
         format_equipment_for_conversation=_c.format_equipment_for_conversation,
         base_system_prompt=_c.BASE_SYSTEM_PROMPT,
