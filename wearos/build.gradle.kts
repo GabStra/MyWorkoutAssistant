@@ -111,8 +111,8 @@ dependencies {
     implementation(project(":shared"))
     implementation("androidx.wear.compose:compose-material-core:1.6.1")
     implementation("androidx.navigation:navigation-compose:2.9.8")
-    implementation("androidx.compose.ui:ui-graphics:1.11.0")
-    implementation("androidx.compose.ui:ui-graphics:1.11.0")
+    implementation("androidx.compose.ui:ui-graphics:1.11.1")
+    implementation("androidx.compose.ui:ui-graphics:1.11.1")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -173,7 +173,7 @@ dependencies {
     // Test
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.23.0")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("io.mockk:mockk:1.14.9")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
