@@ -57,6 +57,7 @@ import com.gabstra.myworkoutassistant.composables.RecoveryDialog
 import com.gabstra.myworkoutassistant.composables.TutorialOverlay
 import com.gabstra.myworkoutassistant.composables.TutorialStep
 import com.gabstra.myworkoutassistant.data.AppViewModel
+import com.gabstra.myworkoutassistant.sync.WearWorkoutLifecycleFlushSource
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
 import com.gabstra.myworkoutassistant.data.HapticsViewModelFactory
 import com.gabstra.myworkoutassistant.data.PolarViewModel
@@ -190,12 +191,12 @@ class MainActivity : ComponentActivity() {
                 when (event) {
                     Lifecycle.Event.ON_PAUSE -> {
                         lifecycleScope.launch {
-                            appViewModel.flushWorkoutSync()
+                            appViewModel.flushWorkoutSync(WearWorkoutLifecycleFlushSource.Pause)
                         }
                     }
                     Lifecycle.Event.ON_STOP -> {
                         lifecycleScope.launch {
-                            appViewModel.flushWorkoutSync()
+                            appViewModel.flushWorkoutSync(WearWorkoutLifecycleFlushSource.Stop)
                         }
                     }
                     else -> {}

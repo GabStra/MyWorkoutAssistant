@@ -11,7 +11,10 @@ import com.gabstra.myworkoutassistant.data.WearLocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.ErrorLog
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -38,6 +41,9 @@ class MyApplication : Application() {
     val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Uncaught exception in coroutine", throwable)
         logErrorToFile("Coroutine", throwable)
+    }
+    val applicationScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + coroutineExceptionHandler)
     }
     
     override fun onCreate() {
