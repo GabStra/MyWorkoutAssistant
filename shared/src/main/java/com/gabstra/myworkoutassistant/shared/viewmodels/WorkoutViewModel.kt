@@ -420,6 +420,14 @@ open class WorkoutViewModel(
         rebuildScreenState()
     }
 
+    /**
+     * Guards delayed UI actions from stale Preparing compositions. Recovery can replace the
+     * active screen state before an outgoing Preparing screen finishes its timers/animations.
+     */
+    fun isCurrentPreparingState(expectedState: WorkoutState.Preparing): Boolean {
+        return _workoutState.value === expectedState
+    }
+
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
     val workouts = _workouts.asStateFlow()
 
@@ -483,6 +491,7 @@ open class WorkoutViewModel(
     ): Boolean {
         return recordState.hasWorkoutRecord &&
             stateMachine == null &&
+            currentWorkoutHistory == null &&
             hadActiveSession &&
             !isSessionHydrationInFlight() &&
             recordState.workoutRecord?.ownerDeviceOrDefault() == activeSessionOwnerDevice()

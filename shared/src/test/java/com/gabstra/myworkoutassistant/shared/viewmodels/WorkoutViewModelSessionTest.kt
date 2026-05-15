@@ -4,6 +4,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 
 import android.content.Context
 import androidx.lifecycle.viewModelScope
@@ -2480,6 +2481,120 @@ class WorkoutViewModelSessionTest {
             "A duplicate auto-resume should not build a second state machine during preparing.",
             null,
             stateMachineField.get(viewModel)
+        )
+    }
+
+    @Test
+    fun isCurrentPreparingState_returnsFalseAfterWorkoutStateMovesPastPreparing() = runTest(testDispatcher) {
+        val preparingState = WorkoutState.Preparing(dataLoaded = true)
+        @Suppress("UNCHECKED_CAST")
+        (workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>).value =
+            preparingState
+
+        assertTrue(viewModel.isCurrentPreparingState(preparingState))
+
+        val activeSetState = WorkoutState.Set(
+            exerciseId = testExerciseId,
+            set = createWeightSetWithValidatedWeight(UUID.randomUUID(), 8, 80.0),
+            setIndex = 0u,
+            previousSetData = null,
+            currentSetDataState = androidx.compose.runtime.mutableStateOf(
+                WeightSetData(actualReps = 8, actualWeight = 80.0, volume = 640.0)
+            ),
+            hasNoHistory = true,
+            startTime = null,
+            skipped = false,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            currentBodyWeight = 70.0,
+            plateChangeResult = null,
+            streak = 0,
+            progressionState = null,
+            isWarmupSet = false,
+            equipmentId = null,
+            isUnilateral = false,
+            intraSetTotal = null,
+            intraSetCounter = 0u,
+            isCalibrationSet = false
+        )
+        @Suppress("UNCHECKED_CAST")
+        (workoutStateField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutState>).value =
+            activeSetState
+
+        assertFalse(viewModel.isCurrentPreparingState(preparingState))
+    }
+
+    @Test
+    fun applyExternalSyncWorkoutStore_doesNotColdRehydrateWhenActiveHistoryIsAlreadyLoaded() = runTest(testDispatcher) {
+        val setId = UUID.randomUUID()
+        val exercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(setId, 8, 80.0))
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+        val unfinishedHistoryId = UUID.randomUUID()
+        val startTime = LocalDateTime.now().minusMinutes(5)
+        val unfinishedHistory = WorkoutHistory(
+            id = unfinishedHistoryId,
+            workoutId = testWorkoutId,
+            date = startTime.toLocalDate(),
+            time = startTime.toLocalTime(),
+            startTime = startTime,
+            duration = 120,
+            heartBeatRecords = emptyList(),
+            isDone = false,
+            hasBeenSentToHealth = false,
+            globalId = testWorkoutGlobalId,
+            version = 1u
+        )
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        database.workoutHistoryDao().insert(unfinishedHistory)
+        database.workoutRecordDao().insert(
+            WorkoutRecord(
+                id = UUID.randomUUID(),
+                workoutId = testWorkoutId,
+                workoutHistoryId = unfinishedHistoryId,
+                setIndex = 0u,
+                exerciseId = testExerciseId
+            )
+        )
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        val hasWorkoutRecordField = WorkoutViewModel::class.java.getDeclaredField("_hasWorkoutRecord")
+        hasWorkoutRecordField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (hasWorkoutRecordField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>).value = true
+
+        val currentWorkoutHistoryField =
+            WorkoutViewModel::class.java.getDeclaredField("currentWorkoutHistory\$delegate")
+        currentWorkoutHistoryField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (currentWorkoutHistoryField.get(viewModel) as androidx.compose.runtime.MutableState<WorkoutHistory?>).value =
+            unfinishedHistory
+
+        val sessionPhaseField = WorkoutViewModel::class.java.getDeclaredField("_sessionPhase")
+        sessionPhaseField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (sessionPhaseField.get(viewModel) as kotlinx.coroutines.flow.MutableStateFlow<WorkoutSessionPhase>).value =
+            WorkoutSessionPhase.ACTIVE
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertEquals(
+            "External sync must not kick off a cold record-based rehydrate once the active session history is already loaded in memory.",
+            null,
+            stateMachineField.get(viewModel)
+        )
+        assertFalse(
+            "External sync should not surface the late resuming state after recovery has already restored the active session.",
+            viewModel.isResuming.value
         )
     }
 }
