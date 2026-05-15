@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -43,11 +44,11 @@ fun ControlButtonsVertical(
     onMinusLongPress: () -> Unit,
     onPlusTap: () -> Unit,
     onPlusLongPress: () -> Unit,
+    isMinusEnabled: Boolean = true,
+    isPlusEnabled: Boolean = true,
     onCloseClick: () -> Unit,
     content: @Composable () -> Unit
 ){
-    val coroutineScope = rememberWearCoroutineScope()
-
     BackHandler {
         onCloseClick()
     }
@@ -61,26 +62,29 @@ fun ControlButtonsVertical(
             modifier = Modifier
                 .size(50.dp)
                 .background(Color.Transparent)
+                .alpha(if (isPlusEnabled) 1f else 0.45f)
                 .semantics(mergeDescendants = true) {
                     contentDescription = "Add"
                     role = Role.Button
                     onClick(
                         label = "Add"
                     ) {
+                        if (!isPlusEnabled) return@onClick false
                         onPlusTap()
                         true
                     }
                     onLongClick(
                         label = "Add"
                     ) {
+                        if (!isPlusEnabled) return@onLongClick false
                         onPlusLongPress()
                         true
                     }
                 }
                 .repeatActionOnLongPressOrTap(
-                    coroutineScope,
                     thresholdMillis = 1000,
                     intervalMillis = 150,
+                    enabled = isPlusEnabled,
                     onAction = onPlusLongPress,
                     onTap = onPlusTap
                 ),
@@ -114,26 +118,29 @@ fun ControlButtonsVertical(
             modifier = Modifier
                 .size(50.dp)
                 .background(Color.Transparent)
+                .alpha(if (isMinusEnabled) 1f else 0.45f)
                 .semantics(mergeDescendants = true) {
                     contentDescription = "Subtract"
                     role = Role.Button
                     onClick(
                         label = "Subtract"
                     ) {
+                        if (!isMinusEnabled) return@onClick false
                         onMinusTap()
                         true
                     }
                     onLongClick(
                         label = "Subtract"
                     ) {
+                        if (!isMinusEnabled) return@onLongClick false
                         onMinusLongPress()
                         true
                     }
                 }
                 .repeatActionOnLongPressOrTap(
-                    coroutineScope,
                     thresholdMillis = 1000,
                     intervalMillis = 150,
+                    enabled = isMinusEnabled,
                     onAction = onMinusLongPress,
                     onTap = onMinusTap
                 ),

@@ -82,6 +82,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
@@ -1369,67 +1370,112 @@ private fun sendOpenPageRequestToPhone(
     }
 }
 
+data class LongPressRepeatSpeedStage(
+    val holdTimeMillis: Long,
+    val intervalMillis: Long,
+)
+
+private val DefaultLongPressRepeatSpeedStages = listOf(
+    LongPressRepeatSpeedStage(holdTimeMillis = 0L, intervalMillis = 150L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 1_500L, intervalMillis = 100L),
+    LongPressRepeatSpeedStage(holdTimeMillis = 3_000L, intervalMillis = 60L),
+)
+
+private fun resolveLongPressRepeatInterval(
+    elapsedHoldMillis: Long,
+    speedStages: List<LongPressRepeatSpeedStage>,
+    fallbackIntervalMillis: Long,
+): Long {
+    return speedStages
+        .lastOrNull { elapsedHoldMillis >= it.holdTimeMillis }
+        ?.intervalMillis
+        ?: fallbackIntervalMillis
+}
+
 @SuppressLint("SuspiciousModifierThen")
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.repeatActionOnLongPressOrTap(
-    coroutineScope: CoroutineScope,
     thresholdMillis: Long = 5000L,
     intervalMillis: Long = 1000L,
+    speedStages: List<LongPressRepeatSpeedStage> = DefaultLongPressRepeatSpeedStages,
+    enabled: Boolean = true,
     onAction: () -> Unit,
     onTap: () -> Unit
 ): Modifier = this.then(
-    pointerInput(Unit) {
-        var repeatedActionHappening = false
-        detectTapGestures(
-            onPress = { _ ->
-                val job = coroutineScope.launch {
-                    delay(thresholdMillis)
-                    do {
-                        repeatedActionHappening = true
-                        onAction()
-                        delay(intervalMillis)
-                    } while (true)
+    pointerInput(enabled) {
+        coroutineScope {
+            var repeatedActionHappening = false
+            detectTapGestures(
+                onPress = { _ ->
+                    if (!enabled) return@detectTapGestures
+                    val job = launch {
+                        delay(thresholdMillis)
+                        val repeatStartMillis = System.currentTimeMillis()
+                        do {
+                            if (!enabled) break
+                            repeatedActionHappening = true
+                            onAction()
+                            val elapsedHoldMillis = System.currentTimeMillis() - repeatStartMillis
+                            delay(
+                                resolveLongPressRepeatInterval(
+                                    elapsedHoldMillis = elapsedHoldMillis,
+                                    speedStages = speedStages,
+                                    fallbackIntervalMillis = intervalMillis,
+                                )
+                            )
+                        } while (isActive)
+                    }
+                    tryAwaitRelease()
+                    job.cancel()
+                    repeatedActionHappening = false
+                },
+                onTap = {
+                    if(enabled && !repeatedActionHappening) onTap()
                 }
-                tryAwaitRelease()
-                job.cancel()
-                repeatedActionHappening = false
-            },
-            onTap = {
-                if(!repeatedActionHappening) onTap()
-            }
-        )
+            )
+        }
     }
 )
 
 @SuppressLint("SuspiciousModifierThen")
 @OptIn(ExperimentalComposeUiApi::class)
 fun Modifier.repeatActionOnLongPress(
-    coroutineScope: CoroutineScope,
     thresholdMillis: Long = 5000L,
     intervalMillis: Long = 1000L,
+    speedStages: List<LongPressRepeatSpeedStage> = DefaultLongPressRepeatSpeedStages,
     onPressStart: () -> Unit,
     onBeforeLongPressRepeat: () -> Unit,
     onLongPressRepeat: () -> Unit,
     onRelease: () -> Unit
 ): Modifier = this.then(
     pointerInput(Unit) {
-        detectTapGestures(
-            onPress = { _ ->
-                onPressStart()
-                val job = coroutineScope.launch {
-                    delay(thresholdMillis)
-                    onBeforeLongPressRepeat()
-                    do {
-                        delay(intervalMillis)
-                        onLongPressRepeat()
-                    } while (isActive)
-                }
+        coroutineScope {
+            detectTapGestures(
+                onPress = { _ ->
+                    onPressStart()
+                    val job = launch {
+                        delay(thresholdMillis)
+                        onBeforeLongPressRepeat()
+                        val repeatStartMillis = System.currentTimeMillis()
+                        do {
+                            val elapsedHoldMillis = System.currentTimeMillis() - repeatStartMillis
+                            delay(
+                                resolveLongPressRepeatInterval(
+                                    elapsedHoldMillis = elapsedHoldMillis,
+                                    speedStages = speedStages,
+                                    fallbackIntervalMillis = intervalMillis,
+                                )
+                            )
+                            onLongPressRepeat()
+                        } while (isActive)
+                    }
 
-                tryAwaitRelease()
-                job.cancel()
-                onRelease()
-            }
-        )
+                    tryAwaitRelease()
+                    job.cancel()
+                    onRelease()
+                }
+            )
+        }
     }
 )
 

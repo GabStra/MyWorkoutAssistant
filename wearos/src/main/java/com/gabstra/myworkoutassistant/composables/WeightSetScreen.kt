@@ -60,6 +60,7 @@ import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
 private const val TAG = "WeightSetScreen"
+private val DeltaTextSlotHeight = 16.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -200,6 +201,16 @@ fun WeightSetScreen(
     }
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
+    val canDecrease = when {
+        isRepsInEditMode -> currentSetData.actualReps > 1
+        isWeightInEditMode -> selectedWeightIndex?.let { it > 0 } == true
+        else -> false
+    }
+    val canIncrease = when {
+        isRepsInEditMode -> true
+        isWeightInEditMode -> selectedWeightIndex?.let { it < availableWeights.size - 1 } == true
+        else -> false
+    }
 
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
     val typography = MaterialTheme.typography
@@ -233,6 +244,18 @@ fun WeightSetScreen(
         }
     }
 
+    fun updateWeight(weight: Double) {
+        val newSetData = currentSetData.copy(
+            actualWeight = weight
+        )
+
+        currentSetData = currentSetData.copy(
+            actualWeight = newSetData.actualWeight,
+            volume = newSetData.calculateVolume()
+        )
+
+        viewModel.schedulePlateRecalculation(newSetData.actualWeight)
+    }
 
     fun onMinusClick() {
         if (shouldLockCalibrationEdits) return
@@ -255,18 +278,7 @@ fun WeightSetScreen(
             selectedWeightIndex?.let {
                 if (it > 0) {
                     selectedWeightIndex = it - 1
-
-                    val newSetData = currentSetData.copy(
-                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
-                    )
-
-                    currentSetData = currentSetData.copy(
-                        actualWeight = newSetData.actualWeight,
-                        volume = newSetData.calculateVolume()
-                    )
-                    
-                    // Schedule debounced plate recalculation
-                    viewModel.schedulePlateRecalculation(newSetData.actualWeight)
+                    updateWeight(availableWeights.elementAt(selectedWeightIndex!!))
                 }
             }
 
@@ -296,18 +308,7 @@ fun WeightSetScreen(
             selectedWeightIndex?.let {
                 if (it < availableWeights.size - 1) {
                     selectedWeightIndex = it + 1
-
-                    val newSetData = currentSetData.copy(
-                        actualWeight = availableWeights.elementAt(selectedWeightIndex!!)
-                    )
-
-                    currentSetData = currentSetData.copy(
-                        actualWeight = newSetData.actualWeight,
-                        volume = newSetData.calculateVolume()
-                    )
-                    
-                    // Schedule debounced plate recalculation
-                    viewModel.schedulePlateRecalculation(newSetData.actualWeight)
+                    updateWeight(availableWeights.elementAt(selectedWeightIndex!!))
                 }
             }
 
@@ -378,19 +379,24 @@ fun WeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(40.dp),
+                modifier = Modifier.height(35.dp),
                 text = repsText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (repsDeltaText != null) {
-                ScalableText(
-                    text = repsDeltaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
-                    textAlign = TextAlign.Center,
-                )
+            Box(
+                modifier = Modifier.height(DeltaTextSlotHeight),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                if (repsDeltaText != null) {
+                    ScalableText(
+                        text = repsDeltaText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -421,14 +427,8 @@ fun WeightSetScreen(
                     onDoubleClick = {
                         if (shouldLockCalibrationEdits) return@combinedClickable
                         if (isWeightInEditMode) {
-                            val newSetData = currentSetData.copy(
-                                actualWeight = previousSetData.actualWeight,
-                            )
-
-                            currentSetData = currentSetData.copy(
-                                actualWeight = previousSetData.actualWeight,
-                                volume = newSetData.calculateVolume()
-                            )
+                            updateInteractionTime()
+                            updateWeight(previousSetData.actualWeight)
 
                             hapticsViewModel.doHardVibrationTwice()
                         }
@@ -458,19 +458,24 @@ fun WeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(40.dp),
+                modifier = Modifier.height(35.dp),
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (weightDeltaText != null) {
-                ScalableText(
-                    text = weightDeltaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
-                    textAlign = TextAlign.Center,
-                )
+            Box(
+                modifier = Modifier.height(DeltaTextSlotHeight),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                if (weightDeltaText != null) {
+                    ScalableText(
+                        text = weightDeltaText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -602,6 +607,8 @@ fun WeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isMinusEnabled = canDecrease,
+                    isPlusEnabled = canIncrease,
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false

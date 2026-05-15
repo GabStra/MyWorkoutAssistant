@@ -59,6 +59,7 @@ import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
 private const val TAG = "BodyWeightSetScreen"
+private val DeltaTextSlotHeight = 16.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -205,6 +206,16 @@ fun BodyWeightSetScreen(
     var isWeightInEditMode by remember { mutableStateOf(false) }
 
     val isInEditMode = isRepsInEditMode || isWeightInEditMode
+    val canDecrease = when {
+        isRepsInEditMode -> currentSetData.actualReps > 1
+        isWeightInEditMode -> selectedWeightIndex?.let { it > 0 } == true
+        else -> false
+    }
+    val canIncrease = when {
+        isRepsInEditMode -> true
+        isWeightInEditMode -> selectedWeightIndex?.let { it < availableWeights.size - 1 } == true
+        else -> false
+    }
 
     val typography = MaterialTheme.typography
     val headerStyle = MaterialTheme.typography.bodyExtraSmall
@@ -384,19 +395,24 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(40.dp),
+                modifier = Modifier.height(35.dp),
                 text = repsText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (repsDeltaText != null) {
-                ScalableText(
-                    text = repsDeltaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
-                    textAlign = TextAlign.Center,
-                )
+            Box(
+                modifier = Modifier.height(DeltaTextSlotHeight),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                if (repsDeltaText != null) {
+                    ScalableText(
+                        text = repsDeltaText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -468,19 +484,24 @@ fun BodyWeightSetScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             ScalableText(
-                modifier = Modifier.height(40.dp),
+                modifier = Modifier.height(35.dp),
                 text = weightText,
                 style = style,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            if (weightDeltaText != null) {
-                ScalableText(
-                    text = weightDeltaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
-                    textAlign = TextAlign.Center,
-                )
+            Box(
+                modifier = Modifier.height(DeltaTextSlotHeight),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                if (weightDeltaText != null) {
+                    ScalableText(
+                        text = weightDeltaText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -615,6 +636,8 @@ fun BodyWeightSetScreen(
                     onMinusLongPress = { onMinusClick() },
                     onPlusTap = { onPlusClick() },
                     onPlusLongPress = { onPlusClick() },
+                    isMinusEnabled = canDecrease,
+                    isPlusEnabled = canIncrease,
                     onCloseClick = {
                         isRepsInEditMode = false
                         isWeightInEditMode = false
