@@ -71,6 +71,10 @@ fun PreparingStandardScreen(
         val isReady = state.dataLoaded && currentMillis >= 3000
 
         if (isReady) {
+            if (!viewModel.isCurrentPreparingState(state)) {
+                hasTriggeredNextState = true
+                return@LaunchedEffect
+            }
             hasTriggeredNextState = true
 
             viewModel.lightScreenUp()
