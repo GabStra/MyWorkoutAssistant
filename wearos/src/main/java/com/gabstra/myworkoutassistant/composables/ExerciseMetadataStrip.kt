@@ -47,7 +47,7 @@ fun ExerciseMetadataStrip(
     ) {
         FlowRow(
             modifier = clickableModifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)
+            horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
         ) {
             exerciseLabel?.let {
                 Text(
@@ -94,7 +94,7 @@ fun ExerciseMetadataStrip(
 
             repRange?.let {
                 Text(
-                    text = "Rep range: $it",
+                    text = "$it reps",
                     style = baseStyle,
                     color = secondaryTextColor
                 )

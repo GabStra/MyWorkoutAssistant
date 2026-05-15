@@ -202,7 +202,7 @@ fun CustomDialogYesOnLongPress(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        Spacer(modifier = Modifier.height(2.5.dp))
+                        Spacer(modifier = Modifier.height(5.dp))
                         val contentColor = MaterialTheme.colorScheme.onSurface
                         Row(
                             horizontalArrangement = Arrangement.Center,
@@ -224,7 +224,7 @@ fun CustomDialogYesOnLongPress(
                                     tint = contentColor
                                 )
                             }
-                            Spacer(modifier = Modifier.width(20.dp))
+                            Spacer(modifier = Modifier.width(15.dp))
                             Box(
                                 modifier = Modifier
                                     .size(62.5.dp)
