@@ -144,8 +144,16 @@ class MobileSyncToWatchWorker(
             )
 
             workerSyncMutex.withLock {
+                Log.d(
+                    TAG,
+                    "SYNC_TRACE event=worker_start side=mobile channel=full_backup"
+                )
                 sendAppBackup(dataClient, appBackup, context)
             }
+            Log.d(
+                TAG,
+                "SYNC_TRACE event=worker_complete side=mobile channel=full_backup"
+            )
             PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(context.applicationContext)
             Result.success()
         }.getOrElse { exception ->
@@ -153,6 +161,7 @@ class MobileSyncToWatchWorker(
                 Log.e(TAG, "Mobile sync worker aborted because workout-store validation failed: ${exception.userMessage}")
                 return Result.failure()
             }
+            Log.e(TAG, "SYNC_TRACE event=worker_retry side=mobile channel=full_backup", exception)
             Log.e(TAG, "Mobile sync worker failed", exception)
             PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
             Result.retry()
