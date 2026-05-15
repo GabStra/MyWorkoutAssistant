@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,7 +69,6 @@ import com.gabstra.myworkoutassistant.shared.setdata.WeightSetData
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
 import com.gabstra.myworkoutassistant.shared.utils.PlateCalculator
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
-import kotlinx.coroutines.delay
 import java.util.UUID
 import kotlin.math.sqrt
 
@@ -166,6 +166,242 @@ private fun computeLabelBoundsPx(
     )
 }
 
+internal data class PlateDisplayFrame(
+    val animatedPlates: List<Double>,
+    val currentStepIndex: Int,
+    val isFinalState: Boolean,
+)
+
+internal data class PlateUiStep(
+    val action: PlateCalculator.Companion.Action,
+    val weights: List<Double>,
+)
+
+internal fun filterEffectivePlateSteps(
+    plateChangeResult: PlateCalculator.Companion.PlateChangeResult,
+): List<PlateCalculator.Companion.PlateStep> {
+    val filtered = mutableListOf<PlateCalculator.Companion.PlateStep>()
+    val workingPlates = plateChangeResult.previousPlates.toMutableList()
+    plateChangeResult.change.steps.forEach { step ->
+        val platesBefore = workingPlates.sortedDescending().toList()
+        applyPhysicalPlateStep(workingPlates, step)
+        val platesAfter = workingPlates.sortedDescending().toList()
+        if (platesBefore != platesAfter) {
+            filtered.add(step)
+        }
+    }
+    return filtered
+}
+
+internal fun navigablePlateUiSteps(
+    plateChangeResult: PlateCalculator.Companion.PlateChangeResult,
+): List<PlateUiStep> {
+    return squashPlateStepsForDisplay(
+        physicalSteps = filterEffectivePlateSteps(plateChangeResult),
+        previousPlates = plateChangeResult.previousPlates,
+    )
+}
+
+private fun MutableList<Double>.sortDescendingInPlace() {
+    val sorted = sortedDescending()
+    clear()
+    addAll(sorted)
+}
+
+private fun applyPhysicalPlateStep(
+    working: MutableList<Double>,
+    step: PlateCalculator.Companion.PlateStep,
+) {
+    when (step.action) {
+        PlateCalculator.Companion.Action.ADD -> {
+            working.add(step.weight)
+            working.sortDescendingInPlace()
+        }
+        PlateCalculator.Companion.Action.REMOVE -> {
+            working.sortDescendingInPlace()
+            if (working.isNotEmpty() && working.last() == step.weight) {
+                working.removeAt(working.lastIndex)
+            } else {
+                working.remove(step.weight)
+            }
+        }
+    }
+}
+
+private fun areAdjacentStackIndices(indexA: Int, indexB: Int): Boolean =
+    kotlin.math.abs(indexA - indexB) == 1
+
+/** Next remove must peel the outermost plate (adjacent to the sleeve-side stack edge). */
+private fun isAdjacentOuterRemove(working: List<Double>, weight: Double): Boolean {
+    if (working.isEmpty()) return false
+    val sorted = working.sortedDescending()
+    return sorted.last() == weight
+}
+
+/**
+ * Next add must land next to the previous plate added in this squashed group
+ * (inner→outer indices differ by exactly one on the sorted stack).
+ */
+private fun isAdjacentAdd(
+    working: List<Double>,
+    weight: Double,
+    lastAddedPlateIndex: Int?,
+): Boolean {
+    if (lastAddedPlateIndex == null) return true
+    val sortedBefore = working.sortedDescending()
+    val sortedAfter = (sortedBefore + weight).sortedDescending()
+    val newIndex = sortedAfter.indexOfLast { it == weight }
+    return areAdjacentStackIndices(lastAddedPlateIndex, newIndex)
+}
+
+internal fun squashPlateStepsForDisplay(
+    physicalSteps: List<PlateCalculator.Companion.PlateStep>,
+    previousPlates: List<Double>,
+): List<PlateUiStep> {
+    if (physicalSteps.isEmpty()) return emptyList()
+
+    val squashed = mutableListOf<PlateUiStep>()
+    val working = previousPlates.sortedDescending().toMutableList()
+    var index = 0
+
+    while (index < physicalSteps.size) {
+        when (physicalSteps[index].action) {
+            PlateCalculator.Companion.Action.ADD -> {
+                val weights = mutableListOf<Double>()
+                var lastAddedPlateIndex: Int? = null
+                while (index < physicalSteps.size &&
+                    physicalSteps[index].action == PlateCalculator.Companion.Action.ADD
+                ) {
+                    val step = physicalSteps[index]
+                    if (weights.isNotEmpty() && !isAdjacentAdd(working, step.weight, lastAddedPlateIndex)) {
+                        break
+                    }
+                    weights.add(step.weight)
+                    applyPhysicalPlateStep(working, step)
+                    lastAddedPlateIndex = working.indexOfLast { it == step.weight }
+                    index++
+                }
+                if (weights.isNotEmpty()) {
+                    squashed.add(PlateUiStep(PlateCalculator.Companion.Action.ADD, weights))
+                }
+            }
+            PlateCalculator.Companion.Action.REMOVE -> {
+                val weights = mutableListOf<Double>()
+                while (index < physicalSteps.size &&
+                    physicalSteps[index].action == PlateCalculator.Companion.Action.REMOVE
+                ) {
+                    val step = physicalSteps[index]
+                    if (weights.isNotEmpty() && !isAdjacentOuterRemove(working, step.weight)) {
+                        break
+                    }
+                    weights.add(step.weight)
+                    applyPhysicalPlateStep(working, step)
+                    index++
+                }
+                if (weights.isNotEmpty()) {
+                    squashed.add(PlateUiStep(PlateCalculator.Companion.Action.REMOVE, weights))
+                }
+            }
+        }
+    }
+    return squashed
+}
+
+internal fun plateChangeTotalFrames(stepCount: Int): Int =
+    if (stepCount == 0) 1 else stepCount
+
+internal fun applyPlateUiSteps(
+    previousPlates: List<Double>,
+    steps: List<PlateUiStep>,
+    stepCount: Int,
+): List<Double> {
+    val workingPlates = previousPlates.toMutableList()
+    for (uiStepIndex in 0 until stepCount.coerceAtMost(steps.size)) {
+        val uiStep = steps[uiStepIndex]
+        for (weight in uiStep.weights) {
+            when (uiStep.action) {
+                PlateCalculator.Companion.Action.ADD -> workingPlates.add(weight)
+                PlateCalculator.Companion.Action.REMOVE -> {
+                    workingPlates.sortDescendingInPlace()
+                    if (workingPlates.isNotEmpty() && workingPlates.last() == weight) {
+                        workingPlates.removeAt(workingPlates.lastIndex)
+                    } else {
+                        workingPlates.remove(weight)
+                    }
+                }
+            }
+        }
+    }
+    return workingPlates.sortedDescending()
+}
+
+internal fun computeHighlightedPlateIndices(
+    platesBeforeUiStep: List<Double>,
+    uiStep: PlateUiStep,
+): Set<Int> {
+    val sortedBefore = platesBeforeUiStep.sortedDescending().toMutableList()
+    val highlighted = mutableSetOf<Int>()
+    when (uiStep.action) {
+        PlateCalculator.Companion.Action.REMOVE -> {
+            for (weight in uiStep.weights) {
+                if (sortedBefore.isEmpty() || sortedBefore.last() != weight) break
+                highlighted.add(sortedBefore.lastIndex)
+                sortedBefore.removeAt(sortedBefore.lastIndex)
+            }
+        }
+        PlateCalculator.Companion.Action.ADD -> {
+            val afterSorted = applyPlateUiSteps(
+                previousPlates = platesBeforeUiStep,
+                steps = listOf(uiStep),
+                stepCount = 1,
+            )
+            val beforeMultiset = platesBeforeUiStep.toMutableList()
+            for (weight in uiStep.weights) {
+                val countBefore = beforeMultiset.count { it == weight }
+                var seen = 0
+                afterSorted.forEachIndexed { plateIndex, plateWeight ->
+                    if (plateWeight == weight) {
+                        if (seen >= countBefore) {
+                            highlighted.add(plateIndex)
+                        }
+                        seen++
+                    }
+                }
+                beforeMultiset.add(weight)
+            }
+        }
+    }
+    return highlighted
+}
+
+internal fun resolvePlateDisplayFrame(
+    plateChangeResult: PlateCalculator.Companion.PlateChangeResult,
+    steps: List<PlateUiStep>,
+    userStepIndex: Int,
+): PlateDisplayFrame {
+    val totalFrames = plateChangeTotalFrames(steps.size)
+    val clampedIndex = userStepIndex.coerceIn(0, totalFrames - 1)
+    val currentSorted = plateChangeResult.currentPlates.sortedDescending()
+
+    if (steps.isEmpty()) {
+        return PlateDisplayFrame(
+            animatedPlates = currentSorted,
+            currentStepIndex = -1,
+            isFinalState = true,
+        )
+    }
+
+    return PlateDisplayFrame(
+        animatedPlates = applyPlateUiSteps(
+            previousPlates = plateChangeResult.previousPlates,
+            steps = steps,
+            stepCount = clampedIndex + 1,
+        ),
+        currentStepIndex = clampedIndex,
+        isFinalState = false,
+    )
+}
+
 @SuppressLint("DefaultLocale")
 @Composable
 fun PagePlates(
@@ -193,6 +429,7 @@ fun PagePlates(
     PagePlatesContent(
         updatedState = updatedState,
         equipment = equipment,
+        hapticsViewModel = hapticsViewModel,
         onHeaderTap = { hapticsViewModel.doGentleVibration() }
     )
 }
@@ -202,6 +439,7 @@ fun PagePlates(
 private fun PagePlatesContent(
     updatedState: WorkoutState.Set,
     equipment: WeightLoadedEquipment?,
+    hapticsViewModel: HapticsViewModel? = null,
     onHeaderTap: () -> Unit = {},
     animateSteps: Boolean = true
 ) {
@@ -254,7 +492,7 @@ private fun PagePlatesContent(
                     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     val topLine = buildAnnotatedString {
                         withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
-                            append("Tot: ")
+                            append("Target: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
                                 append(" + (")
@@ -275,7 +513,7 @@ private fun PagePlatesContent(
                     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                     val topLine = buildAnnotatedString {
                         withStyle(baseStyle.toSpanStyle().copy(color = secondaryTextColor, fontWeight = FontWeight.Normal)) {
-                            append("Tot: ")
+                            append("Target: ")
                             append(formatWeight(equipment.barWeight))
                             if (currentSideWeightTotal != 0.0) {
                                 append(" + (")
@@ -294,52 +532,39 @@ private fun PagePlatesContent(
                 }
             }
 
-            // Visual barbell representation with animation
+            // Visual barbell representation with user-driven step navigation
             val plateChangeResult = updatedState.plateChangeResult!!
-            val allSteps = plateChangeResult.change.steps
+            val steps = remember(plateChangeResult) {
+                navigablePlateUiSteps(plateChangeResult)
+            }
+            val totalFrames = plateChangeTotalFrames(steps.size)
 
-            // Filter out no-op steps that don't result in any visual change
-            val effectiveSteps = remember(allSteps, plateChangeResult.previousPlates) {
-                val filtered = mutableListOf<PlateCalculator.Companion.PlateStep>()
-                val workingPlates = plateChangeResult.previousPlates.toMutableList()
-
-                allSteps.forEach { step ->
-                    val platesBefore = workingPlates.sortedDescending().toList()
-
-                    // Apply the step
-                    when (step.action) {
-                        PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
-                        PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
-                    }
-
-                    val platesAfter = workingPlates.sortedDescending().toList()
-
-                    // Only include the step if it actually changed the plate configuration
-                    if (platesBefore != platesAfter) {
-                        filtered.add(step)
-                    }
-                }
-
-                filtered
+            var userStepIndex by remember(plateChangeResult) { mutableIntStateOf(0) }
+            LaunchedEffect(plateChangeResult) {
+                userStepIndex = 0
             }
 
-            val steps = effectiveSteps
-
-            // Looping step animation only when the transition mixes removes and adds (true swap).
-            val shouldAnimateTransition = remember(steps) {
-                steps.any { it.action == PlateCalculator.Companion.Action.ADD } &&
-                    steps.any { it.action == PlateCalculator.Companion.Action.REMOVE }
+            val displayStepIndex = if (animateSteps) {
+                userStepIndex
+            } else {
+                totalFrames - 1
             }
 
-            // Index of the current step being animated (or -1 when idle, or steps.size for final state)
-            var currentStepIndex by remember(plateChangeResult) { mutableIntStateOf(-1) }
-
-            // We keep track of the *actual* plates currently shown on the bar.
-            // This lets us always start the animation from the current state instead of
-            // reconstructing everything from an implicit empty bar or looping forever.
-            var animatedPlates by remember(plateChangeResult) {
-                mutableStateOf(plateChangeResult.previousPlates.sortedDescending())
+            val displayFrame = remember(plateChangeResult, steps, displayStepIndex) {
+                resolvePlateDisplayFrame(
+                    plateChangeResult = plateChangeResult,
+                    steps = steps,
+                    userStepIndex = displayStepIndex,
+                )
             }
+            val animatedPlates = displayFrame.animatedPlates
+            val currentStepIndex = displayFrame.currentStepIndex
+            val isFinalState = displayFrame.isFinalState
+
+            val stepSidePlateSum = remember(animatedPlates) {
+                animatedPlates.sum().round(2)
+            }
+            val showStepIndicator = animateSteps && totalFrames > 1
 
             // Compute the maximum total plate thickness encountered across all configurations
             // in this transition (previous → all intermediate steps → current). This value
@@ -356,10 +581,19 @@ private fun PagePlatesContent(
                 var maxThickness = totalThicknessFor(plateChangeResult.previousPlates)
                 val workingPlates = plateChangeResult.previousPlates.toMutableList()
 
-                steps.forEach { step ->
-                    when (step.action) {
-                        PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
-                        PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
+                steps.forEach { uiStep ->
+                    uiStep.weights.forEach { weight ->
+                        when (uiStep.action) {
+                            PlateCalculator.Companion.Action.ADD -> workingPlates.add(weight)
+                            PlateCalculator.Companion.Action.REMOVE -> {
+                                workingPlates.sortDescendingInPlace()
+                                if (workingPlates.isNotEmpty() && workingPlates.last() == weight) {
+                                    workingPlates.removeAt(workingPlates.lastIndex)
+                                } else {
+                                    workingPlates.remove(weight)
+                                }
+                            }
+                        }
                     }
                     val t = totalThicknessFor(workingPlates)
                     if (t > maxThickness) {
@@ -380,10 +614,19 @@ private fun PagePlatesContent(
                 buildList {
                     val workingPlates = plateChangeResult.previousPlates.sortedDescending().toMutableList()
                     add(workingPlates.toList())
-                    steps.forEach { step ->
-                        when (step.action) {
-                            PlateCalculator.Companion.Action.ADD -> workingPlates.add(step.weight)
-                            PlateCalculator.Companion.Action.REMOVE -> workingPlates.remove(step.weight)
+                    steps.forEach { uiStep ->
+                        uiStep.weights.forEach { weight ->
+                            when (uiStep.action) {
+                                PlateCalculator.Companion.Action.ADD -> workingPlates.add(weight)
+                                PlateCalculator.Companion.Action.REMOVE -> {
+                                    workingPlates.sortDescendingInPlace()
+                                    if (workingPlates.isNotEmpty() && workingPlates.last() == weight) {
+                                        workingPlates.removeAt(workingPlates.lastIndex)
+                                    } else {
+                                        workingPlates.remove(weight)
+                                    }
+                                }
+                            }
                         }
                         add(workingPlates.sortedDescending())
                     }
@@ -393,145 +636,49 @@ private fun PagePlatesContent(
                 }
             }
 
-            // Track which specific plate instance is currently being added or removed
-            // We need to identify which instance among multiple plates of the same weight
-            val activePlateInfo = remember(currentStepIndex, steps, animatedPlates) {
-                if (currentStepIndex >= 0 && currentStepIndex < steps.size) {
-                    val step = steps[currentStepIndex]
-
-                    // Calculate plates state before current step
-                    val platesBeforeStep = if (currentStepIndex > 0) {
-                        val before = plateChangeResult.previousPlates.toMutableList()
-                        for (i in 0 until currentStepIndex) {
-                            val s = steps[i]
-                            when (s.action) {
-                                PlateCalculator.Companion.Action.ADD -> before.add(s.weight)
-                                PlateCalculator.Companion.Action.REMOVE -> before.remove(s.weight)
-                            }
-                        }
-                        before.sortedDescending()
-                    } else {
-                        plateChangeResult.previousPlates.sortedDescending()
-                    }
-
-                    // Count how many plates of this weight exist before the current step
-                    val countBefore = platesBeforeStep.count { it == step.weight }
-
-                    // For ADD: the new plate will be at position countBefore in the sorted list of same-weight plates
-                    // For REMOVE: we remove the plate from the end (outermost), which is the last instance
-                    // If countBefore is 2 (instances 0 and 1), we remove instance 1 (the last one)
-                    val instanceIndex = when (step.action) {
-                        PlateCalculator.Companion.Action.ADD -> countBefore // New plate will be at this index (0-indexed)
-                        PlateCalculator.Companion.Action.REMOVE -> {
-                            // For REMOVE, the algorithm removes from the end (outermost)
-                            // In sorted descending order, this is the last instance of that weight
-                            countBefore - 1
-                        }
-                    }
-
-                    Triple(step.weight, step.action, instanceIndex)
-                } else {
-                    null
-                }
-            }
-
-            // Calculate plates state before current step for highlighting purposes
-            // This is needed for REMOVE actions where the plate is already removed from animatedPlates
-            // For final state (currentStepIndex == steps.size), use null since we don't need before state
             val platesBeforeCurrentStep = remember(currentStepIndex, steps, plateChangeResult.previousPlates) {
                 if (currentStepIndex >= 0 && currentStepIndex < steps.size) {
-                    if (currentStepIndex > 0) {
-                        val before = plateChangeResult.previousPlates.toMutableList()
-                        for (i in 0 until currentStepIndex) {
-                            val s = steps[i]
-                            when (s.action) {
-                                PlateCalculator.Companion.Action.ADD -> before.add(s.weight)
-                                PlateCalculator.Companion.Action.REMOVE -> before.remove(s.weight)
-                            }
-                        }
-                        before.sortedDescending()
-                    } else {
-                        plateChangeResult.previousPlates.sortedDescending()
-                    }
+                    applyPlateUiSteps(
+                        previousPlates = plateChangeResult.previousPlates,
+                        steps = steps,
+                        stepCount = currentStepIndex,
+                    )
                 } else {
                     null
                 }
             }
 
-            // Animate the plate changes
-            LaunchedEffect(plateChangeResult, animateSteps) {
-                if (!animateSteps) {
-                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
-                    currentStepIndex = steps.size
-                    return@LaunchedEffect
-                }
+            val activeUiStep = remember(currentStepIndex, steps) {
+                steps.getOrNull(currentStepIndex)
+            }
 
-                // If there are no steps we just show the current configuration and do not animate.
-                if (steps.isEmpty()) {
-                    currentStepIndex = -1
-                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
-                    return@LaunchedEffect
-                }
-
-                if (!shouldAnimateTransition) {
-                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
-                    // `currentStepIndex == steps.size` is the final-state branch in BarbellVisualization (all plates primary).
-                    currentStepIndex = steps.size
-                    return@LaunchedEffect
-                }
-
-                // Continuously loop the full physical transition from previousPlates → currentPlates.
-                // The starting configuration for every loop is always previousPlates (never an
-                // artificial empty bar), so the user repeatedly sees the exact sequence of
-                // plate changes needed for this transition.
-                while (true) {
-                    // Start from the previous bar configuration for this transition.
-                    animatedPlates = plateChangeResult.previousPlates.sortedDescending()
-
-                    // Walk the sequence of physical steps, applying the
-                    // delta to the currently drawn plates.
-                    for (stepIndex in steps.indices) {
-                        val step = steps[stepIndex]
-                        currentStepIndex = stepIndex
-
-                        // Apply this step to the current animated plates.
-                        animatedPlates = animatedPlates.toMutableList().also { currentPlates ->
-                            when (step.action) {
-                                PlateCalculator.Companion.Action.ADD -> {
-                                    currentPlates.add(step.weight)
-                                }
-
-                                PlateCalculator.Companion.Action.REMOVE -> {
-                                    // Remove one instance of this plate, matching the physical action
-                                    // (outermost plate of that weight). Since the list is sorted
-                                    // descending, any instance is visually equivalent.
-                                    currentPlates.remove(step.weight)
-                                }
-                            }
-                        }.sortedDescending()
-
-                        // Give time for the highlight / alpha animation and for the user to see the step.
-                        delay(1000)
-                    }
-
-                    // After the last step, show the final configuration with all plates in primary color
-                    animatedPlates = plateChangeResult.currentPlates.sortedDescending()
-                    currentStepIndex = steps.size // Special value to indicate final state
-
-                    // Show final state with all plates in primary color
-                    delay(1000)
-
-                    // Pause before restarting the animation loop
-                    delay(1000)
+            val highlightedPlateIndices = remember(platesBeforeCurrentStep, activeUiStep) {
+                if (platesBeforeCurrentStep != null && activeUiStep != null) {
+                    computeHighlightedPlateIndices(
+                        platesBeforeUiStep = platesBeforeCurrentStep,
+                        uiStep = activeUiStep,
+                    )
+                } else {
+                    emptySet()
                 }
             }
-            
-            BoxWithConstraints(
+
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 20.dp)
+                    ) {
                 val viewportWidth = maxWidth
                 val density = LocalDensity.current
                 val viewportWidthPx = with(density) { viewportWidth.toPx() }
@@ -543,8 +690,8 @@ private fun PagePlatesContent(
                         density = density
                     )
                 }
-                val platesForDrawing = remember(animatedPlates, platesBeforeCurrentStep, activePlateInfo) {
-                    if (activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
+                val platesForDrawing = remember(animatedPlates, platesBeforeCurrentStep, activeUiStep) {
+                    if (activeUiStep?.action == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
                         platesBeforeCurrentStep.sortedDescending()
                     } else {
                         animatedPlates.sortedDescending()
@@ -643,14 +790,73 @@ private fun PagePlatesContent(
                         BarbellVisualization(
                             plates = animatedPlates,
                             barbell = equipment,
-                            activePlateInfo = activePlateInfo,
+                            activeUiStep = activeUiStep,
+                            highlightedPlateIndices = highlightedPlateIndices,
                             maxLogicalThickness = maxLogicalThickness,
                             platesBeforeCurrentStep = platesBeforeCurrentStep,
                             previousPlates = plateChangeResult.previousPlates.sortedDescending(),
                             currentStepIndex = currentStepIndex,
-                            totalSteps = steps.size,
+                            isFinalState = isFinalState,
                             viewportWidth = viewportWidth,
                             modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+                    }
+
+                    if (animateSteps && totalFrames > 1 && hapticsViewModel != null) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(1f)
+                                    .clickable(enabled = userStepIndex > 0) {
+                                        hapticsViewModel.doGentleVibration()
+                                        userStepIndex -= 1
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                            ) {}
+                            Spacer(modifier = Modifier.fillMaxHeight().weight(1f))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(1f)
+                                    .clickable(enabled = userStepIndex < totalFrames - 1) {
+                                        hapticsViewModel.doGentleVibration()
+                                        userStepIndex += 1
+                                    },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                            ) {}
+                        }
+                    }
+                }
+
+                if (showStepIndicator) {
+                    val stepIndicatorStyle = MaterialTheme.typography.bodySmall
+                    val stepIndicatorColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 50.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Step: ${userStepIndex + 1}/$totalFrames",
+                            style = stepIndicatorStyle,
+                            color = stepIndicatorColor,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            text = "Side: ${formatWeight(stepSidePlateSum)}",
+                            style = stepIndicatorStyle,
+                            color = stepIndicatorColor,
+                            textAlign = TextAlign.Center,
                         )
                     }
                 }
@@ -663,21 +869,21 @@ private fun PagePlatesContent(
 private fun BarbellVisualization(
     plates: List<Double>,
     barbell: Barbell,
-    activePlateInfo: Triple<Double, PlateCalculator.Companion.Action, Int>? = null, // weight, action, instanceIndex
+    activeUiStep: PlateUiStep? = null,
+    highlightedPlateIndices: Set<Int> = emptySet(),
     maxLogicalThickness: Float? = null,
     platesBeforeCurrentStep: List<Double>? = null, // Plates state before current step (for REMOVE highlighting)
     previousPlates: List<Double>? = null, // Initial previous plate configuration used as the color baseline
-    currentStepIndex: Int = -1, // Current step index (-1 idle, steps.size for final state)
-    totalSteps: Int = 0, // Total number of steps
+    currentStepIndex: Int = -1, // Current step index (-1 idle / between loops, 0..last while stepping)
+    isFinalState: Boolean, // Set only by PagePlates animation logic (settled / preview / no-op), not derived here
     viewportWidth: Dp? = null, // When set, bar and plates use this width; labels use full canvas (content) width
     modifier: Modifier = Modifier
 ) {
 
     // For REMOVE actions, use platesBeforeCurrentStep so the plate being removed is still drawn and can be highlighted
     // For ADD actions, use the current plates (the plate being added is already in the list)
-    val platesForDrawing = remember(plates, platesBeforeCurrentStep, activePlateInfo) {
-        if (activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
-            // Use the before state which includes the plate being removed
+    val platesForDrawing = remember(plates, platesBeforeCurrentStep, activeUiStep) {
+        if (activeUiStep?.action == PlateCalculator.Companion.Action.REMOVE && platesBeforeCurrentStep != null) {
             platesBeforeCurrentStep.sortedDescending()
         } else {
             plates.sortedDescending()
@@ -694,8 +900,6 @@ private fun BarbellVisualization(
             )
         }
     }
-
-    val isFinalState = (currentStepIndex == totalSteps) || (totalSteps == 0)
 
     val sleeveLength = barbell.sleeveLength.toFloat()
     // Total logical thickness of the *current* plates on the sleeve (in the same unit as sleeveLength)
@@ -730,21 +934,8 @@ private fun BarbellVisualization(
 
     // Calculate which plate indices should be highlighted (based on instance position among same-weight plates)
     // In final state, no plates should be highlighted
-    val highlightedPlateIndices = remember(sortedPlatesForHighlighting, activePlateInfo, isFinalState) {
-        if (isFinalState || activePlateInfo == null) {
-            emptySet<Int>()
-        } else {
-            val (targetWeight, _, instanceIndex) = activePlateInfo
-            sortedPlatesForHighlighting.mapIndexedNotNull { index, plateWeight ->
-                if (plateWeight == targetWeight) {
-                    // Count how many plates of this weight come before this one (0-indexed)
-                    val instanceCount = sortedPlatesForHighlighting.subList(0, index + 1).count { it == targetWeight } - 1
-                    if (instanceCount == instanceIndex) index else null
-                } else {
-                    null
-                }
-            }.toSet()
-        }
+    val activeHighlightedIndices = remember(highlightedPlateIndices, isFinalState) {
+        if (isFinalState) emptySet() else highlightedPlateIndices
     }
 
     // Green should mean "this position now has a different plate than the initial configuration",
@@ -918,15 +1109,16 @@ private fun BarbellVisualization(
             val localPlateBottomY = localPlateY + plateHeight
 
             // Get color and alpha for this specific plate instance
-            val isHighlighted = highlightedPlateIndices.contains(plateIndex)
+            val isHighlighted = activeHighlightedIndices.contains(plateIndex)
             val isNewAtThisPosition = newlyAddedPlateIndices.contains(plateIndex)
 
             val plateColor = when {
                 // Final state: all plates use primary color (this should be the only case in final state)
                 isFinalState -> finalStatePlateColor
                 // Currently active plate being removed - red with animation
-                isHighlighted && activePlateInfo != null && activePlateInfo.second == PlateCalculator.Companion.Action.REMOVE -> Red
-                // Green marks positions that now contain a new plate relative to the starting configuration.
+                isHighlighted && activeUiStep?.action == PlateCalculator.Companion.Action.REMOVE -> Red
+                // Plates added in the current squashed add step, or positions that differ from the starting configuration.
+                isHighlighted && activeUiStep?.action == PlateCalculator.Companion.Action.ADD -> Green
                 isNewAtThisPosition -> Green
                 // Default color for other plates (onBackground)
                 else -> defaultPlateColor

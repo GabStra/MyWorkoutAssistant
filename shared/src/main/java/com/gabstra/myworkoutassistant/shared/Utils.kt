@@ -6,17 +6,17 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import com.gabstra.myworkoutassistant.shared.adapters.AccessoryEquipmentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.EquipmentAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.ExerciseSessionSnapshotAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.ExternalHeartRateConfigAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalDateTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.LocalTimeAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.SetDataAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutAdapter
+import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutPlanPackageAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutRecordAdapter
-import com.gabstra.myworkoutassistant.shared.adapters.WorkoutComponentAdapter
 import com.gabstra.myworkoutassistant.shared.adapters.WorkoutStoreAdapter
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.Barbell
@@ -38,11 +38,11 @@ import com.gabstra.myworkoutassistant.shared.sets.RestSet
 import com.gabstra.myworkoutassistant.shared.sets.Set
 import com.gabstra.myworkoutassistant.shared.sets.TimedDurationSet
 import com.gabstra.myworkoutassistant.shared.sets.WeightSet
+import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
-import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.io.ByteArrayInputStream
@@ -51,7 +51,6 @@ import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.util.LinkedHashMap
 import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
@@ -1277,9 +1276,9 @@ fun List<Double>.coefficientOfVariation(): Double {
 
 
 fun formatWeight(weight:Double): String {
-    if (weight % 1.0 == 0.0) {
+/*    if (weight % 1.0 == 0.0) {
         return weight.toInt().toString()
-    }
+    }*/
 
     return "%.2f".format(weight).replace(",", ".")
 }
