@@ -15,4 +15,5 @@ data class WorkoutStore(
     val progressionPercentageAmount: Double,
     val measuredMaxHeartRate: Int? = null,
     val restingHeartRate: Int? = null,
+    val deloadConfig: DeloadConfig = DeloadConfig(),
 )

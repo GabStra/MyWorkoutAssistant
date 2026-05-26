@@ -55,6 +55,8 @@ import com.gabstra.myworkoutassistant.shared.ExerciseSessionSnapshot
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgression
 import com.gabstra.myworkoutassistant.shared.ExerciseSessionProgressionDao
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
+import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
+import com.gabstra.myworkoutassistant.shared.resolveProgressionDecision
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
 import com.gabstra.myworkoutassistant.shared.SetHistory
@@ -407,7 +409,11 @@ private suspend fun calculateExpectedSetsAndProgressionState(
         }
 
         // Compute progression state using the workout history date
-        val progressionState = computeProgressionState(exerciseInfoBefore, workoutHistoryDate = workoutHistoryDate)
+        val progressionState = resolveProgressionDecision(
+            exercise = exercise,
+            exerciseInfo = exerciseInfoBefore,
+            workoutStore = workoutStore
+        ).progressionState
 
         // Calculate expected sets based on progression state
         val repsRange = IntRange(exercise.minReps, exercise.maxReps)
@@ -416,7 +422,14 @@ private suspend fun calculateExpectedSetsAndProgressionState(
                 DoubleProgressionHelper.planDeloadSession(
                     previousSets = previousSessionSets,
                     availableWeights = availableWeights,
-                    repsRange = repsRange
+                    repsRange = repsRange,
+                    options = workoutStore.resolveDeloadConfig(exercise).let {
+                        DoubleProgressionHelper.DeloadOptions(
+                            weightFactor = it.weightFactor,
+                            repsDrop = it.repsDrop,
+                            cutSetsTo = it.cutSetsTo
+                        )
+                    }
                 ).sets
             }
             ProgressionState.RETRY -> {
@@ -448,36 +461,6 @@ private suspend fun calculateExpectedSetsAndProgressionState(
         return Pair(null, null)
     }
 }
-
-private fun computeProgressionState(
-    exerciseInfo: ExerciseInfo?,
-    workoutHistoryDate: LocalDate?
-): ProgressionState {
-    val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
-    val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
-
-    // For backfill, we use the date from the workout history if available
-    val today = workoutHistoryDate ?: LocalDate.now()
-
-    var weeklyCount = 0
-    exerciseInfo?.weeklyCompletionUpdateDate?.let { lastUpdate ->
-        val startOfThisWeek = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        val startOfLastUpdateWeek = lastUpdate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        if (startOfThisWeek.isEqual(startOfLastUpdateWeek)) {
-            weeklyCount = exerciseInfo.timesCompletedInAWeek
-        }
-    }
-
-    val shouldDeload = false // temporarily disable deload: (fails >= 2) && !lastWasDeload
-    val shouldRetry = !lastWasDeload && (fails >= 1 || weeklyCount > 1)
-
-    return when {
-        shouldDeload -> ProgressionState.DELOAD
-        shouldRetry -> ProgressionState.RETRY
-        else -> ProgressionState.PROGRESS
-    }
-}
-
 private fun compareProgressionAwareSetLists(
     current: List<SimpleSet>,
     baseline: List<SimpleSet>,
@@ -573,11 +556,12 @@ private suspend fun updateExerciseInfoState(
                 id = exerciseId,
                 bestSession = currentSessionSnapshot,
                 lastSuccessfulSession = currentSessionSnapshot,
-                successfulSessionCounter = 1u,
+                successfulSessionCounter = if (isDeloadSession) 0u else 1u,
                 sessionFailedCounter = 0u,
+                completedSessionsSinceDeload = if (isDeloadSession) 0u else 1u,
                 timesCompletedInAWeek = weeklyCount,
                 weeklyCompletionUpdateDate = today,
-                lastSessionWasDeload = false
+                lastSessionWasDeload = isDeloadSession
             )
         } else {
             var info = exerciseInfoBefore.copy(version = exerciseInfoBefore.version + 1u)
@@ -586,10 +570,14 @@ private suspend fun updateExerciseInfoState(
                 info = info.copy(
                     sessionFailedCounter = 0u,
                     successfulSessionCounter = 0u,
+                    completedSessionsSinceDeload = 0u,
                     lastSessionWasDeload = true
                 )
             } else {
-                info = info.copy(lastSessionWasDeload = false)
+                info = info.copy(
+                    lastSessionWasDeload = false,
+                    completedSessionsSinceDeload = info.completedSessionsSinceDeload.inc()
+                )
 
                 // Convert best session to SimpleSet list for comparison
                 val bestSessionSets = info.bestSession.toExecutedSimpleSets()
@@ -818,6 +806,7 @@ fun mergeWorkoutStore(
     val mergedExternalHeartRateConfigs = existing.externalHeartRateConfigs
     val mergedMeasuredMaxHeartRate = existing.measuredMaxHeartRate
     val mergedRestingHeartRate = existing.restingHeartRate
+    val mergedDeloadConfig = existing.deloadConfig
     
     // Merge workout plans
     val existingPlanIds = existing.workoutPlans.map { it.id }.toSet()
@@ -860,6 +849,7 @@ fun mergeWorkoutStore(
         weightKg = mergedWeightKg,
         progressionPercentageAmount = mergedProgressionPercentageAmount,
         externalHeartRateConfigs = mergedExternalHeartRateConfigs,
+        deloadConfig = mergedDeloadConfig,
         measuredMaxHeartRate = mergedMeasuredMaxHeartRate,
         restingHeartRate = mergedRestingHeartRate
     )

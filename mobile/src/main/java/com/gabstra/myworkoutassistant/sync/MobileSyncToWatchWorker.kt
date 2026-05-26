@@ -163,8 +163,14 @@ class MobileSyncToWatchWorker(
             }
             Log.e(TAG, "SYNC_TRACE event=worker_retry side=mobile channel=full_backup", exception)
             Log.e(TAG, "Mobile sync worker failed", exception)
-            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
-            Result.retry()
+            val shouldRetry = PhoneToWatchSyncCoordinator.onWorkerSyncAttemptWillRetry(applicationContext)
+            if (shouldRetry) {
+                Result.retry()
+            } else {
+                // A user-triggered manual sync is being enqueued immediately, so avoid leaving the old
+                // failed unique work in exponential backoff ahead of the replacement request.
+                Result.success()
+            }
         }
     }
 

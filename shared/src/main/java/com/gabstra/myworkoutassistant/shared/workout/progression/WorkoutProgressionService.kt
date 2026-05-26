@@ -9,8 +9,11 @@ import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.SetHistory
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.resolveProgressionDecision
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
+import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.applySetHistoryToProgrammedSet
 import com.gabstra.myworkoutassistant.shared.removeRestAndRestPause
 import com.gabstra.myworkoutassistant.shared.round
@@ -43,22 +46,20 @@ class WorkoutProgressionService(
     private val exerciseInfoDao: () -> ExerciseInfoDao,
     private val setHistoryDao: () -> SetHistoryDao,
     private val workoutHistoryDao: () -> WorkoutHistoryDao,
-    private val exerciseSessionProgressionDao: () -> ExerciseSessionProgressionDao
+    private val exerciseSessionProgressionDao: () -> ExerciseSessionProgressionDao,
+    private val workoutStoreProvider: () -> WorkoutStore,
 ) {
-    suspend fun computeSessionDecision(exerciseId: UUID): SessionDecision {
-        val exerciseInfo = exerciseInfoDao().getExerciseInfoById(exerciseId)
-        val fails = exerciseInfo?.sessionFailedCounter?.toInt() ?: 0
-        val lastWasDeload = exerciseInfo?.lastSessionWasDeload ?: false
-
-        val shouldDeload = false
-        val shouldRetry = !lastWasDeload && fails >= 1
-        val shouldLoadLastSuccessfulSession = lastWasDeload || shouldRetry
-        val progressionState =
-            if (shouldDeload) ProgressionState.DELOAD else if (shouldRetry) ProgressionState.RETRY else ProgressionState.PROGRESS
+    suspend fun computeSessionDecision(exercise: Exercise): SessionDecision {
+        val exerciseInfo = exerciseInfoDao().getExerciseInfoById(exercise.id)
+        val decision = resolveProgressionDecision(
+            exercise = exercise,
+            exerciseInfo = exerciseInfo,
+            workoutStore = workoutStoreProvider()
+        )
 
         return SessionDecision(
-            progressionState = progressionState,
-            shouldLoadLastSuccessfulSession = shouldLoadLastSuccessfulSession,
+            progressionState = decision.progressionState,
+            shouldLoadLastSuccessfulSession = decision.shouldLoadLastSuccessfulSession,
             lastSuccessfulSession = exerciseInfo?.lastSuccessfulSession ?: ExerciseSessionSnapshot()
         )
     }
@@ -237,7 +238,7 @@ class WorkoutProgressionService(
 
             else -> throw IllegalArgumentException("Unknown exercise type")
         }
-        val sessionDecision = computeSessionDecision(exercise.id)
+        val sessionDecision = computeSessionDecision(exercise)
         val setHistories = setHistoryDao().getSetHistoriesByExerciseId(exercise.id)
         val workoutHistoryIds = setHistories.mapNotNull { it.workoutHistoryId }.toSet()
         val workoutHistories = workoutHistoryDao().getAllWorkoutHistories()
@@ -287,7 +288,16 @@ class WorkoutProgressionService(
             ProgressionState.DELOAD -> DoubleProgressionHelper.planDeloadSession(
                 previousSets = previousSets,
                 availableWeights = availableWeights,
-                repsRange = repsRange
+                repsRange = repsRange,
+                options = workoutStoreProvider()
+                    .resolveDeloadConfig(exercise)
+                    .let {
+                        DoubleProgressionHelper.DeloadOptions(
+                            weightFactor = it.weightFactor,
+                            repsDrop = it.repsDrop,
+                            cutSetsTo = it.cutSetsTo
+                        )
+                    }
             )
 
             ProgressionState.RETRY -> DoubleProgressionHelper.Plan(

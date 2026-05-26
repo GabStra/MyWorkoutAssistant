@@ -35,6 +35,11 @@ data class Exercise (
     val requiredAccessoryEquipmentIds: List<UUID>? = null,
     val requiresLoadCalibration: Boolean = false,
     val exerciseCategory: ExerciseCategory? = null,
+    val deloadFailedSessionsThreshold: Int? = null,
+    val deloadCompletedSessionsInterval: Int? = null,
+    val deloadWeightFactor: Double? = null,
+    val deloadRepsDrop: Int? = null,
+    val deloadCutSetsTo: Int? = null,
     ): WorkoutComponent(id,enabled) {
     
     // Custom hashCode and equals to safely handle null requiredAccessoryEquipmentIds
@@ -65,6 +70,11 @@ data class Exercise (
         result = 31 * result + (requiredAccessoryEquipmentIds?.hashCode() ?: 0)
         result = 31 * result + requiresLoadCalibration.hashCode()
         result = 31 * result + (exerciseCategory?.hashCode() ?: 0)
+        result = 31 * result + (deloadFailedSessionsThreshold?.hashCode() ?: 0)
+        result = 31 * result + (deloadCompletedSessionsInterval?.hashCode() ?: 0)
+        result = 31 * result + (deloadWeightFactor?.hashCode() ?: 0)
+        result = 31 * result + (deloadRepsDrop?.hashCode() ?: 0)
+        result = 31 * result + (deloadCutSetsTo?.hashCode() ?: 0)
         return result
     }
     
@@ -97,6 +107,11 @@ data class Exercise (
         if ((requiredAccessoryEquipmentIds ?: emptyList<UUID>()) != (other.requiredAccessoryEquipmentIds ?: emptyList<UUID>())) return false
         if (requiresLoadCalibration != other.requiresLoadCalibration) return false
         if (exerciseCategory != other.exerciseCategory) return false
+        if (deloadFailedSessionsThreshold != other.deloadFailedSessionsThreshold) return false
+        if (deloadCompletedSessionsInterval != other.deloadCompletedSessionsInterval) return false
+        if (deloadWeightFactor != other.deloadWeightFactor) return false
+        if (deloadRepsDrop != other.deloadRepsDrop) return false
+        if (deloadCutSetsTo != other.deloadCutSetsTo) return false
         
         return true
     }

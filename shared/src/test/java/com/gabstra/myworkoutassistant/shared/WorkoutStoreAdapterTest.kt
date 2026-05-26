@@ -25,6 +25,11 @@ class WorkoutStoreAdapterTest {
         )
 
         assertTrue(workoutStore.weeklyProgressOverrides.isEmpty())
+        assertEquals(2, workoutStore.deloadConfig.failedSessionsThreshold)
+        assertEquals(null, workoutStore.deloadConfig.completedSessionsInterval)
+        assertEquals(0.9, workoutStore.deloadConfig.weightFactor, 0.0)
+        assertEquals(2, workoutStore.deloadConfig.repsDrop)
+        assertEquals(null, workoutStore.deloadConfig.cutSetsTo)
     }
 
     @Test
@@ -51,6 +56,67 @@ class WorkoutStoreAdapterTest {
         val roundTripped = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(original))
 
         assertEquals(listOf(overrideA, overrideB), roundTripped.weeklyProgressOverrides)
+    }
+
+    @Test
+    fun deloadConfigAndExerciseOverrides_roundTripThroughWorkoutStoreJson() {
+        val exercise = com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise(
+            id = UUID.randomUUID(),
+            enabled = true,
+            name = "Bench",
+            notes = "",
+            sets = emptyList(),
+            exerciseType = ExerciseType.WEIGHT,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = UUID.randomUUID(),
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            deloadFailedSessionsThreshold = 4,
+            deloadCompletedSessionsInterval = 8,
+            deloadWeightFactor = 0.85,
+            deloadRepsDrop = 3,
+            deloadCutSetsTo = 2
+        )
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "Push",
+            description = "",
+            workoutComponents = listOf(exercise),
+            order = 0,
+            creationDate = LocalDate.of(2025, 1, 1),
+            globalId = UUID.randomUUID(),
+            type = 0
+        )
+        val original = WorkoutStore(
+            workouts = listOf(workout),
+            equipments = emptyList(),
+            accessoryEquipments = emptyList(),
+            workoutPlans = emptyList(),
+            birthDateYear = 1990,
+            weightKg = 82.5,
+            progressionPercentageAmount = 0.1,
+            deloadConfig = DeloadConfig(
+                failedSessionsThreshold = 3,
+                completedSessionsInterval = 6,
+                weightFactor = 0.88,
+                repsDrop = 2,
+                cutSetsTo = 3
+            )
+        )
+
+        val roundTripped = fromJSONToWorkoutStore(fromWorkoutStoreToJSON(original))
+        val roundTrippedExercise = roundTripped.workouts.single().workoutComponents
+            .single() as com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+
+        assertEquals(original.deloadConfig, roundTripped.deloadConfig)
+        assertEquals(4, roundTrippedExercise.deloadFailedSessionsThreshold)
+        assertEquals(8, roundTrippedExercise.deloadCompletedSessionsInterval)
+        assertEquals(0.85, roundTrippedExercise.deloadWeightFactor ?: 0.0, 0.0)
+        assertEquals(3, roundTrippedExercise.deloadRepsDrop)
+        assertEquals(2, roundTrippedExercise.deloadCutSetsTo)
     }
 
     @Test

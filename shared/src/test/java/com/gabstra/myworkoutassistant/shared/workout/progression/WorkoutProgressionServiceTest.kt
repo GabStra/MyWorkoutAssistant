@@ -4,10 +4,12 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.gabstra.myworkoutassistant.shared.AppDatabase
+import com.gabstra.myworkoutassistant.shared.DeloadConfig
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.ExerciseInfo
 import com.gabstra.myworkoutassistant.shared.ProgressionMode
 import com.gabstra.myworkoutassistant.shared.Workout
+import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.equipments.BaseWeight
 import com.gabstra.myworkoutassistant.shared.equipments.Dumbbell
 import com.gabstra.myworkoutassistant.shared.buildExerciseSessionSnapshot
@@ -104,7 +106,18 @@ class WorkoutProgressionServiceTest {
             exerciseInfoDao = { database.exerciseInfoDao() },
             setHistoryDao = { database.setHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() },
-            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = {
+                WorkoutStore(
+                    workouts = emptyList(),
+                    equipments = listOf(equipment),
+                    accessoryEquipments = emptyList(),
+                    workoutPlans = emptyList(),
+                    birthDateYear = 1990,
+                    weightKg = 80.0,
+                    progressionPercentageAmount = 0.1
+                )
+            }
         )
 
         val result = kotlinx.coroutines.runBlocking {
@@ -169,7 +182,8 @@ class WorkoutProgressionServiceTest {
             exerciseInfoDao = { database.exerciseInfoDao() },
             setHistoryDao = { database.setHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() },
-            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = { testWorkoutStore() }
         )
         val snapshotOnlyWorkSets = exerciseSessionSnapshotFromSets(
             listOf(
@@ -225,7 +239,8 @@ class WorkoutProgressionServiceTest {
             exerciseInfoDao = { database.exerciseInfoDao() },
             setHistoryDao = { database.setHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() },
-            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = { testWorkoutStore() }
         )
         val plan = DoubleProgressionHelper.Plan(
             sets = listOf(
@@ -289,7 +304,8 @@ class WorkoutProgressionServiceTest {
             exerciseInfoDao = { database.exerciseInfoDao() },
             setHistoryDao = { database.setHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() },
-            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = { testWorkoutStore() }
         )
         val plan = DoubleProgressionHelper.Plan(
             sets = listOf(SimpleSet(82.5, 9)),
@@ -378,14 +394,279 @@ class WorkoutProgressionServiceTest {
             exerciseInfoDao = { database.exerciseInfoDao() },
             setHistoryDao = { database.setHistoryDao() },
             workoutHistoryDao = { database.workoutHistoryDao() },
-            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() }
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = { testWorkoutStore() }
         )
 
         val decision = kotlinx.coroutines.runBlocking {
-            service.computeSessionDecision(exerciseId)
+            service.computeSessionDecision(
+                exercise = Exercise(
+                    id = exerciseId,
+                    enabled = true,
+                    name = "Bench",
+                    notes = "",
+                    sets = listOf(WeightSet(UUID.randomUUID(), 8, 80.0)),
+                    exerciseType = ExerciseType.WEIGHT,
+                    minReps = 6,
+                    maxReps = 12,
+                    lowerBoundMaxHRPercent = null,
+                    upperBoundMaxHRPercent = null,
+                    equipmentId = UUID.randomUUID(),
+                    bodyWeightPercentage = null,
+                    progressionMode = ProgressionMode.DOUBLE_PROGRESSION
+                )
+            )
         }
 
         assertEquals(ProgressionState.PROGRESS, decision.progressionState)
         assertEquals(false, decision.shouldLoadLastSuccessfulSession)
+    }
+
+    @Test
+    fun computeSessionDecision_failThresholdHit_producesDeload() {
+        val exerciseId = UUID.randomUUID()
+        val exercise = testExercise(
+            id = exerciseId,
+            deloadFailedSessionsThreshold = 2
+        )
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = exerciseSessionSnapshotFromSets(emptyList()),
+                    lastSuccessfulSession = exerciseSessionSnapshotFromSets(
+                        listOf(WeightSet(UUID.randomUUID(), 10, 80.0))
+                    ),
+                    successfulSessionCounter = 0u,
+                    sessionFailedCounter = 2u,
+                    lastSessionWasDeload = false,
+                    completedSessionsSinceDeload = 1u
+                )
+            )
+        }
+        val service = testService(
+            deloadConfig = DeloadConfig(failedSessionsThreshold = 2, completedSessionsInterval = null)
+        )
+
+        val decision = kotlinx.coroutines.runBlocking { service.computeSessionDecision(exercise) }
+
+        assertEquals(ProgressionState.DELOAD, decision.progressionState)
+        assertFalse(decision.shouldLoadLastSuccessfulSession)
+    }
+
+    @Test
+    fun computeSessionDecision_completedIntervalHit_producesDeload() {
+        val exerciseId = UUID.randomUUID()
+        val exercise = testExercise(id = exerciseId)
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = exerciseSessionSnapshotFromSets(emptyList()),
+                    lastSuccessfulSession = exerciseSessionSnapshotFromSets(
+                        listOf(WeightSet(UUID.randomUUID(), 10, 80.0))
+                    ),
+                    successfulSessionCounter = 1u,
+                    sessionFailedCounter = 0u,
+                    lastSessionWasDeload = false,
+                    completedSessionsSinceDeload = 3u
+                )
+            )
+        }
+        val service = testService(
+            deloadConfig = DeloadConfig(failedSessionsThreshold = null, completedSessionsInterval = 3)
+        )
+
+        val decision = kotlinx.coroutines.runBlocking { service.computeSessionDecision(exercise) }
+
+        assertEquals(ProgressionState.DELOAD, decision.progressionState)
+    }
+
+    @Test
+    fun computeSessionDecision_deloadWinsOverRetry_whenBothApply() {
+        val exerciseId = UUID.randomUUID()
+        val exercise = testExercise(id = exerciseId)
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = exerciseSessionSnapshotFromSets(emptyList()),
+                    lastSuccessfulSession = exerciseSessionSnapshotFromSets(
+                        listOf(WeightSet(UUID.randomUUID(), 10, 80.0))
+                    ),
+                    successfulSessionCounter = 0u,
+                    sessionFailedCounter = 3u,
+                    lastSessionWasDeload = false,
+                    completedSessionsSinceDeload = 0u
+                )
+            )
+        }
+        val service = testService(
+            deloadConfig = DeloadConfig(failedSessionsThreshold = 2, completedSessionsInterval = null)
+        )
+
+        val decision = kotlinx.coroutines.runBlocking { service.computeSessionDecision(exercise) }
+
+        assertEquals(ProgressionState.DELOAD, decision.progressionState)
+        assertFalse(decision.shouldLoadLastSuccessfulSession)
+    }
+
+    @Test
+    fun computeSessionDecision_afterDeload_loadsLastSuccessfulSession_andDoesNotDeloadAgain() {
+        val exerciseId = UUID.randomUUID()
+        val lastSuccessfulSession = exerciseSessionSnapshotFromSets(
+            listOf(WeightSet(UUID.randomUUID(), 8, 82.5))
+        )
+        val exercise = testExercise(id = exerciseId)
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = lastSuccessfulSession,
+                    lastSuccessfulSession = lastSuccessfulSession,
+                    successfulSessionCounter = 0u,
+                    sessionFailedCounter = 3u,
+                    lastSessionWasDeload = true,
+                    completedSessionsSinceDeload = 0u
+                )
+            )
+        }
+        val service = testService(
+            deloadConfig = DeloadConfig(failedSessionsThreshold = 2, completedSessionsInterval = null)
+        )
+
+        val decision = kotlinx.coroutines.runBlocking { service.computeSessionDecision(exercise) }
+
+        assertEquals(ProgressionState.PROGRESS, decision.progressionState)
+        assertTrue(decision.shouldLoadLastSuccessfulSession)
+        assertEquals(lastSuccessfulSession, decision.lastSuccessfulSession)
+    }
+
+    @Test
+    fun generateProgressions_resolvedDeloadOptions_changeDeloadPlan() {
+        val equipment = Dumbbell(
+            id = UUID.randomUUID(),
+            name = "DB",
+            availableDumbbells = listOf(BaseWeight(5.0), BaseWeight(10.0), BaseWeight(15.0), BaseWeight(20.0))
+        )
+        val exerciseId = UUID.randomUUID()
+        val exercise = testExercise(
+            id = exerciseId,
+            equipmentId = equipment.id,
+            deloadWeightFactor = 0.8,
+            deloadRepsDrop = 3,
+            deloadCutSetsTo = 2
+        ).copy(
+            sets = listOf(
+                WeightSet(UUID.randomUUID(), 12, 20.0),
+                WeightSet(UUID.randomUUID(), 10, 20.0),
+                WeightSet(UUID.randomUUID(), 8, 20.0)
+            )
+        )
+        val workout = Workout(
+            id = UUID.randomUUID(),
+            name = "Workout",
+            description = "",
+            workoutComponents = listOf(exercise),
+            order = 0,
+            creationDate = LocalDate.now(),
+            globalId = UUID.randomUUID(),
+            type = 0
+        )
+        kotlinx.coroutines.runBlocking {
+            database.exerciseInfoDao().insert(
+                ExerciseInfo(
+                    id = exerciseId,
+                    bestSession = exerciseSessionSnapshotFromSets(exercise.sets),
+                    lastSuccessfulSession = exerciseSessionSnapshotFromSets(exercise.sets),
+                    successfulSessionCounter = 0u,
+                    sessionFailedCounter = 2u,
+                    lastSessionWasDeload = false
+                )
+            )
+        }
+        val service = testService(
+            workoutStore = testWorkoutStore(
+                equipments = listOf(equipment),
+                deloadConfig = DeloadConfig(failedSessionsThreshold = 2, completedSessionsInterval = null)
+            )
+        )
+
+        val result = kotlinx.coroutines.runBlocking {
+            service.generateProgressions(
+                selectedWorkout = workout,
+                bodyWeightKg = 80.0,
+                getEquipmentById = { id -> if (id == equipment.id) equipment else null },
+                getWeightByEquipment = { loadedEquipment -> loadedEquipment?.getWeightsCombinations() ?: emptySet() },
+                weightsByEquipment = mutableMapOf()
+            )
+        }
+
+        val (plan, state) = result.progressionByExerciseId.getValue(exerciseId)
+        assertEquals(ProgressionState.DELOAD, state)
+        assertEquals(2, plan.sets.size)
+        assertTrue(plan.sets.all { it.weight == 15.0 })
+        assertEquals(listOf(9, 7), plan.sets.map { it.reps })
+    }
+
+    private fun testService(
+        workoutStore: WorkoutStore = testWorkoutStore(),
+        deloadConfig: DeloadConfig = workoutStore.deloadConfig,
+    ): WorkoutProgressionService {
+        val resolvedStore = workoutStore.copy(deloadConfig = deloadConfig)
+        return WorkoutProgressionService(
+            exerciseInfoDao = { database.exerciseInfoDao() },
+            setHistoryDao = { database.setHistoryDao() },
+            workoutHistoryDao = { database.workoutHistoryDao() },
+            exerciseSessionProgressionDao = { database.exerciseSessionProgressionDao() },
+            workoutStoreProvider = { resolvedStore }
+        )
+    }
+
+    private fun testWorkoutStore(
+        equipments: List<com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment> = emptyList(),
+        deloadConfig: DeloadConfig = DeloadConfig(),
+    ): WorkoutStore {
+        return WorkoutStore(
+            workouts = emptyList(),
+            equipments = equipments,
+            accessoryEquipments = emptyList(),
+            workoutPlans = emptyList(),
+            birthDateYear = 1990,
+            weightKg = 80.0,
+            progressionPercentageAmount = 0.1,
+            deloadConfig = deloadConfig
+        )
+    }
+
+    private fun testExercise(
+        id: UUID = UUID.randomUUID(),
+        equipmentId: UUID? = UUID.randomUUID(),
+        deloadFailedSessionsThreshold: Int? = null,
+        deloadCompletedSessionsInterval: Int? = null,
+        deloadWeightFactor: Double? = null,
+        deloadRepsDrop: Int? = null,
+        deloadCutSetsTo: Int? = null,
+    ): Exercise {
+        return Exercise(
+            id = id,
+            enabled = true,
+            name = "Bench",
+            notes = "",
+            sets = listOf(WeightSet(UUID.randomUUID(), 10, 80.0)),
+            exerciseType = ExerciseType.WEIGHT,
+            minReps = 6,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = equipmentId,
+            bodyWeightPercentage = null,
+            progressionMode = ProgressionMode.DOUBLE_PROGRESSION,
+            deloadFailedSessionsThreshold = deloadFailedSessionsThreshold,
+            deloadCompletedSessionsInterval = deloadCompletedSessionsInterval,
+            deloadWeightFactor = deloadWeightFactor,
+            deloadRepsDrop = deloadRepsDrop,
+            deloadCutSetsTo = deloadCutSetsTo
+        )
     }
 }

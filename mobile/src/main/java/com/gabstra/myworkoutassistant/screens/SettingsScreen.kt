@@ -58,6 +58,7 @@ import com.gabstra.myworkoutassistant.getHistoricalRestingHeartRateFromHealthCon
 import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.RemoteOpenAiConfig
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
+import com.gabstra.myworkoutassistant.shared.DeloadConfig
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WhoopHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
@@ -110,6 +111,21 @@ fun SettingsScreen(
     val measuredMaxHeartRateState = remember { mutableStateOf(workoutStore.measuredMaxHeartRate?.toString() ?: "") }
     val restingHeartRateState = remember {
         mutableStateOf(getEffectiveRestingHeartRate(workoutStore.restingHeartRate).toString())
+    }
+    val deloadFailedSessionsThresholdState = remember {
+        mutableStateOf(workoutStore.deloadConfig.failedSessionsThreshold?.toString() ?: "")
+    }
+    val deloadCompletedSessionsIntervalState = remember {
+        mutableStateOf(workoutStore.deloadConfig.completedSessionsInterval?.toString() ?: "")
+    }
+    val deloadWeightFactorState = remember {
+        mutableStateOf(workoutStore.deloadConfig.weightFactor.toString())
+    }
+    val deloadRepsDropState = remember {
+        mutableStateOf(workoutStore.deloadConfig.repsDrop.toString())
+    }
+    val deloadCutSetsToState = remember {
+        mutableStateOf(workoutStore.deloadConfig.cutSetsTo?.toString() ?: "")
     }
     val mobileLlmEnabledState = remember { mutableStateOf(mobileLlmEnabled) }
     val workoutInsightsModeState = remember { mutableStateOf(workoutInsightsMode) }
@@ -339,6 +355,95 @@ fun SettingsScreen(
                                 }
                             }
                         },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(Spacing.sm))
+            FormSectionTitle("Training & Progression")
+            StyledCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    ContentSubtitle(
+                        text = "Global deload defaults apply when an exercise keeps a field on \"use global\". Leave both trigger thresholds blank to disable automatic deload by default.",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = deloadFailedSessionsThresholdState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                deloadFailedSessionsThresholdState.value = input
+                            }
+                        },
+                        label = { Text("Failed sessions threshold") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = deloadCompletedSessionsIntervalState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                deloadCompletedSessionsIntervalState.value = input
+                            }
+                        },
+                        label = { Text("Completed sessions interval") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = deloadWeightFactorState.value,
+                        onValueChange = { input ->
+                            if (
+                                input.isEmpty() ||
+                                (input.count { it == '.' } <= 1 &&
+                                    input.all { it.isDigit() || it == '.' } &&
+                                    !input.startsWith("."))
+                            ) {
+                                deloadWeightFactorState.value = input
+                            }
+                        },
+                        label = { Text("Deload weight factor") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = deloadRepsDropState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                deloadRepsDropState.value = input
+                            }
+                        },
+                        label = { Text("Deload reps drop") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = deloadCutSetsToState.value,
+                        onValueChange = { input ->
+                            if (input.isEmpty() || input.all { it.isDigit() }) {
+                                deloadCutSetsToState.value = input
+                            }
+                        },
+                        label = { Text("Cut sets to (optional)") },
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(8.dp)
@@ -622,6 +727,39 @@ fun SettingsScreen(
                             Toast.makeText(context, "Enter a valid resting heart rate.", Toast.LENGTH_SHORT).show()
                             return@AppPrimaryButton
                         }
+                        val deloadFailedSessionsThreshold =
+                            deloadFailedSessionsThresholdState.value.toIntOrNull()
+                        if (deloadFailedSessionsThresholdState.value.isNotBlank() &&
+                            (deloadFailedSessionsThreshold == null || deloadFailedSessionsThreshold < 1)
+                        ) {
+                            Toast.makeText(context, "Enter a valid failed sessions threshold.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+                        val deloadCompletedSessionsInterval =
+                            deloadCompletedSessionsIntervalState.value.toIntOrNull()
+                        if (deloadCompletedSessionsIntervalState.value.isNotBlank() &&
+                            (deloadCompletedSessionsInterval == null || deloadCompletedSessionsInterval < 1)
+                        ) {
+                            Toast.makeText(context, "Enter a valid completed sessions interval.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+                        val deloadWeightFactor = deloadWeightFactorState.value.toDoubleOrNull()
+                        if (deloadWeightFactor == null || deloadWeightFactor <= 0.0 || deloadWeightFactor > 1.0) {
+                            Toast.makeText(context, "Enter a deload weight factor between 0 and 1.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+                        val deloadRepsDrop = deloadRepsDropState.value.toIntOrNull()
+                        if (deloadRepsDrop == null || deloadRepsDrop < 0) {
+                            Toast.makeText(context, "Enter a valid deload reps drop.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
+                        val deloadCutSetsTo = deloadCutSetsToState.value.toIntOrNull()
+                        if (deloadCutSetsToState.value.isNotBlank() &&
+                            (deloadCutSetsTo == null || deloadCutSetsTo < 1)
+                        ) {
+                            Toast.makeText(context, "Enter a valid cut sets value.", Toast.LENGTH_SHORT).show()
+                            return@AppPrimaryButton
+                        }
 
                         val externalHeartRateConfigs = buildList {
                             val polarDeviceId = polarDeviceIdState.value.trim()
@@ -650,6 +788,13 @@ fun SettingsScreen(
                             externalHeartRateConfigs = externalHeartRateConfigs,
                             birthDateYear = birthDateYear,
                             weightKg = weight,
+                            deloadConfig = DeloadConfig(
+                                failedSessionsThreshold = deloadFailedSessionsThreshold,
+                                completedSessionsInterval = deloadCompletedSessionsInterval,
+                                weightFactor = deloadWeightFactor,
+                                repsDrop = deloadRepsDrop,
+                                cutSetsTo = deloadCutSetsTo
+                            ),
                             measuredMaxHeartRate = measuredMaxHeartRate,
                             restingHeartRate = restingHeartRate
                         )

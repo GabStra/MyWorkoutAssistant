@@ -5,6 +5,7 @@ import com.gabstra.myworkoutassistant.shared.WorkoutStore
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WeeklyProgressOverride
 import com.gabstra.myworkoutassistant.shared.ExternalHeartRateConfig
+import com.gabstra.myworkoutassistant.shared.DeloadConfig
 import com.gabstra.myworkoutassistant.shared.PolarHeartRateConfig
 import com.gabstra.myworkoutassistant.shared.equipments.AccessoryEquipment
 import com.gabstra.myworkoutassistant.shared.equipments.WeightLoadedEquipment
@@ -77,6 +78,30 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
         val birthDateYear = jsonObject.get("birthDateYear")?.asInt ?: 0
         val weightKg = jsonObject.get("weightKg")?.asDouble ?: 0.0
         val progressionPercentageAmount = jsonObject.get("progressionPercentageAmount")?.asDouble ?: 0.0
+        val deloadConfig = jsonObject.get("deloadConfig")?.let { element ->
+            if (element.isJsonNull) {
+                DeloadConfig()
+            } else {
+                val deloadObject = element.asJsonObject
+                DeloadConfig(
+                    failedSessionsThreshold = deloadObject.get("failedSessionsThreshold")?.let {
+                        if (it.isJsonNull) null else it.asInt
+                    } ?: DeloadConfig.DEFAULT_FAILED_SESSIONS_THRESHOLD,
+                    completedSessionsInterval = deloadObject.get("completedSessionsInterval")?.let {
+                        if (it.isJsonNull) null else it.asInt
+                    } ?: DeloadConfig.DEFAULT_COMPLETED_SESSIONS_INTERVAL,
+                    weightFactor = deloadObject.get("weightFactor")?.let {
+                        if (it.isJsonNull) DeloadConfig.DEFAULT_WEIGHT_FACTOR else it.asDouble
+                    } ?: DeloadConfig.DEFAULT_WEIGHT_FACTOR,
+                    repsDrop = deloadObject.get("repsDrop")?.let {
+                        if (it.isJsonNull) DeloadConfig.DEFAULT_REPS_DROP else it.asInt
+                    } ?: DeloadConfig.DEFAULT_REPS_DROP,
+                    cutSetsTo = deloadObject.get("cutSetsTo")?.let {
+                        if (it.isJsonNull) null else it.asInt
+                    } ?: DeloadConfig.DEFAULT_CUT_SETS_TO
+                )
+            }
+        } ?: DeloadConfig()
         val measuredMaxHeartRate = jsonObject.get("measuredMaxHeartRate")?.let {
             if (it.isJsonNull) null else it.asInt
         }
@@ -94,6 +119,7 @@ class WorkoutStoreAdapter : JsonDeserializer<WorkoutStore> {
             birthDateYear = birthDateYear,
             weightKg = weightKg,
             progressionPercentageAmount = progressionPercentageAmount,
+            deloadConfig = deloadConfig,
             measuredMaxHeartRate = measuredMaxHeartRate,
             restingHeartRate = restingHeartRate
         )

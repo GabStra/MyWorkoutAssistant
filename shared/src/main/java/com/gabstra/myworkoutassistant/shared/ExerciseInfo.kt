@@ -14,6 +14,7 @@ data class ExerciseInfo(
     val successfulSessionCounter: UInt,
     val sessionFailedCounter: UInt,
     val lastSessionWasDeload: Boolean,
+    val completedSessionsSinceDeload: UInt = 0u,
     val timesCompletedInAWeek: Int = 0,
     val weeklyCompletionUpdateDate: LocalDate? = null,
     val version: UInt = 0u

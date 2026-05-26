@@ -27,11 +27,13 @@ object PhoneToWatchSyncCoordinator {
     private const val FOLLOW_UP_ENQUEUE_DELAY_MS = 100L
     private const val PREFS_NAME = "phone_to_watch_sync_coordinator"
     private const val KEY_PENDING_FOLLOW_UP = "pending_follow_up_sync"
+    private const val KEY_PENDING_MANUAL_OVERRIDE = "pending_manual_override_sync"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
     private var debounceJob: Job? = null
     private val pendingFollowUp = AtomicBoolean(false)
+    private val pendingManualOverride = AtomicBoolean(false)
     private val isWorkerRunning = AtomicBoolean(false)
 
     private var installed = false
@@ -40,6 +42,22 @@ object PhoneToWatchSyncCoordinator {
         pendingFollowUp.set(pending)
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_PENDING_FOLLOW_UP, pending)
+            .apply()
+    }
+
+    private fun setPendingManualOverride(context: Context, pending: Boolean) {
+        pendingManualOverride.set(pending)
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_PENDING_MANUAL_OVERRIDE, pending)
+            .apply()
+    }
+
+    private fun clearPendingSyncFlags(context: Context) {
+        pendingFollowUp.set(false)
+        pendingManualOverride.set(false)
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_PENDING_FOLLOW_UP, false)
+            .putBoolean(KEY_PENDING_MANUAL_OVERRIDE, false)
             .apply()
     }
 
@@ -61,12 +79,19 @@ object PhoneToWatchSyncCoordinator {
         scope.launch {
             delay(400)
             val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            if (prefs.getBoolean(KEY_PENDING_FOLLOW_UP, false)) {
+            val hadPendingManualOverride = prefs.getBoolean(KEY_PENDING_MANUAL_OVERRIDE, false)
+            val hadPendingFollowUp = prefs.getBoolean(KEY_PENDING_FOLLOW_UP, false)
+            if (hadPendingManualOverride || hadPendingFollowUp) {
                 mutex.withLock {
-                    setPendingFollowUp(appContext, false)
+                    clearPendingSyncFlags(appContext)
                 }
-                MobileSyncToWatchWorker.enqueue(appContext)
-                Log.d(TAG, "install: had persisted pending follow-up, enqueued mobile sync to watch")
+                if (hadPendingManualOverride) {
+                    MobileSyncToWatchWorker.enqueueManual(appContext)
+                    Log.d(TAG, "install: had persisted manual override, enqueued immediate mobile sync to watch")
+                } else {
+                    MobileSyncToWatchWorker.enqueue(appContext)
+                    Log.d(TAG, "install: had persisted pending follow-up, enqueued mobile sync to watch")
+                }
             }
         }
     }
@@ -150,8 +175,9 @@ object PhoneToWatchSyncCoordinator {
             debounceJob?.cancel()
             debounceJob = null
             if (isWorkerRunning.get()) {
-                setPendingFollowUp(appContext, true)
-                Log.d(TAG, "manual sync: worker running, pending follow-up set")
+                setPendingManualOverride(appContext, true)
+                setPendingFollowUp(appContext, false)
+                Log.d(TAG, "manual sync: worker running, immediate manual follow-up requested")
             } else {
                 MobileSyncToWatchWorker.enqueueManual(appContext)
                 Log.d(TAG, "manual sync: replaced pending work and enqueued mobile sync to watch")
@@ -163,7 +189,11 @@ object PhoneToWatchSyncCoordinator {
         scope.launch {
             delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
             mutex.withLock {
-                if (pendingFollowUp.compareAndSet(true, false)) {
+                if (pendingManualOverride.compareAndSet(true, false)) {
+                    setPendingManualOverride(appContext, false)
+                    MobileSyncToWatchWorker.enqueueManual(appContext)
+                    Log.d(TAG, "after successful sync, enqueued immediate manual override")
+                } else if (pendingFollowUp.compareAndSet(true, false)) {
                     setPendingFollowUp(appContext, false)
                     MobileSyncToWatchWorker.enqueue(appContext)
                     Log.d(TAG, "after successful sync, enqueued follow-up from pending")
@@ -172,8 +202,18 @@ object PhoneToWatchSyncCoordinator {
         }
     }
 
-    internal fun onWorkerSyncAttemptWillRetry(appContext: Context) {
+    internal fun onWorkerSyncAttemptWillRetry(appContext: Context): Boolean {
+        if (pendingManualOverride.compareAndSet(true, false)) {
+            setPendingManualOverride(appContext, false)
+            scope.launch {
+                delay(FOLLOW_UP_ENQUEUE_DELAY_MS)
+                MobileSyncToWatchWorker.enqueueManual(appContext)
+                Log.d(TAG, "worker failed; replaced retry backoff with immediate manual override")
+            }
+            return false
+        }
         setPendingFollowUp(appContext, false)
         Log.d(TAG, "worker will retry; cleared pending (retry sends latest state)")
+        return true
     }
 }

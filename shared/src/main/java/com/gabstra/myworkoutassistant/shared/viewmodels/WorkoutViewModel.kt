@@ -243,7 +243,8 @@ open class WorkoutViewModel(
             exerciseInfoDao = { exerciseInfoDao },
             setHistoryDao = { setHistoryDao },
             workoutHistoryDao = { workoutHistoryDao },
-            exerciseSessionProgressionDao = { exerciseSessionProgressionDao }
+            exerciseSessionProgressionDao = { exerciseSessionProgressionDao },
+            workoutStoreProvider = { workoutStore }
         )
     }
 
@@ -1720,7 +1721,7 @@ open class WorkoutViewModel(
             (key.exerciseId to key.setId) to value
         }
         validExercises.forEach { exercise ->
-            val sessionDecision = computeSessionDecision(exercise.id)
+            val sessionDecision = computeSessionDecision(exercise)
             val validSets = workoutProgressionService.buildPreProcessedSets(
                 exercise = exercise,
                 latestSetHistoryByKey = latestSetHistoryByKey,
@@ -1773,9 +1774,9 @@ open class WorkoutViewModel(
     }
 
     suspend fun computeSessionDecision(
-        exerciseId: UUID,
+        exercise: Exercise,
     ): SessionDecision {
-        return workoutProgressionService.computeSessionDecision(exerciseId)
+        return workoutProgressionService.computeSessionDecision(exercise)
     }
 
     /**

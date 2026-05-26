@@ -93,6 +93,21 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 if (src.exerciseCategory != null) {
                     jsonObject.addProperty("exerciseCategory", src.exerciseCategory.name)
                 }
+                if (src.deloadFailedSessionsThreshold != null) {
+                    jsonObject.addProperty("deloadFailedSessionsThreshold", src.deloadFailedSessionsThreshold)
+                }
+                if (src.deloadCompletedSessionsInterval != null) {
+                    jsonObject.addProperty("deloadCompletedSessionsInterval", src.deloadCompletedSessionsInterval)
+                }
+                if (src.deloadWeightFactor != null) {
+                    jsonObject.addProperty("deloadWeightFactor", src.deloadWeightFactor)
+                }
+                if (src.deloadRepsDrop != null) {
+                    jsonObject.addProperty("deloadRepsDrop", src.deloadRepsDrop)
+                }
+                if (src.deloadCutSetsTo != null) {
+                    jsonObject.addProperty("deloadCutSetsTo", src.deloadCutSetsTo)
+                }
             }
 
             is Rest -> {
@@ -264,6 +279,31 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                 } else {
                     false
                 }
+                val deloadFailedSessionsThreshold = if (jsonObject.has("deloadFailedSessionsThreshold") && !jsonObject.get("deloadFailedSessionsThreshold").isJsonNull) {
+                    jsonObject.get("deloadFailedSessionsThreshold").asInt
+                } else {
+                    null
+                }
+                val deloadCompletedSessionsInterval = if (jsonObject.has("deloadCompletedSessionsInterval") && !jsonObject.get("deloadCompletedSessionsInterval").isJsonNull) {
+                    jsonObject.get("deloadCompletedSessionsInterval").asInt
+                } else {
+                    null
+                }
+                val deloadWeightFactor = if (jsonObject.has("deloadWeightFactor") && !jsonObject.get("deloadWeightFactor").isJsonNull) {
+                    jsonObject.get("deloadWeightFactor").asDouble
+                } else {
+                    null
+                }
+                val deloadRepsDrop = if (jsonObject.has("deloadRepsDrop") && !jsonObject.get("deloadRepsDrop").isJsonNull) {
+                    jsonObject.get("deloadRepsDrop").asInt
+                } else {
+                    null
+                }
+                val deloadCutSetsTo = if (jsonObject.has("deloadCutSetsTo") && !jsonObject.get("deloadCutSetsTo").isJsonNull) {
+                    jsonObject.get("deloadCutSetsTo").asInt
+                } else {
+                    null
+                }
 
                 // Support both exerciseCategory and legacy warmupCategory for backward compatibility
                 val exerciseCategory = when {
@@ -309,7 +349,12 @@ class WorkoutComponentAdapter : JsonSerializer<WorkoutComponent>,
                     secondaryMuscleGroups,
                     requiredAccessoryEquipmentIds,
                     requiresLoadCalibration,
-                    exerciseCategory
+                    exerciseCategory,
+                    deloadFailedSessionsThreshold,
+                    deloadCompletedSessionsInterval,
+                    deloadWeightFactor,
+                    deloadRepsDrop,
+                    deloadCutSetsTo
                 )
             }
 

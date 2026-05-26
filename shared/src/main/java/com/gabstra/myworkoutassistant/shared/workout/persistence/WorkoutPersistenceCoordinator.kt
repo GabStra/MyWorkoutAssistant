@@ -19,7 +19,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.replaceSetsInExerciseRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutManager.Companion.updateWorkoutComponentsRecursively
 import com.gabstra.myworkoutassistant.shared.WorkoutStore
+import com.gabstra.myworkoutassistant.shared.resolveDeloadConfig
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
+import com.gabstra.myworkoutassistant.shared.resolveProgressionDecision
 import com.gabstra.myworkoutassistant.shared.copySetData
 import com.gabstra.myworkoutassistant.shared.sortedLatestFirst
 import com.gabstra.myworkoutassistant.shared.workout.history.ExerciseSessionReconstruction
@@ -449,11 +451,12 @@ internal class WorkoutPersistenceCoordinator(
                         id = exerciseId,
                         bestSession = currentSessionSnapshot,
                         lastSuccessfulSession = currentSessionSnapshot,
-                        successfulSessionCounter = 1u,
+                        successfulSessionCounter = if (isDeloadSession) 0u else 1u,
                         sessionFailedCounter = 0u,
+                        completedSessionsSinceDeload = if (isDeloadSession) 0u else 1u,
                         timesCompletedInAWeek = weeklyCount,
                         weeklyCompletionUpdateDate = today,
-                        lastSessionWasDeload = false,
+                        lastSessionWasDeload = isDeloadSession,
                     )
                     exerciseInfoDaoRef.insert(newExerciseInfo)
                 } else {
@@ -463,10 +466,14 @@ internal class WorkoutPersistenceCoordinator(
                         updatedInfo = updatedInfo.copy(
                             sessionFailedCounter = 0u,
                             successfulSessionCounter = 0u,
+                            completedSessionsSinceDeload = 0u,
                             lastSessionWasDeload = true
                         )
                     } else {
-                        updatedInfo = updatedInfo.copy(lastSessionWasDeload = false)
+                        updatedInfo = updatedInfo.copy(
+                            lastSessionWasDeload = false,
+                            completedSessionsSinceDeload = updatedInfo.completedSessionsSinceDeload.inc()
+                        )
 
                         val bestSessionSets = toExecutedWorkSets(updatedInfo.bestSession)
 
