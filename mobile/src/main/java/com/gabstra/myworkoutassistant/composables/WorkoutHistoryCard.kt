@@ -1,6 +1,5 @@
 package com.gabstra.myworkoutassistant.composables
 
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.AppViewModel
 import com.gabstra.myworkoutassistant.ScreenData
@@ -69,47 +69,75 @@ fun WorkoutHistoryCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    modifier = Modifier
-                        .weight(1f)
-                        .basicMarquee(iterations = Int.MAX_VALUE),
+                    modifier = Modifier.weight(1f),
                     text = workout.name,
                     color = if (workout.enabled) MaterialTheme.colorScheme.onBackground else DisabledContentGray,
                     style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                workoutSessionDisplayLabel(sessionStatus)?.let { label ->
+
+                if (workoutHistory.isDone) {
                     Text(
-                        text = label,
+                        text = buildString {
+                            append(workoutHistory.startTime.toLocalTime().format(timeFormatter))
+                            append("-")
+                            append(
+                                workoutHistory.startTime
+                                    .plusSeconds(workoutHistory.duration.toLong())
+                                    .toLocalTime()
+                                    .format(timeFormatter)
+                            )
+                        },
+                        textAlign = TextAlign.End,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
-            if (statusBadgeText != null) {
-                Text(
-                    modifier = Modifier
-                        .background(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(999.dp)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                    text = statusBadgeText,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                workoutSessionDisplayLabel(sessionStatus)?.let { label ->
+                    SessionInfoPill(
+                        text = label,
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (statusBadgeText != null) {
+                    SessionInfoPill(
+                        text = statusBadgeText,
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
-
-        if (workoutHistory.isDone) {
-            Text(
-                text = workoutHistory.time.format(timeFormatter),
-                textAlign = TextAlign.End,
-                color = MaterialTheme.colorScheme.onBackground,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-        }
     }
+}
+
+@Composable
+fun SessionInfoPill(
+    text: String,
+    backgroundColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+) {
+    Text(
+        modifier = Modifier
+            .background(
+                color = backgroundColor,
+                shape = RoundedCornerShape(999.dp)
+            )
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        text = text,
+        color = contentColor,
+        style = MaterialTheme.typography.labelSmall,
+    )
 }

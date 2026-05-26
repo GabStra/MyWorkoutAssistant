@@ -1,7 +1,6 @@
 package com.gabstra.myworkoutassistant.screens
 
 import android.util.Log
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -392,7 +391,6 @@ private fun WorkoutSessionActionCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .animateContentSize()
         ) {
             when {
             isCheckingWorkoutRecord -> {

@@ -35,6 +35,7 @@ import com.gabstra.myworkoutassistant.composables.AppPrimaryOutlinedButton
 import com.gabstra.myworkoutassistant.composables.AppSecondaryButton
 import com.gabstra.myworkoutassistant.composables.DashedCard
 import com.gabstra.myworkoutassistant.composables.ExpandableContainer
+import com.gabstra.myworkoutassistant.composables.ExternalWorkoutSessionCard
 import com.gabstra.myworkoutassistant.composables.ObjectiveProgressBar
 import com.gabstra.myworkoutassistant.composables.StandardDialog
 import com.gabstra.myworkoutassistant.composables.StyledCard
@@ -70,14 +71,14 @@ fun WorkoutsStatusTab(
     selectedWeekStart: LocalDate,
     selectedWeekEnd: LocalDate,
     completedWeekStarts: Set<LocalDate>,
-    selectedWeekWorkoutsByDate: Map<LocalDate, List<WeeklyStatusWorkoutHistory>>?,
+    selectedWeekSessionsByDate: Map<LocalDate, List<WorkoutStatusSessionEntry>>?,
     weeklyProgressSnapshot: WeeklyProgressSnapshot,
     appViewModel: AppViewModel,
     onDayClicked: (CalendarState, CalendarDay) -> Unit,
-    highlightDay: (CalendarDay) -> Boolean,
+    activityKindForDay: (CalendarDay) -> WorkoutCalendarActivityKind,
     onSaveWeeklyProgressSelection: (Set<UUID>) -> Unit,
     onClearWeeklyProgressSelection: () -> Unit,
-    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
+    activityDates: Set<LocalDate> = emptySet(),
     workoutHistorySessionStatuses: Map<UUID, WorkoutSessionStatus?>? = null,
 ) {
     val scrollState = rememberScrollState()
@@ -216,7 +217,7 @@ fun WorkoutsStatusTab(
                 DateTimeFormatter.ofPattern("d MMM yyyy", currentLocale)
             )
         }
-        if (groupedWorkoutsHistories == null) {
+        if (activityDates.isEmpty() && isLoading) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -239,8 +240,8 @@ fun WorkoutsStatusTab(
                     onDayClicked = { calendarState, day ->
                         onDayClicked(calendarState, day)
                     },
-                    shouldHighlight = { day -> highlightDay(day) },
-                    groupedWorkoutsHistories = groupedWorkoutsHistories
+                    activityKindForDay = { day -> activityKindForDay(day) },
+                    activityDates = activityDates,
                 )
             }
             if (isLoading) {
@@ -386,7 +387,7 @@ fun WorkoutsStatusTab(
                             color = MaterialTheme.colorScheme.onBackground
                         )
 
-                        if (selectedWeekWorkoutsByDate.isNullOrEmpty()) {
+                        if (selectedWeekSessionsByDate.isNullOrEmpty()) {
                             Box(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
@@ -400,9 +401,9 @@ fun WorkoutsStatusTab(
                             }
                         } else {
                             val dayFormatter = DateTimeFormatter.ofPattern("EEE d MMM", currentLocale)
-                            selectedWeekWorkoutsByDate.entries
+                            selectedWeekSessionsByDate.entries
                                 .sortedBy { it.key }
-                                .forEach { (date, dayWorkouts) ->
+                                .forEach { (date, daySessions) ->
                                     Text(
                                         modifier = Modifier.fillMaxWidth(),
                                         text = date.format(dayFormatter),
@@ -411,7 +412,7 @@ fun WorkoutsStatusTab(
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
                                     WorkoutHistoriesByWorkoutGroup(
-                                        dayWorkouts = dayWorkouts,
+                                        daySessions = daySessions,
                                         appViewModel = appViewModel,
                                         timeFormatter = timeFormatter,
                                         sessionStatusesByHistoryId = workoutHistorySessionStatuses,
@@ -427,95 +428,104 @@ fun WorkoutsStatusTab(
 
 @Composable
 private fun WorkoutHistoriesByWorkoutGroup(
-    dayWorkouts: List<WeeklyStatusWorkoutHistory>,
+    daySessions: List<WorkoutStatusSessionEntry>,
     appViewModel: AppViewModel,
     timeFormatter: DateTimeFormatter,
     sessionStatusesByHistoryId: Map<UUID, WorkoutSessionStatus?>?,
 ) {
-    dayWorkouts
-        .groupBy { it.workout.id }
-        .forEach { (_, historyAndWorkoutList) ->
-            val moreThanOneWorkout = historyAndWorkoutList.size > 1
-            if (moreThanOneWorkout) {
-                val workout = historyAndWorkoutList[0].workout
-                ExpandableContainer(
-                    title = { modifier ->
-                        Row(
-                            modifier = modifier,
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .size(30.dp)
-                                    .background(MaterialTheme.colorScheme.primary),
-                                contentAlignment = Alignment.Center
+    buildWorkoutStatusRenderBlocks(daySessions).forEach { block ->
+        when (block) {
+            is AppWorkoutStatusSessionGroup -> {
+                val firstSession = block.sessions.first().weeklyStatusWorkoutHistory
+                if (block.sessions.size > 1) {
+                    ExpandableContainer(
+                        title = { modifier ->
+                            Row(
+                                modifier = modifier,
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = historyAndWorkoutList.size.toString(),
-                                    color = MaterialTheme.colorScheme.background,
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
-                            Text(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(start = 5.dp),
-                                text = workout.name,
-                                color = if (workout.enabled) {
-                                    MaterialTheme.colorScheme.onBackground
-                                } else {
-                                    DisabledContentGray
-                                },
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                    },
-                    content = {
-                        DashedCard {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                historyAndWorkoutList.forEach { dayWorkout ->
-                                    WorkoutHistoryCard(
-                                        workoutHistory = dayWorkout.workoutHistory,
-                                        workout = dayWorkout.workout,
-                                        appViewModel = appViewModel,
-                                        timeFormatter = timeFormatter,
-                                        sessionStatus = sessionStatusesByHistoryId?.get(
-                                            dayWorkout.workoutHistory.id
-                                        ),
-                                        statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
-                                            "Not counted"
-                                        } else {
-                                            null
-                                        }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .size(30.dp)
+                                        .background(MaterialTheme.colorScheme.primary),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        text = block.sessions.size.toString(),
+                                        color = MaterialTheme.colorScheme.background,
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.titleMedium,
                                     )
                                 }
+                                Text(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 5.dp),
+                                    text = firstSession.workout.name,
+                                    color = if (firstSession.workout.enabled) {
+                                        MaterialTheme.colorScheme.onBackground
+                                    } else {
+                                        DisabledContentGray
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
                             }
-                        }
-                    }
-                )
-            } else {
-                val dayWorkout = historyAndWorkoutList[0]
-                WorkoutHistoryCard(
-                    workoutHistory = dayWorkout.workoutHistory,
-                    workout = dayWorkout.workout,
+                        },
+                        content = {
+                            DashedCard {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    block.sessions.forEach { appSession ->
+                                        val dayWorkout = appSession.weeklyStatusWorkoutHistory
+                                        WorkoutHistoryCard(
+                                            workoutHistory = dayWorkout.workoutHistory,
+                                            workout = dayWorkout.workout,
+                                            appViewModel = appViewModel,
+                                            timeFormatter = timeFormatter,
+                                            sessionStatus = sessionStatusesByHistoryId?.get(
+                                                dayWorkout.workoutHistory.id,
+                                            ),
+                                            statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
+                                                "Not counted"
+                                            } else {
+                                                null
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    WorkoutHistoryCard(
+                        workoutHistory = firstSession.workoutHistory,
+                        workout = firstSession.workout,
+                        appViewModel = appViewModel,
+                        timeFormatter = timeFormatter,
+                        sessionStatus = sessionStatusesByHistoryId?.get(firstSession.workoutHistory.id),
+                        statusBadgeText = if (firstSession.isExcludedFromWeeklyProgress) {
+                            "Not counted"
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
+
+            is ExternalWorkoutStatusSessionBlock -> {
+                ExternalWorkoutSessionCard(
+                    session = block.session.session,
                     appViewModel = appViewModel,
                     timeFormatter = timeFormatter,
-                    sessionStatus = sessionStatusesByHistoryId?.get(dayWorkout.workoutHistory.id),
-                    statusBadgeText = if (dayWorkout.isExcludedFromWeeklyProgress) {
-                        "Not counted"
-                    } else {
-                        null
-                    }
                 )
             }
         }
+    }
 }
