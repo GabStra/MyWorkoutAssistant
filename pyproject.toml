@@ -8,6 +8,7 @@ dependencies = [
     "openai>=1.0.0",
     "httpx>=0.27.0",
     "jsonschema>=4.0.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -15,8 +16,13 @@ test = [
     "pytest>=8.0.0",
 ]
 
-[tool.setuptools]
-packages = ["workout_history_mcp", "workout_generator_pkg"]
+[tool.setuptools.packages.find]
+include = [
+    "workout_history_mcp",
+    "workout_generator_pkg",
+    "motion_annotation_pkg",
+    "motion_annotation_pkg.*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

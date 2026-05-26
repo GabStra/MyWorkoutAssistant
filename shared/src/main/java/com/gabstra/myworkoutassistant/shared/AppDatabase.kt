@@ -19,6 +19,10 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.TernaryTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.TimeTypeConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UIntConverter
 import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSegmentEntity
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionDao
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureSessionEntity
 
 @Database(
     entities = [
@@ -29,9 +33,11 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
         ExerciseInfo::class,
         WorkoutSchedule::class,
         ExerciseSessionProgression::class,
-        ErrorLog::class
+        ErrorLog::class,
+        MotionCaptureSessionEntity::class,
+        MotionCaptureSegmentEntity::class
     ],
-    version = 58,
+    version = 60,
     exportSchema = false
 )
 @TypeConverters(
@@ -58,6 +64,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun workoutScheduleDao(): WorkoutScheduleDao
     abstract fun exerciseSessionProgressionDao(): ExerciseSessionProgressionDao
     abstract fun errorLogDao(): ErrorLogDao
+    abstract fun motionCaptureSessionDao(): MotionCaptureSessionDao
+    abstract fun motionCaptureSegmentDao(): MotionCaptureSegmentDao
 
     companion object {
         @Volatile

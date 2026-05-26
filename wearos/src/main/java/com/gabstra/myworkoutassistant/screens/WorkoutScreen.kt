@@ -142,6 +142,9 @@ fun WorkoutScreen(
                 } else {
                     hrViewModel.stopMeasuringHeartRate()
                 }
+                scope.launch {
+                    viewModel.stopMotionCaptureForExit()
+                }
             } catch (exception: Exception) {
                 android.util.Log.e("WorkoutScreen", "Error stopping sensors on Go Home", exception)
             }
@@ -340,6 +343,7 @@ fun WorkoutScreen(
                 scope.launch {
                     try {
                         viewModel.flushTimerState()
+                        viewModel.pauseMotionCaptureForBackground()
                         // Persist a fresh recovery snapshot after timer flush so process-death
                         // recovery uses the exact paused timer value.
                         viewModel.persistRecoverySnapshotNow(synchronous = true)

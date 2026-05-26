@@ -79,6 +79,7 @@ fun WorkoutDetailScreen(
     val hasWorkoutRecord by viewModel.hasWorkoutRecord.collectAsState()
     val hasExercises by viewModel.hasExercises.collectAsState()
     val isCheckingWorkoutRecord by viewModel.isCheckingWorkoutRecord.collectAsState()
+    val motionCaptureUiState by viewModel.motionCaptureUiState.collectAsState()
     // Track when checking started and ensure minimum display time to prevent flashing
     var showLoading by remember(selectedWorkoutId) { mutableStateOf(true) }
     var checkStartTime by remember(selectedWorkoutId) { mutableStateOf(System.currentTimeMillis()) }
@@ -231,6 +232,25 @@ fun WorkoutDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+
+                    item {
+                        ButtonWithText(
+                            modifier = Modifier
+                                .semantics { contentDescription = "Toggle motion dataset recording" }
+                                .fillMaxWidth()
+                                .transformedHeight(this, spec),
+                            transformation = SurfaceTransformation(spec),
+                            text = if (motionCaptureUiState.collectionEnabled) {
+                                "Motion dataset: On"
+                            } else {
+                                "Motion dataset: Off"
+                            },
+                            onClick = {
+                                hapticsViewModel.doGentleVibration()
+                                viewModel.setMotionCaptureEnabled(!motionCaptureUiState.collectionEnabled)
+                            }
+                        )
                     }
 
                     item {

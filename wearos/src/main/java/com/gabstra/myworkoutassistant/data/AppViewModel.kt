@@ -69,6 +69,7 @@ import com.gabstra.myworkoutassistant.e2e.E2eRuntimePreferences
 import com.gabstra.myworkoutassistant.sync.WorkoutHistoryTransferCoordinator
 import com.gabstra.myworkoutassistant.sync.WorkoutHistorySyncWorker
 import com.gabstra.myworkoutassistant.shared.UNASSIGNED_PLAN_NAME
+import com.gabstra.myworkoutassistant.shared.motion.MotionCaptureExerciseCandidate
 import com.gabstra.myworkoutassistant.shared.workout.recovery.CalibrationRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.DecodedRecoveryRuntimeSnapshot
 import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryPromptUiState
@@ -77,6 +78,7 @@ import com.gabstra.myworkoutassistant.shared.workout.recovery.RecoveryStateType
 import com.gabstra.myworkoutassistant.shared.workout.recovery.TimerRecoveryChoice
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoveryCheckpoint
 import com.gabstra.myworkoutassistant.shared.workout.recovery.WorkoutRecoverySnapshotCodec
+import com.gabstra.myworkoutassistant.repository.MotionSensorRepository
 
 internal enum class WorkoutHistorySyncRequestMode {
     Debounced,
@@ -111,6 +113,7 @@ open class AppViewModel : WorkoutViewModel() {
     private var workoutSessionHeartbeatJob: Job? = null
     private var activeDirectSyncJob: Job? = null
     private var activeDirectSyncClaim: WearDirectHistorySyncClaim? = null
+    private var motionCaptureCoordinator: MotionCaptureCoordinator? = null
 
     /** Pending sync: transactionId -> workoutHistoryId. Cleared on process death; those histories stay unsynced and retry at start. */
     private val pendingSyncTransactions = mutableMapOf<String, UUID>()
@@ -120,7 +123,60 @@ open class AppViewModel : WorkoutViewModel() {
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
+        if (motionCaptureCoordinator == null) {
+            val appContext = context.applicationContext
+            motionCaptureCoordinator = MotionCaptureCoordinator(
+                context = appContext,
+                appDatabase = AppDatabase.getDatabase(appContext),
+                sensorRepository = MotionSensorRepository(appContext),
+                scope = viewModelScope,
+                activeWorkoutHistoryIdProvider = { currentWorkoutHistory?.id ?: _workoutRecord?.workoutHistoryId },
+                appVersionProvider = {
+                    runCatching {
+                        val packageInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+                        packageInfo.versionName ?: packageInfo.longVersionCode.toString()
+                    }.getOrDefault("unknown")
+                }
+            )
+        }
     }
+
+    val motionCaptureUiState: StateFlow<MotionCaptureUiState>
+        get() = motionCaptureCoordinator?.uiState ?: MutableStateFlow(MotionCaptureUiState()).asStateFlow()
+
+    fun setMotionCaptureEnabled(enabled: Boolean) {
+        motionCaptureCoordinator?.setCollectionEnabled(enabled)
+    }
+
+    suspend fun pauseMotionCaptureForBackground() {
+        motionCaptureCoordinator?.onPaused()
+    }
+
+    suspend fun stopMotionCaptureForExit() {
+        motionCaptureCoordinator?.onWorkoutExited()
+    }
+
+    suspend fun confirmMotionCaptureSegment(segmentId: UUID) {
+        motionCaptureCoordinator?.confirmSegment(segmentId)
+    }
+
+    suspend fun relabelMotionCaptureSegment(
+        segmentId: UUID,
+        candidate: MotionCaptureExerciseCandidate
+    ) {
+        motionCaptureCoordinator?.relabelSegment(segmentId, candidate)
+    }
+
+    suspend fun markMotionCaptureSegmentRest(segmentId: UUID) {
+        motionCaptureCoordinator?.markSegmentRest(segmentId)
+    }
+
+    suspend fun dropMotionCaptureSegment(segmentId: UUID) {
+        motionCaptureCoordinator?.dropSegment(segmentId)
+    }
+
+    suspend fun exportLatestMotionCaptureSession(): String? =
+        motionCaptureCoordinator?.exportLatestReviewSession()
 
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
         val context = applicationContext ?: return null
@@ -714,6 +770,7 @@ open class AppViewModel : WorkoutViewModel() {
 
         updateWorkoutSessionHeartbeat(newState)
         persistRecoveryCheckpointForCurrentState(newState)
+        motionCaptureCoordinator?.onScreenStateChanged(newState)
     }
 
     private fun updateWorkoutSessionHeartbeat(screenState: WorkoutScreenState) {
