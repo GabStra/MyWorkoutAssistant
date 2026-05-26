@@ -57,8 +57,7 @@ import com.gabstra.myworkoutassistant.composables.AppDropdownMenu
 import com.gabstra.myworkoutassistant.composables.AppDropdownMenuItem
 import com.gabstra.myworkoutassistant.composables.ContentTitle
 import com.gabstra.myworkoutassistant.composables.ExerciseHistoryRenderer
-import com.gabstra.myworkoutassistant.composables.ExpandableContainer
-import com.gabstra.myworkoutassistant.composables.HeartRateChartContent
+import com.gabstra.myworkoutassistant.composables.HeartRateSessionCard
 import com.gabstra.myworkoutassistant.composables.HistoryGraphEmptyState
 import com.gabstra.myworkoutassistant.composables.HistoryGraphTabColumn
 import com.gabstra.myworkoutassistant.composables.HistorySetsTabColumn
@@ -72,6 +71,8 @@ import com.gabstra.myworkoutassistant.composables.TargetHrProgressSection
 import com.gabstra.myworkoutassistant.composables.formatRestHistoryDisplayLine
 import com.gabstra.myworkoutassistant.composables.historyExerciseNameTextStyle
 import com.gabstra.myworkoutassistant.composables.rememberHistoryFilterRangeSelection
+import com.gabstra.myworkoutassistant.heart_rate.HeartRateSessionAnalysis
+import com.gabstra.myworkoutassistant.heart_rate.analyzeHeartRateSession
 import com.gabstra.myworkoutassistant.formatTime
 import com.gabstra.myworkoutassistant.formatTimeHourMinutes
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
@@ -86,11 +87,9 @@ import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.WorkoutHistoryDao
 import com.gabstra.myworkoutassistant.shared.WorkoutRecord
 import com.gabstra.myworkoutassistant.shared.WorkoutRecordDao
-import com.gabstra.myworkoutassistant.shared.colorsByZone
 import com.gabstra.myworkoutassistant.shared.filterBy
 import com.gabstra.myworkoutassistant.shared.formatNumber
 import com.gabstra.myworkoutassistant.shared.getHeartRateFromPercentage
-import com.gabstra.myworkoutassistant.shared.getMaxHeartRate
 import com.gabstra.myworkoutassistant.shared.getNewSetFromRestHistory
 import com.gabstra.myworkoutassistant.shared.getNewSetFromSetHistory
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -108,8 +107,6 @@ import com.gabstra.myworkoutassistant.shared.workout.model.resolveWorkoutSession
 import com.gabstra.myworkoutassistant.shared.workout.model.workoutSessionDisplayLabel
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Superset
-import com.gabstra.myworkoutassistant.shared.zoneRanges
-import com.kevinnzou.compose.progressindicator.SimpleProgressIndicator
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModel
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.data.LineCartesianLayerModel
@@ -121,25 +118,13 @@ import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.abs
-import kotlin.math.roundToLong
 
 private const val WORKOUT_HISTORY_SCREEN_LOG_TAG = "WorkoutHistoryScreen"
-
-private data class HeartRateZoneSegment(
-    val zoneIndex: Int,
-    val xValues: List<Double>,
-    val yValues: List<Double>,
-)
 
 private data class TargetHeartRateProgress(
     val counter: Int,
     val total: Int,
 )
-
-private fun roundXToSupportedPrecision(value: Double): Double {
-    return (value * 10_000.0).roundToLong() / 10_000.0
-}
 
 private fun WorkoutHistoryLayoutItem.setsTabHistoryItemKey(): Any = when (this) {
     is WorkoutHistoryLayoutItem.ExerciseSection -> "exercise:$exerciseId"
@@ -166,141 +151,6 @@ private fun RestBetweenWorkoutComponentsBlock(
             )
         }
     }
-}
-
-private fun getHeartRateZoneGuideValues(
-    userAge: Int,
-    measuredMaxHeartRate: Int?,
-    restingHeartRate: Int?,
-): List<Double> {
-    val zoneBounds = getHeartRateZoneBounds(
-        userAge = userAge,
-        measuredMaxHeartRate = measuredMaxHeartRate,
-        restingHeartRate = restingHeartRate,
-    )
-    return (zoneBounds.drop(1).map { it.first.toDouble() } + getMaxHeartRate(userAge).toDouble())
-        .distinct().sorted()
-}
-
-private fun getHeartRateZoneBounds(
-    userAge: Int,
-    measuredMaxHeartRate: Int?,
-    restingHeartRate: Int?,
-): List<IntRange> {
-    val zoneStarts = zoneRanges.map { (lowerBoundPercent, _) ->
-        getHeartRateFromPercentage(
-            lowerBoundPercent,
-            userAge,
-            measuredMaxHeartRate,
-            restingHeartRate,
-        )
-    }
-    val absoluteMax = getHeartRateFromPercentage(
-        zoneRanges.last().second,
-        userAge,
-        measuredMaxHeartRate,
-        restingHeartRate,
-    )
-
-    return zoneStarts.indices.map { zoneIndex ->
-        val lowerBound = zoneStarts[zoneIndex]
-        val upperBound = if (zoneIndex < zoneStarts.lastIndex) {
-            zoneStarts[zoneIndex + 1] - 1
-        } else {
-            absoluteMax
-        }
-        lowerBound..maxOf(lowerBound, upperBound)
-    }
-}
-
-private fun getZoneFromHeartRate(
-    heartRate: Double,
-    userAge: Int,
-    measuredMaxHeartRate: Int?,
-    restingHeartRate: Int?,
-): Int {
-    val zoneBounds = getHeartRateZoneBounds(userAge, measuredMaxHeartRate, restingHeartRate)
-    for (zoneIndex in zoneBounds.indices.reversed()) {
-        val zoneRange = zoneBounds[zoneIndex]
-        if (heartRate in zoneRange.first.toDouble()..zoneRange.last.toDouble()) {
-            return zoneIndex
-        }
-    }
-
-    return when {
-        heartRate < zoneBounds.first().first.toDouble() -> 0
-        heartRate > zoneBounds.last().last.toDouble() -> zoneBounds.lastIndex
-        else -> 0
-    }
-}
-
-private fun buildHeartRateZoneSegments(
-    values: List<Double>,
-    thresholds: List<Double>,
-    zoneFromValue: (Double) -> Int,
-): List<HeartRateZoneSegment> {
-    if (values.size < 2) return emptyList()
-
-    val segments = mutableListOf<HeartRateZoneSegment>()
-    var currentX = mutableListOf(0.0)
-    var currentY = mutableListOf(values.first())
-    var currentZone = zoneFromValue(values.first())
-
-    fun closeCurrentSegment() {
-        if (currentX.size >= 2 && currentY.size >= 2) {
-            segments += HeartRateZoneSegment(
-                zoneIndex = currentZone,
-                xValues = currentX.toList(),
-                yValues = currentY.toList(),
-            )
-        }
-    }
-
-    for (index in 0 until values.lastIndex) {
-        val x1 = index.toDouble()
-        val x2 = (index + 1).toDouble()
-        val y1 = values[index]
-        val y2 = values[index + 1]
-
-        if (abs(y2 - y1) < 1e-9) {
-            currentX.add(x2)
-            currentY.add(y2)
-            continue
-        }
-
-        val minY = minOf(y1, y2)
-        val maxY = maxOf(y1, y2)
-        val isAscending = y2 > y1
-        val crossings = thresholds
-            .filter { it > minY && it < maxY }
-            .sortedBy { if (isAscending) it else -it }
-
-        if (crossings.isEmpty()) {
-            currentX.add(x2)
-            currentY.add(y2)
-            continue
-        }
-
-        for (threshold in crossings) {
-            val t = (threshold - y1) / (y2 - y1)
-            val crossingX = roundXToSupportedPrecision(x1 + (x2 - x1) * t)
-
-            currentX.add(crossingX)
-            currentY.add(threshold)
-            closeCurrentSegment()
-
-            val epsilon = if (isAscending) 1e-4 else -1e-4
-            currentZone = zoneFromValue(threshold + epsilon)
-            currentX = mutableListOf(crossingX)
-            currentY = mutableListOf(threshold)
-        }
-
-        currentX.add(x2)
-        currentY.add(y2)
-    }
-
-    closeCurrentSegment()
-    return segments
 }
 
 @Composable
@@ -397,14 +247,11 @@ fun WorkoutHistoryScreen(
     var volumeEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var durationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
     var workoutDurationEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
-    var heartRateEntryModel by remember { mutableStateOf<CartesianChartModel?>(null) }
+    var heartRateAnalysis by remember { mutableStateOf<HeartRateSessionAnalysis?>(null) }
 
     var volumeMarkerTarget by remember { mutableStateOf<Pair<Int, Double>?>(null) }
     var durationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
     var workoutDurationMarkerTarget by remember { mutableStateOf<Pair<Int, Float>?>(null) }
-    var heartBeatMarkerTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
-    var zoneCounter by remember { mutableStateOf<Map<Int, Int>?>(null) }
-    var heartRateMinY by remember { mutableStateOf<Double?>(null) }
 
     val horizontalAxisValueFormatter = remember(historiesToShow) {
         CartesianValueFormatter { _, value, _ ->
@@ -443,14 +290,6 @@ fun WorkoutHistoryScreen(
     }
 
     val workoutVersions = workouts.filter { it.globalId == selectedWorkout.globalId }
-    val heartRateZoneBounds = remember(userAge, measuredMaxHeartRate, restingHeartRate) {
-        getHeartRateZoneBounds(
-            userAge = userAge,
-            measuredMaxHeartRate = measuredMaxHeartRate,
-            restingHeartRate = restingHeartRate,
-        )
-    }
-
     var kiloCaloriesBurned by remember { mutableDoubleStateOf(0.0) }
 
     val volumes = remember { mutableListOf<Pair<Int, Double>>() }
@@ -611,56 +450,21 @@ fun WorkoutHistoryScreen(
         onSelectedWorkoutHistoryIdChanged(selectedWorkoutHistory?.id)
         val workoutHistory = selectedWorkoutHistory ?: run {
             loadedSelectedWorkoutHistoryId = null
+            heartRateAnalysis = null
             return@LaunchedEffect
         }
         val selectedWorkoutHistoryId = workoutHistory.id
 
-        zoneCounter = null
-        heartRateEntryModel = null
-        heartRateMinY = null
+        heartRateAnalysis = null
 
         withContext(Dispatchers.IO) {
-
-            if (workoutHistory.heartBeatRecords.isNotEmpty() && workoutHistory.heartBeatRecords.any { it != 0 }) {
-                val validHeartBeatRecords =
-                    workoutHistory.heartBeatRecords.filter { it != 0 }
-                val minHeartBeat = validHeartBeatRecords.minOrNull()
-                heartRateMinY = minHeartBeat?.toDouble()
-
-                validHeartBeatRecords.maxOrNull()?.let { maxHeartBeat ->
-                    // Create a pair of the index of the max heartbeat and the value itself
-                    heartBeatMarkerTarget = Pair(
-                        workoutHistory.heartBeatRecords.indexOf(maxHeartBeat),
-                        maxHeartBeat
-                    )
-                }
-
-                zoneCounter = mapOf(0 to 0, 1 to 0, 2 to 0, 3 to 0, 4 to 0, 5 to 0)
-
-                for (heartBeat in validHeartBeatRecords) {
-                    val zone = getZoneFromHeartRate(
-                        heartRate = heartBeat.toDouble(),
-                        userAge = userAge,
-                        measuredMaxHeartRate = measuredMaxHeartRate,
-                        restingHeartRate = restingHeartRate,
-                    )
-                    zoneCounter = zoneCounter!!.plus(zone to zoneCounter!![zone]!!.plus(1))
-                }
-
-                val heartRateSeries = workoutHistory.heartBeatRecords.map {
-                    if (it == 0 && minHeartBeat != null) {
-                        minHeartBeat.toDouble()
-                    } else {
-                        it.toDouble()
-                    }
-                }
-
-                heartRateEntryModel = CartesianChartModel(
-                    LineCartesianLayerModel.build {
-                        series(heartRateSeries)
-                    }
-                )
-            }
+            heartRateAnalysis = analyzeHeartRateSession(
+                heartRateSeries = workoutHistory.heartBeatRecords,
+                durationSeconds = workoutHistory.duration,
+                userAge = userAge,
+                measuredMaxHeartRate = measuredMaxHeartRate,
+                restingHeartRate = restingHeartRate,
+            )
 
             val setHistories =
                 setHistoryDao.getSetHistoriesByWorkoutHistoryIdOrdered(selectedWorkoutHistoryId)
@@ -1068,177 +872,20 @@ fun WorkoutHistoryScreen(
         HistorySetsTabColumn(
             state = setHistoryLazyListState,
         ) {
-            if (heartRateEntryModel != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
+            if (heartRateAnalysis != null && selectedWorkoutHistory != null && selectedWorkoutHistory!!.heartBeatRecords.isNotEmpty()) {
                 item {
-                    PrimarySurface {
-                        ExpandableContainer(
-                            isOpen = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            isExpandable = zoneCounter != null,
-                            title = {
-                                Text(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(10.dp),
-                                    text = "Heart rate during workout",
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                )
-                            },
-                        subContent = {
-                            HeartRateChartContent(
-                                modifier = Modifier.fillMaxWidth(),
-                                cartesianChartModel = heartRateEntryModel!!,
-                                userAge = userAge,
-                                measuredMaxHeartRate = measuredMaxHeartRate,
-                                restingHeartRate = restingHeartRate,
-                                minYBpm = heartRateMinY,
-                                zoneGuideValuesBpm = getHeartRateZoneGuideValues(
-                                    userAge = userAge,
-                                    measuredMaxHeartRate = measuredMaxHeartRate,
-                                    restingHeartRate = restingHeartRate,
-                                ),
-                                onInteractionChange = { isChartInteractionActive = it },
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp)
-                                    .padding(bottom = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                val minHeartRate =
-                                    selectedWorkoutHistory!!.heartBeatRecords.filter { it != 0 }
-                                        .min()
-                                val maxHeartRate = selectedWorkoutHistory!!.heartBeatRecords.max()
-
-                                Text(
-                                    text = "Duration: ${formatTime(selectedWorkoutHistory!!.duration)}",
-                                    modifier = Modifier.weight(2f),
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "Min:",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                        )
-                                        Text(
-                                            text = "$minHeartRate bpm",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            textAlign = TextAlign.End
-                                        )
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "Max:",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                        )
-                                        Text(
-                                            text = "$maxHeartRate bpm",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            textAlign = TextAlign.End
-                                        )
-                                    }
-                                    if (kiloCaloriesBurned != 0.0 && !kiloCaloriesBurned.isNaN()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(
-                                                text = "Calories:",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                            )
-                                            Text(
-                                                text = "${kiloCaloriesBurned.toInt()}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                                textAlign = TextAlign.End
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        content = {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.md)
-                            ) {
-                                zoneCounter!!
-                                    .toList()
-                                    .asReversed()
-                                    .forEach { (zone, count) ->
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            val total = zoneCounter!!.values.sum()
-                                            var progress = count.toFloat() / total
-                                            if (progress.isNaN()) {
-                                                progress = 0f
-                                            }
-                                            Text(
-                                                text = "Zone $zone",
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                            )
-                                            Spacer(Modifier.height(5.dp))
-                                            Row(modifier = Modifier.fillMaxWidth()) {
-                                                val zoneRange = heartRateZoneBounds[zone]
-                                                Text(
-                                                    text = if (zone == 0) {
-                                                        "< ${heartRateZoneBounds[1].first} bpm"
-                                                    } else {
-                                                        "${zoneRange.first} - ${zoneRange.last} bpm"
-                                                    },
-                                                    modifier = Modifier.weight(1f),
-                                                    color = MaterialTheme.colorScheme.onBackground,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                )
-                                                Spacer(Modifier.weight(1f))
-                                                Text(
-                                                    text = "${(progress * 100).toInt()}% ${
-                                                        formatTime(
-                                                            count
-                                                        )
-                                                    }",
-                                                    modifier = Modifier.weight(1f),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    textAlign = TextAlign.End,
-                                                    color = MaterialTheme.colorScheme.onBackground,
-                                                )
-                                            }
-                                            Spacer(Modifier.height(5.dp))
-                                            SimpleProgressIndicator(
-                                                progress = progress,
-                                                trackColor = MediumDarkGray,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(16.dp)
-                                                    .clip(MaterialTheme.shapes.large),
-                                                progressBarColor = colorsByZone[zone],
-                                            )
-                                        }
-                                    }
-                            }
-                        }
+                    HeartRateSessionCard(
+                        title = "Heart rate during workout",
+                        analysis = heartRateAnalysis!!,
+                        userAge = userAge,
+                        measuredMaxHeartRate = measuredMaxHeartRate,
+                        restingHeartRate = restingHeartRate,
+                        caloriesBurned = kiloCaloriesBurned
+                            .takeIf { it != 0.0 && !it.isNaN() }
+                            ?.toInt(),
+                        onInteractionChange = { isChartInteractionActive = it },
                     )
                 }
-            }
             }
             item {
                 ContentTitle(
