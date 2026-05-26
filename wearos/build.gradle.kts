@@ -109,10 +109,9 @@ android {
 
 dependencies {
     implementation(project(":shared"))
-    implementation("androidx.wear.compose:compose-material-core:1.6.1")
+    implementation("androidx.wear.compose:compose-material-core:1.6.2")
     implementation("androidx.navigation:navigation-compose:2.9.8")
-    implementation("androidx.compose.ui:ui-graphics:1.11.1")
-    implementation("androidx.compose.ui:ui-graphics:1.11.1")
+    implementation("androidx.compose.ui:ui-graphics:1.11.2")
 
     // Compose BOM (don't specify versions for androidx.compose.* artifacts)
     val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
@@ -131,10 +130,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Wear Compose
-    implementation("androidx.wear.compose:compose-material3:1.6.1")
-    implementation("androidx.wear.compose:compose-navigation:1.6.1")
-    implementation("androidx.wear.compose:compose-ui-tooling:1.6.1")
-    implementation("androidx.wear.compose:compose-foundation:1.6.1")
+    implementation("androidx.wear.compose:compose-material3:1.6.2")
+    implementation("androidx.wear.compose:compose-navigation:1.6.2")
+    implementation("androidx.wear.compose:compose-ui-tooling:1.6.2")
+    implementation("androidx.wear.compose:compose-foundation:1.6.2")
 
     // AndroidX / Google
     implementation("androidx.core:core-ktx:1.18.0")

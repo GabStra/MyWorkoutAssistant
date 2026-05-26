@@ -1,6 +1,11 @@
 plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
+    id("com.google.devtools.ksp")
+}
+
+ksp {
+    arg("room.generateKotlin", "true")
 }
 
 java {
@@ -155,9 +160,9 @@ dependencies {
     // Accompanist (permissions only; system UI controller replaced by enableEdgeToEdge)
     implementation("com.google.accompanist:accompanist-permissions:0.37.3")
 
-    // Room runtime only; shared owns Room annotation processing.
     implementation("androidx.room:room-runtime:2.8.4")
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+    ksp("androidx.room:room-compiler:2.8.4")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
     implementation("com.openai:openai-java:4.35.0")
     implementation("com.github.jeziellago:compose-markdown:0.5.8")
 
@@ -167,7 +172,6 @@ dependencies {
     implementation("com.kizitonwose.calendar:compose:2.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("com.github.kevinnzou:compose-progressindicator:1.0.0")
-    implementation("com.github.nanihadesuka:LazyColumnScrollbar:2.1.0")
 
     // Tests
     testImplementation("junit:junit:4.13.2")
