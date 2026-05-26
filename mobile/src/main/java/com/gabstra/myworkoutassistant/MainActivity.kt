@@ -67,6 +67,7 @@ import com.gabstra.myworkoutassistant.insights.LiteRtLmBackendPreference
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsMode
 import com.gabstra.myworkoutassistant.insights.WorkoutInsightsSettingsStore
 import com.gabstra.myworkoutassistant.screens.ErrorLogsScreen
+import com.gabstra.myworkoutassistant.screens.ExternalWorkoutSessionDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseDetailScreen
 import com.gabstra.myworkoutassistant.screens.ExerciseForm
 import com.gabstra.myworkoutassistant.screens.HistoryChatScreen
@@ -1784,6 +1785,15 @@ fun MyWorkoutAssistantNavHost(
                             initialSelectedTabIndex = screenData.selectedTabIndex,
                             initialWorkoutHistoryId = screenData.workoutHistoryId,
                             onClearAllIncompleteSessions = clearAllIncompleteSessions
+                        ) {
+                            appViewModel.goBack()
+                        }
+                    }
+
+                    is ScreenData.ExternalWorkoutSession -> {
+                        ExternalWorkoutSessionDetailScreen(
+                            appViewModel = appViewModel,
+                            sessionId = currentScreen.externalSessionId,
                         ) {
                             appViewModel.goBack()
                         }

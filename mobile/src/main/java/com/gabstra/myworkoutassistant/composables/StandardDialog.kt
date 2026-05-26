@@ -38,7 +38,7 @@ fun StandardDialog(
     isConfirmDestructive: Boolean = false,
     maxWidth: Dp = 560.dp,
     usePlatformDefaultWidth: Boolean = true,
-    contentHorizontalPadding: Dp = 10.dp,
+    contentHorizontalPadding: Dp = 15.dp,
     contentVerticalPadding: Dp = 10.dp,
 ) {
     val hasConfirmButton = showConfirm && confirmText != null && onConfirm != null

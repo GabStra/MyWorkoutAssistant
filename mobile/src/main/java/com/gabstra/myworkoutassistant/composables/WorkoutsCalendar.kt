@@ -32,8 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.gabstra.myworkoutassistant.optionalClip
+import com.gabstra.myworkoutassistant.screens.WorkoutCalendarActivityKind
 import com.gabstra.myworkoutassistant.shared.DisabledContentGray
-import com.gabstra.myworkoutassistant.shared.WorkoutHistory
 import com.gabstra.myworkoutassistant.shared.Yellow
 import com.kizitonwose.calendar.compose.CalendarState
 import com.kizitonwose.calendar.compose.HorizontalCalendar
@@ -95,7 +95,7 @@ private fun Day(
     isInCompletedWeek: Boolean = false,
     isCompletedWeekStart: Boolean = false,
     isCompletedWeekEnd: Boolean = false,
-    shouldHighlight: Boolean = false,
+    activityKind: WorkoutCalendarActivityKind = WorkoutCalendarActivityKind.NONE,
     onClick: (CalendarDay) -> Unit = {},
 ) {
     val isToday = remember(day) { day.date == currentDate }
@@ -111,6 +111,7 @@ private fun Day(
     }
     val isClickEnabled = !isAfterToday || isFutureInCurrentWeek
 
+    val shouldHighlight = activityKind != WorkoutCalendarActivityKind.NONE
     Box(
         Modifier
             .fillMaxWidth()
@@ -179,6 +180,8 @@ private fun Day(
         ) {
 
             val highlightBackgroundColor = when {
+                activityKind == WorkoutCalendarActivityKind.EXTERNAL_ONLY ->
+                    MaterialTheme.colorScheme.tertiary
                 isOutOfBounds && isInCompletedWeek -> Yellow.copy(0.5f)
                 isOutOfBounds -> MaterialTheme.colorScheme.primary.copy(0.5f)
                 isInCompletedWeek -> Yellow
@@ -337,25 +340,25 @@ fun WorkoutsCalendar(
     selectedWeekEnd: LocalDate,
     completedWeekStarts: Set<LocalDate> = emptySet(),
     onDayClicked: (CalendarState,CalendarDay) -> Unit,
-    shouldHighlight: (CalendarDay) -> Boolean,
-    groupedWorkoutsHistories: Map<LocalDate, List<WorkoutHistory>>? = null,
+    activityKindForDay: (CalendarDay) -> WorkoutCalendarActivityKind,
+    activityDates: Set<LocalDate> = emptySet(),
 ){
     val currentDate = remember { LocalDate.now() }
     val currentMonth = remember { YearMonth.now() }
 
-    // Calculate available months from groupedWorkoutsHistories
-    val availableMonths = remember(groupedWorkoutsHistories) {
-        groupedWorkoutsHistories?.keys
-            ?.map { YearMonth.from(it) }  // Convert LocalDate to YearMonth using YearMonth.from()
-            ?.distinct()
-            ?.sorted()
+    // Calculate available months from all activity dates.
+    val availableMonths = remember(activityDates) {
+        activityDates
+            .map { YearMonth.from(it) }
+            .distinct()
+            .sorted()
     }
 
     val startMonth = remember(availableMonths, currentMonth) {
-        availableMonths?.firstOrNull() ?: currentMonth
+        availableMonths.firstOrNull() ?: currentMonth
     }
     val endMonth = remember(availableMonths, currentMonth) {
-        availableMonths?.lastOrNull() ?: currentMonth
+        availableMonths.lastOrNull() ?: currentMonth
     }
 
     val daysOfWeek = remember { daysOfWeek() }
@@ -394,7 +397,7 @@ fun WorkoutsCalendar(
                     isInCompletedWeek = isCompletedWeek,
                     isCompletedWeekStart = isCompletedWeek && day.date == dayWeekStart,
                     isCompletedWeekEnd = isCompletedWeek && day.date == dayWeekEnd,
-                    shouldHighlight = shouldHighlight(day),
+                    activityKind = activityKindForDay(day),
                 ) { selectedCalendarDay ->
                     onDayClicked(calendarState,selectedCalendarDay)
                 }

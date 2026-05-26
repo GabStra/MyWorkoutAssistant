@@ -39,8 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import com.gabstra.myworkoutassistant.AppViewModel
@@ -60,7 +60,10 @@ import com.gabstra.myworkoutassistant.composables.SwipeableTabs
 import com.gabstra.myworkoutassistant.composables.rememberMinimumLoadingVisibility
 import com.gabstra.myworkoutassistant.getEndOfWeek
 import com.gabstra.myworkoutassistant.getStartOfWeek
+import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionDatabase
+import com.gabstra.myworkoutassistant.healthconnect.external.ExternalHealthConnectSessionSyncService
 import com.gabstra.myworkoutassistant.shared.DarkGray
+import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.SetHistoryDao
 import com.gabstra.myworkoutassistant.shared.Workout
 import com.gabstra.myworkoutassistant.shared.WorkoutHistory
@@ -112,6 +115,14 @@ fun WorkoutsScreen(
     selectedTabIndex: Int
 ) {
     val updateMessage by appViewModel.updateNotificationFlow.collectAsState(initial = null)
+    val context = LocalContext.current
+    val externalSessionDatabase = remember(context) {
+        ExternalHealthConnectSessionDatabase.getDatabase(context)
+    }
+    val externalSessions by externalSessionDatabase
+        .externalHealthConnectSessionDao()
+        .observeAllSessions()
+        .collectAsState(initial = emptyList())
 
     var isDaySelectionLoading by remember { mutableStateOf(false) }
     var hasInitializedSelectedDate by remember { mutableStateOf(false) }
@@ -269,9 +280,10 @@ fun WorkoutsScreen(
         computeWeekObjectiveSnapshot(selectedWeekStart)
     }
 
-    val selectedWeekWorkoutsByDate =
+    val selectedWeekSessionsByDate =
         remember(
             groupedWorkoutsHistories,
+            externalSessions,
             selectedWeekStart,
             selectedWeekEnd,
             workoutById,
@@ -285,21 +297,47 @@ fun WorkoutsScreen(
                     val dayWorkouts = groupedWorkoutsHistories?.get(date)
                         ?.mapNotNull { history ->
                             byId[history.workoutId]?.let { workout ->
-                                WeeklyStatusWorkoutHistory(
-                                    workoutHistory = history,
-                                    workout = workout,
-                                    isExcludedFromWeeklyProgress =
-                                        history.globalId in selectedWeekSnapshot.excludedWorkoutGlobalIds
+                                AppWorkoutStatusSessionEntry(
+                                    WeeklyStatusWorkoutHistory(
+                                        workoutHistory = history,
+                                        workout = workout,
+                                        isExcludedFromWeeklyProgress =
+                                            history.globalId in selectedWeekSnapshot.excludedWorkoutGlobalIds
+                                    )
                                 )
                             }
                         }
                         .orEmpty()
-                    if (dayWorkouts.isEmpty()) null else (date to dayWorkouts)
+                    val dayExternalSessions = externalSessions
+                        .filter { it.date == date }
+                        .map(::ExternalWorkoutStatusSessionEntry)
+                    val daySessions = deduplicateWorkoutStatusSessions(dayWorkouts + dayExternalSessions)
+                        .sortedBy { it.startedAt }
+                    if (daySessions.isEmpty()) null else (date to daySessions)
                 }.toMap(LinkedHashMap())
             } catch (e: Exception) {
                 emptyMap()
             }
         }
+
+    val activityDates = remember(groupedWorkoutsHistories, externalSessions) {
+        buildSet {
+            groupedWorkoutsHistories?.keys?.forEach(::add)
+            externalSessions.forEach { add(it.date) }
+        }
+    }
+
+    val activityKindByDate = remember(groupedWorkoutsHistories, externalSessions, activityDates) {
+        activityDates.associateWith { date ->
+            val hasAppOwned = groupedWorkoutsHistories?.get(date)?.isNotEmpty() == true
+            val hasExternal = externalSessions.any { it.date == date }
+            when {
+                !hasAppOwned && hasExternal -> WorkoutCalendarActivityKind.EXTERNAL_ONLY
+                hasAppOwned || hasExternal -> WorkoutCalendarActivityKind.APP_OR_MIXED
+                else -> WorkoutCalendarActivityKind.NONE
+            }
+        }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -341,6 +379,24 @@ fun WorkoutsScreen(
             candidateWeekStarts.filterTo(mutableSetOf()) { weekStart ->
                 computeWeekObjectiveSnapshot(weekStart).objectiveProgress >= 1.0
             }
+        }
+    }
+
+    LaunchedEffect(
+        appViewModel.checkedHealthPermission,
+        appViewModel.hasHealthPermissions,
+        workouts.map { it.id }.toSet(),
+    ) {
+        if (!appViewModel.checkedHealthPermission || !appViewModel.hasHealthPermissions) {
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            ExternalHealthConnectSessionSyncService(
+                context = context,
+                healthConnectClient = healthConnectClient,
+                externalDatabase = externalSessionDatabase,
+                appDatabase = AppDatabase.getDatabase(context),
+            ).refreshRecentSessions()
         }
     }
 
@@ -392,11 +448,9 @@ fun WorkoutsScreen(
         }
     }
 
-    fun highlightDay(day: CalendarDay): Boolean {
-        return groupedWorkoutsHistories?.get(day.date)?.isNotEmpty() ?: false
+    fun activityKindForDay(day: CalendarDay): WorkoutCalendarActivityKind {
+        return activityKindByDate[day.date] ?: WorkoutCalendarActivityKind.NONE
     }
-
-    val context = androidx.compose.ui.platform.LocalContext.current
     var isSaving by remember { mutableStateOf(false) }
 
     fun updateWorkoutsEnabledState(enabled: Boolean) {
@@ -626,7 +680,7 @@ fun WorkoutsScreen(
                                             selectedWeekStart = selectedWeekStart,
                                             selectedWeekEnd = selectedWeekEnd,
                                             completedWeekStarts = completedWeekStarts,
-                                            selectedWeekWorkoutsByDate = selectedWeekWorkoutsByDate,
+                                            selectedWeekSessionsByDate = selectedWeekSessionsByDate,
                                             weeklyProgressSnapshot = selectedWeekSnapshot,
                                             appViewModel = appViewModel,
                                             onDayClicked = { calendarState, day ->
@@ -635,7 +689,7 @@ fun WorkoutsScreen(
                                                     day
                                                 )
                                             },
-                                            highlightDay = { day -> highlightDay(day) },
+                                            activityKindForDay = { day -> activityKindForDay(day) },
                                             onSaveWeeklyProgressSelection = { includedWorkoutGlobalIds ->
                                                 appViewModel.setWeeklyProgressOverride(
                                                     weekStart = selectedWeekStart,
@@ -647,7 +701,7 @@ fun WorkoutsScreen(
                                                 appViewModel.clearWeeklyProgressOverride(selectedWeekStart)
                                                 appViewModel.scheduleWorkoutSave(context)
                                             },
-                                            groupedWorkoutsHistories = groupedWorkoutsHistories,
+                                            activityDates = activityDates,
                                             workoutHistorySessionStatuses = workoutHistorySessionStatuses
                                         )
                                     }
