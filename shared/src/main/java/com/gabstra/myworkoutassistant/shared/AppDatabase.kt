@@ -31,7 +31,7 @@ import com.gabstra.myworkoutassistant.shared.typeconverters.UUIDConverter
         ExerciseSessionProgression::class,
         ErrorLog::class
     ],
-    version = 58,
+    version = 59,
     exportSchema = false
 )
 @TypeConverters(

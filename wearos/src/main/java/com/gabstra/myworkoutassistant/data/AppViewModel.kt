@@ -258,11 +258,22 @@ open class AppViewModel : WorkoutViewModel() {
 
     override fun prepareResumeWorkout(workoutId: UUID, workoutHistoryId: UUID) {
         super.prepareResumeWorkout(workoutId, workoutHistoryId)
+        if (selectedWorkout.value.usesExternalHeartRateDevice) {
+            markPreparingDataLoaded()
+        } else {
+            enterResumingPhase()
+        }
+        rebuildScreenState()
         clearRecoveryPromptUiState()
     }
 
     fun prepareResumeWorkout(incompleteWorkout: IncompleteWorkout) {
         prepareResumeWorkout(incompleteWorkout.workoutId, incompleteWorkout.workoutHistory.id)
+    }
+
+    fun finishPreparedResume() {
+        enterResumingPhase()
+        resumeWorkout()
     }
 
     private fun clearRecoveryPromptState() {
@@ -690,7 +701,6 @@ open class AppViewModel : WorkoutViewModel() {
             selectedWorkout = selectedWorkout.value,
             isPaused = isPaused.value,
             hasWorkoutRecord = hasWorkoutRecord.value,
-            isResuming = isResuming.value,
             isRefreshing = isRefreshing.value,
             isCustomDialogOpen = isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = enableWorkoutNotificationFlow.value,
@@ -1385,9 +1395,10 @@ open class AppViewModel : WorkoutViewModel() {
             recalculatePlatesForCurrentExerciseAfterRecoveryIfNeeded()
             if (selectedWorkout.value.usesExternalHeartRateDevice) {
                 // Leave user on the external heart-rate prep screen so they can connect or skip
-                markSessionReady()
+                markPreparingDataLoaded()
                 rebuildScreenState()
             } else {
+                enterResumingPhase()
                 resumeWorkout()
             }
             skipNextResumeLastState = true

@@ -82,11 +82,43 @@ import com.gabstra.myworkoutassistant.shared.workout.calibration.confirmCalibrat
 import com.gabstra.myworkoutassistant.shared.workout.display.formatWorkoutDurationSecondsForDisplay
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutScreenState
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import com.google.android.horologist.compose.ambient.AmbientAwareTime
 import com.google.android.horologist.compose.ambient.AmbientState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
+
+internal data class WorkoutPhaseRenderModel(
+    val loadingMessage: String? = null,
+    val showHeader: Boolean = false,
+    val renderPreparing: Boolean = false,
+    val renderActiveContent: Boolean = false,
+    val renderCompletedContent: Boolean = false,
+)
+
+internal fun resolveWorkoutPhaseRenderModel(
+    sessionPhase: WorkoutSessionPhase,
+    isRefreshing: Boolean
+): WorkoutPhaseRenderModel {
+    if (isRefreshing) {
+        return WorkoutPhaseRenderModel(loadingMessage = "Reloading your workout")
+    }
+
+    return when (sessionPhase) {
+        WorkoutSessionPhase.PREPARING,
+        WorkoutSessionPhase.READY -> WorkoutPhaseRenderModel(renderPreparing = true)
+        WorkoutSessionPhase.RESUMING -> WorkoutPhaseRenderModel(loadingMessage = "Resuming your workout")
+        WorkoutSessionPhase.ACTIVE -> WorkoutPhaseRenderModel(
+            showHeader = true,
+            renderActiveContent = true
+        )
+        WorkoutSessionPhase.COMPLETED -> WorkoutPhaseRenderModel(
+            showHeader = true,
+            renderCompletedContent = true
+        )
+    }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -113,6 +145,7 @@ fun WorkoutScreen(
     val workoutState = screenState.workoutState
     var hrStatus by remember(workoutState) { mutableStateOf<HeartRateStatus?>(null) }
     val selectedWorkout = screenState.selectedWorkout
+    val sessionPhase = screenState.sessionPhase
     val userAge = screenState.userAge
     val measuredMaxHeartRate = screenState.measuredMaxHeartRate
     val restingHeartRate = screenState.restingHeartRate
@@ -130,8 +163,13 @@ fun WorkoutScreen(
         activeExternalHeartRateController?.isSkippedForSession?.collectAsState()
             ?: remember { mutableStateOf(false) }
         )
-    val isResuming = screenState.isResuming
     val isRefreshing = screenState.isRefreshing
+    val renderModel = remember(sessionPhase, isRefreshing) {
+        resolveWorkoutPhaseRenderModel(
+            sessionPhase = sessionPhase,
+            isRefreshing = isRefreshing
+        )
+    }
     val onBeforeGoHome = remember(selectedWorkout) {
         {
             // Ensure no timer background loop remains active after leaving workout flow.
@@ -269,8 +307,13 @@ fun WorkoutScreen(
         },
         onSinglePress = {
             if(showWorkoutInProgressDialog) return@CustomBackHandler
+            if (sessionPhase != WorkoutSessionPhase.ACTIVE &&
+                sessionPhase != WorkoutSessionPhase.COMPLETED
+            ) {
+                return@CustomBackHandler
+            }
             
-                when (workoutState) {
+            when (workoutState) {
                 is WorkoutState.Set -> {
                     viewModel.openCustomDialog()
                     viewModel.lightScreenUp()
@@ -297,6 +340,11 @@ fun WorkoutScreen(
         },
         onDoublePress = {
             android.util.Log.d("WorkoutSync", "Double-press back button detected, workoutState: $workoutState")
+            if (sessionPhase != WorkoutSessionPhase.ACTIVE &&
+                sessionPhase != WorkoutSessionPhase.COMPLETED
+            ) {
+                return@CustomBackHandler
+            }
             if(workoutState is WorkoutState.Completed || isCustomDialogOpen) return@CustomBackHandler
             
             when (workoutState) {
@@ -394,13 +442,8 @@ fun WorkoutScreen(
                 modifier = Modifier
                     .fillMaxSize(),
             ) {
-            if(isResuming){
-                LoadingScreen(viewModel,"Resuming your workout")
-                return@Box
-            }
-
-            if(isRefreshing){
-                LoadingScreen(viewModel,"Reloading your workout")
+            if (renderModel.loadingMessage != null) {
+                LoadingScreen(viewModel, renderModel.loadingMessage)
                 return@Box
             }
 
@@ -418,42 +461,60 @@ fun WorkoutScreen(
 
             key(stateTypeKey) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .height(WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding+WorkoutPagerLayoutTokens.WorkoutHeaderHeight)
-                            .background(MaterialTheme.colorScheme.background)
-                            .zIndex(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        WorkoutStateHeader(
-                            modifier = Modifier.padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding - 2.5.dp),
-                            workoutState = workoutState,
-                            viewModel = viewModel,
-                            hapticsViewModel = hapticsViewModel
-                        )
+                    if (renderModel.showHeader) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .height(WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding+WorkoutPagerLayoutTokens.WorkoutHeaderHeight)
+                                .background(MaterialTheme.colorScheme.background)
+                                .zIndex(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            WorkoutStateHeader(
+                                modifier = Modifier.padding(top = WorkoutPagerLayoutTokens.WorkoutHeaderTopPadding - 2.5.dp),
+                                workoutState = workoutState,
+                                viewModel = viewModel,
+                                hapticsViewModel = hapticsViewModel
+                            )
+                        }
                     }
 
                     Box(
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        when(workoutState){
-                            is WorkoutState.Preparing -> {
-                                if(!selectedWorkout.usesExternalHeartRateDevice)
-                                    PreparingStandardScreen(viewModel,hapticsViewModel,hrViewModel,
-                                        workoutState
-                                    )
-                                else if (activeExternalHeartRateController != null)
-                                    PreparingExternalHeartRateScreen(
-                                        viewModel,
-                                        hapticsViewModel,
-                                        navController,
-                                        activeExternalHeartRateController,
-                                        workoutState
-                                    )
+                        if (renderModel.renderPreparing) {
+                            val preparingState = workoutState as? WorkoutState.Preparing
+                                ?: WorkoutState.Preparing(dataLoaded = false)
+                            if(!selectedWorkout.usesExternalHeartRateDevice) {
+                                PreparingStandardScreen(
+                                    viewModel,
+                                    hapticsViewModel,
+                                    hrViewModel,
+                                    preparingState
+                                )
+                            } else if (activeExternalHeartRateController != null) {
+                                PreparingExternalHeartRateScreen(
+                                    viewModel,
+                                    hapticsViewModel,
+                                    navController,
+                                    activeExternalHeartRateController,
+                                    preparingState
+                                )
                             }
-                            is WorkoutState.CalibrationLoadSelection -> {
+                        } else if (renderModel.renderCompletedContent) {
+                            WorkoutCompleteScreen(
+                                navController,
+                                viewModel,
+                                workoutState as WorkoutState.Completed,
+                                hrViewModel,
+                                hapticsViewModel,
+                                activeExternalHeartRateController
+                            )
+                        } else if (renderModel.renderActiveContent) {
+                            when(workoutState){
+                                is WorkoutState.Preparing -> Unit
+                                is WorkoutState.CalibrationLoadSelection -> {
                                 CalibrationLoadScreen(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -486,7 +547,7 @@ fun WorkoutScreen(
                                     }
                                 )
                             }
-                            is WorkoutState.CalibrationRIRSelection -> {
+                                is WorkoutState.CalibrationRIRSelection -> {
                                 CalibrationRIRScreen(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -505,7 +566,7 @@ fun WorkoutScreen(
                                     }
                                 )
                             }
-                            is WorkoutState.AutoRegulationRIRSelection -> {
+                                is WorkoutState.AutoRegulationRIRSelection -> {
                                 AutoRegulationRIRScreen(
                                     viewModel = viewModel,
                                     hapticsViewModel = hapticsViewModel,
@@ -521,7 +582,7 @@ fun WorkoutScreen(
                                     },
                                 )
                             }
-                            is WorkoutState.Set -> {
+                                is WorkoutState.Set -> {
                                 LaunchedEffect(workoutState) {
                                     try {
                                         heartRateChangeViewModel.reset()
@@ -576,7 +637,7 @@ fun WorkoutScreen(
                                     }
                                 }
                             }
-                            is WorkoutState.Rest -> {
+                                is WorkoutState.Rest -> {
                                 LaunchedEffect(workoutState) {
                                     try {
                                         heartRateChangeViewModel.reset()
@@ -642,15 +703,7 @@ fun WorkoutScreen(
                                     navController = navController,
                                 )
                             }
-                            is WorkoutState.Completed -> {
-                                WorkoutCompleteScreen(
-                                    navController,
-                                    viewModel,
-                                    workoutState,
-                                    hrViewModel,
-                                    hapticsViewModel,
-                                    activeExternalHeartRateController
-                                )
+                                is WorkoutState.Completed -> Unit
                             }
                         }
                     }

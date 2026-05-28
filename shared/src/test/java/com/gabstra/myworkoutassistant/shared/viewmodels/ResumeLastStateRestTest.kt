@@ -19,6 +19,7 @@ import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateMachine
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateSequenceItem
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutStateContainer
+import com.gabstra.myworkoutassistant.shared.workout.ui.WorkoutSessionPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -53,6 +54,7 @@ class ResumeLastStateRestTest {
     private lateinit var stateMachineField: java.lang.reflect.Field
     private lateinit var workoutStateField: java.lang.reflect.Field
     private lateinit var workoutRecordField: java.lang.reflect.Field
+    private lateinit var sessionPhaseField: java.lang.reflect.Field
     private val testDispatcher = StandardTestDispatcher()
 
     private val exerciseId = UUID.randomUUID()
@@ -131,6 +133,8 @@ class ResumeLastStateRestTest {
         workoutStateField.isAccessible = true
         workoutRecordField = WorkoutViewModel::class.java.getDeclaredField("_workoutRecord\$delegate")
         workoutRecordField.isAccessible = true
+        sessionPhaseField = WorkoutViewModel::class.java.getDeclaredField("_sessionPhase")
+        sessionPhaseField.isAccessible = true
 
         viewModel.initWorkoutStoreRepository(mockWorkoutStoreRepository)
     }
@@ -165,6 +169,8 @@ class ResumeLastStateRestTest {
             exerciseId = exerciseId
         )
         (workoutRecordField.get(viewModel) as MutableState<WorkoutRecord?>).value = record
+        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
+            WorkoutSessionPhase.RESUMING
 
         viewModel.resumeLastState()
         advanceUntilIdle()
@@ -175,6 +181,41 @@ class ResumeLastStateRestTest {
         assertTrue(
             "Current state should still be Rest",
             machineAfter.currentState is WorkoutState.Rest
+        )
+        assertEquals(
+            "A successful resume should leave the dedicated resume phase and reactivate the workout state machine.",
+            WorkoutSessionPhase.ACTIVE,
+            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+        )
+    }
+
+    @Test
+    fun resumeLastState_whenResumingAbortsWithoutStateMachine_doesNotStayInResuming() = runTest {
+        val record = WorkoutRecord(
+            id = UUID.randomUUID(),
+            workoutId = workoutId,
+            workoutHistoryId = workoutHistoryId,
+            setIndex = 0u,
+            exerciseId = exerciseId
+        )
+        (workoutRecordField.get(viewModel) as MutableState<WorkoutRecord?>).value = record
+        (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value =
+            WorkoutSessionPhase.PREPARING
+
+        viewModel.resumeLastState()
+
+        assertEquals(
+            "Resume should enter the dedicated RESUMING phase before asynchronous state reconstruction proceeds.",
+            WorkoutSessionPhase.RESUMING,
+            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(
+            "An aborted resume should fall back to a non-loading phase instead of leaving the screen stuck on RESUMING.",
+            WorkoutSessionPhase.PREPARING,
+            (sessionPhaseField.get(viewModel) as MutableStateFlow<WorkoutSessionPhase>).value
         )
     }
 }

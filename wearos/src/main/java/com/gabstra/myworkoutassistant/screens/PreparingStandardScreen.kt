@@ -80,7 +80,7 @@ fun PreparingStandardScreen(
             viewModel.lightScreenUp()
             if(hasWorkoutRecord){
                 if (viewModel.consumeSkipNextResumeLastState()) {
-                    viewModel.resumeWorkout()
+                    viewModel.finishPreparedResume()
                 } else {
                     viewModel.resumeLastState()
                 }

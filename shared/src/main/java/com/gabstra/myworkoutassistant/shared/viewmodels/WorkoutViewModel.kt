@@ -426,7 +426,9 @@ open class WorkoutViewModel(
      * active screen state before an outgoing Preparing screen finishes its timers/animations.
      */
     fun isCurrentPreparingState(expectedState: WorkoutState.Preparing): Boolean {
-        return _workoutState.value === expectedState
+        val phase = _sessionPhase.value
+        return (phase == WorkoutSessionPhase.PREPARING || phase == WorkoutSessionPhase.READY) &&
+            _workoutState.value === expectedState
     }
 
     private val _workouts = MutableStateFlow<List<Workout>>(emptyList())
@@ -881,10 +883,22 @@ open class WorkoutViewModel(
     protected fun enterPreparingPhase() {
         _sessionPhase.value = WorkoutSessionPhase.PREPARING
         _workoutState.value = WorkoutState.Preparing(dataLoaded = false)
+        _nextWorkoutState.value = null
+    }
+
+    protected fun enterResumingPhase() {
+        _sessionPhase.value = WorkoutSessionPhase.RESUMING
+        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+        _nextWorkoutState.value = null
     }
 
     protected fun markSessionReady() {
         _sessionPhase.value = WorkoutSessionPhase.READY
+        _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
+    }
+
+    protected fun markPreparingDataLoaded() {
+        _sessionPhase.value = WorkoutSessionPhase.PREPARING
         _workoutState.value = WorkoutState.Preparing(dataLoaded = true)
     }
 
@@ -926,7 +940,6 @@ open class WorkoutViewModel(
             selectedWorkout = _selectedWorkout.value,
             isPaused = _isPaused.value,
             hasWorkoutRecord = _hasWorkoutRecord.value,
-            isResuming = _isResuming.value,
             isRefreshing = _isRefreshing.value,
             isCustomDialogOpen = _isCustomDialogOpen.value,
             enableWorkoutNotificationFlow = _enableWorkoutNotificationFlow.value,
@@ -1027,9 +1040,6 @@ open class WorkoutViewModel(
 
     protected var _workoutRecord by mutableStateOf<WorkoutRecord?>(null)
     protected var pendingResumeWorkoutHistoryId: UUID? = null
-
-    private val _isResuming = MutableStateFlow<Boolean>(false)
-    val isResuming = _isResuming.asStateFlow()
 
     private val _isRefreshing = MutableStateFlow<Boolean>(false)
     val isRefreshing = _isRefreshing.asStateFlow()
@@ -1333,11 +1343,6 @@ open class WorkoutViewModel(
             _enableWorkoutNotificationFlow.value = null
             _currentScreenDimmingState.value = false
 
-            enterPreparingPhase()
-            stateMachine = null
-            setStates.clear()
-            weightsByEquipment.clear()
-            _isPaused.value = false
             val resumeSelectedWorkout =
                 resolveWorkoutTemplateForSession(_selectedWorkoutId.value)
                     ?: run {
@@ -1348,6 +1353,15 @@ open class WorkoutViewModel(
                         )
                         return@withContext
                     }
+            if (resumeSelectedWorkout.usesExternalHeartRateDevice) {
+                enterPreparingPhase()
+            } else {
+                enterResumingPhase()
+            }
+            stateMachine = null
+            setStates.clear()
+            weightsByEquipment.clear()
+            _isPaused.value = false
             _selectedWorkout.value = resumeSelectedWorkout
             initializeExercisesMaps(resumeSelectedWorkout)
             if (_workoutRecord == null) {
@@ -1788,7 +1802,7 @@ open class WorkoutViewModel(
         val executedSetHistories = executedSetStore.executedSets.value
 
         if (_workoutRecord == null) {
-            if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING && stateMachine != null) {
                 updateStateFlowsFromMachine()
             }
             return
@@ -1805,13 +1819,12 @@ open class WorkoutViewModel(
 
         // When we land on Preparing before resuming, the state machine already knows the real state.
         // Sync the UI-facing state so comparisons run against the latest value.
-        if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
-            updateStateFlowsFromMachine()
-        }
-
         val currentState = _workoutState.value
         if (isTargetResumeState(currentState) && currentState is WorkoutState.Set) {
             workoutTimerRestoreService.restoreTimerForTimeSet(currentState, executedSetHistories, TAG)
+            if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+                updateStateFlowsFromMachine()
+            }
             return
         }
 
@@ -1829,32 +1842,46 @@ open class WorkoutViewModel(
                     )
                 ) {
                     Log.d(TAG, "Resume on Rest after set matching record: staying on Rest")
+                    if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+                        updateStateFlowsFromMachine()
+                    }
                     return
                 }
             }
         }
 
-        launchIO {
-            _isResuming.value = true
-            while (true) {
-                if (_workoutState.value is WorkoutState.Completed) break
-                val machineState = stateMachine?.currentState ?: break
-
-                if (isTargetResumeState(machineState) && machineState is WorkoutState.Set) {
-                    workoutTimerRestoreService.restoreTimerForTimeSet(machineState, executedSetHistories, TAG)
-                    //go to the next set after the target set which is not rest
-                    do{
-                        goToNextState()
-                    } while (_workoutState.value is WorkoutState.Rest)
-                    break
+        enterResumingPhase()
+        launchMain {
+            try {
+                if (_workoutState.value is WorkoutState.Preparing && stateMachine != null) {
+                    updateStateFlowsFromMachine()
                 }
 
-                goToNextState()
-            }
+                while (true) {
+                    if (_workoutState.value is WorkoutState.Completed) break
+                    val machineState = stateMachine?.currentState ?: break
 
-            delay(2000)
-            _isResuming.value = false
-            rebuildScreenState()
+                    if (isTargetResumeState(machineState) && machineState is WorkoutState.Set) {
+                        workoutTimerRestoreService.restoreTimerForTimeSet(machineState, executedSetHistories, TAG)
+                        // Go to the next non-rest state after the target set.
+                        do {
+                            goToNextState()
+                        } while (_workoutState.value is WorkoutState.Rest)
+                        break
+                    }
+
+                    goToNextState()
+                }
+            } finally {
+                if (_sessionPhase.value == WorkoutSessionPhase.RESUMING && stateMachine != null) {
+                    updateStateFlowsFromMachine()
+                } else if (_sessionPhase.value == WorkoutSessionPhase.RESUMING) {
+                    markPreparingDataLoaded()
+                    rebuildScreenState()
+                } else {
+                    rebuildScreenState()
+                }
+            }
         }
     }
 

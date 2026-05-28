@@ -2593,8 +2593,8 @@ class WorkoutViewModelSessionTest {
             stateMachineField.get(viewModel)
         )
         assertFalse(
-            "External sync should not surface the late resuming state after recovery has already restored the active session.",
-            viewModel.isResuming.value
+            "External sync should not leave the session in the dedicated resume phase after recovery has already restored the active session.",
+            viewModel.sessionPhase.value == WorkoutSessionPhase.RESUMING
         )
     }
 }
