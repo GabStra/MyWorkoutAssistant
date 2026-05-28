@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -60,105 +63,102 @@ fun ControlButtonsVertical(
     ) {
         Box(
             modifier = Modifier
-                .size(50.dp)
-                .background(Color.Transparent)
-                .alpha(if (isPlusEnabled) 1f else 0.45f)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Add"
-                    role = Role.Button
-                    onClick(
-                        label = "Add"
-                    ) {
-                        if (!isPlusEnabled) return@onClick false
-                        onPlusTap()
-                        true
-                    }
-                    onLongClick(
-                        label = "Add"
-                    ) {
-                        if (!isPlusEnabled) return@onLongClick false
-                        onPlusLongPress()
-                        true
-                    }
-                }
-                .repeatActionOnLongPressOrTap(
-                    thresholdMillis = 1000,
-                    intervalMillis = 150,
-                    enabled = isPlusEnabled,
-                    onAction = onPlusLongPress,
-                    onTap = onPlusTap
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Green,CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    modifier = Modifier.size(30.dp),
-                    imageVector = Icons.Filled.ArrowUpward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 2.5.dp),
+                .weight(1f)
+                .padding(horizontal = 30.dp),
             contentAlignment = Alignment.Center
         ) {
             content()
         }
 
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 22.5.dp)
+        ) {
+            ControlButton(
+                contentDescription = "Subtract",
+                icon = {
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Filled.ArrowDownward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                },
+                backgroundColor = Red,
+                enabled = isMinusEnabled,
+                onTap = onMinusTap,
+                onLongPress = onMinusLongPress
+            )
+            Spacer(modifier = Modifier.width(15.dp))
+            ControlButton(
+                contentDescription = "Add",
+                icon = {
+                    Icon(
+                        modifier = Modifier.size(30.dp),
+                        imageVector = Icons.Filled.ArrowUpward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
+                },
+                backgroundColor = Green,
+                enabled = isPlusEnabled,
+                onTap = onPlusTap,
+                onLongPress = onPlusLongPress
+            )
+        }
+    }
+}
+
+@Composable
+private fun ControlButton(
+    contentDescription: String,
+    icon: @Composable () -> Unit,
+    backgroundColor: Color,
+    enabled: Boolean,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(62.5.dp)
+            .alpha(if (enabled) 1f else 0.45f)
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = contentDescription
+                role = Role.Button
+                onClick(
+                    label = contentDescription
+                ) {
+                    if (!enabled) return@onClick false
+                    onTap()
+                    true
+                }
+                onLongClick(
+                    label = contentDescription
+                ) {
+                    if (!enabled) return@onLongClick false
+                    onLongPress()
+                    true
+                }
+            }
+            .repeatActionOnLongPressOrTap(
+                thresholdMillis = 1000,
+                intervalMillis = 150,
+                enabled = enabled,
+                onAction = onLongPress,
+                onTap = onTap
+            ),
+        contentAlignment = Alignment.Center
+    ) {
         Box(
             modifier = Modifier
                 .size(50.dp)
-                .background(Color.Transparent)
-                .alpha(if (isMinusEnabled) 1f else 0.45f)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Subtract"
-                    role = Role.Button
-                    onClick(
-                        label = "Subtract"
-                    ) {
-                        if (!isMinusEnabled) return@onClick false
-                        onMinusTap()
-                        true
-                    }
-                    onLongClick(
-                        label = "Subtract"
-                    ) {
-                        if (!isMinusEnabled) return@onLongClick false
-                        onMinusLongPress()
-                        true
-                    }
-                }
-                .repeatActionOnLongPressOrTap(
-                    thresholdMillis = 1000,
-                    intervalMillis = 150,
-                    enabled = isMinusEnabled,
-                    onAction = onMinusLongPress,
-                    onTap = onMinusTap
-                ),
+                .background(backgroundColor, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Red,CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    modifier = Modifier.size(30.dp),
-                    imageVector = Icons.Filled.ArrowDownward,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
-            }
+            icon()
         }
     }
 }
