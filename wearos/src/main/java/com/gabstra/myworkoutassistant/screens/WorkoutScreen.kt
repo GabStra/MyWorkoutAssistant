@@ -424,9 +424,9 @@ fun WorkoutScreen(
                         TutorialOverlay(
                             visible = true,
                             steps = listOf(
-                                TutorialStep("Heart rate (left)", "Tap the number to cycle display (for example BPM or zone)."),
-                                TutorialStep("Progress (right)", "Shows which exercise and set you are on."),
-                                TutorialStep("Complete this set", "Tap Complete Set, or press back once and hold the checkmark to confirm.")
+                                TutorialStep("Heart rate", "Tap the number on the left to switch between views like BPM and zone."),
+                                TutorialStep("Workout progress", "The right side shows where you are in the workout so you can check the current exercise and set at a glance."),
+                                TutorialStep("Finish the set", "Swipe to the buttons page and tap Complete Set. You can also press Back once and hold the checkmark.")
                             ),
                             onDismiss = onDismissHeartRateTutorial,
                             hapticsViewModel = hapticsViewModel
@@ -598,9 +598,10 @@ fun WorkoutScreen(
                                             TutorialOverlay(
                                                 visible = true,
                                                 steps = listOf(
-                                                    TutorialStep("Extra pages", "Swipe left or right for more views for this set."),
-                                                    TutorialStep("Long exercise names", "Tap the exercise title or top bar to scroll the text."),
-                                                    TutorialStep("Save the set", "Use Complete Set on the buttons page, or press back once and hold the checkmark.")
+                                                    TutorialStep("Edit the set", "Long press reps, weight, or time to edit that value, then use + and - to adjust it."),
+                                                    TutorialStep("More views", "Swipe left or right for extra pages like notes, progression, plates, and other set details."),
+                                                    TutorialStep("Restore quickly", "While editing, double tap a value to restore the previous value when available."),
+                                                    TutorialStep("Save the set", "Swipe to the buttons page and tap Complete Set. You can also press Back once and hold the checkmark.")
                                                 ),
                                                 onDismiss = onDismissSetScreenTutorial,
                                                 hapticsViewModel = hapticsViewModel
@@ -653,10 +654,10 @@ fun WorkoutScreen(
                                             TutorialOverlay(
                                                 visible = true,
                                                 steps = listOf(
-                                                    TutorialStep("Rest timer", "Countdown starts on its own.\nLong press the timer, then use + and − to adjust."),
-                                                    TutorialStep("Exercise preview", "Tap the left or right side to see the previous or next exercise."),
-                                                    TutorialStep("Almost done", "The screen turns on when 5 seconds remain."),
-                                                    TutorialStep("Skip this rest", "Press back once, then hold the checkmark to skip early.")
+                                                    TutorialStep("Rest timer", "Rest starts automatically. Long press the timer, then use + and - to adjust it."),
+                                                    TutorialStep("Preview exercises", "Tap the left or right side to check the previous or next exercise without leaving rest."),
+                                                    TutorialStep("Wake-up cue", "The watch turns the screen on when 5 seconds remain so you do not miss the next set."),
+                                                    TutorialStep("Skip early", "Press Back once, then hold the checkmark to end the rest early.")
                                                 ),
                                                 onDismiss = onDismissRestScreenTutorial,
                                                 hapticsViewModel = hapticsViewModel

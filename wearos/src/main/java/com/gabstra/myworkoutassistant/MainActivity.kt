@@ -506,8 +506,8 @@ fun WearApp(
                                         .zIndex(1f),
                                     visible = showWorkoutSelectionTutorial,
                                     steps = listOf(
-                                        TutorialStep("Start a workout", "Tap a workout to open its details, then start from that screen."),
-                                        TutorialStep("List header", "Long press the header for app info and options.\nDouble tap the header for sync tools.")
+                                        TutorialStep("Choose a workout", "Tap a workout to open it, review the details, and start when you're ready."),
+                                        TutorialStep("Watch sync status", "The badge at the top shows whether the watch is syncing. If something looks outdated, let sync finish first.")
                                     ),
                                     onDismiss = {
                                         showWorkoutSelectionTutorial = false
