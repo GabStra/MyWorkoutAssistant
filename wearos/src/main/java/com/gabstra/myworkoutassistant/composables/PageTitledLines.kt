@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -24,7 +25,6 @@ import androidx.wear.compose.material3.lazy.TransformationVariableSpec
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import java.util.Locale.getDefault
 
 /** A section with a title and a list of lines (e.g. "Equipment" / ["Barbell"] or "Accessories" / ["Bench", "Rings"]). */
 data class TitledLinesSection(val title: String, val lines: List<String>)
@@ -38,7 +38,7 @@ private fun TitledLinesSectionItem(
         modifier = modifier,
     ) {
         Text(
-            text = section.title.uppercase(getDefault()),
+            text = section.title.uppercase(LocalLocale.current.platformLocale),
             modifier = Modifier.fillMaxWidth(),
             style = workoutPagerTitleTextStyle(),
             color = MaterialTheme.colorScheme.onBackground,
