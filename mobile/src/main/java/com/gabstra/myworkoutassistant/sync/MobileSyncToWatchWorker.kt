@@ -15,6 +15,7 @@ import com.gabstra.myworkoutassistant.shared.AppBackup
 import com.gabstra.myworkoutassistant.shared.AppDatabase
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreRepository
 import com.gabstra.myworkoutassistant.shared.WorkoutStoreValidationException
+import com.gabstra.myworkoutassistant.shared.calculateWorkoutStoreHash
 import com.gabstra.myworkoutassistant.shared.validateWorkoutStoreForRuntimeUse
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
@@ -37,6 +38,7 @@ class MobileSyncToWatchWorker(
             val db = AppDatabase.getDatabase(context)
             val workoutStoreRepository = WorkoutStoreRepository(context.filesDir)
             val workoutStore = workoutStoreRepository.getWorkoutStore()
+            val workoutStoreFingerprint = calculateWorkoutStoreHash(workoutStore)
             validateWorkoutStoreForRuntimeUse(workoutStore)
 
             val workoutHistoryDao = db.workoutHistoryDao()
@@ -154,7 +156,10 @@ class MobileSyncToWatchWorker(
                 TAG,
                 "SYNC_TRACE event=worker_complete side=mobile channel=full_backup"
             )
-            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(context.applicationContext)
+            PhoneToWatchSyncCoordinator.onWorkerSyncAttemptSucceeded(
+                context.applicationContext,
+                workoutStoreFingerprint
+            )
             Result.success()
         }.getOrElse { exception ->
             if (exception is WorkoutStoreValidationException) {

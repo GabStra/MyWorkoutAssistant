@@ -437,6 +437,12 @@ fun calculateAppBackupHash(appBackup: AppBackup): String {
     return hashBytes.joinToString("") { "%02x".format(it) }
 }
 
+fun calculateWorkoutStoreHash(workoutStore: WorkoutStore): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hashBytes = digest.digest(fromWorkoutStoreToJSON(workoutStore).toByteArray(Charsets.UTF_8))
+    return hashBytes.joinToString("") { "%02x".format(it) }
+}
+
 private fun appBackupArchiveGsonBuilder(): GsonBuilder {
     return GsonBuilder()
         .registerTypeAdapter(WorkoutStore::class.java, WorkoutStoreAdapter())
