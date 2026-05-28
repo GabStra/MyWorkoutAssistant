@@ -219,6 +219,12 @@ function Reset-AppInstallState([string]$serial, [string]$appPackage) {
     Uninstall-PackageIfPresent -serial $serial -packageName $appPackage
 }
 
+function Reset-PhoneAppInstallState([string]$serial, [string]$appPackage) {
+    Reset-AppInstallState -serial $serial -appPackage $appPackage
+    # Old non-debug test packages can keep enough data around to break emulator installs.
+    Uninstall-PackageIfPresent -serial $serial -packageName "com.gabstra.myworkoutassistant.test"
+}
+
 function Install-MobileDebugAndTestApks([string]$phoneSerial) {
     Write-Host "Building and installing mobile debug + androidTest APKs on phone emulator..." -ForegroundColor Cyan
     & .\gradlew :mobile:assembleDebug :mobile:assembleDebugAndroidTest
@@ -237,12 +243,26 @@ function Install-MobileDebugAndTestApks([string]$phoneSerial) {
 
     & adb -s $phoneSerial install -r $mobileApk | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile debug app on $phoneSerial"
+        Write-Host "Initial phone app install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
+        Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        & adb -s $phoneSerial install -r $mobileApk | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install mobile debug app on $phoneSerial"
+        }
     }
 
     & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install mobile androidTest APK on $phoneSerial"
+        Write-Host "Initial phone androidTest install failed; resetting phone packages and retrying once..." -ForegroundColor Yellow
+        Reset-PhoneAppInstallState -serial $phoneSerial -appPackage $AppPackage
+        & adb -s $phoneSerial install -r $mobileApk | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to reinstall mobile debug app on $phoneSerial after reset"
+        }
+        & adb -s $phoneSerial install -r $mobileTestApk | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install mobile androidTest APK on $phoneSerial"
+        }
     }
 }
 
