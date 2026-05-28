@@ -210,7 +210,7 @@ private fun weightAndRepsDifference(
     }
     val repsText = if (repsDiff != 0) {
         val sign = if (repsDiff > 0) "+" else ""
-        "$sign$repsDiff reps"
+        "$sign$repsDiff"
     } else {
         null
     }

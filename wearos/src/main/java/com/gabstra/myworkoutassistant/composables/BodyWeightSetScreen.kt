@@ -59,8 +59,6 @@ import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
 private const val TAG = "BodyWeightSetScreen"
-private val DeltaTextSlotHeight = 16.dp
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BodyWeightSetScreen(
@@ -401,19 +399,10 @@ fun BodyWeightSetScreen(
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            Box(
-                modifier = Modifier.height(DeltaTextSlotHeight),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                if (repsDeltaText != null) {
-                    ScalableText(
-                        text = repsDeltaText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
+            SetDeltaTextSlot(
+                deltaText = repsDeltaText,
+                color = colorForSetSegmentTrend(historicalSetDifference.repsTrend),
+            )
         }
     }
 
@@ -490,19 +479,10 @@ fun BodyWeightSetScreen(
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
-            Box(
-                modifier = Modifier.height(DeltaTextSlotHeight),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                if (weightDeltaText != null) {
-                    ScalableText(
-                        text = weightDeltaText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
+            SetDeltaTextSlot(
+                deltaText = weightDeltaText,
+                color = colorForSetSegmentTrend(historicalSetDifference.weightTrend),
+            )
         }
     }
 
