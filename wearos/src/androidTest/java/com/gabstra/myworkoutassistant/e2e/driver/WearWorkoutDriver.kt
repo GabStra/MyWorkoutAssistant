@@ -604,18 +604,19 @@ class WearWorkoutDriver(
     }
 
     /**
-     * Fallback: find visible text that looks like a weight value (integer in 50..150 kg).
+     * Fallback: find visible text that looks like a weight value.
      * Used when semantics are not exposed (e.g. on a pager page).
      */
     private fun readWeightFromScreenFallback(timeoutMs: Long): Double? {
         device.waitForIdle(E2ETestTimings.MEDIUM_IDLE_MS)
         val deadline = System.currentTimeMillis() + timeoutMs
+        val weightPattern = Pattern.compile("^[0-9]+([.,][0-9]+)?$")
         while (System.currentTimeMillis() < deadline) {
-            val nodes = device.findObjects(By.text(Pattern.compile("^[0-9]+$")))
+            val nodes = device.findObjects(By.text(weightPattern))
             for (node in nodes) {
-                val text = node.text?.trim() ?: continue
+                val text = node.text?.trim()?.replace(",", ".") ?: continue
                 val value = text.toDoubleOrNull() ?: continue
-                if (value in 50.0..150.0) return value
+                if (value in 0.0..500.0) return value
             }
             device.waitForIdle(300)
         }
