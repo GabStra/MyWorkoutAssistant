@@ -62,7 +62,6 @@ import com.gabstra.myworkoutassistant.screens.setCurrentWorkoutState
 import com.gabstra.myworkoutassistant.screens.setFieldValue
 import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.MediumDarkGray
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
 import com.gabstra.myworkoutassistant.shared.setdata.RestSetData
 import com.gabstra.myworkoutassistant.shared.setdata.SetSubCategory
@@ -375,7 +374,6 @@ private fun shouldUseWeightHeader(
 private fun ExercisePageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem,
-    stepLabel: String?,
     displayCounter: String?,
     useWeightHeader: Boolean,
 ) {
@@ -383,10 +381,9 @@ private fun ExercisePageFixedHeader(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        WorkoutStepIndicatorText(stepLabel = stepLabel)
         Box(modifier = Modifier.fillMaxWidth()) {
             when (pageItem) {
                 is PageExercisesItem.SupersetPage -> ExerciseNameText(
@@ -443,14 +440,12 @@ private fun ExercisePageFixedHeader(
 private fun RestPageFixedHeader(
     modifier: Modifier = Modifier,
     pageItem: PageExercisesItem.RestPage,
-    stepLabel: String?,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        WorkoutStepIndicatorText(stepLabel = stepLabel)
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.5.dp)
@@ -458,7 +453,7 @@ private fun RestPageFixedHeader(
             Text(
                 text = "UP NEXT",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.primary
             )
 
             ExerciseNameText(
@@ -489,8 +484,16 @@ private fun TransformingLazyColumnScope.RestPageContent(
         ) {
             val borderColor: Color = when (progressState) {
                 ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
-                ProgressState.CURRENT -> Orange
+                ProgressState.CURRENT -> MaterialTheme.colorScheme.primary
                 ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+            val backgroundColor: Color = when (progressState) {
+                ProgressState.CURRENT -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.background
+            }
+            val textColor: Color = when (progressState) {
+                ProgressState.CURRENT -> MaterialTheme.colorScheme.onPrimary
+                else -> borderColor
             }
             val shape = RoundedCornerShape(25)
             Box(
@@ -498,6 +501,7 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     .fillMaxWidth()
                     .graphicsLayer { with(transformationSpec) { applyContentTransformation(scrollProgress) } }
                     .height(25.dp)
+                    .background(backgroundColor, shape)
                     .border(BorderStroke(1.dp, borderColor), shape)
                     .semantics {
                         contentDescription = PageExercisesRestSemantics.restDurationRowDescription(formattedRest)
@@ -508,7 +512,7 @@ private fun TransformingLazyColumnScope.RestPageContent(
                     modifier = Modifier.padding(vertical = 2.5.dp, horizontal = 5.dp),
                     text = "REST $formattedRest",
                     style = MaterialTheme.typography.numeralMedium,
-                    color = borderColor,
+                    color = textColor,
                 )
             }
         }
@@ -674,7 +678,7 @@ fun PageExercises(
             null -> false
         }
     }
-    val headerOverlayHeightDp = 60.dp
+    val headerOverlayHeightDp = 40.dp
     val density = LocalDensity.current
 
     BoxWithConstraints(
@@ -805,7 +809,6 @@ fun PageExercises(
                             .height(headerOverlayHeightDp)
                             .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
-                        stepLabel = selectedStepLabel
                     )
                     else -> ExercisePageFixedHeader(
                         modifier = Modifier
@@ -813,13 +816,23 @@ fun PageExercises(
                             .height(headerOverlayHeightDp)
                             .padding(bottom = 2.5.dp),
                         pageItem = selectedPageItem,
-                        stepLabel = selectedStepLabel,
                         displayCounter = displayCounter,
                         useWeightHeader = useWeightHeader
                     )
                 }
             }
         }
+
+        WorkoutStepIndicatorText(
+            stepLabel = selectedStepLabel,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .height(10.dp + WorkoutPagerPageSafeAreaPadding.calculateBottomPadding())
+                .background(MaterialTheme.colorScheme.background)
+                .padding(vertical = 2.5.dp)
+        )
 
         Row(
             modifier = Modifier.fillMaxSize(),

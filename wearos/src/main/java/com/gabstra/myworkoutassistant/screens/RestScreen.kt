@@ -313,12 +313,12 @@ private fun RestTimerBlock(
                 Text(
                     text = "UP NEXT",
                     style = timerHeaderStyle,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(2.5.dp))
                 ExerciseNameText(
                     text = nextExercise.name,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                     textAlign = TextAlign.Center
                 )

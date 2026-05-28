@@ -2,6 +2,7 @@ package com.gabstra.myworkoutassistant.composables
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -37,7 +38,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material3.LocalTextConfiguration
 import androidx.wear.compose.material3.MaterialTheme
@@ -47,9 +47,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.gabstra.myworkoutassistant.data.AppViewModel
 import com.gabstra.myworkoutassistant.data.FormatTime
 import com.gabstra.myworkoutassistant.data.HapticsViewModel
-import com.gabstra.myworkoutassistant.shared.ExerciseType
 import com.gabstra.myworkoutassistant.shared.Green
-import com.gabstra.myworkoutassistant.shared.Orange
 import com.gabstra.myworkoutassistant.shared.Red
 import com.gabstra.myworkoutassistant.shared.Yellow
 import com.gabstra.myworkoutassistant.shared.setdata.BodyWeightSetData
@@ -67,7 +65,6 @@ import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutRestRow
 import com.gabstra.myworkoutassistant.shared.workout.display.buildWorkoutSetDisplayIdentifier
 import com.gabstra.myworkoutassistant.shared.workout.display.findDisplayRowIndex
 import com.gabstra.myworkoutassistant.shared.workout.display.setLikeIdOrNull
-import com.gabstra.myworkoutassistant.shared.workout.display.toExerciseSetDisplayRowOrNull
 import com.gabstra.myworkoutassistant.shared.workout.state.WorkoutState
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
 import java.util.UUID
@@ -1240,8 +1237,23 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val borderColor = when (progressState) {
             ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
             ProgressState.CURRENT -> when {
-                rowModel.rowIndex == setIndex -> Orange
-                rowModel.rowIndex < setIndex -> MaterialTheme.colorScheme.primary
+                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.primary
+                else -> currentExercisePendingColor
+            }
+            ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+        val backgroundColor = when (progressState) {
+            ProgressState.PAST -> MaterialTheme.colorScheme.background
+            ProgressState.CURRENT -> when {
+                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.background
+            }
+            ProgressState.FUTURE -> MaterialTheme.colorScheme.background
+        }
+        val textColor = when (progressState) {
+            ProgressState.PAST -> MaterialTheme.colorScheme.onBackground
+            ProgressState.CURRENT -> when {
+                rowModel.rowIndex <= setIndex -> MaterialTheme.colorScheme.onPrimary
                 else -> currentExercisePendingColor
             }
             ProgressState.FUTURE -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1250,6 +1262,7 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
         val rowModifier = Modifier
             .fillMaxWidth()
             .height(25.dp)
+            .background(backgroundColor, RoundedCornerShape(25))
             .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(25))
 
         when (rowModel.contentType) {
@@ -1259,27 +1272,27 @@ internal fun TransformingLazyColumnScope.ExerciseSetsViewer(
                 enableFadingText = enableFadingText,
                 hideSetListRowText = hideSetListRowText,
                 modifier = rowModifier,
-                textColor = borderColor
+                textColor = textColor
             )
             PageExercisesRowContentType.CalibrationLoad -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = borderColor,
+                textColor = textColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.Rest -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = borderColor,
+                textColor = textColor,
                 hideSetListRowText = hideSetListRowText,
             )
             PageExercisesRowContentType.CalibrationRir -> CenteredLabelRow(
                 modifier = rowModifier,
                 text = rowModel.centeredText.orEmpty(),
                 fittedText = fittedRows?.rowsByKey?.get(rowModel.key)?.centeredText,
-                textColor = borderColor,
+                textColor = textColor,
                 hideSetListRowText = hideSetListRowText,
             )
         }

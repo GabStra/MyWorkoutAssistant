@@ -336,24 +336,39 @@ fun PageProgressionComparison(
         val comparison = setDifference.comparison
 
         val rowIndex = currentSetIndex
-        val borderColor by remember(currentSetIndex, setIndex, colorScheme.outline, colorScheme.onBackground) {
+        val borderColor by remember(
+            currentSetIndex,
+            setIndex,
+            colorScheme.primary,
+            colorScheme.onBackground,
+            colorScheme.surfaceContainerHigh,
+        ) {
             derivedStateOf {
                 when {
-                    rowIndex == setIndex -> Orange // Current set: orange border
+                    rowIndex == setIndex -> colorScheme.primary
                     rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground border
                     else -> colorScheme.surfaceContainerHigh // Future set: subtle outline
                 }
             }
         }
-        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.background) {
-            derivedStateOf {
-                colorScheme.background // All sets: black background
-            }
-        }
-        val textColor by remember(currentSetIndex, setIndex, colorScheme.surfaceContainerHigh) {
+        val backgroundColor by remember(currentSetIndex, setIndex, colorScheme.primary, colorScheme.background) {
             derivedStateOf {
                 when {
-                    rowIndex == setIndex -> Orange // Current set: orange text
+                    rowIndex == setIndex -> colorScheme.primary
+                    else -> colorScheme.background
+                }
+            }
+        }
+        val textColor by remember(
+            currentSetIndex,
+            setIndex,
+            colorScheme.onPrimary,
+            colorScheme.onBackground,
+            colorScheme.surfaceContainerHigh,
+        ) {
+            derivedStateOf {
+                when {
+                    rowIndex == setIndex -> colorScheme.onPrimary
                     rowIndex < setIndex -> colorScheme.onBackground // Previous set: onBackground text
                     else -> colorScheme.surfaceContainerHigh // Future set: surfaceContainerHigh (MediumLightGray)
                 }
