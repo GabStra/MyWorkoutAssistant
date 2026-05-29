@@ -26,6 +26,7 @@ data class WorkoutScreenState(
     val startWorkoutTime: LocalDateTime?,
     val enableDimming: Boolean,
     val keepScreenOn: Boolean,
+    val isAlertSoundEnabled: Boolean = true,
     val currentScreenDimmingState: Boolean,
     // WearOS-specific display modes (default to 0 for mobile)
     val headerDisplayMode: Int = 0,
@@ -65,6 +66,7 @@ data class WorkoutScreenState(
                 startWorkoutTime = null,
                 enableDimming = false,
                 keepScreenOn = false,
+                isAlertSoundEnabled = true,
                 currentScreenDimmingState = false,
                 headerDisplayMode = 0,
                 hrDisplayMode = 0,
