@@ -356,12 +356,7 @@ internal fun shouldDuplicateUnilateralHistoryRow(
 ): Boolean {
     val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
     if (intraSetRestSeconds <= 0) return false
-    val subCategory = when (setData) {
-        is WeightSetData -> setData.subCategory
-        is BodyWeightSetData -> setData.subCategory
-        else -> null
-    }
-    return subCategory != SetSubCategory.WarmupSet
+    return setData is WeightSetData || setData is BodyWeightSetData || setData == null
 }
 
 private fun shouldDuplicateUnilateralTemplateRow(
@@ -370,12 +365,7 @@ private fun shouldDuplicateUnilateralTemplateRow(
 ): Boolean {
     val intraSetRestSeconds = exercise.intraSetRestInSeconds ?: return false
     if (intraSetRestSeconds <= 0) return false
-    val subCategory = when (set) {
-        is WeightSet -> set.subCategory
-        is BodyWeightSet -> set.subCategory
-        else -> null
-    }
-    return subCategory != SetSubCategory.WarmupSet
+    return set is WeightSet || set is BodyWeightSet
 }
 
 @Composable

@@ -32,6 +32,8 @@ import com.gabstra.myworkoutassistant.shared.utils.SimpleSet
 import com.gabstra.myworkoutassistant.shared.utils.Ternary
 import com.gabstra.myworkoutassistant.shared.utils.compareSetListsUnordered
 import com.gabstra.myworkoutassistant.shared.workoutcomponents.Exercise
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.Rest
+import com.gabstra.myworkoutassistant.shared.workoutcomponents.WorkoutComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -254,6 +256,25 @@ class WorkoutViewModelSessionTest {
         )
     }
 
+    private fun createTestWorkout(workoutComponents: List<WorkoutComponent>): Workout {
+        return Workout(
+            id = testWorkoutId,
+            name = "Test Workout",
+            description = "Test Description",
+            workoutComponents = workoutComponents,
+            order = 0,
+            enabled = true,
+            heartRateSource = com.gabstra.myworkoutassistant.shared.HeartRateSource.WATCH_SENSOR,
+            creationDate = LocalDate.now(),
+            previousVersionId = null,
+            nextVersionId = null,
+            isActive = true,
+            timesCompletedInAWeek = null,
+            globalId = testWorkoutGlobalId,
+            type = 0
+        )
+    }
+
     private fun createTestWorkoutStore(workout: Workout): WorkoutStore {
         val equipment = createTestBarbell()
         
@@ -264,6 +285,189 @@ class WorkoutViewModelSessionTest {
             weightKg = 75.0,
             progressionPercentageAmount = 0.0
         )
+    }
+
+    private suspend fun TestScope.startSelectedWorkoutAndEnterFirstSet() {
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        delay(10)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        waitForWorkoutToLoad()
+    }
+
+    @Test
+    fun skipCurrentExercise_movesToNextExercisePersistsSkippedSetsAndSurvivesRefresh() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val thirdSetId = UUID.randomUUID()
+        val nextExerciseSetId = UUID.randomUUID()
+        val firstExercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 80.0),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 82.5),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(thirdSetId, 8, 85.0)
+            ),
+            name = "Bench Press"
+        )
+        val secondExerciseId = UUID.randomUUID()
+        val secondExercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(nextExerciseSetId, 10, 70.0)),
+            name = "Barbell Row"
+        ).copy(id = secondExerciseId)
+        val workout = createTestWorkout(
+            listOf(
+                firstExercise,
+                Rest(id = UUID.randomUUID(), enabled = true, timeInSeconds = 90),
+                secondExercise
+            )
+        )
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        viewModel.skipCurrentExercise(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val currentState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Expected the next exercise set to become active after skip.", currentState)
+        assertEquals(secondExercise.id, currentState?.exerciseId)
+        assertEquals(nextExerciseSetId, currentState?.set?.id)
+
+        val skippedHistories = viewModel.executedSetsHistory.filter { it.exerciseId == firstExercise.id }
+        assertEquals(3, skippedHistories.size)
+        assertTrue(skippedHistories.all { it.skipped })
+
+        viewModel.applyExternalSyncWorkoutStore(workoutStore)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val refreshedState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Expected refresh to keep the next exercise active after skip.", refreshedState)
+        assertEquals(secondExercise.id, refreshedState?.exerciseId)
+        assertEquals(nextExerciseSetId, refreshedState?.set?.id)
+        val refreshedFirstExerciseStates = viewModel.getStatesForExercise(firstExercise.id)
+            .filterIsInstance<WorkoutState.Set>()
+        assertTrue(refreshedFirstExerciseStates.all { it.skipped })
+    }
+
+    @Test
+    fun skipCurrentExercise_fromMiddleSetPreservesCompletedHistoryAndSkipsRemainingSets() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val thirdSetId = UUID.randomUUID()
+        val nextExerciseSetId = UUID.randomUUID()
+        val firstExercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 80.0),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 82.5),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(thirdSetId, 8, 85.0)
+            ),
+            name = "Bench Press"
+        )
+        val secondExercise = createTestExercise(
+            sets = listOf(createWeightSetWithValidatedWeight(nextExerciseSetId, 10, 70.0)),
+            name = "Barbell Row"
+        ).copy(id = UUID.randomUUID())
+        val workout = createTestWorkout(listOf(firstExercise, secondExercise))
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        val firstState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(firstState)
+        firstState!!.startTime = LocalDateTime.now()
+        viewModel.storeSetData()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        viewModel.goToNextState()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val middleState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull("Expected to land on the middle set before skipping.", middleState)
+        assertEquals(secondSetId, middleState?.set?.id)
+
+        viewModel.skipCurrentExercise(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        val firstExerciseHistories = viewModel.executedSetsHistory
+            .filter { it.exerciseId == firstExercise.id }
+            .associateBy { it.setId }
+        assertEquals(3, firstExerciseHistories.size)
+        assertEquals(false, firstExerciseHistories[firstSetId]?.skipped)
+        assertEquals(true, firstExerciseHistories[secondSetId]?.skipped)
+        assertEquals(true, firstExerciseHistories[thirdSetId]?.skipped)
+
+        val currentState = viewModel.workoutState.value as? WorkoutState.Set
+        assertNotNull(currentState)
+        assertEquals(secondExercise.id, currentState?.exerciseId)
+        assertEquals(nextExerciseSetId, currentState?.set?.id)
+    }
+
+    @Test
+    fun skipCurrentExercise_onFinalExerciseCompletesWorkout() = runTest(testDispatcher) {
+        val firstSetId = UUID.randomUUID()
+        val secondSetId = UUID.randomUUID()
+        val exercise = createTestExercise(
+            sets = listOf(
+                createWeightSetWithValidatedWeight(firstSetId, 8, 80.0),
+                RestSet(UUID.randomUUID(), 60),
+                createWeightSetWithValidatedWeight(secondSetId, 8, 82.5)
+            ),
+            name = "Bench Press"
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        mockWorkoutStoreRepository.saveWorkoutStore(workoutStore)
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        startSelectedWorkoutAndEnterFirstSet()
+
+        viewModel.skipCurrentExercise(context)
+        advanceUntilIdle()
+        joinViewModelJobs()
+        advanceUntilIdle()
+        joinViewModelJobs()
+
+        assertTrue(viewModel.workoutState.value is WorkoutState.Completed)
+        val skippedHistories = viewModel.executedSetsHistory.filter { it.exerciseId == exercise.id }
+        assertEquals(2, skippedHistories.size)
+        assertTrue(skippedHistories.all { it.skipped })
+
+        val completedHistory = database.workoutHistoryDao()
+            .getLatestWorkoutHistoryByWorkoutId(testWorkoutId, isDone = true)
+        assertNotNull("Expected a completed workout history after skipping the final exercise.", completedHistory)
     }
 
     private suspend fun createExerciseInfo(
@@ -2210,6 +2414,70 @@ class WorkoutViewModelSessionTest {
         // Test scenario 3: Verify total count is correct (should be 1, not 2)
         val totalUnique = viewModel.getAllExerciseWorkoutStates(testExerciseId).distinctBy { it.set.id }.size
         assertEquals("Total unique sets should be 1 for unilateral exercise", 1, totalUnique)
+    }
+
+    @Test
+    fun unilateralExercise_splitsWarmupSetsToo() = runTest(testDispatcher) {
+        val warmupSetId = UUID.randomUUID()
+        val workSetId = UUID.randomUUID()
+        val exercise = Exercise(
+            id = testExerciseId,
+            enabled = true,
+            name = "Unilateral Dumbbell Curl",
+            notes = "",
+            sets = listOf(
+                WeightSet(
+                    id = warmupSetId,
+                    reps = 12,
+                    weight = 10.0,
+                    subCategory = SetSubCategory.WarmupSet
+                ),
+                WeightSet(
+                    id = workSetId,
+                    reps = 10,
+                    weight = 20.0,
+                    subCategory = SetSubCategory.WorkSet
+                )
+            ),
+            exerciseType = ExerciseType.WEIGHT,
+            minReps = 5,
+            maxReps = 12,
+            lowerBoundMaxHRPercent = null,
+            upperBoundMaxHRPercent = null,
+            equipmentId = testEquipmentId,
+            bodyWeightPercentage = null,
+            generateWarmUpSets = false,
+            progressionMode = com.gabstra.myworkoutassistant.shared.ProgressionMode.OFF,
+            keepScreenOn = false,
+            showCountDownTimer = false,
+            intraSetRestInSeconds = 60,
+            loadJumpDefaultPct = null,
+            loadJumpMaxPct = null,
+            loadJumpOvercapUntil = null
+        )
+        val workout = createTestWorkout(exercise)
+        val workoutStore = createTestWorkoutStore(workout)
+
+        viewModel.updateWorkoutStore(workoutStore)
+        viewModel.setSelectedWorkoutId(testWorkoutId)
+        advanceUntilIdle()
+
+        viewModel.startWorkout()
+        advanceUntilIdle()
+        joinViewModelJobs()
+        waitForWorkoutToLoad()
+
+        val allStates = viewModel.allWorkoutStates
+        val warmupStates = allStates.filterIsInstance<WorkoutState.Set>().filter { it.set.id == warmupSetId }
+        val workStates = allStates.filterIsInstance<WorkoutState.Set>().filter { it.set.id == workSetId }
+        val intraSetRests = allStates.filterIsInstance<WorkoutState.Rest>().filter { it.isIntraSetRest }
+
+        assertEquals("Warm-up set should be duplicated into two unilateral sides", 2, warmupStates.size)
+        assertTrue("Duplicated warm-up states should keep the warm-up flag", warmupStates.all { it.isWarmupSet })
+        assertEquals("Warm-up sides should be numbered left/right", listOf(1u, 2u), warmupStates.map { it.intraSetCounter })
+
+        assertEquals("Work set should still be duplicated into two unilateral sides", 2, workStates.size)
+        assertEquals("Each unilateral set should still have its own intra-set rest", 2, intraSetRests.size)
     }
 
     @Test

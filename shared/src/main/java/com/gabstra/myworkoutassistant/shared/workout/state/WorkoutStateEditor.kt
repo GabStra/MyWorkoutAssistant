@@ -24,6 +24,7 @@ internal object WorkoutStateEditor {
                     }
                     if (setHistory != null) {
                         state.currentSetData = setHistory.setData
+                        state.skipped = setHistory.skipped
                     }
                     state
                 }
@@ -149,4 +150,3 @@ internal object WorkoutStateEditor {
         return state.copy(previousSetData = loadSelectionSetData)
     }
 }
-

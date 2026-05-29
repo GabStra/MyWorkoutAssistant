@@ -565,7 +565,12 @@ open class WorkoutViewModel(
                 val preservedSkipped = currentSetState?.skipped
 
                 val workoutSequence = generateWorkoutStates()
-                val initialMachine = initializeStateMachine(workoutSequence, 0)
+                val executedSetsHistorySnapshot = executedSetStore.executedSets.value
+                val refreshedSequence = applyExecutedSetDataToSequence(
+                    workoutSequence,
+                    executedSetsHistorySnapshot
+                )
+                val initialMachine = initializeStateMachine(refreshedSequence, 0)
                 populateNextStateForRest(initialMachine)
 
                 val targetIndex = workoutRefreshService.findTargetIndex(
@@ -578,7 +583,7 @@ open class WorkoutViewModel(
                     previousMachine.currentIndex.coerceIn(0, initialMachine.allStates.lastIndex)
                 }
 
-                var rebuiltMachine = initializeStateMachine(workoutSequence, repositionIndex)
+                var rebuiltMachine = initializeStateMachine(refreshedSequence, repositionIndex)
                 populateNextStateForRest(rebuiltMachine)
 
                 val rebuiltCurrentSet = rebuiltMachine.currentState as? WorkoutState.Set
@@ -2699,7 +2704,7 @@ open class WorkoutViewModel(
                         getEquipmentById = ::getEquipmentById
                     )
 
-                    val unilateralBlock = if (!isWarmupSet && isUnilateralExercise) {
+                    val unilateralBlock = if (isUnilateralExercise) {
                         workoutSetStateFactory.buildUnilateralSetBlock(exercise, setState, index)
                     } else {
                         null
@@ -3259,5 +3264,116 @@ open class WorkoutViewModel(
 
         stateMachine = newMachine
         updateStateFlowsFromMachine()
+    }
+
+    private data class ExerciseSkipPlan(
+        val exerciseId: UUID,
+        val skippedSetStates: List<WorkoutState.Set>,
+        val nextSetIndex: Int?
+    )
+
+    private fun buildExerciseSkipPlan(machine: WorkoutStateMachine): ExerciseSkipPlan? {
+        val currentState = machine.currentState as? WorkoutState.Set ?: return null
+        val exerciseId = currentState.exerciseId
+        val skippedSetStates = machine.allStates
+            .subList(machine.currentIndex, machine.allStates.size)
+            .filterIsInstance<WorkoutState.Set>()
+            .filter { it.exerciseId == exerciseId }
+        if (skippedSetStates.isEmpty()) return null
+
+        val nextSetIndex = WorkoutStateQueries.findNextIndex(machine) { state ->
+            state is WorkoutState.Set && state.exerciseId != exerciseId
+        }
+
+        return ExerciseSkipPlan(
+            exerciseId = exerciseId,
+            skippedSetStates = skippedSetStates,
+            nextSetIndex = nextSetIndex
+        )
+    }
+
+    fun shouldCompleteAfterSkippingCurrentExercise(): Boolean {
+        val machine = stateMachine ?: return false
+        val plan = buildExerciseSkipPlan(machine) ?: return false
+        return plan.nextSetIndex == null
+    }
+
+    open fun skipCurrentExercise(
+        context: Context? = null,
+        onEnd: suspend () -> Unit = {}
+    ) {
+        val machineSnapshot = stateMachine ?: return
+        val skipPlan = buildExerciseSkipPlan(machineSnapshot) ?: return
+
+        launchIO {
+            val skippedSetStates = skipPlan.skippedSetStates.map { setState ->
+                setState.copy(
+                    startTime = setState.startTime ?: LocalDateTime.now(),
+                    skipped = true,
+                    hasBeenExecuted = true
+                ).also { copiedState ->
+                    copiedState.currentSetData = copySetData(setState.currentSetData)
+                }
+            }
+
+            skippedSetStates.forEach { skippedState ->
+                val snapshot = workoutPersistenceCoordinator.captureSetHistorySnapshot(
+                    currentState = skippedState,
+                    exercisesById = exercisesById,
+                    supersetIdByExerciseId = supersetIdByExerciseId,
+                    exercisesBySupersetId = exercisesBySupersetId
+                ) ?: return@forEach
+                workoutPersistenceCoordinator.upsertSetHistorySnapshot(snapshot)
+            }
+
+            withContext(dispatchers.main) {
+                val activeMachine = stateMachine ?: return@withContext
+                val currentIndexSnapshot = activeMachine.currentIndex
+                val updatedMachine = activeMachine.mapStatesIndexed { index, state ->
+                    val setState = state as? WorkoutState.Set ?: return@mapStatesIndexed state
+                    if (index < currentIndexSnapshot || setState.exerciseId != skipPlan.exerciseId) {
+                        return@mapStatesIndexed state
+                    }
+
+                    skippedSetStates.firstOrNull {
+                        it.exerciseId == setState.exerciseId &&
+                            it.set.id == setState.set.id &&
+                            it.setIndex == setState.setIndex
+                    } ?: setState.copy(
+                        startTime = setState.startTime ?: LocalDateTime.now(),
+                        skipped = true,
+                        hasBeenExecuted = true
+                    ).also { copiedState ->
+                        copiedState.currentSetData = copySetData(setState.currentSetData)
+                    }
+                }
+                populateNextStateForRest(updatedMachine)
+
+                if (skipPlan.nextSetIndex == null) {
+                    stateMachine = updatedMachine
+                    val workoutStart = startWorkoutTime ?: LocalDateTime.now().also {
+                        startWorkoutTime = it
+                    }
+                    val completedState = WorkoutState.Completed(workoutStart).apply {
+                        endWorkoutTime = LocalDateTime.now()
+                    }
+                    _workoutState.value = completedState
+                    _nextWorkoutState.value = null
+                    _sessionPhase.value = WorkoutSessionPhase.COMPLETED
+                    _isHistoryEmpty.value = updatedMachine.isHistoryEmpty
+                    workoutTimerService.unregisterAll()
+                    rebuildScreenState()
+                } else {
+                    stateMachine = updatedMachine.withCurrentIndex(skipPlan.nextSetIndex)
+                    updateStateFlowsFromMachine()
+                }
+
+                pushAndStoreWorkoutData(
+                    isDone = skipPlan.nextSetIndex == null,
+                    context = context,
+                    onEnd = onEnd
+                )
+            }
+        }
     }
 }
