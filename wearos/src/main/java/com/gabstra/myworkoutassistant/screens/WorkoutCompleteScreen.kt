@@ -130,7 +130,7 @@ fun WorkoutCompleteScreen(
         viewModel.setDimming(false)
 
         delay(500)
-        hapticsViewModel.doShortImpulse()
+        hapticsViewModel.doShortImpulseWithBeep()
     }
 
     // Start countdown when progression data is ready; sync runs independently in background.

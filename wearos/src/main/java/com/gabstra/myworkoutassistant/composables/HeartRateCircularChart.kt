@@ -281,7 +281,6 @@ fun HeartRateCircularChart(
     val scope = rememberWearCoroutineScope()
     var alertJob by remember { mutableStateOf<Job?>(null) }
     var zoneTrackingJob by remember { mutableStateOf<Job?>(null) }
-    var alarmJob by remember { mutableStateOf<Job?>(null) }
 
     val currentZone by remember(mhrPercentage) {
         derivedStateOf { getZoneFromPercentage(mhrPercentage) }
@@ -308,8 +307,7 @@ fun HeartRateCircularChart(
             if (alertJob?.isActive == true) return@LaunchedEffect
 
             if (mhrPercentage in lowerBoundMaxHRPercent..upperBoundMaxHRPercent) {
-                if (alarmJob?.isActive == true) {
-                    alarmJob?.cancel()
+                if (hrStatus == HeartRateStatus.LOWER_THAN_TARGET || hrStatus == HeartRateStatus.HIGHER_THAN_TARGET) {
                     hrStatus = null
                     onHrStatusChange?.invoke(null)
                 }
@@ -325,30 +323,19 @@ fun HeartRateCircularChart(
             } else {
                 zoneTrackingJob?.cancel()
 
-                if (!reachedTargetOnce || alarmJob?.isActive == true) {
+                if (!reachedTargetOnce) {
                     return@LaunchedEffect
                 }
 
-                alarmJob = scope.launch {
-                    delay(5000)
+                delay(5000)
 
-                    val newStatus = if (mhrPercentage < lowerBoundMaxHRPercent) {
-                        HeartRateStatus.LOWER_THAN_TARGET
-                    } else {
-                        HeartRateStatus.HIGHER_THAN_TARGET
-                    }
-                    hrStatus = newStatus
-                    onHrStatusChange?.invoke(newStatus)
-
-                    while (isActive) {
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(1000)
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(1000)
-                        hapticsViewModel.doHardVibrationTwiceWithBeep()
-                        delay(5000)
-                    }
+                val newStatus = if (mhrPercentage < lowerBoundMaxHRPercent) {
+                    HeartRateStatus.LOWER_THAN_TARGET
+                } else {
+                    HeartRateStatus.HIGHER_THAN_TARGET
                 }
+                hrStatus = newStatus
+                onHrStatusChange?.invoke(newStatus)
             }
         }
 
@@ -364,7 +351,6 @@ fun HeartRateCircularChart(
             hrStatus = HeartRateStatus.OUT_OF_MAX
             onHrStatusChange?.invoke(HeartRateStatus.OUT_OF_MAX)
             zoneTrackingJob?.cancel()
-            alarmJob?.cancel()
         } else if (alertJob?.isActive == true && mhrPercentage <= 100) {
             hrStatus = null
             onHrStatusChange?.invoke(null)
@@ -377,7 +363,6 @@ fun HeartRateCircularChart(
         onDispose {
             alertJob?.cancel()
             zoneTrackingJob?.cancel()
-            alarmJob?.cancel()
         }
     }
 

@@ -117,9 +117,18 @@ open class AppViewModel : WorkoutViewModel() {
 
     fun initApplicationContext(context: android.content.Context) {
         applicationContext = context.applicationContext
+        _alertSoundEnabled.value = AlertSoundPreferences.isEnabled(context.applicationContext)
         (context.applicationContext as? MyApplication)?.coroutineExceptionHandler?.let {
             coroutineExceptionHandler = it
         }
+    }
+
+    fun setAlertSoundEnabled(enabled: Boolean) {
+        val context = applicationContext ?: return
+        if (_alertSoundEnabled.value == enabled) return
+        AlertSoundPreferences.setEnabled(context, enabled)
+        _alertSoundEnabled.value = enabled
+        rebuildScreenState()
     }
 
     private fun checkpointStore(): WorkoutRecoveryCheckpointStore? {
@@ -212,6 +221,8 @@ open class AppViewModel : WorkoutViewModel() {
     private val _showRecoveredWorkoutNotice = mutableStateOf(false)
     val showRecoveredWorkoutNotice: State<Boolean> = _showRecoveredWorkoutNotice
     private var skipNextResumeLastState = false
+    private val _alertSoundEnabled = mutableStateOf(AlertSoundPreferences.DEFAULT_ALERT_SOUND_ENABLED)
+    val alertSoundEnabled: State<Boolean> = _alertSoundEnabled
 
     fun consumeRecoveredWorkoutNotice() {
         _showRecoveredWorkoutNotice.value = false
@@ -710,6 +721,7 @@ open class AppViewModel : WorkoutViewModel() {
             startWorkoutTime = startWorkoutTime,
             enableDimming = enableDimming.value,
             keepScreenOn = keepScreenOn.value,
+            isAlertSoundEnabled = alertSoundEnabled.value,
             currentScreenDimmingState = currentScreenDimmingState.value,
             headerDisplayMode = headerDisplayMode.value,
             hrDisplayMode = hrDisplayMode.value,

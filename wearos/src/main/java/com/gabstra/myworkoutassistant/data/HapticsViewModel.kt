@@ -1,8 +1,6 @@
 package com.gabstra.myworkoutassistant.data
 
 import android.content.Context
-import android.media.AudioManager
-import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -13,8 +11,6 @@ import androidx.lifecycle.viewModelScope
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.lang.reflect.Constructor
-
 class HapticsHelper(context: Context) {
     private val appContext = context.applicationContext
 
@@ -67,6 +63,10 @@ class HapticsHelper(context: Context) {
     // fire sound + vibration together
     fun vibrateHardAndBeep() {
         vibrateHard()
+        playBeep()
+    }
+
+    fun playBeep() {
         try {
             tone?.let {
                 val startToneMethod = it.javaClass.getMethod(
@@ -100,18 +100,33 @@ class HapticsViewModel(
 ) : ViewModel() {
 
     private val appCeh get() = (appContext.applicationContext as? MyApplication)?.coroutineExceptionHandler ?: EmptyCoroutineContext
+    private fun isAlertSoundEnabled(): Boolean = AlertSoundPreferences.isEnabled(appContext)
 
     fun doHardVibration() = haptics.vibrateHard()
     fun doGentleVibration() = haptics.vibrateGentle()
-    fun doHardVibrationWithBeep() = haptics.vibrateHardAndBeep()
+    fun doHardVibrationWithBeep() {
+        if (isAlertSoundEnabled()) {
+            haptics.vibrateHardAndBeep()
+        } else {
+            haptics.vibrateHard()
+        }
+    }
     fun doHardVibrationTwice() = viewModelScope.launch(appCeh) {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard()
     }
     fun doHardVibrationTwiceWithBeep() = viewModelScope.launch(appCeh) {
-        haptics.vibrateHardAndBeep(); delay(200); haptics.vibrateHardAndBeep()
+        doHardVibrationWithBeep(); delay(200); doHardVibrationWithBeep()
     }
     fun doShortImpulse() = viewModelScope.launch(appCeh) {
         haptics.vibrateHard(); delay(200); haptics.vibrateHard(); delay(200); haptics.vibrateHard()
+    }
+    fun doShortImpulseWithBeep() = viewModelScope.launch(appCeh) {
+        repeat(3) { index ->
+            doHardVibrationWithBeep()
+            if (index < 2) {
+                delay(200)
+            }
+        }
     }
 
     override fun onCleared() { super.onCleared(); haptics.release() }

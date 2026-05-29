@@ -191,6 +191,69 @@ fun PageButtons(
                 }
             }
             item {
+                val alertSoundEnabled = screenState.isAlertSoundEnabled
+
+                FilledTonalButton(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (isInspectionMode) Modifier else Modifier.transformedHeight(
+                                this,
+                                spec
+                            )
+                        ),
+                    transformation = if (isInspectionMode) null else SurfaceTransformation(spec),
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    onClick = {
+                        hapticsViewModel.doGentleVibration()
+                        viewModel.setAlertSoundEnabled(!alertSoundEnabled)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.5.dp)
+                        ) {
+                            Text(
+                                text = "Alert sound",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Start,
+                            )
+                            Text(
+                                text = if (alertSoundEnabled) {
+                                    "Critical alerts vibrate and beep"
+                                } else {
+                                    "Critical alerts vibrate only"
+                                },
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = alertSoundEnabled,
+                            onCheckedChange = {
+                                hapticsViewModel.doGentleVibration()
+                                viewModel.setAlertSoundEnabled(it)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onBackground,
+                                uncheckedTrackColor = MediumLightGray,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onBackground,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            item {
                 val exerciseDefaultKeepOn = exercise.keepScreenOn
                 val statusText = when {
                     exerciseDefaultKeepOn -> "This exercise keeps the screen on"
