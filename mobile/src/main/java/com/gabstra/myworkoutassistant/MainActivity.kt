@@ -400,6 +400,7 @@ fun MyWorkoutAssistantNavHost(
 
     var hasHealthPermissions by remember { mutableStateOf(false) }
     var showPrerequisitesDialog by remember { mutableStateOf(false) }
+    var deferHealthPermissionPrompt by remember { mutableStateOf(true) }
 
     suspend fun refreshPermissionState(showDialogWhenMissing: Boolean) {
         val grantedPermissions = try {
@@ -413,7 +414,7 @@ fun MyWorkoutAssistantNavHost(
         appViewModel.setHealthPermissionsChecked()
 
         if (showDialogWhenMissing) {
-            showPrerequisitesDialog = !hasHealthPermissions
+            showPrerequisitesDialog = !hasHealthPermissions && !deferHealthPermissionPrompt
         }
     }
 
@@ -925,12 +926,20 @@ fun MyWorkoutAssistantNavHost(
     var showStartupRestorePickerPrompt by remember { mutableStateOf(false) }
     var isRestoringBackup by remember { mutableStateOf(false) }
 
+    fun resolveStartupRestoreGate() {
+        deferHealthPermissionPrompt = false
+        showPrerequisitesDialog = !hasHealthPermissions
+    }
+
     LaunchedEffect(initialDataLoaded) {
         if (!initialDataLoaded) return@LaunchedEffect
 
         val prefs = context.getSharedPreferences("startup_restore", Context.MODE_PRIVATE)
         val alreadyChecked = prefs.getBoolean("auto_restore_checked", false)
-        if (alreadyChecked) return@LaunchedEffect
+        if (alreadyChecked) {
+            resolveStartupRestoreGate()
+            return@LaunchedEffect
+        }
 
         val hasCurrentData =
             appViewModel.workoutStore.workouts.isNotEmpty() ||
@@ -940,6 +949,7 @@ fun MyWorkoutAssistantNavHost(
 
         if (hasCurrentData) {
             prefs.edit { putBoolean("auto_restore_checked", true) }
+            resolveStartupRestoreGate()
             return@LaunchedEffect
         }
 
@@ -949,6 +959,8 @@ fun MyWorkoutAssistantNavHost(
             if (!alreadyPrompted) {
                 prefs.edit { putBoolean("restore_picker_prompt_shown", true) }
                 showStartupRestorePickerPrompt = true
+            } else {
+                resolveStartupRestoreGate()
             }
             return@LaunchedEffect
         }
@@ -972,11 +984,15 @@ fun MyWorkoutAssistantNavHost(
         if (restored) {
             prefs.edit { putBoolean("auto_restore_checked", true) }
         }
+        resolveStartupRestoreGate()
     }
 
     val jsonPickerLauncher =
         rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-            val selectedUri = uri ?: return@rememberLauncherForActivityResult
+            val selectedUri = uri ?: run {
+                resolveStartupRestoreGate()
+                return@rememberLauncherForActivityResult
+            }
             if (isRestoringBackup) return@rememberLauncherForActivityResult
 
             // Use restoreScope so restore completes even if activity is destroyed/recreated (e.g. rotation).
@@ -1065,13 +1081,17 @@ fun MyWorkoutAssistantNavHost(
                     }
                 } finally {
                     isRestoringBackup = false
+                    resolveStartupRestoreGate()
                 }
             }
         }
 
     if (showStartupRestorePickerPrompt) {
         StandardDialog(
-            onDismissRequest = { showStartupRestorePickerPrompt = false },
+            onDismissRequest = {
+                showStartupRestorePickerPrompt = false
+                resolveStartupRestoreGate()
+            },
             title = "Restore backup?",
             body = {
                 Text("Your local data is empty. Choose a backup file to restore your workouts.")
@@ -1082,7 +1102,10 @@ fun MyWorkoutAssistantNavHost(
                 jsonPickerLauncher.launch(arrayOf("application/json"))
             },
             dismissText = "Not now",
-            onDismissButton = { showStartupRestorePickerPrompt = false }
+            onDismissButton = {
+                showStartupRestorePickerPrompt = false
+                resolveStartupRestoreGate()
+            }
         )
     }
 
